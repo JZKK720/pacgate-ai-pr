@@ -1,6 +1,5 @@
 //! TenantStore and MatterStore — Postgres-backed CRUD for tenants and matters.
 
-use chrono::Utc;
 use pacgate_core::{Matter, MatterId, TenantId, UserId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;

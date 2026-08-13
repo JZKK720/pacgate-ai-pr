@@ -9,7 +9,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use futures::Stream;
 use pacgate_core::{
-    AgentMessage, LlmProvider, LlmTier, ModelConfig, PacgateError, Result, ToolCall,
+    LlmProvider, LlmTier, ModelConfig, PacgateError, Result, ToolCall,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

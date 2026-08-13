@@ -8,7 +8,6 @@
 
 use std::path::PathBuf;
 
-use chrono::Utc;
 use pacgate_core::{Matter, MatterId, TenantId, UserId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;

@@ -7,9 +7,8 @@
 //! - Each chunk gets embedded via Ollama and stored in kb_chunks
 
 use pacgate_core::{DocumentId, MatterId, TenantId};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use tracing::instrument;
-use uuid::Uuid;
 
 use crate::{EmbeddingService, RagError};
 

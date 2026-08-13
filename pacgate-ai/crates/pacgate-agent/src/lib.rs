@@ -6,16 +6,13 @@
 
 use std::sync::Arc;
 
-use anyhow::Context;
-use async_trait::async_trait;
 use pacgate_core::{
-    AgentMessage, CitationRef, ConversationId, DocumentId, LlmTier, MatterId, MessageId,
+    AgentMessage, CitationRef, DocumentId, LlmTier, MatterId, MessageId,
     PacgateError, Result, ToolCall, ToolResult,
 };
-use pacgate_llm::{ChatMessage, LlmRouter, LlmStreamEvent, OaiTool, OaiFunctionDef};
+use pacgate_llm::{ChatMessage, LlmRouter, OaiTool, OaiFunctionDef};
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
-use uuid::Uuid;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool argument / result schemas

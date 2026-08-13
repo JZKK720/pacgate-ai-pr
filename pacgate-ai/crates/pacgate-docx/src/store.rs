@@ -11,10 +11,9 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use pacgate_core::{Document, DocumentFormat, DocumentId, DocumentStore, FindResult, MatterId, TenantId, UserId};
 use sqlx::{PgPool, Row};
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument};
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -225,13 +224,11 @@ impl DocumentStore for FsDocumentStore {
         let content_lower = content.to_lowercase();
 
         let mut results = Vec::new();
-        let mut page = 1u32;
         let lines: Vec<&str> = content.lines().collect();
         let lines_per_page = 40;
 
         for (i, chunk) in lines.chunks(lines_per_page).enumerate() {
-            page = (i + 1) as u32;
-            let page_text = chunk.join("\n");
+            let page = (i + 1) as u32;
             if let Some(pos) = content_lower.find(&query_lower) {
                 let match_start = pos;
                 let context_start = pos.saturating_sub(100);

@@ -1,6 +1,6 @@
 //! DOCX text extraction — reads text content from a .docx file.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::io::Read;
 use zip::ZipArchive;
 

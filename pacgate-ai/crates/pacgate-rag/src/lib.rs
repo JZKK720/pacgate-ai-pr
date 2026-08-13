@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use pacgate_core::{DocumentId, KbChunk, MatterId, TenantId};
+use pacgate_core::{MatterId, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 

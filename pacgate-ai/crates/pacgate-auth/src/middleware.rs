@@ -11,7 +11,7 @@ use axum::{
 };
 use tracing::debug;
 
-use crate::{AuthService, Claims};
+use crate::AuthService;
 
 /// Auth middleware — verifies JWT and injects Claims into request extensions.
 ///

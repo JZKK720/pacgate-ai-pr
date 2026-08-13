@@ -14,7 +14,6 @@ pub use error::ApiError;
 use axum::{
     Router,
     routing::{get, post, put, delete},
-    middleware,
 };
 use tower::ServiceBuilder;
 use tower_http::{
