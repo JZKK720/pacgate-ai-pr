@@ -1,0 +1,221 @@
+# Fund lawyer workflows
+# Derived from: 基金律师实用Prompts指南.md
+# Covers fund formation, compliance, investment, operations, exit, and cross-border.
+
+- id: "00000000-0000-0000-0000-000000000701"
+  name: "基金架构设计"
+  description: "Design fund legal structure — compare onshore RMB fund vs offshore USD fund across 7 dimensions"
+  category: "fund_formation"
+  steps:
+    - name: "Search fund regulations"
+      description: "Search for current AMAC filing requirements and Cayman fund regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate fund structure memo"
+      description: "Generate comparative fund architecture design memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为拟设立的基金设计法律架构，对比境内人民币基金和境外美元基金两条路径。
+
+          对比维度（输出对比矩阵）：
+          1. 法律组织形式（境内LP vs 开曼ELP/SPC/BVI）
+          2. GP与管理人架构（分离/合一、牌照要求）
+          3. 税务效率（LP所得税、管理费税务、创投优惠、预提税）
+          4. 监管与备案（AMAC备案 vs CIMA登记/SFC牌照）
+          5. 投资范围灵活性
+          6. LP保护与治理（LPAC、关键人条款、无过错解散）
+          7. 外汇与资金流动（QDII/QDLP/QFLP/ODI）
+
+          输出对比矩阵，并基于具体情况给出推荐架构方案及理由。
+          如推荐双币种双基金架构，请说明协调机制。
+          所有法规引用须标注名称、条文号、效力状态，严禁编造。
+
+- id: "00000000-0000-0000-0000-000000000702"
+  name: "LPA核心条款起草"
+  description: "Draft Limited Partnership Agreement core clauses with GP-friendly/LP-friendly/market terms"
+  category: "fund_formation"
+  steps:
+    - name: "Search AMAC guidelines"
+      description: "Search for AMAC contract guidelines for partnership funds"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate LPA draft"
+      description: "Generate LPA with all core chapters and three-version clause comparison"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份《有限合伙协议》（LPA），核心商业条款包括：
+          基金规模、期限（投资期+退出期+延长期）、管理费（投资期2%/退出期1%）、
+          业绩报酬（20% catch-up → 20/80 split）、门槛收益率（8%）、回拨机制、
+          GP出资（1%）、关键人条款、LPAC组成。
+
+          完整协议框架（不少于以下核心章节）：
+          1. 基金设立与期限
+          2. 出资与缴款机制（Capital Call）
+          3. 投资限制与投资范围
+          4. 管理费与业绩报酬
+          5. 收益分配瀑布机制（详细计算示例）
+          6. 有限合伙人的权利与限制
+          7. LP咨询委员会
+          8. 关键人条款
+          9. 无过错解散权
+          10. GP转让与替换
+          11. 退出与清算
+          12. 保密与冲突处理
+          13. 争议解决
+
+          每个商业条款标注【GP友好版】【LP友好版】【市场中间版】三种表述的差异。
+          境内基金需与AMAC《合同指引2号》（合伙型）合规对照。
+          境外基金输出中英双语对照。
+
+- id: "00000000-0000-0000-0000-000000000703"
+  name: "Side Letter起草"
+  description: "Draft fund side letter template for specific LP negotiations (fee discounts, MFN, co-investment rights)"
+  category: "fund_formation"
+  steps:
+    - name: "Generate side letter"
+      description: "Generate side letter with selected provisions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份基金Side Letter模板，用于与特定LP谈判附加安排。
+
+          核心内容选项（按需选择）：
+          1. 管理费折扣
+          2. 业绩报酬优惠
+          3. 信息权增强
+          4. 投资优先权（Co-investment优先权）
+          5. 最惠国待遇（MFN）
+          6. 监管合规协助
+          7. 退出便利
+          8. 费用豁免
+          9. 咨询委员会席位
+          10. 竞投限制
+
+          起草要求：
+          - 模板格式：开头声明→引用LPA条款→具体安排→生效与终止→签名
+          - 每个条款标注"是否需要LPAC知情/同意"
+          - 标注"是否可能构成对其他LP的不公平，需要MFN条款覆盖"
+          - 标注"境内国资LP适用的特殊合规要求"
+          - 输出中英双语对照
+
+- id: "00000000-0000-0000-0000-000000000704"
+  name: "基金管理人登记申请"
+  description: "Prepare fund manager registration application materials (AMAC/SFC Type 9/CIMA)"
+  category: "fund_compliance"
+  steps:
+    - name: "Search registration requirements"
+      description: "Search for current manager registration requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate application framework"
+      description: "Generate registration application materials framework"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助准备基金管理人登记/牌照申请的申请材料框架。
+
+          申请材料结构：
+          1. 申请人基本信息（主体名称、注册地、团队背景、拟管理基金类型）
+          2. 股东与实际控制人结构
+          3. 高管人员资质与履历
+          4. 内控制度与风险管理制度
+          5. 合规管理制度
+          6. 投资决策流程
+          7. 信息披露制度
+          8. 利益冲突防范机制
+          9. 基金合同模板
+          10. 托管协议模板
+
+          要求：
+          - 标注每项材料的具体监管要求依据（引用条文号）
+          - 标注常见退回原因与防范建议
+          - 内控制度不少于5项专项制度
+
+- id: "00000000-0000-0000-0000-000000000705"
+  name: "基金投资交易审阅"
+  description: "Review fund investment transaction documents (SPA, SHA, VAM) from GP/LP perspective"
+  category: "fund_investment"
+  steps:
+    - name: "Read investment agreement"
+      description: "Read the investment agreement document"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Find key clauses"
+      description: "Search for key investment clauses"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "估值调整"
+          - "对赌"
+          - "优先清算"
+          - "反稀释"
+          - "一票否决"
+          - "回购"
+          - "业绩承诺"
+
+    - name: "Generate investment review"
+      description: "Generate investment transaction review memo"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请从基金GP角度审阅以下投资交易文件：
+
+          审阅维度：
+          1. 估值与对赌机制（VAM触发条件、调整方式、补偿计算）
+          2. 优先清算权（倍数、参与方式、上限）
+          3. 反稀释保护（类型、计算方式）
+          4. 一票否决权清单（保护性条款范围）
+          5. 回购权（触发条件、价格、期限）
+          6. 业绩承诺与补偿
+          7. 信息权与检查权
+          8. 创始人锁定与服务期
+          9. 退出条款（IPO/并购/回购路径）
+          10. 争议解决
+
+          每条标注风险等级（🔴/🟡/🟢）和修改建议。
+          输出结论先行，先给摘要再展开分析。
+
+- id: "00000000-0000-0000-0000-000000000706"
+  name: "基金年度备案"
+  description: "Prepare fund annual filing with AMAC — audit, disclosure, and compliance check"
+  category: "fund_compliance"
+  steps:
+    - name: "Search AMAC filing requirements"
+      description: "Search for current AMAC annual filing requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate filing checklist"
+      description: "Generate annual filing checklist and materials"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请生成基金年度备案与协会披露材料清单：
+
+          备案材料结构：
+          1. 基金基本信息更新（规模、LP结构、投资进度）
+          2. 年度审计报告要求
+          3. 信息披露报告（半年度/年度）
+          4. 投资运作合规性自查
+          5. LP变动情况报告
+          6. 管理费与业绩报酬合规性
+          7. 关联交易披露
+          8. 利益冲突事项报告
+          9. 逾期未退出项目说明
+          10. 下一年度投资计划
+
+          每项标注：
+          - 提交截止日期
+          - 所需文件清单
+          - 常见问题与防范建议
+          - 引用具体AMAC自律规则条文号

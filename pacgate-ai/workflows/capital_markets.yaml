@@ -1,0 +1,237 @@
+# Capital markets and IPO workflows
+# Derived from: 非诉律师实用Prompts指南.md §七 资本市场与IPO
+# Covers IPO path selection, pre-IPO restructuring, VIE, legal due diligence, and review replies.
+
+- id: "00000000-0000-0000-0000-000000000801"
+  name: "上市路径选择与可行性"
+  description: "IPO path selection and feasibility analysis — A-share, Hong Kong, US, or dual listing"
+  category: "capital_markets"
+  steps:
+    - name: "Search listing requirements"
+      description: "Search for current listing requirements across exchanges"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate IPO path analysis"
+      description: "Generate IPO path comparison and recommendation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业分析上市路径选择与可行性：
+          企业信息：【行业、营收、净利润、估值、业务模式】
+
+          输出格式：
+          一、企业概况与上市条件评估
+          - 主板/科创板/创业板/北交所上市条件对照
+          - 港股主板/GEM上市条件
+          - 美股NYSE/Nasdaq上市条件
+
+          二、上市路径对比矩阵
+          | 维度 | A股 | 港股 | 美股 |
+          |------|-----|------|------|
+          | 财务门槛 | | | |
+          | 行业限制 | | | |
+          | VIE架构要求 | | | |
+          | 审核周期 | | | |
+          | 估值水平 | | | |
+          | 流动性 | | | |
+          | 监管环境 | | | |
+          | 外汇/资金 | | | |
+
+          三、推荐路径与理由
+          四、上市时间表与里程碑
+          五、关键风险与对策
+          六、双上市/二次上市可行性（如适用）
+
+          所有上市条件引用具体规则名称、条文号，标注效力状态。
+
+- id: "00000000-0000-0000-0000-000000000802"
+  name: "上市前重组与股改"
+  description: "Pre-IPO restructuring and joint-stock conversion plan"
+  category: "capital_markets"
+  steps:
+    - name: "Search restructuring regulations"
+      description: "Search for pre-IPO restructuring regulatory requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate restructuring plan"
+      description: "Generate pre-IPO restructuring plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业制定上市前重组与股改方案：
+          企业信息：【现有股权结构、子公司数量与分布、业务线、关联交易】
+
+          重组方案结构：
+          一、现有架构分析与问题诊断
+          二、重组目标与原则
+          三、股权重组方案
+          - 创始人/员工持股平台/投资人股权梳理
+          - 代持清理
+          - 期权池设立
+          - 股权激励计划
+
+          四、业务重组方案
+          - 主营业务聚焦
+          - 非核心业务剥离
+          - 关联交易清理
+          - 同业竞争消除
+
+          五、税务重组
+          - 税务效率优化
+          - 历史税务问题整改
+
+          六、股改方案
+          - 有限公司变更为股份有限公司
+          - 折股方案
+          - 发起人协议
+          - 创立大会
+
+          七、重组时间表与审批程序
+          八、重组成本估算
+          九、风险提示
+
+- id: "00000000-0000-0000-0000-000000000803"
+  name: "红筹/VIE搭建与拆除"
+  description: "Red-chip/VIE structure setup or dismantling — Cayman structure, economic interests, regulatory compliance"
+  category: "capital_markets"
+  steps:
+    - name: "Search VIE regulations"
+      description: "Search for current VIE structure regulations and precedents"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate VIE memo"
+      description: "Generate VIE structure setup or dismantling memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下红筹/VIE架构事项出具法律分析：
+
+          事项：【搭建VIE架构 / 拆除VIE架构回归A股 / VIE架构合规性审查】
+
+          输出格式：
+          一、背景与现状
+          二、法律依据分析
+          - 《关于外国投资者并购境内企业的规定》（10号文）
+          - 《外商投资准入特别管理措施》
+          - 证监会境外发行上市备案新规
+          - 引用具体条文号
+
+          三、VIE架构设计/拆除方案
+          - 境外架构：开曼控股公司 → BVI中间层 → 香港公司 → WFOE → VIE
+          - 协议安排：独家运营协议、独家购买权、股权质押、授权委托书、贷款协议
+          - 经济利益流向分析
+          - 拆除路径（如适用）：注销境外主体、WFOE转内资、外汇登记
+
+          四、税务影响分析
+          - 搭建阶段税务
+          - 拆除阶段税务（股权转让所得税、回购等）
+
+          五、监管风险
+          - 外商投资准入限制变化
+          - 证监会备案要求
+          - 外汇管理局登记
+
+          六、操作步骤与时间表
+          七、待确认事项
+
+- id: "00000000-0000-0000-0000-000000000804"
+  name: "IPO法律尽调与整改"
+  description: "IPO legal due diligence and remediation plan for listing candidates"
+  category: "capital_markets"
+  steps:
+    - name: "List matter documents"
+      description: "List all documents in the matter for DD review"
+      tool: "list_documents"
+      parameters: {}
+
+    - name: "Search for issues"
+      description: "Search documents for red flags and issues"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "出资瑕疵"
+          - "股权代持"
+          - "关联交易"
+          - "同业竞争"
+          - "税务问题"
+          - "社保欠缴"
+          - "行政处罚"
+          - "诉讼仲裁"
+
+    - name: "Generate DD report"
+      description: "Generate IPO legal due diligence report with remediation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据已审阅的文件生成IPO法律尽职调查报告：
+
+          报告结构：
+          一、公司设立与存续
+          - 设立程序合规性
+          - 注册资本实缴情况
+          - 历次股权变动合规性
+
+          二、公司治理
+          - 三会运作规范性
+          - 独立董事制度
+          - 内控制度健全性
+
+          三、业务资质
+          四、资产权属（土地、房产、IP、设备）
+          五、重大合同
+          六、关联交易与同业竞争
+          七、劳动合规
+          八、税务合规
+          九、环境保护
+          十、诉讼仲裁与行政处罚
+          十一、数据合规
+
+          每项标注：
+          - 合规状态：✅合规 / ⚠️部分合规 / ❌不合规 / ❓资料不足
+          - 风险等级：P0(必须整改) / P1(重大风险) / P2(中等) / P3(低)
+          - 整改方案与时间表
+          - 引用具体法律条文
+
+          免责声明：本报告为供律师复核的草稿。
+
+- id: "00000000-0000-0000-0000-000000000805"
+  name: "审核问询回复"
+  description: "Draft response to exchange/CSRC review inquiry questions for IPO"
+  category: "capital_markets"
+  steps:
+    - name: "Read inquiry document"
+      description: "Read the review inquiry questions"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate reply draft"
+      description: "Generate inquiry response draft"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下审核问询函起草回复：
+
+          回复格式（针对每个问询问题）：
+          一、问题原文
+          二、回复
+          - 事实陈述（客观描述）
+          - 法律分析（引用具体法规、条文号）
+          - 中介机构意见（律师法律意见）
+
+          三、补充说明文件清单
+          - 标注文件名称、页码
+          - 标注文件用途
+
+          回复原则：
+          - 直接回答问题，不回避
+          - 事实与法律分析分开
+          - 引用具体条文号、效力状态
+          - 涉及历史问题的，说明整改措施与效果
+          - 涉及关联交易的，说明必要性、合理性与公允性
+          - 结论先行，再展开分析
