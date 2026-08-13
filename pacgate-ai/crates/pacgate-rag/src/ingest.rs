@@ -6,7 +6,7 @@
 //! - Split long paragraphs at sentence boundaries
 //! - Each chunk gets embedded via Ollama and stored in kb_chunks
 
-use pacgate_core::{DocumentId, MatterId, TenantId};
+use pacgate_core::{DocumentId, Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::PgPool;
 use tracing::instrument;
 
@@ -26,6 +26,9 @@ impl ChunkIngestor {
     }
 
     /// Ingest a document: split into chunks, embed, and store in kb_chunks.
+    ///
+    /// Each chunk is tagged with the document's jurisdiction and source level
+    /// for later filtering during RAG search.
     #[instrument(skip(self, content), fields(doc_id = %doc_id.as_str(), content_len = content.len()))]
     pub async fn ingest_document(
         &self,
@@ -33,6 +36,8 @@ impl ChunkIngestor {
         matter_id: &MatterId,
         doc_id: &DocumentId,
         content: &str,
+        jurisdiction: &Jurisdiction,
+        source_level: &SourceLevel,
     ) -> Result<u32, RagError> {
         // Split into chunks
         let chunks = self.chunk_text(content);
@@ -40,6 +45,17 @@ impl ChunkIngestor {
         if chunks.is_empty() {
             return Ok(0);
         }
+
+        // Serialize jurisdiction and source_level to snake_case strings
+        let jur_str = serde_json::to_value(jurisdiction)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "international".to_string());
+
+        let sl_str = serde_json::to_value(source_level)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "model_inference".to_string());
 
         // Embed each chunk
         let chunk_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
@@ -58,8 +74,8 @@ impl ChunkIngestor {
             );
 
             sqlx::query(
-                "INSERT INTO kb_chunks (tenant_id, matter_id, document_id, chunk_index, content, embedding)
-                 VALUES ($1, $2, $3, $4, $5, $6::vector)",
+                "INSERT INTO kb_chunks (tenant_id, matter_id, document_id, chunk_index, content, embedding, jurisdiction, source_level)
+                 VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)",
             )
             .bind(tenant_id.0)
             .bind(matter_id.0)
@@ -67,13 +83,15 @@ impl ChunkIngestor {
             .bind(i as i32)
             .bind(chunk)
             .bind(&embedding_str)
+            .bind(&jur_str)
+            .bind(&sl_str)
             .execute(&self.db)
             .await?;
 
             stored += 1;
         }
 
-        tracing::info!("ingested {stored} chunks for document {}", doc_id.as_str());
+        tracing::info!("ingested {stored} chunks for document {} (jurisdiction={jur_str}, source_level={sl_str})", doc_id.as_str());
         Ok(stored)
     }
 

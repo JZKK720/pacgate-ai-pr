@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use pacgate_core::{MatterId, TenantId};
+use pacgate_core::{Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 
@@ -31,6 +31,34 @@ pub struct KbSearchResult {
     pub page:       Option<u32>,
 }
 
+/// Optional filters for RAG search.
+///
+/// When a filter is `Some`, only chunks matching the filter are returned.
+/// When `None`, no filtering is applied on that dimension.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilter {
+    /// Filter by jurisdiction (e.g., ChinaMainland, UnitedStates)
+    pub jurisdiction:  Option<Jurisdiction>,
+    /// Filter by source level (e.g., AuthorityVerified, AuxiliaryDB)
+    pub source_level:  Option<SourceLevel>,
+}
+
+impl SearchFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_jurisdiction(mut self, j: Jurisdiction) -> Self {
+        self.jurisdiction = Some(j);
+        self
+    }
+
+    pub fn with_source_level(mut self, s: SourceLevel) -> Self {
+        self.source_level = Some(s);
+        self
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RagStore — the main search interface
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +77,10 @@ impl RagStore {
     ///
     /// Combines semantic (pgvector) and keyword (tsvector) search,
     /// merges results, and returns the top_k by combined score.
+    ///
+    /// Pass `SearchFilter::default()` for no filtering, or use
+    /// `SearchFilter::new().with_jurisdiction(...)` to filter by jurisdiction
+    /// and/or source level.
     #[instrument(skip(self), fields(matter_id = %matter_id.as_str(), query = %query, top_k = top_k))]
     pub async fn search(
         &self,
@@ -56,6 +88,7 @@ impl RagStore {
         matter_id: &MatterId,
         query: &str,
         top_k: u32,
+        filter: &SearchFilter,
     ) -> Result<Vec<KbSearchResult>, RagError> {
         // Generate embedding for the query
         let query_embedding = self.embedding.embed(query).await?;
@@ -66,6 +99,7 @@ impl RagStore {
             matter_id,
             &query_embedding,
             top_k,
+            filter,
         ).await.unwrap_or_default();
 
         // Keyword search via tsvector
@@ -74,6 +108,7 @@ impl RagStore {
             matter_id,
             query,
             top_k,
+            filter,
         ).await.unwrap_or_default();
 
         // Merge and rank by combined score
@@ -88,6 +123,7 @@ impl RagStore {
         matter_id: &MatterId,
         embedding: &[f32],
         top_k: u32,
+        filter: &SearchFilter,
     ) -> Result<Vec<KbSearchResult>, RagError> {
         // Convert embedding to pgvector format: "[0.1,0.2,...]"
         let embedding_str = format!(
@@ -99,22 +135,33 @@ impl RagStore {
                 .join(",")
         );
 
-        let rows = sqlx::query(
+        // Build query with optional jurisdiction + source_level filters
+        let (sql, jur_param, sl_param) = Self::build_filtered_sql(
             "SELECT c.content, c.page, d.name as doc_name,
                     1 - (c.embedding <=> $3::vector) as score
              FROM kb_chunks c
              JOIN documents d ON c.document_id = d.id
              WHERE c.tenant_id = $1 AND c.matter_id = $2
-               AND c.embedding IS NOT NULL
-             ORDER BY c.embedding <=> $3::vector
-             LIMIT $4",
-        )
-        .bind(tenant_id.0)
-        .bind(matter_id.0)
-        .bind(&embedding_str)
-        .bind(top_k as i32)
-        .fetch_all(&self.db)
-        .await?;
+               AND c.embedding IS NOT NULL",
+            filter,
+            "$5",
+            "$6",
+        );
+
+        let mut query = sqlx::query(&sql)
+            .bind(tenant_id.0)
+            .bind(matter_id.0)
+            .bind(&embedding_str)
+            .bind(top_k as i32);
+
+        if let Some(j) = jur_param {
+            query = query.bind(j);
+        }
+        if let Some(s) = sl_param {
+            query = query.bind(s);
+        }
+
+        let rows = query.fetch_all(&self.db).await?;
 
         Ok(rows
             .into_iter()
@@ -134,23 +181,34 @@ impl RagStore {
         matter_id: &MatterId,
         query: &str,
         top_k: u32,
+        filter: &SearchFilter,
     ) -> Result<Vec<KbSearchResult>, RagError> {
-        let rows = sqlx::query(
+        let (sql, jur_param, sl_param) = Self::build_filtered_sql(
             "SELECT c.content, c.page, d.name as doc_name,
                     ts_rank(c.content_tsv, plainto_tsquery('english', $3)) as score
              FROM kb_chunks c
              JOIN documents d ON c.document_id = d.id
              WHERE c.tenant_id = $1 AND c.matter_id = $2
-               AND c.content_tsv @@ plainto_tsquery('english', $3)
-             ORDER BY score DESC
-             LIMIT $4",
-        )
-        .bind(tenant_id.0)
-        .bind(matter_id.0)
-        .bind(query)
-        .bind(top_k as i32)
-        .fetch_all(&self.db)
-        .await?;
+               AND c.content_tsv @@ plainto_tsquery('english', $3)",
+            filter,
+            "$5",
+            "$6",
+        );
+
+        let mut q = sqlx::query(&sql)
+            .bind(tenant_id.0)
+            .bind(matter_id.0)
+            .bind(query)
+            .bind(top_k as i32);
+
+        if let Some(j) = jur_param {
+            q = q.bind(j);
+        }
+        if let Some(s) = sl_param {
+            q = q.bind(s);
+        }
+
+        let rows = q.fetch_all(&self.db).await?;
 
         Ok(rows
             .into_iter()
@@ -161,6 +219,54 @@ impl RagStore {
                 page: row.get::<Option<i32>, _>("page").map(|p| p as u32),
             })
             .collect())
+    }
+
+    /// Build SQL with optional jurisdiction and source_level filter clauses.
+    ///
+    /// Returns `(sql_with_order_by_and_limit, jurisdiction_param, source_level_param)`.
+    /// The params are `Some(String)` when the filter is active, `None` otherwise.
+    /// When active, the SQL appends `AND c.jurisdiction = $N` / `AND c.source_level = $N`
+    /// and the caller must bind the param in the correct position.
+    fn build_filtered_sql(
+        base_sql: &str,
+        filter: &SearchFilter,
+        jur_param_num: &str,
+        sl_param_num: &str,
+    ) -> (String, Option<String>, Option<String>) {
+        let mut sql = base_sql.to_string();
+        let mut jur_param: Option<String> = None;
+        let mut sl_param: Option<String> = None;
+
+        if let Some(ref j) = filter.jurisdiction {
+            let j_str = serde_json::to_value(j)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            sql.push_str(&format!(" AND c.jurisdiction = {}", jur_param_num));
+            jur_param = Some(j_str);
+        }
+
+        if let Some(ref s) = filter.source_level {
+            let s_str = serde_json::to_value(s)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            sql.push_str(&format!(" AND c.source_level = {}", sl_param_num));
+            sl_param = Some(s_str);
+        }
+
+        sql.push_str(" ORDER BY ");
+        // For semantic search, order by embedding distance; for keyword, by score
+        // We need to detect which query this is. The simplest approach: if the base
+        // SQL contains "embedding <=>", order by that; otherwise by score DESC.
+        if base_sql.contains("embedding <=>") {
+            sql.push_str("c.embedding <=> $3::vector");
+        } else {
+            sql.push_str("score DESC");
+        }
+        sql.push_str(" LIMIT $4");
+
+        (sql, jur_param, sl_param)
     }
 
     /// Merge semantic and keyword results, combining scores for duplicates.
@@ -215,7 +321,14 @@ impl RagStore {
             .execute(pool)
             .await
             .map_err(|e| RagError::Migration(e.to_string()))?;
-        tracing::info!("RAG migrations applied");
+
+        let enrichment_sql = include_str!("../../../migrations/003_rag_enrichment.sql");
+        sqlx::query(enrichment_sql)
+            .execute(pool)
+            .await
+            .map_err(|e| RagError::Migration(e.to_string()))?;
+
+        tracing::info!("RAG migrations applied (002_schema + 003_enrichment)");
         Ok(())
     }
 }

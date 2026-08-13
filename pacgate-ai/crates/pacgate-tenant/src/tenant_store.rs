@@ -22,7 +22,11 @@ impl TenantStore {
     }
 
     #[instrument(skip(self), fields(name = %name))]
-    pub async fn create(&self, name: &str, slug: &str) -> Result<pacgate_core::Tenant, TenantError> {
+    pub async fn create(
+        &self,
+        name: &str,
+        slug: &str,
+    ) -> Result<pacgate_core::Tenant, TenantError> {
         let row = sqlx::query(
             "INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id, name, slug, config_json, created_at, updated_at",
         )
@@ -104,7 +108,9 @@ impl MatterStore {
         created_by: &UserId,
     ) -> Result<Matter, TenantError> {
         if name.trim().is_empty() {
-            return Err(TenantError::Validation("matter name must not be empty".into()));
+            return Err(TenantError::Validation(
+                "matter name must not be empty".into(),
+            ));
         }
 
         let row = sqlx::query(
@@ -137,7 +143,11 @@ impl MatterStore {
     }
 
     #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str(), matter_id = %matter_id.as_str()))]
-    pub async fn get(&self, tenant_id: &TenantId, matter_id: &MatterId) -> Result<Matter, TenantError> {
+    pub async fn get(
+        &self,
+        tenant_id: &TenantId,
+        matter_id: &MatterId,
+    ) -> Result<Matter, TenantError> {
         let row = sqlx::query(
             "SELECT id, tenant_id, name, description, persona_id, created_by, created_at, updated_at
              FROM matters WHERE id = $1 AND tenant_id = $2",
@@ -151,7 +161,11 @@ impl MatterStore {
     }
 
     #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str(), matter_id = %matter_id.as_str()))]
-    pub async fn delete(&self, tenant_id: &TenantId, matter_id: &MatterId) -> Result<(), TenantError> {
+    pub async fn delete(
+        &self,
+        tenant_id: &TenantId,
+        matter_id: &MatterId,
+    ) -> Result<(), TenantError> {
         let result = sqlx::query("DELETE FROM matters WHERE id = $1 AND tenant_id = $2")
             .bind(matter_id.0)
             .bind(tenant_id.0)

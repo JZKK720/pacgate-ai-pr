@@ -1,23 +1,23 @@
 [package]
-name    = "pacgate-auth"
+name = "pacgate-auth"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pacgate-core    = { path = "../pacgate-core" }
-pacgate-tenant  = { path = "../pacgate-tenant" }
+pacgate-core = { path = "../pacgate-core" }
+pacgate-tenant = { path = "../pacgate-tenant" }
 pacgate-persona = { path = "../pacgate-persona" }
-serde.workspace         = true
-serde_json.workspace    = true
-sqlx.workspace          = true
-tokio.workspace         = true
-uuid.workspace          = true
-chrono.workspace        = true
-anyhow.workspace        = true
-thiserror.workspace     = true
-tracing.workspace       = true
-argon2.workspace        = true
-jsonwebtoken.workspace  = true
-rand.workspace          = true
-base64.workspace        = true
-axum.workspace          = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+argon2.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+base64.workspace = true
+axum.workspace = true
