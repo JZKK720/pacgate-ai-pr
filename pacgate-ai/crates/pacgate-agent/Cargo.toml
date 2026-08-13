@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pacgate-core  = { path = "../pacgate-core" }
-pacgate-llm   = { path = "../pacgate-llm" }
-pacgate-docx  = { path = "../pacgate-docx" }
+pacgate-core     = { path = "../pacgate-core" }
+pacgate-llm      = { path = "../pacgate-llm" }
+pacgate-docx     = { path = "../pacgate-docx" }
+pacgate-workflow = { path = "../pacgate-workflow" }
 serde.workspace       = true
 serde_json.workspace  = true
 tokio.workspace       = true

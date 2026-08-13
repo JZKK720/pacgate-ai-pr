@@ -3,6 +3,9 @@
 //! Implements the 10-tool agent architecture (inspired by Mike's chatTools.ts),
 //! rewritten in Rust with type-safe tool definitions, async execution,
 //! and a citation extraction pass on assistant messages.
+//!
+//! Also provides `WorkflowExecutor` for running multi-step legal workflow
+//! templates sequentially through the agent loop.
 
 use std::sync::Arc;
 
@@ -13,6 +16,9 @@ use pacgate_core::{
 use pacgate_llm::{ChatMessage, LlmRouter, OaiTool, OaiFunctionDef};
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
+
+pub mod workflow_executor;
+pub use workflow_executor::{WorkflowExecutor, WorkflowResult, StepResult};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool argument / result schemas
