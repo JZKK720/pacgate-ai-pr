@@ -3,6 +3,18 @@
 //! Seed templates covering common legal workflows. The full Suzie Law
 //! library (160+ templates, MIT) can be loaded from YAML files at runtime.
 //! These built-in templates cover the most common workflows for a law firm.
+//!
+//! ## Loading templates
+//!
+//! 1. **Built-in** — `list_workflows()` / `get_workflow()` / `workflows_by_category()`
+//!    return the hardcoded seed templates compiled into the binary.
+//! 2. **YAML files** — `load_from_yaml_dir(path)` reads all `.yaml` or `.yml` files
+//!    from a directory and returns `Vec<Workflow>`. Each file may contain one or
+//!    more workflow templates (a YAML list).
+//! 3. **Combined** — `list_all_workflows(builtin, yaml_dir)` merges both sources,
+//!    with YAML templates overriding built-in ones with the same ID.
+
+use std::path::Path;
 
 use pacgate_core::WorkflowId;
 
@@ -23,12 +35,122 @@ pub struct WorkflowStep {
     pub parameters:  serde_json::Value,
 }
 
+/// Error type for YAML loading.
+#[derive(Debug, thiserror::Error)]
+pub enum WorkflowError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("YAML parse error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YAML loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Load workflow templates from a directory of YAML files.
+///
+/// Each `.yaml` or `.yml` file in `dir` is parsed. A file may contain:
+/// - A single workflow (YAML mapping)
+/// - A list of workflows (YAML sequence)
+///
+/// Returns all successfully parsed workflows. Files that fail to parse are
+/// logged as warnings and skipped (does not fail the entire load).
+pub fn load_from_yaml_dir(dir: &Path) -> Result<Vec<Workflow>, WorkflowError> {
+    let mut workflows = Vec::new();
+
+    if !dir.exists() {
+        tracing::debug!("workflow YAML dir does not exist: {}", dir.display());
+        return Ok(workflows);
+    }
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        let is_yaml = path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext == "yaml" || ext == "yml")
+            .unwrap_or(false);
+
+        if !is_yaml {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("failed to read workflow file {}: {e}", path.display());
+                continue;
+            }
+        };
+
+        // Try parsing as a single workflow first, then as a list
+        let parsed: Vec<Workflow> = match serde_yaml::from_str::<Workflow>(&content) {
+            Ok(w) => vec![w],
+            Err(_) => match serde_yaml::from_str::<Vec<Workflow>>(&content) {
+                Ok(list) => list,
+                Err(e) => {
+                    tracing::warn!("failed to parse workflow file {}: {e}", path.display());
+                    continue;
+                }
+            }
+        };
+
+        tracing::debug!("loaded {} workflow(s) from {}", parsed.len(), path.display());
+        workflows.extend(parsed);
+    }
+
+    Ok(workflows)
+}
+
+/// Merge built-in and YAML-loaded workflows. YAML templates with the same ID
+/// override built-in ones.
+pub fn merge_workflows(builtin: Vec<Workflow>, yaml: Vec<Workflow>) -> Vec<Workflow> {
+    let mut result: Vec<Workflow> = Vec::with_capacity(builtin.len() + yaml.len());
+    let mut yaml_ids: std::collections::HashSet<_> = std::collections::HashSet::new();
+
+    for w in yaml {
+        yaml_ids.insert(w.id.clone());
+        result.push(w);
+    }
+
+    for w in builtin {
+        if !yaml_ids.contains(&w.id) {
+            result.push(w);
+        }
+    }
+
+    result
+}
+
+/// List all workflows: built-in + YAML from a directory (if provided).
+pub fn list_all_workflows(yaml_dir: Option<&Path>) -> Vec<Workflow> {
+    let builtin = built_in_workflows();
+    match yaml_dir {
+        Some(dir) => {
+            let yaml = load_from_yaml_dir(dir).unwrap_or_default();
+            merge_workflows(builtin, yaml)
+        }
+        None => builtin,
+    }
+}
+
+/// Get a workflow by ID from all sources (built-in + YAML).
+pub fn get_workflow_all(id: &WorkflowId, yaml_dir: Option<&Path>) -> Option<Workflow> {
+    list_all_workflows(yaml_dir)
+        .iter()
+        .find(|w| &w.id == id)
+        .cloned()
+}
+
 /// List all built-in workflows.
 pub fn list_workflows() -> Vec<Workflow> {
     built_in_workflows()
 }
 
-/// Get a workflow by ID.
+/// Get a built-in workflow by ID.
 pub fn get_workflow(id: &WorkflowId) -> Option<Workflow> {
     built_in_workflows().iter().find(|w| &w.id == id).cloned()
 }

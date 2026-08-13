@@ -1,0 +1,190 @@
+# Litigation workflows
+# Derived from: 诉讼律师实用Prompts指南.md
+# Covers litigation strategy, evidence analysis, court documents, and arbitration.
+
+- id: "00000000-0000-0000-0000-000000000501"
+  name: "诉讼策略备忘录"
+  description: "Generate litigation strategy memorandum with cause of action analysis and evidence assessment"
+  category: "litigation"
+  steps:
+    - name: "Search legal basis"
+      description: "Search for applicable causes of action and legal authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate strategy memo"
+      description: "Generate litigation strategy memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下案件起草诉讼策略备忘录：
+          案件概述：【当事人/案由/争议金额/管辖】
+
+          输出格式：
+          一、案件事实摘要
+          二、法律关系分析
+          - 请求权基础（合同/侵权/不当得利/其他）
+          - 诉讼时效分析
+          - 管辖权分析
+
+          三、诉讼请求设计
+          - 主诉讼请求
+          - 备位诉讼请求
+          - 诉讼请求金额计算
+
+          四、证据分析
+          - 证据清单（证据名称/证明对象/证据形式）
+          - 证据效力评估（原件/复印件/证人/鉴定）
+          - 举证责任分配
+          - 证据弱点分析
+
+          五、对方可能抗辩
+          - 主要抗辩理由
+          - 反诉可能性
+
+          六、诉讼风险
+          - 胜诉概率评估
+          - 执行风险
+          - 成本收益分析
+
+          七、和解策略
+          - 和解底线
+          - 谈判筹码
+
+          八、时间表
+
+- id: "00000000-0000-0000-0000-000000000502"
+  name: "证据梳理与时间线"
+  description: "Organize evidence into a timeline with objections and admissibility analysis"
+  category: "litigation"
+  steps:
+    - name: "Read evidence documents"
+      description: "Read evidence materials for the case"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate evidence timeline"
+      description: "Generate evidence timeline and analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下材料生成证据梳理表与时间线：
+          案件：【案件名称】
+
+          输出格式：
+          一、时间线
+          | 日期 | 事件 | 对应证据 | 证明目的 |
+
+          二、证据清单
+          | 序号 | 证据名称 | 证据形式 | 证明对象 | 举证方 | 效力评估 |
+          每份证据标注：
+          - 原件/复印件
+          - 是否需要公证认证
+          - 证据效力等级（高/中/低）
+
+          三、质证意见预案
+          对对方可能出示的证据：
+          - 真实性异议
+          - 关联性异议
+          - 合法性异议
+          - 证明力异议
+
+          四、举证策略
+          - 举证顺序建议
+          - 关键证据突出
+          - 补强证据需求
+
+- id: "00000000-0000-0000-0000-000000000503"
+  name: "起诉状起草"
+  description: "Draft a civil complaint/complaint petition with claims, facts, and legal basis"
+  category: "litigation"
+  steps:
+    - name: "Generate complaint"
+      description: "Generate civil complaint document"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份民事起诉状：
+          原告：【姓名/名称、住所、法定代表人】
+          被告：【姓名/名称、住所、法定代表人】
+          诉讼请求：【具体请求及金额】
+          事实与理由：【案件事实概要】
+
+          输出格式（标准民事起诉状格式）：
+          民事起诉状
+
+          原告：...
+          被告：...
+
+          诉讼请求：
+          1. ...
+          2. ...
+
+          事实与理由：
+          （分段叙述事实，引用法律条文）
+
+          此致
+          XX人民法院
+
+          具状人：
+          日期：
+
+          要求：
+          - 诉讼请求明确、具体、可执行
+          - 事实叙述按时间顺序
+          - 法律依据引用具体条文号
+          - 金额计算依据清楚
+
+- id: "00000000-0000-0000-0000-000000000504"
+  name: "仲裁策略备忘录"
+  description: "Arbitration strategy memo — tribunal analysis, procedural strategy, and award enforcement"
+  category: "arbitration"
+  steps:
+    - name: "Search arbitration rules"
+      description: "Search for applicable arbitration rules and procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate arbitration memo"
+      description: "Generate arbitration strategy memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下仲裁案件起草策略备忘录：
+          仲裁机构：【CIETAC/HKIAC/SIAC/ICC/UNCITRAL】
+          仲裁地：【地点】
+          案件概述：【当事人/争议金额/合同类型】
+
+          输出格式：
+          一、仲裁条款效力审查
+          - 仲裁协议是否有效
+          - 仲裁范围（哪些争议可仲裁）
+          - 仲裁机构与仲裁地选择分析
+
+          二、仲裁庭组成策略
+          - 独任仲裁员 vs 三人庭
+          - 仲裁员候选人的专业背景与倾向
+          - 首席仲裁员选定策略
+
+          三、程序策略
+          - 语言选择
+          - 仲裁规则适用
+          - 临时措施申请（财产保全/证据保全）
+          - 文件披露范围
+
+          四、实体分析
+          - 请求权基础
+          - 证据评估
+          - 法律适用
+
+          五、裁决执行
+          - 裁决执行地分析
+          - 《纽约公约》适用性
+          - 拒绝执行的抗辩预案
+
+          六、成本与时间评估
+          - 仲裁费用估算
+          - 预计时间表
+          - 和解可能性评估

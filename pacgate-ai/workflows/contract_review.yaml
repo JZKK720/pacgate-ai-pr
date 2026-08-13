@@ -1,0 +1,170 @@
+# Contract review & daily practice workflows
+# Derived from: 律师日常通用Prompts指南.md §一 合同起草与日常审阅
+# These cover the most frequent daily work for all lawyers.
+
+- id: "00000000-0000-0000-0000-000000000301"
+  name: "日常商业合同审阅"
+  description: "Full contract review from a specified party perspective — form check, substantive clauses, risk assessment"
+  category: "contract_review"
+  steps:
+    - name: "Read contract"
+      description: "Read the contract document"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Find risk clauses"
+      description: "Search for high-risk clauses: indemnification, liability caps, termination, governing law"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "违约责任"
+          - "赔偿"
+          - "解除"
+          - "管辖"
+          - "适用法律"
+          - "保密"
+          - "知识产权"
+          - "不可抗力"
+
+    - name: "Generate review memo"
+      description: "Generate a clause-by-clause review with risk levels and modified text"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请从【我方为买方/卖方/出租方/承租方/委托方/受托方】角度进行全面审查：
+
+          审阅维度及输出格式：
+
+          一、形式审查：
+          1. 合同名称是否与内容匹配
+          2. 当事人信息完整性
+          3. 签约日期与生效条件
+          4. 附件清单是否完整
+
+          二、实质性条款逐条审阅：
+          对每个条款标注：
+          | 条款号 | 条款标题 | 风险等级 | 风险描述 | 修改建议 | 修改后文本 |
+
+          审阅维度：
+          1. 定义条款：关键术语定义是否清晰、完整、无歧义
+          2. 标的条款：标的描述是否明确、具体、可识别
+          3. 数量与质量：计量单位、质量标准、验收标准是否明确
+          4. 价格与支付：计价方式、支付节点、支付条件、发票要求
+          5. 交付与验收：交付时间/地点/方式、验收标准/期限/异议处理
+          6. 权利义务：双方权利义务是否对等、是否遗漏关键义务
+          7. 违约责任：违约情形是否穷尽、违约金计算方式、违约与解除的关系
+          8. 合同解除：解除条件是否合理、解除后的清算安排
+          9. 不可抗力：定义范围是否合理、通知义务、后果处理
+          10. 保密条款：保密信息范围、保密期限、例外情形
+          11. 知识产权：IP归属、许可范围、侵权责任
+          12. 争议解决：管辖法院/仲裁机构选择是否对我方有利
+          13. 合同期限与续签
+          14. 通知条款：通知方式、送达地址、生效时间
+
+          三、我方特殊关注点（根据我方身份）
+
+          四、整体风险评估：
+          - 🔴高风险条款（必须修改）
+          - 🟡中风险条款（建议修改）
+          - 🟢低风险条款（可接受但建议优化）
+
+          五、修改后完整合同文本（标注所有修改处）
+
+- id: "00000000-0000-0000-0000-000000000302"
+  name: "合同关键条款谈判备忘录"
+  description: "Draft a negotiation memorandum for disputed contract clauses with three-tier fallback positions"
+  category: "contract_review"
+  steps:
+    - name: "Read disputed clauses"
+      description: "Read the contract with disputed clauses"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate negotiation memo"
+      description: "Generate a negotiation memo with fallback positions and talking points"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请针对以下合同中的关键争议条款，起草一份谈判备忘录：
+
+          谈判备忘录结构：
+          1. 条款争议点分析：
+             a. 我方立场与理由
+             b. 对方立场与理由
+             c. 市场惯例参考
+             d. 谈判策略：第一方案/第二方案/底线方案，每个方案的措辞文本
+
+          2. 谈判筹码分析：
+             - 我方谈判优势
+             - 对方谈判优势
+             - 可交换条款
+
+          3. 谈判顺序建议
+
+          4. 话术建议
+
+- id: "00000000-0000-0000-0000-000000000303"
+  name: "劳动法咨询"
+  description: "Employment law consultation — contract review, termination, non-compete, labor disputes"
+  category: "employment_law"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for employment law authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate consultation memo"
+      description: "Generate employment law consultation response with legal basis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下劳动法问题提供法律咨询意见：
+          咨询事项：【如：解除劳动合同的合法性与补偿/竞业限制执行/社保补缴/工伤认定】
+
+          输出格式：
+          一、结论摘要（结论先行）
+          二、法律分析
+          - 引用具体法律法规名称、条文号
+          - 标注效力状态与检索来源
+          - 检索不到的明确说明
+          三、操作建议
+          四、风险提示
+          五、待确认事项
+
+- id: "00000000-0000-0000-0000-000000000304"
+  name: "争议预防与商业谈判支持"
+  description: "Risk assessment and negotiation support for commercial disputes"
+  category: "dispute_prevention"
+  steps:
+    - name: "Search precedent"
+      description: "Search knowledge base for similar cases and legal authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate risk assessment"
+      description: "Generate dispute risk assessment with settlement options"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下商业争议提供风险评估与谈判支持：
+
+          争议概述：【争议类型、当事方、金额、时间线】
+
+          输出格式：
+          一、争议事实摘要
+          二、法律分析
+          - 合同依据
+          - 法律依据（引用具体条文）
+          - 类似案例参考
+          三、风险评估
+          - 胜诉概率评估（高/中/低）
+          - 主要风险点
+          - 最坏情况分析
+          四、谈判策略
+          - 我方优势与劣势
+          - 对方优势与劣势
+          - 建议谈判方案（理想/中间/底线）
+          五、和解建议
+          六、诉讼/仲裁准备清单
