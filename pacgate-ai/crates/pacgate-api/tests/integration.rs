@@ -63,6 +63,7 @@ mod tests {
             max_upload_mb: 50,
             jwt_secret: "test-secret-key".to_string(),
             default_tenant: "test-firm".to_string(),
+            workflows_dir: None,
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -331,6 +332,7 @@ mod tests {
             max_upload_mb: 50,
             jwt_secret: "test-secret-key".to_string(),
             default_tenant: "test-firm".to_string(),
+            workflows_dir: None,
         });
 
         // Build minimal state (stubs for everything)

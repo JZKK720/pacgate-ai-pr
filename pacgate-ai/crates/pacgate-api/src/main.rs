@@ -30,12 +30,16 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "change-me-in-production".to_string());
     let default_tenant = std::env::var("PACGATE_DEFAULT_TENANT")
         .unwrap_or_else(|_| "default-firm".to_string());
+    let workflows_dir = std::env::var("WORKFLOWS_DIR")
+        .map(std::path::PathBuf::from)
+        .ok();
 
     let config = Arc::new(AppConfig {
         data_dir: std::path::PathBuf::from(&data_dir),
         max_upload_mb: 50,
         jwt_secret,
         default_tenant,
+        workflows_dir,
     });
 
     // Create Postgres connection pool

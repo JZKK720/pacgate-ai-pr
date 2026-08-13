@@ -28,6 +28,9 @@ pub struct AppConfig {
     pub jwt_secret:  String,
     /// Default tenant ID for single-tenant pilot deployments
     pub default_tenant: String,
+    /// Directory containing YAML workflow templates (optional).
+    /// When set, the API merges built-in + YAML workflows.
+    pub workflows_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -37,6 +40,7 @@ impl Default for AppConfig {
             max_upload_mb:     50,
             jwt_secret:        "change-me-in-production".to_string(),
             default_tenant:    "default-firm".to_string(),
+            workflows_dir:     None,
         }
     }
 }
