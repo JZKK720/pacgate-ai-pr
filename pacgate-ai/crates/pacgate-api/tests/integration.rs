@@ -187,7 +187,12 @@ mod tests {
 
         let response = app
             .clone()
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -295,9 +300,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK, "list matters should return 200");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "list matters should return 200"
+        );
 
-        tracing::info!("Integration test passed: health → register → login → create matter → list matters");
+        tracing::info!(
+            "Integration test passed: health → register → login → create matter → list matters"
+        );
     }
 
     /// Test that unauthenticated requests to protected routes return 401.
@@ -330,22 +341,49 @@ mod tests {
             async fn read(&self, _: &pacgate_core::DocumentId) -> pacgate_core::Result<String> {
                 Err(pacgate_core::PacgateError::StorageError("stub".into()))
             }
-            async fn read_version(&self, _: &pacgate_core::DocumentId, _: u32) -> pacgate_core::Result<String> {
+            async fn read_version(
+                &self,
+                _: &pacgate_core::DocumentId,
+                _: u32,
+            ) -> pacgate_core::Result<String> {
                 Err(pacgate_core::PacgateError::StorageError("stub".into()))
             }
-            async fn list_for_matter(&self, _: &pacgate_core::MatterId) -> pacgate_core::Result<Vec<pacgate_core::Document>> {
+            async fn list_for_matter(
+                &self,
+                _: &pacgate_core::MatterId,
+            ) -> pacgate_core::Result<Vec<pacgate_core::Document>> {
                 Ok(Vec::new())
             }
-            async fn find_in(&self, _: &pacgate_core::DocumentId, _: &str) -> pacgate_core::Result<Vec<pacgate_core::FindResult>> {
+            async fn find_in(
+                &self,
+                _: &pacgate_core::DocumentId,
+                _: &str,
+            ) -> pacgate_core::Result<Vec<pacgate_core::FindResult>> {
                 Ok(Vec::new())
             }
-            async fn create_from_structure(&self, _: &pacgate_core::MatterId, _: &str, _: &serde_json::Value) -> pacgate_core::Result<pacgate_core::Document> {
+            async fn create_from_structure(
+                &self,
+                _: &pacgate_core::MatterId,
+                _: &str,
+                _: &serde_json::Value,
+            ) -> pacgate_core::Result<pacgate_core::Document> {
                 Err(pacgate_core::PacgateError::StorageError("stub".into()))
             }
-            async fn apply_edit(&self, _: &pacgate_core::DocumentId, _: &str, _: &str, _: Option<&str>, _: Option<&str>) -> pacgate_core::Result<pacgate_core::Document> {
+            async fn apply_edit(
+                &self,
+                _: &pacgate_core::DocumentId,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> pacgate_core::Result<pacgate_core::Document> {
                 Err(pacgate_core::PacgateError::StorageError("stub".into()))
             }
-            async fn replicate(&self, _: &pacgate_core::DocumentId, _: u32) -> pacgate_core::Result<Vec<pacgate_core::Document>> {
+            async fn replicate(
+                &self,
+                _: &pacgate_core::DocumentId,
+                _: u32,
+            ) -> pacgate_core::Result<Vec<pacgate_core::Document>> {
                 Ok(Vec::new())
             }
         }
@@ -357,7 +395,12 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl KbStore for StubAll {
-            async fn search(&self, _: &pacgate_core::MatterId, _: &str, _: u32) -> pacgate_core::Result<Vec<pacgate_core::KbChunk>> {
+            async fn search(
+                &self,
+                _: &pacgate_core::MatterId,
+                _: &str,
+                _: u32,
+            ) -> pacgate_core::Result<Vec<pacgate_core::KbChunk>> {
                 Ok(Vec::new())
             }
         }
@@ -368,15 +411,24 @@ mod tests {
             Arc::new(StubAll),
         ));
         let model_configs = pacgate_core::ModelConfig::default_local();
-        let router = Arc::new(pacgate_llm::LlmRouter::new(model_configs, std::collections::HashMap::new()));
-        let agent_loop = Arc::new(pacgate_agent::AgentLoop::new(router.clone(), dispatcher.clone()));
+        let router = Arc::new(pacgate_llm::LlmRouter::new(
+            model_configs,
+            std::collections::HashMap::new(),
+        ));
+        let agent_loop = Arc::new(pacgate_agent::AgentLoop::new(
+            router.clone(),
+            dispatcher.clone(),
+        ));
 
         let state = pacgate_api::AppState {
             agent_loop,
             router,
             dispatcher,
             config,
-            doc_store: Arc::new(pacgate_docx::FsDocumentStore::new(pool.clone(), &std::path::PathBuf::from(TEST_DATA_DIR))),
+            doc_store: Arc::new(pacgate_docx::FsDocumentStore::new(
+                pool.clone(),
+                &std::path::PathBuf::from(TEST_DATA_DIR),
+            )),
             matter_store: Arc::new(pacgate_tenant::MatterStore::new(pool.clone())),
             tenant_store: Arc::new(pacgate_tenant::TenantStore::new(pool.clone())),
             auth: Arc::new(pacgate_auth::AuthService::new("test-secret", pool.clone())),

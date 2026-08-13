@@ -67,6 +67,7 @@ pacgate-ai-pr/
 ## Current status (as of 2026-08-13, session 5)
 
 ### Done — Phase 1 critical path complete + Session 5 enrichment
+
 - Full Rust workspace compiles cleanly (`cargo check` passes)
 - 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
 - Integration test scaffold added (`cargo test -p pacgate-api --test integration -- --ignored`, requires Postgres)
@@ -87,6 +88,7 @@ pacgate-ai-pr/
 - Git: 10 commits on main, all pushed to origin
 
 ### Next steps (resume from here on other machine)
+
 1. ~~Push pending commits~~ — DONE (all pushed)
 2. **Convert 150+ prompt templates** from client assets into pacgate-workflow
 3. ~~Add jurisdiction filtering + source level tagging to pacgate-rag~~ — DONE (SearchFilter + migration 003)
@@ -100,6 +102,7 @@ pacgate-ai-pr/
 11. **Run integration test** against real Postgres — verify the full flow works end-to-end
 
 ### Important reminders
+
 - **Repo is private** — only accessible to JZKK720 account
 - **Windows proxy fix**: set `$env:NO_PROXY = "localhost,127.0.0.1,::1"` before graphify or Ollama tools
 - **sqlx uses postgres** (not sqlite) — workspace Cargo.toml has `features = ["postgres", ...]`
