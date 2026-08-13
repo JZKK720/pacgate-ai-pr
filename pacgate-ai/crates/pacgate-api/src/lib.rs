@@ -52,8 +52,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/matters/:id/documents", get(matters::list_matter_documents))
 
         // Workflows
-        .route("/api/workflows",        get(workflows::list_workflows))
-        .route("/api/workflows/:id",    get(workflows::get_workflow))
+        .route("/api/workflows",              get(workflows::list_workflows))
+        .route("/api/workflows/:id",          get(workflows::get_workflow))
+        .route("/api/workflows/:id/execute",  post(workflows::execute_workflow))
 
         // Tabular review
         .route("/api/tabular",          post(documents::start_tabular_review))
