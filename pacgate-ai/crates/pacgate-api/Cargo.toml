@@ -1,0 +1,40 @@
+[package]
+name    = "pacgate-api"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "pacgate-server"
+path = "src/main.rs"
+
+[dependencies]
+pacgate-core     = { path = "../pacgate-core" }
+pacgate-agent    = { path = "../pacgate-agent" }
+pacgate-llm      = { path = "../pacgate-llm" }
+pacgate-docx     = { path = "../pacgate-docx" }
+pacgate-tenant   = { path = "../pacgate-tenant" }
+pacgate-auth     = { path = "../pacgate-auth" }
+pacgate-workflow = { path = "../pacgate-workflow" }
+pacgate-persona  = { path = "../pacgate-persona" }
+pacgate-rag      = { path = "../pacgate-rag" }
+pacgate-search   = { path = "../pacgate-search" }
+serde.workspace       = true
+serde_json.workspace  = true
+sqlx.workspace        = true
+async-trait.workspace = true
+axum.workspace        = true
+axum-extra.workspace  = true
+tower.workspace       = true
+tower-http.workspace  = true
+tokio.workspace       = true
+tokio-stream.workspace = true
+futures.workspace     = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+tracing.workspace     = true
+tracing-subscriber.workspace = true
+uuid.workspace        = true
+chrono.workspace      = true
+dotenvy.workspace     = true
+config.workspace      = true
+bytes.workspace       = true

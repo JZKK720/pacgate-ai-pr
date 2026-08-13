@@ -1,0 +1,22 @@
+services:
+  pacgate-auth:
+    build:
+      context: ./auth-gate
+    container_name: pacgate-auth
+    environment:
+      PACGATE_VIEWER_USERNAME: ${PACGATE_VIEWER_USERNAME}
+      PACGATE_VIEWER_PASSWORD: ${PACGATE_VIEWER_PASSWORD}
+      PACGATE_SESSION_SECRET: ${PACGATE_SESSION_SECRET}
+      PACGATE_COOKIE_SECURE: ${PACGATE_COOKIE_SECURE:-false}
+    restart: unless-stopped
+  pacgate-docs:
+    image: nginx:1.27-alpine
+    container_name: pacgate-docs
+    depends_on:
+      - pacgate-auth
+    ports:
+      - "8081:80"
+    volumes:
+      - ./docs:/usr/share/nginx/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped

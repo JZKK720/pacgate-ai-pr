@@ -1,0 +1,2884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacgate AI - Phase 1 Progress Reportcard</title>
+  <style>
+    :root {
+      --bg: #08101b;
+      --bg2: #0d1726;
+      --panel: rgba(12, 19, 31, 0.92);
+      --panel2: rgba(17, 28, 44, 0.94);
+      --line: #22324a;
+      --line-soft: rgba(34, 50, 74, 0.55);
+      --gold: #cfa652;
+      --gold-soft: #ebcf93;
+      --blue: #7fb8ff;
+      --green: #69c58a;
+      --amber: #e8b44b;
+      --text: #e7eef9;
+      --muted: #95a4bb;
+      --muted2: #5e6f8c;
+      --danger: #e17d7d;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, rgba(127, 184, 255, 0.10), transparent 28%),
+        radial-gradient(circle at top left, rgba(207, 166, 82, 0.12), transparent 24%),
+        linear-gradient(180deg, #09111d 0%, #07101a 50%, #08101b 100%);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+      font-size: 14px;
+    }
+
+    a { color: inherit; }
+
+    .zh { display: none; }
+    body.zh-mode .en { display: none; }
+    body.zh-mode .zh { display: block; }
+    body.zh-mode .zh.inline { display: inline; }
+    body.zh-mode .zh.table-cell { display: table-cell; }
+
+    /* ── HEADER ── */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0 1.4rem;
+      min-height: 60px;
+      background: rgba(8, 16, 27, 0.86);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(207, 166, 82, 0.14);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .brand-sep { color: var(--line); }
+
+    .brand-title {
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      color: var(--gold-soft);
+      background: rgba(207, 166, 82, 0.12);
+      border: 1px solid rgba(207, 166, 82, 0.30);
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+
+    .lang-switch button {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .lang-switch button.active {
+      background: var(--gold);
+      color: #08101b;
+    }
+
+    /* ── MAIN ── */
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.4rem 4rem;
+    }
+
+    /* ── SECTION HEADINGS ── */
+    .sec-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      margin: 2.4rem 0 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .sec-title .ico {
+      font-size: 18px;
+    }
+
+    .sec-subtitle {
+      font-size: 12px;
+      color: var(--muted);
+      margin: -0.6rem 0 1.2rem;
+      font-weight: 400;
+    }
+
+    /* ── STATUS BADGES ── */
+    .st-done {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 4px;
+      color: #0d2618;
+      background: var(--green);
+    }
+    .st-active {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 4px;
+      color: #1a1a0a;
+      background: var(--amber);
+    }
+    .st-pending {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 4px;
+      color: var(--muted);
+      background: rgba(149, 164, 187, 0.12);
+      border: 1px solid rgba(149, 164, 187, 0.25);
+    }
+    .st-blocked {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 4px;
+      color: var(--danger);
+      background: rgba(225, 125, 125, 0.10);
+      border: 1px solid rgba(225, 125, 125, 0.30);
+    }
+
+    /* ── CARDS ── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.2rem;
+      margin: 1rem 0;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1.4rem;
+      box-shadow: var(--shadow);
+      overflow-x: auto;
+    }
+
+    .card h3 {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 0 0 0.6rem;
+      color: var(--text);
+    }
+
+    .card .card-meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 0.8rem;
+    }
+
+    /* ── TABLES ── */
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      font-weight: 700;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      border-bottom: 2px solid var(--line);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+    /* ── PROGRESS BAR ── */
+    .prog-bar-outer {
+      height: 6px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 3px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .prog-bar-inner {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s;
+    }
+    .prog-green { background: var(--green); }
+    .prog-amber { background: var(--amber); }
+    .prog-blue { background: var(--blue); }
+
+    /* ── CHECKLIST ── */
+    .checklist {
+      list-style: none;
+      padding: 0;
+      margin: 0.6rem 0;
+    }
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 13px;
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .check-ico {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+    .check-done { background: rgba(105, 197, 138, 0.18); color: var(--green); }
+    .check-wait { background: rgba(149, 164, 187, 0.10); color: var(--muted); border: 1px solid rgba(149, 164, 187, 0.20); }
+
+    .owner-tag {
+      display: inline-block;
+      padding: 1px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 3px;
+      margin-left: 0.4rem;
+    }
+    .owner-pacgate { background: rgba(127, 184, 255, 0.14); color: var(--blue); }
+    .owner-cubecloud { background: rgba(207, 166, 82, 0.14); color: var(--gold-soft); }
+    .owner-joint { background: rgba(232, 180, 75, 0.12); color: var(--amber); }
+
+    /* ── INTEGRATION REGISTRY ── */
+    .int-row {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+    .int-row:last-child { border-bottom: none; }
+    .int-name { font-weight: 700; min-width: 140px; }
+    .int-type {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      font-weight: 700;
+      background: rgba(127, 184, 255, 0.10);
+      color: var(--blue);
+    }
+    .int-desc { color: var(--muted); font-size: 12px; flex: 1; min-width: 180px; }
+
+    /* ── TIMELINE ── */
+    .tl-phase {
+      border-left: 2px solid var(--line);
+      padding: 0.6rem 0 0.6rem 1.2rem;
+      margin-left: 0.4rem;
+      position: relative;
+    }
+    .tl-phase::before {
+      content: '';
+      position: absolute;
+      left: -5px;
+      top: 0.8rem;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--gold);
+    }
+    .tl-phase.done::before { background: var(--green); }
+    .tl-phase.active::before { background: var(--amber); }
+
+    .tl-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--gold-soft);
+      margin-bottom: 0.2rem;
+    }
+    .tl-detail {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      text-align: center;
+      padding: 2rem 1.4rem;
+      color: var(--muted2);
+      font-size: 11px;
+      border-top: 1px solid var(--line);
+      margin-top: 2rem;
+    }
+
+    footer a { color: var(--gold); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 680px) {
+      header { padding: 0 0.8rem; }
+      main { padding: 1.2rem 0.8rem 2rem; }
+      .card-grid { grid-template-columns: 1fr; }
+      .brand-title { display: none; }
+      .sec-title { font-size: 17px; }
+      table { font-size: 11px; }
+      th, td { padding: 7px 8px; }
+    }
+
+    @media print {
+      body { background: #fff; color: #111; }
+      header { position: static; background: #fff; border-bottom: 1px solid #ccc; }
+      .card { box-shadow: none; border: 1px solid #ccc; background: #fff; }
+      .badge, .lang-switch { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="brand-mark">PAC</span>
+    <span class="brand-sep">|</span>
+    <span class="brand-title en">Phase 1 Progress Reportcard</span>
+    <span class="brand-title zh">Phase 1 进度报告卡</span>
+  </div>
+  <div class="header-actions">
+    <span class="badge en">CONTRACT SIGNED · 2026-06-16</span>
+    <span class="badge zh">合同已签署 · 2026-06-16</span>
+    <div class="lang-switch">
+      <button id="btn-en" class="active" onclick="setLang('en')">EN</button>
+      <button id="btn-zh" onclick="setLang('zh')">中文</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1: PAYMENT MILESTONES DASHBOARD -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">💰</span> Payment Milestones Dashboard</h2>
+<p class="sec-subtitle">Three-contract consolidated view: HWOS-P01 + LEGALAGENT-P01 + ADVISORY-P01. All amounts CNY (RMB).</p>
+
+<div class="tbl-wrap">
+<table>
+<thead>
+<tr>
+  <th>Stage</th>
+  <th>Trigger</th>
+  <th>Hardware</th>
+  <th>Service</th>
+  <th>Advisory</th>
+  <th class="num">Stage Total</th>
+  <th class="num">Cumulative</th>
+  <th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Deposit</strong></td>
+  <td>Signing + 5 working days</td>
+  <td class="num">¥47,760</td>
+  <td class="num">¥24,000</td>
+  <td class="num">¥20,000</td>
+  <td class="num"><strong>¥91,760</strong></td>
+  <td class="num">¥91,760</td>
+  <td><span class="st-active">IN PROGRESS</span></td>
+</tr>
+<tr>
+  <td><strong>Milestone 1</strong></td>
+  <td>Hardware acceptance + 5 WD</td>
+  <td class="num">¥23,880</td>
+  <td class="num">—</td>
+  <td class="num">—</td>
+  <td class="num"><strong>¥23,880</strong></td>
+  <td class="num">¥115,640</td>
+  <td><span class="st-pending">PENDING</span></td>
+</tr>
+<tr>
+  <td><strong>Milestone 2</strong></td>
+  <td>Service acceptance + 5 WD</td>
+  <td class="num">—</td>
+  <td class="num">¥12,000</td>
+  <td class="num">—</td>
+  <td class="num"><strong>¥12,000</strong></td>
+  <td class="num">¥127,640</td>
+  <td><span class="st-pending">PENDING</span></td>
+</tr>
+<tr>
+  <td><strong>Final Payment</strong></td>
+  <td>Final acceptance + 5 WD</td>
+  <td class="num">¥7,960</td>
+  <td class="num">¥4,000</td>
+  <td class="num">—</td>
+  <td class="num"><strong>¥11,960</strong></td>
+  <td class="num"><strong>¥139,600</strong></td>
+  <td><span class="st-pending">PENDING</span></td>
+</tr>
+<tr>
+  <td><strong>Annual Renewal</strong></td>
+  <td>12 months post final acceptance</td>
+  <td class="num" colspan="3">¥4,400/year (ex-tax)</td>
+  <td class="num">¥4,400/yr</td>
+  <td class="num">—</td>
+  <td><span class="st-pending">FUTURE</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>Contract Summary</h3>
+    <table>
+      <tr><td>HWOS-P01 (Hardware &amp; System)</td><td class="num">¥79,600</td></tr>
+      <tr><td>LEGALAGENT-P01 (Agent Service)</td><td class="num">¥40,000</td></tr>
+      <tr><td>ADVISORY-P01 (Remote Advisory, 40h)</td><td class="num">¥20,000</td></tr>
+      <tr><td><strong>Combined Total (ex-tax)</strong></td><td class="num"><strong>¥139,600</strong></td></tr>
+      <tr><td>Combined Total (incl. tax, approx.)</td><td class="num">≈ ¥144,486</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Advisory Hour Allocation</h3>
+    <table>
+      <tr><td>Hardware delivery phase</td><td class="num">5–8 h</td></tr>
+      <tr><td>Service delivery + acceptance</td><td class="num">12–18 h</td></tr>
+      <tr><td>Post-acceptance operations</td><td class="num">15–20 h</td></tr>
+      <tr><td><strong>Total prepaid</strong></td><td class="num"><strong>40 h</strong></td></tr>
+      <tr><td>Overage rate</td><td class="num">¥500/h</td></tr>
+    </table>
+  </div>
+</div>
+</div>
+
+<div class="zh">
+<h2 class="sec-title"><span class="ico">💰</span> 付款里程碑看板</h2>
+<p class="sec-subtitle">三份合同合并视图：HWOS-P01 + LEGALAGENT-P01 + ADVISORY-P01。金额单位：人民币（CNY）。</p>
+
+<div class="tbl-wrap">
+<table>
+<thead>
+<tr>
+  <th>期次</th>
+  <th>触发条件</th>
+  <th>硬件</th>
+  <th>服务</th>
+  <th>顾问</th>
+  <th class="num">本期合计</th>
+  <th class="num">累计</th>
+  <th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>首期</strong></td>
+  <td>签署 + 5 工作日内</td>
+  <td class="num">¥47,760</td>
+  <td class="num">¥24,000</td>
+  <td class="num">¥20,000</td>
+  <td class="num"><strong>¥91,760</strong></td>
+  <td class="num">¥91,760</td>
+  <td><span class="st-active">进行中</span></td>
+</tr>
+<tr>
+  <td><strong>里程碑一</strong></td>
+  <td>硬件验收完成 + 5 工作日</td>
+  <td class="num">¥23,880</td>
+  <td class="num">—</td>
+  <td class="num">—</td>
+  <td class="num"><strong>¥23,880</strong></td>
+  <td class="num">¥115,640</td>
+  <td><span class="st-pending">待触发</span></td>
+</tr>
+<tr>
+  <td><strong>里程碑二</strong></td>
+  <td>服务验收完成 + 5 工作日</td>
+  <td class="num">—</td>
+  <td class="num">¥12,000</td>
+  <td class="num">—</td>
+  <td class="num"><strong>¥12,000</strong></td>
+  <td class="num">¥127,640</td>
+  <td><span class="st-pending">待触发</span></td>
+</tr>
+<tr>
+  <td><strong>尾款</strong></td>
+  <td>最终验收完成 + 5 工作日</td>
+  <td class="num">¥7,960</td>
+  <td class="num">¥4,000</td>
+  <td class="num">—</td>
+  <td class="num"><strong>¥11,960</strong></td>
+  <td class="num"><strong>¥139,600</strong></td>
+  <td><span class="st-pending">待触发</span></td>
+</tr>
+<tr>
+  <td><strong>年度续费</strong></td>
+  <td>终验后满 12 个月，每年续费</td>
+  <td class="num" colspan="3">¥4,400/年（不含税）</td>
+  <td class="num">¥4,400/年</td>
+  <td class="num">—</td>
+  <td><span class="st-pending">远期</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>合同金额汇总</h3>
+    <table>
+      <tr><td>HWOS-P01（硬件及系统交付）</td><td class="num">¥79,600</td></tr>
+      <tr><td>LEGALAGENT-P01（Agent 定制服务）</td><td class="num">¥40,000</td></tr>
+      <tr><td>ADVISORY-P01（远程顾问服务，40h）</td><td class="num">¥20,000</td></tr>
+      <tr><td><strong>三份合计（不含税）</strong></td><td class="num"><strong>¥139,600</strong></td></tr>
+      <tr><td>三份合计（含税，约）</td><td class="num">≈ ¥144,486</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>顾问 40 小时分配建议</h3>
+    <table>
+      <tr><td>硬件交付期</td><td class="num">5–8 小时</td></tr>
+      <tr><td>服务交付 + 验收期</td><td class="num">12–18 小时</td></tr>
+      <tr><td>终验后运营期</td><td class="num">15–20 小时</td></tr>
+      <tr><td><strong>预付合计</strong></td><td class="num"><strong>40 小时</strong></td></tr>
+      <tr><td>超额费率</td><td class="num">¥500/小时</td></tr>
+    </table>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1b: PACGATE LAW FIRM -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🏛️</span> Pacgate Law Firm</h2>
+<p class="sec-subtitle">Client profile, practice areas, Phase 1 role, and what Pacgate brings to the joint delivery.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🏛️</span> 百宸律师事务所</h2>
+<p class="sec-subtitle">甲方画像、业务领域、Phase 1 角色及百宸为联合交付提供的资源。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Firm Profile</h3>
+      <p class="card-meta">Pacgate Law Firm (百宸律师事务所) — Beijing-based PRC law firm.</p>
+    </div>
+    <div class="zh">
+      <h3>律所画像</h3>
+      <p class="card-meta">百宸律师事务所 — 北京中国律师事务所。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Legal Name</strong></td>
+        <td class="zh"><strong>法定名称</strong></td>
+        <td class="en">百宸律师事务所 (Pacgate Law Firm)</td>
+        <td class="zh">百宸律师事务所 (Pacgate Law Firm)</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Jurisdiction</strong></td>
+        <td class="zh"><strong>法域</strong></td>
+        <td class="en">PRC (People's Republic of China), with cross-border practice capability</td>
+        <td class="zh">中华人民共和国，具备跨境业务能力</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Phase 1 Role</strong></td>
+        <td class="zh"><strong>Phase 1 角色</strong></td>
+        <td class="en">Client, legal domain owner, and primary operator of the two-node local AI pilot. Leads legal adaptation; Cubecloud supports deployment and validation.</td>
+        <td class="zh">甲方、法律领域所有者、双节点本地 AI 试点的主要运营方。主导法律适配；智方云支持部署与验证。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Contract Party</strong></td>
+        <td class="zh"><strong>合同方</strong></td>
+        <td class="en">Signatory to three agreements: HWOS-P01, LEGALAGENT-P01, ADVISORY-P01</td>
+        <td class="zh">三份合同签署方：HWOS-P01、LEGALAGENT-P01、ADVISORY-P01</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Practice Areas</h3>
+      <p class="card-meta">Core legal domains targeted for Phase 1 agent adaptation.</p>
+    </div>
+    <div class="zh">
+      <h3>业务领域</h3>
+      <p class="card-meta">Phase 1 Agent 适配目标的核心法律领域。</p>
+    </div>
+    <table>
+      <tr><td class="en">Data Compliance</td><td class="zh">数据合规</td><td class="en">PIPL, CSL, DSL, cross-border data transfer</td><td class="zh">个人信息保护法、网络安全法、数据安全法、跨境数据传输</td></tr>
+      <tr><td class="en">AI Compliance</td><td class="zh">AI 合规</td><td class="en">AI governance, algorithmic filing, generative AI regulation</td><td class="zh">AI 治理、算法备案、生成式 AI 监管</td></tr>
+      <tr><td class="en">Web3 / RWA</td><td class="zh">Web3 / RWA</td><td class="en">Blockchain, digital assets, real-world asset tokenization</td><td class="zh">区块链、数字资产、实物资产代币化</td></tr>
+      <tr><td class="en">M&A / Corporate</td><td class="zh">并购 / 公司</td><td class="en">Mergers, acquisitions, corporate restructuring</td><td class="zh">合并、收购、公司重组</td></tr>
+      <tr><td class="en">Antitrust</td><td class="zh">反垄断</td><td class="en">Competition law, merger control, market dominance</td><td class="zh">竞争法、经营者集中、市场支配地位</td></tr>
+      <tr><td class="en">IP / Technology</td><td class="zh">知识产权 / 技术</td><td class="en">Patent, trademark, copyright, trade secret, technology licensing</td><td class="zh">专利、商标、著作权、商业秘密、技术许可</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>What Pacgate Provides</h3>
+      <p class="card-meta">Client-side inputs required for Phase 1 delivery.</p>
+    </div>
+    <div class="zh">
+      <h3>百宸提供的内容</h3>
+      <p class="card-meta">Phase 1 交付所需的甲方输入。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Playbook Drafts</strong></td>
+        <td class="zh"><strong>Playbook 草稿</strong></td>
+        <td class="en">Practice-area-specific legal workflows, review checklists, and decision trees. Pacgate leads playbook logic; Cubecloud supports technical realization.</td>
+        <td class="zh">按业务领域的法律工作流、审核清单及决策树。百宸主导 Playbook 逻辑；智方云支持技术实现。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Template Samples</strong></td>
+        <td class="zh"><strong>模板样本</strong></td>
+        <td class="en">Contract templates, opinion letter formats, memo structures, and regulatory filing samples for DOCX engine seeding and workflow prompt design.</td>
+        <td class="zh">合同模板、法律意见书格式、备忘录结构及监管申报样本，用于 DOCX 引擎播种和工作流 Prompt 设计。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Matter Folder Structure</strong></td>
+        <td class="zh"><strong>事项文件夹结构</strong></td>
+        <td class="en">Existing client/matter organization conventions. Cubecloud maps these to the context graph and RAG retrieval paths.</td>
+        <td class="zh">现有客户/事项组织规范。智方云将其映射至上下文图谱和 RAG 检索路径。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Business Scope Description</strong></td>
+        <td class="zh"><strong>业务范围说明</strong></td>
+        <td class="en">Written description of target practice areas, priority sequencing, and expected usage patterns. Required for service T-point activation.</td>
+        <td class="zh">目标业务领域、优先级排序及预期使用模式的书面说明。服务 T 点激活所需。</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Role Split: Pacgate ↔ Cubecloud</h3>
+      <p class="card-meta">Clear division of responsibility established in clarification round.</p>
+    </div>
+    <div class="zh">
+      <h3>角色分工：百宸 ↔ 智方云</h3>
+      <p class="card-meta">澄清轮次中确立的明确责任划分。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Pacgate Owns</strong></td>
+        <td class="zh"><strong>百宸负责</strong></td>
+        <td class="en">Legal operating logic: playbooks, review standards, matter logic, templates, practice-area expertise, lawyer review gates, and final output approval. All deliverables copyright assigned to Pacgate.</td>
+        <td class="zh">法律运营逻辑：Playbook、审核标准、事项逻辑、模板、业务领域专业知识、律师审核节点及最终输出批准。所有交付成果著作权归百宸所有。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Cubecloud Owns</strong></td>
+        <td class="zh"><strong>智方云负责</strong></td>
+        <td class="en">Technical realization: deployment, validation, tuning, troubleshooting, AI layer configuration, AgentOS surface enablement, MCP connector integration, and advisory support. Does not own Pacgate-specific legal adaptations.</td>
+        <td class="zh">技术实现：部署、验证、调优、故障排除、AI 层配置、AgentOS 表层启用、MCP 连接器集成及顾问支持。不拥有 Pacgate 专属法律适配成果。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Joint Responsibility</strong></td>
+        <td class="zh"><strong>联合负责</strong></td>
+        <td class="en">Acceptance testing, workflow demonstrations, scenario validation, and Phase 1 evidence collection. Both sides participate in milestone sign-off.</td>
+        <td class="zh">验收测试、工作流演示、场景验证及 Phase 1 证据收集。双方共同参与里程碑签收。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Client Decision Points (Pending)</h3>
+  <p class="card-meta">Items awaiting Pacgate decision or confirmation. See Section 5b (Client Onboarding Information Checklist) for full list.</p>
+  <table>
+    <tr><td><strong>SKU Confirmation</strong></td><td>Written confirmation of hardware SKU selections — gates hardware T-point.</td></tr>
+    <tr><td><strong>Practice Area Priority</strong></td><td>Which practice areas activate first? Drives playbook sequencing and model fine-tuning priority.</td></tr>
+    <tr><td><strong>Domestic Legal MCPs</strong></td><td>Which China-specific legal data sources to integrate? PKULaw, China Judgments Online, local regulatory databases — client decides.</td></tr>
+    <tr><td><strong>BYOK Provider Selection</strong></td><td>Which cloud API providers to provision? Anthropic required for System A; OpenAI, DeepSeek, Qwen, MiniMax optional.</td></tr>
+    <tr><td><strong>Domain Name</strong></td><td>Pacgate Law domain for Cloudflare Zero Trust, SSL/TLS, and secure tunnel endpoints.</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>甲方待决定事项</h3>
+  <p class="card-meta">等待百宸决定或确认的事项。完整清单见第 5b 节（甲方入驻信息清单）。</p>
+  <table>
+    <tr><td><strong>SKU 确认</strong></td><td>硬件 SKU 选购项的书面确认 — 硬件 T 点的前置条件。</td></tr>
+    <tr><td><strong>业务领域优先级</strong></td><td>哪些业务领域首批激活？驱动 Playbook 排序及模型微调优先级。</td></tr>
+    <tr><td><strong>国内法律 MCP</strong></td><td>集成哪些中国特有法律数据源？北大法宝、中国裁判文书网、地方监管数据库 — 甲方决定。</td></tr>
+    <tr><td><strong>BYOK 提供商选择</strong></td><td>开通哪些云端 API 提供商？Anthropic 为系统 A 必需；OpenAI、DeepSeek、Qwen、MiniMax 可选。</td></tr>
+    <tr><td><strong>域名</strong></td><td>Pacgate Law 域名，用于 Cloudflare Zero Trust、SSL/TLS 及安全隧道端点。</td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1c: CUBECLOUD VENDOR PROFILE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🏭</span> Cubecloud Vendor Profile</h2>
+<p class="sec-subtitle">Vendor profile, Phase 1 role, deliverables, team structure, and operational boundaries.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🏭</span> 智方云供应商画像</h2>
+<p class="sec-subtitle">乙方画像、Phase 1 角色、交付物、团队结构及运营边界。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Company Profile</h3>
+      <p class="card-meta">Cubecloud Technology (Shenzhen) Co., Ltd. — OEM AI platform delivery.</p>
+    </div>
+    <div class="zh">
+      <h3>公司画像</h3>
+      <p class="card-meta">智方云科技（深圳）有限公司 — OEM AI 平台交付。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Legal Name</strong></td>
+        <td class="zh"><strong>法定名称</strong></td>
+        <td class="en">智方云科技（深圳）有限公司 (Cubecloud Technology (Shenzhen) Co., Ltd.)</td>
+        <td class="zh">智方云科技（深圳）有限公司 (Cubecloud Technology (Shenzhen) Co., Ltd.)</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Business Model</strong></td>
+        <td class="zh"><strong>商业模式</strong></td>
+        <td class="en">OEM AI platform delivery — hardware + AI layer + AgentOS surfaces + legal-agent adaptation + advisory. Not a SaaS vendor; delivers on-prem AI systems with client-owned deliverables.</td>
+        <td class="zh">OEM AI 平台交付 — 硬件 + AI 层 + AgentOS 表层 + 法律 Agent 适配 + 顾问服务。非 SaaS 供应商；交付本地 AI 系统，交付成果归甲方所有。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Phase 1 Role</strong></td>
+        <td class="zh"><strong>Phase 1 角色</strong></td>
+        <td class="en">Vendor, deployment partner, and technical advisor. Owns hardware procurement, AI layer deployment, AgentOS enablement, agent adaptation support, and advisory services. Does not own Pacgate-specific legal adaptations.</td>
+        <td class="zh">乙方、部署合作伙伴及技术顾问。负责硬件采购、AI 层部署、AgentOS 启用、Agent 适配支持及顾问服务。不拥有 Pacgate 专属法律适配成果。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Contract Party</strong></td>
+        <td class="zh"><strong>合同方</strong></td>
+        <td class="en">Signatory to three agreements: HWOS-P01, LEGALAGENT-P01, ADVISORY-P01</td>
+        <td class="zh">三份合同签署方：HWOS-P01、LEGALAGENT-P01、ADVISORY-P01</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Phase 1 Deliverables (Cubecloud Scope)</h3>
+      <p class="card-meta">What Cubecloud is contractually obligated to deliver.</p>
+    </div>
+    <div class="zh">
+      <h3>Phase 1 交付物（智方云范围）</h3>
+      <p class="card-meta">智方云合同义务交付的内容。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Hardware Package</strong></td>
+        <td class="zh"><strong>硬件包</strong></td>
+        <td class="en">2× Cubecloud AIPC-class systems + 2× external GPU dock pairings. Memory/storage uplift per node. 3-day on-site installation included in fixed delivery. HWOS-P01, ¥79,600.</td>
+        <td class="zh">2× Cubecloud AIPC 级系统 + 2× 外置 GPU 扩展坞。每节点内存/存储升级。3 工作日现场安装已含于固定交付。HWOS-P01，¥79,600。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>AI Layer + AgentOS</strong></td>
+        <td class="zh"><strong>AI 层 + AgentOS</strong></td>
+        <td class="en">Cubecloud standard AI layer (Ollama + approved local models). 6 AgentOS surfaces per node: OpenSpace, Open WebUI, IronClaw, Hermes, Warp ADE, OpenCode. Private Tailscale/WireGuard mesh networking.</td>
+        <td class="zh">Cubecloud 标准 AI 层（Ollama + 已批准本地模型）。每节点 6 个 AgentOS 表层：OpenSpace、Open WebUI、IronClaw、Hermes、Warp ADE、OpenCode。私有 Tailscale/WireGuard Mesh 组网。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Agent Adaptation</strong></td>
+        <td class="zh"><strong>Agent 适配</strong></td>
+        <td class="en">Claude for Legal adaptation (System A) + Lavern adaptation (System B). Prompt drafts, workflow templates, agent role configs, review gate definitions, multi-agent orchestration. LEGALAGENT-P01, ¥40,000.</td>
+        <td class="zh">Claude for Legal 适配（系统 A）+ Lavern 适配（系统 B）。Prompt 草稿、工作流模板、Agent 角色配置、审核节点定义、多 Agent 编排。LEGALAGENT-P01，¥40,000。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Knowledge + RAG</strong></td>
+        <td class="zh"><strong>知识 + RAG</strong></td>
+        <td class="en">Starter authority registry, matter folder conventions, context graph (light schema), RAG pipeline (ingest + retrieval). PostgreSQL + pgvector foundation.</td>
+        <td class="zh">入门权威注册表、事项文件夹规范、上下文图谱（轻量 Schema）、RAG 管道（摄入 + 检索）。PostgreSQL + pgvector 基础。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Advisory</strong></td>
+        <td class="zh"><strong>顾问服务</strong></td>
+        <td class="en">40h prepaid remote advisory: env prep, MCP planning, workflow design, prompt tuning, KB import, system optimization. 3 WD response, 0.5h min billing. ADVISORY-P01, ¥20,000.</td>
+        <td class="zh">40 小时预付远程顾问：环境准备、MCP 规划、工作流设计、Prompt 调优、知识库导入、系统优化。3 工作日响应，0.5 小时最小计费。ADVISORY-P01，¥20,000。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Cubecloud Team Structure (Phase 1)</h3>
+      <p class="card-meta">Workstream owners and team composition.</p>
+    </div>
+    <div class="zh">
+      <h3>智方云团队结构（Phase 1）</h3>
+      <p class="card-meta">工作流负责人及团队组成。</p>
+    </div>
+    <table>
+      <tr>
+        <td><strong>WS1</strong></td>
+        <td class="en">Deployment Team</td><td class="zh">部署团队</td>
+        <td class="en">Hardware procurement, staging, AI layer deployment, AgentOS enablement, on-site installation, system debug, basic training</td>
+        <td class="zh">硬件采购、预部署、AI 层部署、AgentOS 启用、现场安装、系统调试、基础培训</td>
+      </tr>
+      <tr>
+        <td><strong>WS2+3</strong></td>
+        <td class="en">Legal-Agent Team</td><td class="zh">法律 Agent 团队</td>
+        <td class="en">Claude for Legal + Lavern adaptation: prompt engineering, workflow design, agent role configuration, review gate definition, multi-agent orchestration</td>
+        <td class="zh">Claude for Legal + Lavern 适配：Prompt 工程、工作流设计、Agent 角色配置、审核节点定义、多 Agent 编排</td>
+      </tr>
+      <tr>
+        <td><strong>WS4</strong></td>
+        <td class="en">Knowledge Team</td><td class="zh">知识团队</td>
+        <td class="en">Authority registry design, matter folder conventions, context graph schema, RAG pipeline architecture, PostgreSQL + pgvector setup</td>
+        <td class="zh">权威注册表设计、事项文件夹规范、上下文图谱 Schema、RAG 管道架构、PostgreSQL + pgvector 搭建</td>
+      </tr>
+      <tr>
+        <td><strong>WS5</strong></td>
+        <td class="en">Enablement Team</td><td class="zh">启用团队</td>
+        <td class="en">Onboarding sessions, operating playbooks, safety and review guidance, handover materials, user training for daily legal use cases</td>
+        <td class="zh">入职培训、操作手册、安全与审核指南、交接材料、日常法律使用场景用户培训</td>
+      </tr>
+      <tr>
+        <td><strong>WS6</strong></td>
+        <td class="en">Advisory Team</td><td class="zh">顾问团队</td>
+        <td class="en">Remote/on-site support, MCP planning, workflow tuning, KB import, system optimization, advisory assistance throughout Phase 1</td>
+        <td class="zh">远程/现场支持、MCP 规划、工作流调优、知识库导入、系统优化、Phase 1 全程顾问协助</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Operational Boundaries</h3>
+      <p class="card-meta">What Cubecloud does NOT do in Phase 1.</p>
+    </div>
+    <div class="zh">
+      <h3>运营边界</h3>
+      <p class="card-meta">智方云在 Phase 1 中不涉及的内容。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>No Legal Advice</strong></td>
+        <td class="zh"><strong>不提供法律意见</strong></td>
+        <td class="en">Cubecloud is a technology vendor, not a law firm. All legal outputs are drafts until Pacgate lawyer reviews and approves them. Cubecloud does not practice law or provide legal opinions.</td>
+        <td class="zh">智方云是技术供应商，非律师事务所。所有法律输出在百宸律师审核批准前均为草稿。智方云不从事法律业务或提供法律意见。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>No Pacgate IP Ownership</strong></td>
+        <td class="zh"><strong>不拥有百宸知识产权</strong></td>
+        <td class="en">All Phase 1 deliverable copyright assigned to Pacgate. Competitive isolation is permanent — Cubecloud may not reuse Pacgate-specific legal adaptations for any third party in legal services, legal tech, or compliance domains.</td>
+        <td class="zh">所有 Phase 1 交付成果著作权归百宸所有。竞争隔离为永久限制 — 智方云不得将百宸专属法律适配成果用于法律服务、法律科技或合规领域的任何第三方。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>No SaaS Platform in Phase 1</strong></td>
+        <td class="zh"><strong>Phase 1 不含 SaaS 平台</strong></td>
+        <td class="en">Phase 1 is a local pilot, not a multi-tenant SaaS platform. Customer portal, billing, tenant management, and production hosting are deferred to Phase 2+ — separate statement of work required.</td>
+        <td class="zh">Phase 1 为本地试点，非多租户 SaaS 平台。客户门户、计费、租户管理及生产托管推迟至 Phase 2+ — 需独立工作说明书。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>No China Legal Data Completion</strong></td>
+        <td class="zh"><strong>不完成中国法律数据</strong></td>
+        <td class="en">Full Chinese legal corpus completion is deferred to Phase 4. Phase 1 focuses on the startup corpus Pacgate provides. External legal DB MCP integration is client-driven — Pacgate decides which sources to adapt.</td>
+        <td class="zh">完整中国法律语料库推迟至 Phase 4。Phase 1 聚焦百宸提供的启动语料库。外部法律数据库 MCP 集成由甲方驱动 — 百宸决定适配哪些数据源。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Cubecloud Technology Stack (Phase 1)</h3>
+  <table>
+    <tr><td><strong>Hardware Platform</strong></td><td>AMD RyzenAI AIPC-class systems with NPU + GPU acceleration. External GPU dock pairing per node for model inference throughput.</td></tr>
+    <tr><td><strong>Local AI Runtime</strong></td><td>Ollama — 3-tier model roster (Nemotron3:33b, Qwen3.6:27b, Qwen3.5:9b). LM Studio optional for experimentation.</td></tr>
+    <tr><td><strong>Agent Framework</strong></td><td>Rust workspace — 16 crates. 10-tool dispatcher, 3-tier LLM router, 11-state matter machine, 3-path DOCX engine, max-10-round agent loop with SSE streaming.</td></tr>
+    <tr><td><strong>Database</strong></td><td>PostgreSQL + pgvector (vector search) + tsvector (full-text search) + RRF fusion re-ranking. SQLite for auth/tenant stubs.</td></tr>
+    <tr><td><strong>Security</strong></td><td>IronClaw WASM-based credential vault (AES-256-GCM). BYOK keys decrypted only at inference time, never logged. Tailscale/WireGuard encrypted mesh for all cross-node traffic.</td></tr>
+    <tr><td><strong>Networking</strong></td><td>Tailscale/WireGuard private mesh VPN between Device A and Device B. Cloudflare Zero Trust for secure remote access endpoints (pending domain).</td></tr>
+    <tr><td><strong>Container Infrastructure</strong></td><td>Docker + Docker Compose. nginx:1.27-alpine (auth-first routing), Python Flask auth gateway (HMAC-SHA256 sessions). GHCR for private image storage.</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>智方云技术栈（Phase 1）</h3>
+  <table>
+    <tr><td><strong>硬件平台</strong></td><td>AMD RyzenAI AIPC 级系统，NPU + GPU 加速。每节点外置 GPU 扩展坞，用于模型推理吞吐。</td></tr>
+    <tr><td><strong>本地 AI 运行时</strong></td><td>Ollama — 三级模型阵容（Nemotron3:33b、Qwen3.6:27b、Qwen3.5:9b）。LM Studio 可选用于实验。</td></tr>
+    <tr><td><strong>Agent 框架</strong></td><td>Rust 工作区 — 16 个 crate。10 工具调度器、三层 LLM 路由器、11 状态事项状态机、3 路径 DOCX 引擎、最多 10 轮 Agent 循环含 SSE 流式推送。</td></tr>
+    <tr><td><strong>数据库</strong></td><td>PostgreSQL + pgvector（向量搜索）+ tsvector（全文搜索）+ RRF 融合重排序。SQLite 用于 auth/tenant 存根。</td></tr>
+    <tr><td><strong>安全</strong></td><td>IronClaw 基于 WASM 的凭证保险库（AES-256-GCM）。BYOK 密钥仅在推理时解密，永不记录。Tailscale/WireGuard 加密 Mesh 用于所有跨节点流量。</td></tr>
+    <tr><td><strong>网络</strong></td><td>Tailscale/WireGuard 私有 Mesh VPN 连接设备 A 与设备 B。Cloudflare Zero Trust 用于安全远程访问端点（待域名确认）。</td></tr>
+    <tr><td><strong>容器基础设施</strong></td><td>Docker + Docker Compose。nginx:1.27-alpine（认证优先路由）、Python Flask 认证网关（HMAC-SHA256 会话）。GHCR 用于私有镜像存储。</td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 2: HARDWARE NODE PROGRESS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🖥️</span> Hardware Node Progress</h2>
+<p class="sec-subtitle">Two Cubecloud AIPC-class systems with external GPU dock pairings. Delivery window: T-hardware + 20 working days.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🖥️</span> 硬件节点进度</h2>
+<p class="sec-subtitle">两台 Cubecloud AIPC 级系统，各配外置 GPU 扩展坞。交付窗口：T 硬 + 20 工作日。</p>
+</div>
+
+<div class="card-grid">
+  <!-- Device A -->
+  <div class="card">
+    <div class="en">
+      <h3>Device A — Claude for Legal</h3>
+      <p class="card-meta">AIPC + GPU Dock · Focus: playbooks, connectors, structured workflows</p>
+    </div>
+    <div class="zh">
+      <h3>设备 A — Claude for Legal</h3>
+      <p class="card-meta">AIPC + GPU 扩展坞 · 侧重：playbook、连接器、结构化工作流</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">SKU Confirmation</td>
+        <td class="zh">SKU 选购确认</td>
+        <td><span class="st-pending en">AWAITING CLIENT</span><span class="st-pending zh">等待甲方确认</span></td>
+      </tr>
+      <tr>
+        <td class="en">Site Readiness</td>
+        <td class="zh">现场环境就绪</td>
+        <td><span class="st-pending en">PENDING</span><span class="st-pending zh">待确认</span></td>
+      </tr>
+      <tr>
+        <td class="en">Hardware Procurement</td>
+        <td class="zh">硬件采购</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+      <tr>
+        <td class="en">Cubecloud AI Layer Deploy</td>
+        <td class="zh">Cubecloud 标准 AI 层部署</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+      <tr>
+        <td class="en">AgentOS Surfaces Enabled</td>
+        <td class="zh">AgentOS 表层启用</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+      <tr>
+        <td class="en">On-site Installation (3 days)</td>
+        <td class="zh">现场安装（3 工作日）</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+    </table>
+    <div class="prog-bar-outer"><div class="prog-bar-inner prog-amber" style="width:5%"></div></div>
+  </div>
+
+  <!-- Device B -->
+  <div class="card">
+    <div class="en">
+      <h3>Device B — Lavern</h3>
+      <p class="card-meta">AIPC + GPU Dock · Focus: multi-agent, debate, verification, deliverables</p>
+    </div>
+    <div class="zh">
+      <h3>设备 B — Lavern</h3>
+      <p class="card-meta">AIPC + GPU 扩展坞 · 侧重：多 Agent、辩论、验证、可交付成果</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">SKU Confirmation</td>
+        <td class="zh">SKU 选购确认</td>
+        <td><span class="st-pending en">AWAITING CLIENT</span><span class="st-pending zh">等待甲方确认</span></td>
+      </tr>
+      <tr>
+        <td class="en">Site Readiness</td>
+        <td class="zh">现场环境就绪</td>
+        <td><span class="st-pending en">PENDING</span><span class="st-pending zh">待确认</span></td>
+      </tr>
+      <tr>
+        <td class="en">Hardware Procurement</td>
+        <td class="zh">硬件采购</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+      <tr>
+        <td class="en">Cubecloud AI Layer Deploy</td>
+        <td class="zh">Cubecloud 标准 AI 层部署</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+      <tr>
+        <td class="en">AgentOS Surfaces Enabled</td>
+        <td class="zh">AgentOS 表层启用</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+      <tr>
+        <td class="en">On-site Installation (3 days)</td>
+        <td class="zh">现场安装（3 工作日）</td>
+        <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+      </tr>
+    </table>
+    <div class="prog-bar-outer"><div class="prog-bar-inner prog-amber" style="width:5%"></div></div>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Cubecloud Surfaces to Deploy (per node)</h3>
+  <table>
+    <tr><td>OpenSpace</td><td>Team control &amp; shared visibility</td><td><span class="st-pending">NOT STARTED</span></td></tr>
+    <tr><td>Open WebUI</td><td>Private AI chat &amp; search</td><td><span class="st-pending">NOT STARTED</span></td></tr>
+    <tr><td>IronClaw</td><td>Security &amp; policy boundaries</td><td><span class="st-pending">NOT STARTED</span></td></tr>
+    <tr><td>Hermes</td><td>Memory, task follow-up, scheduling</td><td><span class="st-pending">NOT STARTED</span></td></tr>
+    <tr><td>Warp ADE</td><td>Technical tuning, MCP work</td><td><span class="st-pending">NOT STARTED</span></td></tr>
+    <tr><td>OpenCode</td><td>Prompt adaptation &amp; utilities</td><td><span class="st-pending">NOT STARTED</span></td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Cubecloud 表层部署清单（每节点）</h3>
+  <table>
+    <tr><td>OpenSpace</td><td>团队控制与共享可见性</td><td><span class="st-pending">未启动</span></td></tr>
+    <tr><td>Open WebUI</td><td>私有 AI 对话与搜索</td><td><span class="st-pending">未启动</span></td></tr>
+    <tr><td>IronClaw</td><td>安全与策略边界</td><td><span class="st-pending">未启动</span></td></tr>
+    <tr><td>Hermes</td><td>记忆、任务跟进、日程</td><td><span class="st-pending">未启动</span></td></tr>
+    <tr><td>Warp ADE</td><td>技术调优、MCP 工作</td><td><span class="st-pending">未启动</span></td></tr>
+    <tr><td>OpenCode</td><td>Prompt 适配与工具</td><td><span class="st-pending">未启动</span></td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 3: AGENTIC WORKFLOW PROGRESS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🤖</span> Agentic Workflow Progress</h2>
+<p class="sec-subtitle">Six workstreams across deployment, legal-agent adaptation, knowledge, enablement, and advisory.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🤖</span> Agentic 工作流进度</h2>
+<p class="sec-subtitle">六条工作流：部署、法律 Agent 适配、知识、启用、顾问支持。</p>
+</div>
+
+<div class="tbl-wrap">
+<table>
+<thead>
+<tr>
+  <th class="en">WS</th><th class="zh">工作流</th>
+  <th class="en">Owner</th><th class="zh">负责方</th>
+  <th class="en">Deliverable</th><th class="zh">交付物</th>
+  <th class="en">Status</th><th class="zh">状态</th>
+  <th class="en">Progress</th><th class="zh">进度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>WS1</strong></td>
+  <td><span class="owner-tag owner-cubecloud en">Cubecloud</span><span class="owner-tag owner-cubecloud zh">智方云</span></td>
+  <td class="en">Two local AI systems + Cubecloud layer deployed and operational</td>
+  <td class="zh">两台本地 AI 系统 + Cubecloud 层部署并运行</td>
+  <td><span class="st-pending en">PRE-FLIGHT</span><span class="st-pending zh">准备阶段</span></td>
+  <td><div class="prog-bar-outer"><div class="prog-bar-inner prog-amber" style="width:5%"></div></div></td>
+</tr>
+<tr>
+  <td><strong>WS2</strong></td>
+  <td><span class="owner-tag owner-joint en">Joint</span><span class="owner-tag owner-joint zh">联合</span></td>
+  <td class="en">Claude for Legal tailored for Pacgate</td>
+  <td class="zh">Claude for Legal 适配 Pacgate</td>
+  <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+  <td><div class="prog-bar-outer"><div class="prog-bar-inner" style="width:0%;background:var(--muted2)"></div></div></td>
+</tr>
+<tr>
+  <td><strong>WS3</strong></td>
+  <td><span class="owner-tag owner-joint en">Joint</span><span class="owner-tag owner-joint zh">联合</span></td>
+  <td class="en">Lavern tailored for Pacgate</td>
+  <td class="zh">Lavern 适配 Pacgate</td>
+  <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+  <td><div class="prog-bar-outer"><div class="prog-bar-inner" style="width:0%;background:var(--muted2)"></div></div></td>
+</tr>
+<tr>
+  <td><strong>WS4</strong></td>
+  <td><span class="owner-tag owner-cubecloud en">Cubecloud</span><span class="owner-tag owner-cubecloud zh">智方云</span></td>
+  <td class="en">Starter context graph, RAG, authority registry</td>
+  <td class="zh">入门上下文图谱、RAG、权威注册表</td>
+  <td><span class="st-pending en">DESIGN PHASE</span><span class="st-pending zh">设计阶段</span></td>
+  <td><div class="prog-bar-outer"><div class="prog-bar-inner prog-blue" style="width:15%"></div></div></td>
+</tr>
+<tr>
+  <td><strong>WS5</strong></td>
+  <td><span class="owner-tag owner-cubecloud en">Cubecloud</span><span class="owner-tag owner-cubecloud zh">智方云</span></td>
+  <td class="en">Onboarding, playbooks, handover training</td>
+  <td class="zh">入职培训、操作手册、交接培训</td>
+  <td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td>
+  <td><div class="prog-bar-outer"><div class="prog-bar-inner" style="width:0%;background:var(--muted2)"></div></div></td>
+</tr>
+<tr>
+  <td><strong>WS6</strong></td>
+  <td><span class="owner-tag owner-cubecloud en">Cubecloud</span><span class="owner-tag owner-cubecloud zh">智方云</span></td>
+  <td class="en">Remote/on-site support, advisory assistance</td>
+  <td class="zh">远程/现场支持、Phase 2 探索</td>
+  <td><span class="st-active en">ONGOING</span><span class="st-active zh">持续中</span></td>
+  <td><div class="prog-bar-outer"><div class="prog-bar-inner prog-green" style="width:10%"></div></div></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>System A: Claude for Legal Adaptation</h3>
+      <p class="card-meta">Playbook-first, practice-profile driven. Cloud-side API dependency acknowledged.</p>
+    </div>
+    <div class="zh">
+      <h3>系统 A：Claude for Legal 适配</h3>
+      <p class="card-meta">Playbook 优先，实践画像驱动。已确认云端 API 依赖。</p>
+    </div>
+    <table>
+      <tr><td class="en">Practice bundle organization</td><td class="zh">实践包组织</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Cold-start interview &amp; profile setup</td><td class="zh">冷启动访谈与画像设置</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Named workflow agents</td><td class="zh">命名工作流 Agent</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">MCP connectors (document/research)</td><td class="zh">MCP 连接器（文档/研究）</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Lawyer-controlled review gates</td><td class="zh">律师控制审核节点</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>System B: Lavern Adaptation</h3>
+      <p class="card-meta">Multi-agent orchestration, debate, verification. Local-capable prototyping.</p>
+    </div>
+    <div class="zh">
+      <h3>系统 B：Lavern 适配</h3>
+      <p class="card-meta">多 Agent 编排、辩论、验证。本地可运行原型。</p>
+    </div>
+    <table>
+      <tr><td class="en">Specialist agent roles (Pacgate-custom)</td><td class="zh">专家 Agent 角色（Pacgate 定制）</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Evidence + counter-evidence debate</td><td class="zh">证据 + 反证辩论</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Verification loops (10-pass model)</td><td class="zh">验证循环（10 轮模型）</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Deliverable-first output (memos, redlines)</td><td class="zh">可交付成果优先（备忘录、红线稿）</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+      <tr><td class="en">Local run mode (sensitive work on-prem)</td><td class="zh">本地运行模式（敏感工作留驻本地）</td><td><span class="st-pending en">NOT STARTED</span><span class="st-pending zh">未启动</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 3b: PACGATE LEGAL AGENT ARCHITECTURE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">⚙️</span> Pacgate Legal Agent Architecture</h2>
+<p class="sec-subtitle">Core agent system design: 10-tool dispatcher, dual-mode AI, 3-tier LLM router, 11-state matter machine, 3-path DOCX engine, and max-10-round iterative agent loop with SSE streaming and citation extraction.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">⚙️</span> Pacgate 法律 Agent 架构</h2>
+<p class="sec-subtitle">核心 Agent 系统设计：10 工具调度器、双模式 AI、三层 LLM 路由器、11 状态事项状态机、3 路径 DOCX 引擎，以及最多 10 轮迭代 Agent 循环，含 SSE 流式推送与引文提取。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>10-Tool Agent Dispatcher</h3>
+      <p class="card-meta">Tools dispatched from LLM tool_calls. All backends are trait-injected for testability.</p>
+    </div>
+    <div class="zh">
+      <h3>10 工具 Agent 调度器</h3>
+      <p class="card-meta">工具从 LLM tool_calls 调度。所有后端通过 trait 注入，便于测试。</p>
+    </div>
+    <table>
+      <tr><td><strong>1. read_document</strong></td><td class="en">Read full document with optional version</td><td class="zh">读取完整文档（可选版本）</td></tr>
+      <tr><td><strong>2. find_in_document</strong></td><td class="en">Search within a document by query</td><td class="zh">按查询在文档内搜索</td></tr>
+      <tr><td><strong>3. fetch_documents</strong></td><td class="en">Bulk read multiple documents</td><td class="zh">批量读取多个文档</td></tr>
+      <tr><td><strong>4. list_documents</strong></td><td class="en">List documents by matter</td><td class="zh">按事项列出文档</td></tr>
+      <tr><td><strong>5. generate_docx</strong></td><td class="en">Generate DOCX from JSON structure</td><td class="zh">从 JSON 结构生成 DOCX</td></tr>
+      <tr><td><strong>6. edit_document</strong></td><td class="en">Edit with word-level tracked changes (w:ins/w:del)</td><td class="zh">词级批注修改（w:ins/w:del）</td></tr>
+      <tr><td><strong>7. replicate_document</strong></td><td class="en">Replicate 1–20 copies (batch generation)</td><td class="zh">复制 1–20 份（批量生成）</td></tr>
+      <tr><td><strong>8. read_workflow</strong></td><td class="en">Retrieve workflow prompt template</td><td class="zh">检索工作流 Prompt 模板</td></tr>
+      <tr><td><strong>9. read_table_cells</strong></td><td class="en">Extract tabular data from documents</td><td class="zh">从文档中提取表格数据</td></tr>
+      <tr><td><strong>10. kb_search</strong></td><td class="en">RAG retrieval from knowledge base (top_k)</td><td class="zh">从知识库 RAG 检索（top_k）</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Dual-Mode AI</h3>
+      <p class="card-meta">Two reasoning modes for different legal task profiles.</p>
+    </div>
+    <div class="zh">
+      <h3>双模式 AI</h3>
+      <p class="card-meta">两种推理模式，适配不同法律任务画像。</p>
+    </div>
+    <table>
+      <tr>
+        <td><strong class="en">Repeatable Workflows</strong><strong class="zh">可重复工作流</strong></td>
+        <td class="en">Standardized legal tasks: contract review checklists, compliance scans, template-based drafting. Fast, predictable, low-token. Uses Mid/Low LLM tiers.</td>
+        <td class="zh">标准化法律任务：合同审核清单、合规扫描、模板化起草。快速、可预测、低 Token。使用 Mid/Low LLM 层。</td>
+      </tr>
+      <tr>
+        <td><strong class="en">Long-Horizon Reasoning</strong><strong class="zh">长周期推理</strong></td>
+        <td class="en">Complex legal analysis: multi-jurisdiction research, novel argument construction, evidence synthesis, strategic memos. Multi-round agent loop with Main tier LLM.</td>
+        <td class="zh">复杂法律分析：多法域研究、新颖论点构建、证据综合、策略备忘录。多轮 Agent 循环，使用 Main 层 LLM。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>3-Tier LLM Router</h3>
+      <p class="card-meta">Fallback chain: Main → Mid → Low. Local Ollama default + 5 BYOK cloud providers.</p>
+    </div>
+    <div class="zh">
+      <h3>三层 LLM 路由器</h3>
+      <p class="card-meta">降级链：Main → Mid → Low。默认本地 Ollama + 5 个 BYOK 云端提供商。</p>
+    </div>
+    <table>
+      <tr><td><strong>Main</strong></td><td class="en">Nemotron3:33b (local) or Claude Sonnet 4.6 / GPT-5.4 (BYOK)</td><td class="zh">Nemotron3:33b（本地）或 Claude Sonnet 4.6 / GPT-5.4（BYOK）</td></tr>
+      <tr><td><strong>Mid</strong></td><td class="en">Qwen3.6:27b (local) or DeepSeek-V4 / Qwen3.6 (BYOK)</td><td class="zh">Qwen3.6:27b（本地）或 DeepSeek-V4 / Qwen3.6（BYOK）</td></tr>
+      <tr><td><strong>Low</strong></td><td class="en">Qwen3.5:9b (local) or MiniMax-2.7 (BYOK)</td><td class="zh">Qwen3.5:9b（本地）或 MiniMax-2.7（BYOK）</td></tr>
+      <tr><td><strong>Fallback</strong></td><td class="en">Automatic: if Main unavailable → try Mid → try Low. Per-provider API key management.</td><td class="zh">自动：若 Main 不可用 → 尝试 Mid → 尝试 Low。按提供商管理 API 密钥。</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Matter State Machine</h3>
+      <p class="card-meta">11 states tracking a legal matter from intake through archival.</p>
+    </div>
+    <div class="zh">
+      <h3>事项状态机</h3>
+      <p class="card-meta">11 个状态，跟踪法律事项从接收到归档的全生命周期。</p>
+    </div>
+    <table>
+      <tr><td class="en">Intake</td><td class="zh">接收</td><td>→</td><td class="en">Triage</td><td class="zh">分流</td><td>→</td><td class="en">Assigned</td><td class="zh">已分配</td></tr>
+      <tr><td class="en">Researching</td><td class="zh">研究中</td><td>→</td><td class="en">Drafting</td><td class="zh">起草中</td><td>→</td><td class="en">Reviewing</td><td class="zh">审核中</td></tr>
+      <tr><td class="en">Revising</td><td class="zh">修订中</td><td>→</td><td class="en">Approved</td><td class="zh">已批准</td><td>→</td><td class="en">Delivered</td><td class="zh">已交付</td></tr>
+      <tr><td class="en">Closed</td><td class="zh">已结案</td><td>→</td><td class="en">Archived</td><td class="zh">已归档</td><td></td><td></td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Agent Loop</h3>
+      <p class="card-meta">Max-10-round iterative tool dispatch with citation extraction.</p>
+    </div>
+    <div class="zh">
+      <h3>Agent 循环</h3>
+      <p class="card-meta">最多 10 轮迭代工具调度，含引文提取。</p>
+    </div>
+    <table>
+      <tr><td><strong>1</strong></td><td class="en">Build context: system prompt + persona + matter history + RAG results</td><td class="zh">构建上下文：系统提示 + 角色 + 事项历史 + RAG 结果</td></tr>
+      <tr><td><strong>2</strong></td><td class="en">Call LLM via 3-tier router (Main → Mid → Low fallback)</td><td class="zh">通过三层路由器调用 LLM（Main → Mid → Low 降级）</td></tr>
+      <tr><td><strong>3</strong></td><td class="en">Parse response: extract text + tool_calls + citations</td><td class="zh">解析响应：提取文本 + tool_calls + 引文</td></tr>
+      <tr><td><strong>4</strong></td><td class="en">Dispatch tools: execute up to 10 tools per round, collect results</td><td class="zh">调度工具：每轮最多执行 10 个工具，收集结果</td></tr>
+      <tr><td><strong>5</strong></td><td class="en">Append results to history, loop back to step 1 (max 10 rounds)</td><td class="zh">将结果追加至历史，循环回步骤 1（最多 10 轮）</td></tr>
+      <tr><td><strong>6</strong></td><td class="en">Final response: extract citations via regex, format for SSE streaming</td><td class="zh">最终响应：通过正则提取引文，格式化为 SSE 流式推送</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>DOCX Engine — 3-Path OOXML Pipeline</h3>
+      <p class="card-meta">All paths implemented in pacgate-docx crate.</p>
+    </div>
+    <div class="zh">
+      <h3>DOCX 引擎 — 3 路径 OOXML 流水线</h3>
+      <p class="card-meta">所有路径已在 pacgate-docx crate 中实现。</p>
+    </div>
+    <table>
+      <tr>
+        <td><strong class="en">Path A: Generate</strong><strong class="zh">路径 A：生成</strong></td>
+        <td class="en">JSON structure → DocxBuilder → OOXML ZIP. Paragraphs, headings, tables, styles from LegalDocumentTemplate.</td>
+        <td class="zh">JSON 结构 → DocxBuilder → OOXML ZIP。段落、标题、表格、样式来自 LegalDocumentTemplate。</td>
+      </tr>
+      <tr>
+        <td><strong class="en">Path B: Edit</strong><strong class="zh">路径 B：编辑</strong></td>
+        <td class="en">Word-level diff via similar crate → w:ins/w:del revision marks. Author: "Pacgate AI". Lawyer reviews tracked changes before accepting.</td>
+        <td class="zh">通过 similar crate 词级差异 → w:ins/w:del 修订标记。作者："Pacgate AI"。律师审核批注后方可接受。</td>
+      </tr>
+      <tr>
+        <td><strong class="en">Path C: Extract</strong><strong class="zh">路径 C：提取</strong></td>
+        <td class="en">Parse DOCX → plain text. Feeds RAG ingestion pipeline: chunk (512t/64t overlap) → embed → pgvector + tsvector.</td>
+        <td class="zh">解析 DOCX → 纯文本。输入 RAG 摄入管道：分块（512t/64t 重叠）→ 嵌入 → pgvector + tsvector。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>SSE Streaming &amp; Citation Extraction</h3>
+  <table>
+    <tr><td><strong>SSE Payload Types</strong></td><td>TextDelta, ToolStart, ToolEnd, CitationBlock, Done, Error — streamed to client via /api/chat/stream</td></tr>
+    <tr><td><strong>Citation Format</strong></td><td>[N] inline references with page number + verbatim quote. Extracted from final LLM response via regex before streaming.</td></tr>
+    <tr><td><strong>System Prompt</strong></td><td>Loaded from system_prompt_base.txt file. Injected at start of each agent loop with persona and matter context.</td></tr>
+    <tr><td><strong>Traits (Injected)</strong></td><td>DocumentStore, WorkflowStore, KbStore — all trait-injected for testability and future backend swapping (filesystem → S3 → database).</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>SSE 流式推送与引文提取</h3>
+  <table>
+    <tr><td><strong>SSE 载荷类型</strong></td><td>TextDelta、ToolStart、ToolEnd、CitationBlock、Done、Error — 通过 /api/chat/stream 流式推送至客户端</td></tr>
+    <tr><td><strong>引文格式</strong></td><td>[N] 内联引用，含页码 + 逐字引用。在流式推送前通过正则从最终 LLM 响应中提取。</td></tr>
+    <tr><td><strong>系统提示</strong></td><td>从 system_prompt_base.txt 文件加载。每次 Agent 循环开始时注入，附带角色和事项上下文。</td></tr>
+    <tr><td><strong>Trait（注入式）</strong></td><td>DocumentStore、WorkflowStore、KbStore — 全部通过 trait 注入，便于测试及未来后端切换（文件系统 → S3 → 数据库）。</td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4: DATABASE & KNOWLEDGE PROGRESS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🗄️</span> Database &amp; Knowledge Progress</h2>
+<p class="sec-subtitle">PostgreSQL + pgvector foundation, authority registry, RAG pipeline, and context graph.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🗄️</span> 数据库与知识进度</h2>
+<p class="sec-subtitle">PostgreSQL + pgvector 基础、权威注册表、RAG 管道、上下文图谱。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en"><h3>Database Infrastructure</h3></div>
+    <div class="zh"><h3>数据库基础设施</h3></div>
+    <table>
+      <tr>
+        <td>PostgreSQL + pgvector</td>
+        <td class="en">Schema design</td><td class="zh">Schema 设计</td>
+        <td><span class="st-active en">IN DESIGN</span><span class="st-active zh">设计中</span></td>
+      </tr>
+      <tr>
+        <td>SQLite (auth/tenant stubs)</td>
+        <td class="en">Migrations pending</td><td class="zh">迁移待定</td>
+        <td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td>
+      </tr>
+      <tr>
+        <td>tsvector FTS layer</td>
+        <td class="en">Planned</td><td class="zh">计划中</td>
+        <td><span class="st-pending en">PLANNED</span><span class="st-pending zh">计划中</span></td>
+      </tr>
+      <tr>
+        <td>RRF fusion re-ranking</td>
+        <td class="en">Planned</td><td class="zh">计划中</td>
+        <td><span class="st-pending en">PLANNED</span><span class="st-pending zh">计划中</span></td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en"><h3>Knowledge Layer</h3></div>
+    <div class="zh"><h3>知识层</h3></div>
+    <table>
+      <tr>
+        <td class="en">Authority Registry</td><td class="zh">权威注册表</td>
+        <td class="en">Starter structure designed</td><td class="zh">入门结构已设计</td>
+        <td><span class="st-active en">IN DESIGN</span><span class="st-active zh">设计中</span></td>
+      </tr>
+      <tr>
+        <td class="en">Matter Folder Conventions</td><td class="zh">事项文件夹规范</td>
+        <td class="en">Awaiting client input</td><td class="zh">等待甲方输入</td>
+        <td><span class="st-pending en">AWAITING INPUT</span><span class="st-pending zh">等待输入</span></td>
+      </tr>
+      <tr>
+        <td class="en">Context Graph</td><td class="zh">上下文图谱</td>
+        <td class="en">Light schema drafted</td><td class="zh">轻量 Schema 已起草</td>
+        <td><span class="st-active en">DRAFT</span><span class="st-active zh">草稿</span></td>
+      </tr>
+      <tr>
+        <td class="en">RAG Pipeline</td><td class="zh">RAG 管道</td>
+        <td class="en">Ingest + retrieval path defined</td><td class="zh">摄入 + 检索路径已定义</td>
+        <td><span class="st-active en">DESIGNED</span><span class="st-active zh">已设计</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>RAG Pipeline Architecture (Designed)</h3>
+  <table>
+    <tr><td><strong>Ingest</strong></td><td>Extract text → Chunk (512 tokens / 64 overlap) → Embed (nomic-embed-text NPU) → Store (pgvector + tsvector FTS)</td></tr>
+    <tr><td><strong>Retrieve</strong></td><td>Query embedding → cosine similarity search + tsvector FTS → RRF fusion re-ranking → Ranked results to context</td></tr>
+    <tr><td><strong>China Legal Data</strong></td><td>Deferred to Phase 4. Phase 1 focuses on startup corpus Pacgate provides.</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>RAG 管道架构（已设计）</h3>
+  <table>
+    <tr><td><strong>摄入</strong></td><td>提取文本 → 分块（512 tokens / 64 重叠）→ 嵌入（nomic-embed-text NPU）→ 存储（pgvector + tsvector FTS）</td></tr>
+    <tr><td><strong>检索</strong></td><td>查询嵌入 → 余弦相似度搜索 + tsvector 全文搜索 → RRF 融合重排序 → 排序结果送入上下文</td></tr>
+    <tr><td><strong>中国法律数据</strong></td><td>推迟至 Phase 4。Phase 1 聚焦 Pacgate 提供的启动语料库。</td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4b: RUST WORKSPACE & CRATE STATUS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🦀</span> Rust Workspace &amp; Crate Status</h2>
+<p class="sec-subtitle">16 crates in pacgate-ai workspace: 4 fully implemented, 7 stubs, 4 WASM stubs, 1 binary server. All crates depend on pacgate-core for shared types.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🦀</span> Rust 工作区与 Crate 状态</h2>
+<p class="sec-subtitle">pacgate-ai 工作区共 16 个 crate：4 个已完整实现，7 个存根，4 个 WASM 存根，1 个二进制服务端。所有 crate 依赖 pacgate-core 共享类型。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en"><h3>Implemented Crates (4)</h3></div>
+    <div class="zh"><h3>已实现 Crate（4 个）</h3></div>
+    <table>
+      <tr>
+        <td><strong>pacgate-core</strong></td>
+        <td class="en">Shared foundation: 11 typed ID wrappers, LLM config (3-tier, 6 providers), Document, Matter, AgentMessage, ToolCall/Result, CitationRef, 20+ practice areas, error types</td>
+        <td class="zh">共享基础：11 个类型化 ID 包装器、LLM 配置（3 层 6 提供商）、Document、Matter、AgentMessage、ToolCall/Result、CitationRef、20+ 业务领域、错误类型</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+      <tr>
+        <td><strong>pacgate-llm</strong></td>
+        <td class="en">Three-tier LLM router: LlmClient trait, OpenAiCompatClient (SSE streaming, tool_calls parsing), LlmRouter with fallback chain Main→Mid→Low. 7 local Ollama models + 5 BYOK providers</td>
+        <td class="zh">三层 LLM 路由器：LlmClient trait、OpenAiCompatClient（SSE 流、tool_calls 解析）、LlmRouter 降级链 Main→Mid→Low。7 个本地 Ollama 模型 + 5 个 BYOK 提供商</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+      <tr>
+        <td><strong>pacgate-docx</strong></td>
+        <td class="en">OOXML DOCX engine: 3-path pipeline — generate from JSON, edit with word-level tracked changes (w:ins/w:del), extract plain text for RAG. Builder, diff, OOXML, styles, parser, templates modules</td>
+        <td class="zh">OOXML DOCX 引擎：3 路径流水线 — JSON 生成、词级批注修改（w:ins/w:del）、RAG 纯文本提取。builder、diff、ooxml、styles、parser、templates 模块</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+      <tr>
+        <td><strong>pacgate-agent</strong></td>
+        <td class="en">Agent loop &amp; 10-tool dispatcher: DocumentStore/WorkflowStore/KbStore traits, max-10-round iterative dispatch, citation extraction, system prompt injection. 10 tools: read/find/list/generate/edit/replicate documents, read workflow, read table cells, kb search</td>
+        <td class="zh">Agent 循环与 10 工具调度器：DocumentStore/WorkflowStore/KbStore trait、最多 10 轮迭代调度、引文提取、系统提示注入。10 工具：读取/查找/列出/生成/编辑/复制文档、读取工作流、读取表格单元格、知识库搜索</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en"><h3>Stub Crates (7) — No src/ yet</h3></div>
+    <div class="zh"><h3>存根 Crate（7 个）— 尚无 src/</h3></div>
+    <table>
+      <tr><td><strong>pacgate-auth</strong></td><td class="en">Auth layer (sqlx, argon2, jsonwebtoken)</td><td class="zh">认证层（sqlx、argon2、jsonwebtoken）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-tenant</strong></td><td class="en">Multi-tenant isolation (sqlx)</td><td class="zh">多租户隔离（sqlx）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-search</strong></td><td class="en">Semantic/vector search (reqwest)</td><td class="zh">语义/向量搜索（reqwest）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-rag</strong></td><td class="en">Retrieval-augmented generation (sqlx, reqwest)</td><td class="zh">检索增强生成（sqlx、reqwest）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-persona</strong></td><td class="en">Persona/role prompts (once_cell)</td><td class="zh">角色/人设提示（once_cell）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-template</strong></td><td class="en">Document templates (once_cell)</td><td class="zh">文档模板（once_cell）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-workflow</strong></td><td class="en">Workflow definitions (sqlx)</td><td class="zh">工作流定义（sqlx）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en"><h3>WASM Crates (4) — Browser-side, no src/ yet</h3></div>
+    <div class="zh"><h3>WASM Crate（4 个）— 浏览器端，尚无 src/</h3></div>
+    <table>
+      <tr><td><strong>pacgate-doc-validator</strong></td><td class="en">Document validation (HTML/JS)</td><td class="zh">文档验证（HTML/JS）</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-rule-engine</strong></td><td class="en">Regex/rule execution in browser</td><td class="zh">浏览器端正则/规则执行</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-citation-check</strong></td><td class="en">Citation format validation</td><td class="zh">引文格式验证</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+      <tr><td><strong>pacgate-clause-parser</strong></td><td class="en">Clause detection &amp; extraction</td><td class="zh">条款检测与提取</td><td><span class="st-pending en">STUB</span><span class="st-pending zh">存根</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en"><h3>Binary &amp; Infrastructure</h3></div>
+    <div class="zh"><h3>二进制与服务基础设施</h3></div>
+    <table>
+      <tr>
+        <td><strong>pacgate-api</strong></td>
+        <td class="en">Axum HTTP server (pacgate-server binary). Routes: /api/chat, /api/chat/stream (SSE), /api/documents, /api/matters, /api/workflows. Storage layer not yet wired.</td>
+        <td class="zh">Axum HTTP 服务端（pacgate-server 二进制）。路由：/api/chat、/api/chat/stream（SSE）、/api/documents、/api/matters、/api/workflows。存储层尚未接入。</td>
+        <td><span class="st-active en">PARTIAL</span><span class="st-active zh">部分完成</span></td>
+      </tr>
+      <tr>
+        <td><strong>auth-gate</strong></td>
+        <td class="en">Python Flask auth gateway (HMAC-SHA256 session cookies, login form). Docker: python:3.12-alpine, port 3000.</td>
+        <td class="zh">Python Flask 认证网关（HMAC-SHA256 会话 Cookie、登录表单）。Docker：python:3.12-alpine，端口 3000。</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+      <tr>
+        <td><strong>nginx</strong></td>
+        <td class="en">nginx:1.27-alpine with auth_request to pacgate-auth:3000. Blocks .drawio/.md downloads, no-cache headers, login redirect on 401.</td>
+        <td class="zh">nginx:1.27-alpine，auth_request 指向 pacgate-auth:3000。阻止 .drawio/.md 下载、no-cache 头、401 时重定向至登录页。</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+      <tr>
+        <td><strong>compose.yaml</strong></td>
+        <td class="en">Two-service Docker Compose: pacgate-auth (Flask) + pacgate-docs (nginx). Docs volume mounted read-only from ./docs.</td>
+        <td class="zh">双服务 Docker Compose：pacgate-auth（Flask）+ pacgate-docs（nginx）。docs 卷从 ./docs 只读挂载。</td>
+        <td><span class="st-done en">DONE</span><span class="st-done zh">已完成</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Dependency Graph</h3>
+  <table>
+    <tr><td><strong>pacgate-core</strong></td><td>Zero internal deps (serde, uuid, chrono, anyhow, thiserror). Foundation for all 15 other crates.</td></tr>
+    <tr><td><strong>pacgate-llm</strong></td><td>Pure LLM client — no internal deps beyond pacgate-core.</td></tr>
+    <tr><td><strong>pacgate-docx</strong></td><td>Pure document generation — no internal deps beyond pacgate-core.</td></tr>
+    <tr><td><strong>pacgate-agent</strong></td><td>Depends on pacgate-core + pacgate-llm (LlmRouter) + pacgate-docx (DocxBuilder).</td></tr>
+    <tr><td><strong>pacgate-api</strong></td><td>Depends on pacgate-core + pacgate-agent + pacgate-llm + pacgate-docx + all 7 stub crates.</td></tr>
+    <tr><td><strong>Auth / Tenant / Workflow / RAG / Search / Persona / Template</strong></td><td>All depend only on pacgate-core. Ready for independent implementation.</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>依赖关系图</h3>
+  <table>
+    <tr><td><strong>pacgate-core</strong></td><td>零内部依赖（serde、uuid、chrono、anyhow、thiserror）。为所有 15 个其他 crate 提供基础。</td></tr>
+    <tr><td><strong>pacgate-llm</strong></td><td>纯 LLM 客户端 — 除 pacgate-core 外无内部依赖。</td></tr>
+    <tr><td><strong>pacgate-docx</strong></td><td>纯文档生成 — 除 pacgate-core 外无内部依赖。</td></tr>
+    <tr><td><strong>pacgate-agent</strong></td><td>依赖 pacgate-core + pacgate-llm（LlmRouter）+ pacgate-docx（DocxBuilder）。</td></tr>
+    <tr><td><strong>pacgate-api</strong></td><td>依赖 pacgate-core + pacgate-agent + pacgate-llm + pacgate-docx + 全部 7 个存根 crate。</td></tr>
+    <tr><td><strong>Auth / Tenant / Workflow / RAG / Search / Persona / Template</strong></td><td>全部仅依赖 pacgate-core。可独立实现。</td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4c: CUBECLOUD OS SURFACES -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🖧</span> Cubecloud OS Surfaces</h2>
+<p class="sec-subtitle">Six AgentOS surfaces deployed per AIPC node. Each surface serves a distinct role in the Pacgate legal-agent operating environment. All surfaces are pre-deployed as part of the Cubecloud standard AI layer during hardware delivery (T + 20 WD).</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🖧</span> Cubecloud OS 表层</h2>
+<p class="sec-subtitle">每台 AIPC 节点部署六个 AgentOS 表层。每个表层在 Pacgate 法律 Agent 操作环境中承担不同角色。所有表层作为 Cubecloud 标准 AI 层的一部分在硬件交付期间（T + 20 工作日）预部署。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>OpenSpace</h3>
+      <p class="card-meta">Team Control &amp; Shared Visibility</p>
+    </div>
+    <div class="zh">
+      <h3>OpenSpace</h3>
+      <p class="card-meta">团队控制与共享可见性</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">Role in Pacgate</td>
+        <td class="zh">Pacgate 中的角色</td>
+        <td class="en">Central dashboard for lawyer team coordination — matter assignments, agent-run visibility, review queue status, and cross-node activity overview. The primary "who is doing what" surface for legal operations.</td>
+        <td class="zh">律师团队协调中央看板 — 事项分配、Agent 运行可见性、审核队列状态、跨节点活动总览。法律运营的主要"谁在做什么"表层。</td>
+      </tr>
+      <tr>
+        <td class="en">Deployment</td>
+        <td class="zh">部署</td>
+        <td class="en">Per-node, with cross-node visibility via Tailscale mesh</td>
+        <td class="zh">每节点部署，通过 Tailscale Mesh 实现跨节点可见性</td>
+      </tr>
+      <tr>
+        <td class="en">Status</td>
+        <td class="zh">状态</td>
+        <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Open WebUI</h3>
+      <p class="card-meta">Private AI Chat &amp; Search</p>
+    </div>
+    <div class="zh">
+      <h3>Open WebUI</h3>
+      <p class="card-meta">私有 AI 对话与搜索</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">Role in Pacgate</td>
+        <td class="zh">Pacgate 中的角色</td>
+        <td class="en">Lawyer-facing chat interface for direct LLM interaction — legal research queries, draft review, clause analysis. Connects to local Ollama models and BYOK providers through the 3-tier router. Primary ad-hoc legal AI entry point.</td>
+        <td class="zh">律师面向的对话界面，用于直接 LLM 交互 — 法律研究查询、草稿审核、条款分析。通过三层路由器连接本地 Ollama 模型和 BYOK 提供商。主要的即时法律 AI 入口。</td>
+      </tr>
+      <tr>
+        <td class="en">Deployment</td>
+        <td class="zh">部署</td>
+        <td class="en">Per-node, local-only by default. BYOK providers routed through IronClaw vault.</td>
+        <td class="zh">每节点部署，默认仅本地。BYOK 提供商通过 IronClaw 保险库路由。</td>
+      </tr>
+      <tr>
+        <td class="en">Status</td>
+        <td class="zh">状态</td>
+        <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>IronClaw</h3>
+      <p class="card-meta">Security &amp; Policy Boundaries</p>
+    </div>
+    <div class="zh">
+      <h3>IronClaw</h3>
+      <p class="card-meta">安全与策略边界</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">Role in Pacgate</td>
+        <td class="zh">Pacgate 中的角色</td>
+        <td class="en">AES-256-GCM encrypted credential vault. BYOK API keys decrypted only at inference time, never logged. Enforces data egress policies, client matter isolation, and audit logging. The security backbone for all external API calls and sensitive document handling.</td>
+        <td class="zh">AES-256-GCM 加密凭证保险库。BYOK API 密钥仅在推理时解密，永不记录。执行数据出口策略、客户事项隔离及审计日志。所有外部 API 调用和敏感文档处理的安全骨干。</td>
+      </tr>
+      <tr>
+        <td class="en">Deployment</td>
+        <td class="zh">部署</td>
+        <td class="en">Per-node, WASM-based isolation sandbox. Keys never leave the vault process.</td>
+        <td class="zh">每节点部署，基于 WASM 的隔离沙箱。密钥永不离开保险库进程。</td>
+      </tr>
+      <tr>
+        <td class="en">Status</td>
+        <td class="zh">状态</td>
+        <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Hermes</h3>
+      <p class="card-meta">Memory, Task Follow-up, Scheduling</p>
+    </div>
+    <div class="zh">
+      <h3>Hermes</h3>
+      <p class="card-meta">记忆、任务跟进、日程</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">Role in Pacgate</td>
+        <td class="zh">Pacgate 中的角色</td>
+        <td class="en">Cross-session context persistence — remembers matter history, agent-run outcomes, lawyer review decisions, and deadline tracking. Enables continuity across lawyer shifts and agent sessions. Feeds context graph with relationship data.</td>
+        <td class="zh">跨会话上下文持久化 — 记住事项历史、Agent 运行结果、律师审核决定及截止日期跟踪。实现律师轮班和 Agent 会话之间的连续性。向上下文图谱输送关系数据。</td>
+      </tr>
+      <tr>
+        <td class="en">Deployment</td>
+        <td class="zh">部署</td>
+        <td class="en">Per-node, with cross-node sync via private mesh for shared matter context</td>
+        <td class="zh">每节点部署，通过私有 Mesh 跨节点同步共享事项上下文</td>
+      </tr>
+      <tr>
+        <td class="en">Status</td>
+        <td class="zh">状态</td>
+        <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Warp ADE</h3>
+      <p class="card-meta">Technical Tuning, MCP Work</p>
+    </div>
+    <div class="zh">
+      <h3>Warp ADE</h3>
+      <p class="card-meta">技术调优、MCP 工作</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">Role in Pacgate</td>
+        <td class="zh">Pacgate 中的角色</td>
+        <td class="en">Technical workbench for Cubecloud engineers and advanced Pacgate users — MCP connector configuration, model parameter tuning, prompt engineering, RAG pipeline adjustment, and integration testing. The "under the hood" surface for system optimization.</td>
+        <td class="zh">智方云工程师和 Pacgate 高级用户的技术工作台 — MCP 连接器配置、模型参数调优、Prompt 工程、RAG 管道调整及集成测试。系统优化的"底层"表层。</td>
+      </tr>
+      <tr>
+        <td class="en">Deployment</td>
+        <td class="zh">部署</td>
+        <td class="en">Per-node, access-controlled. Primary surface for advisory-hour technical work.</td>
+        <td class="zh">每节点部署，访问受控。顾问工时技术工作的主要表层。</td>
+      </tr>
+      <tr>
+        <td class="en">Status</td>
+        <td class="zh">状态</td>
+        <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>OpenCode</h3>
+      <p class="card-meta">Prompt Adaptation &amp; Utilities</p>
+    </div>
+    <div class="zh">
+      <h3>OpenCode</h3>
+      <p class="card-meta">Prompt 适配与工具</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en">Role in Pacgate</td>
+        <td class="zh">Pacgate 中的角色</td>
+        <td class="en">Lightweight prompt editor and utility surface — Pacgate lawyers and Cubecloud advisors use it to adapt system prompts, workflow prompts, and persona definitions without touching the Rust codebase. Also hosts small utility scripts for document batch operations and format conversion.</td>
+        <td class="zh">轻量 Prompt 编辑器与工具表层 — Pacgate 律师和智方云顾问用于适配系统提示、工作流提示及角色定义，无需接触 Rust 代码库。同时承载文档批处理和格式转换的小型工具脚本。</td>
+      </tr>
+      <tr>
+        <td class="en">Deployment</td>
+        <td class="zh">部署</td>
+        <td class="en">Per-node, shared prompt library synced across nodes</td>
+        <td class="zh">每节点部署，共享 Prompt 库跨节点同步</td>
+      </tr>
+      <tr>
+        <td class="en">Status</td>
+        <td class="zh">状态</td>
+        <td><span class="st-pending en">AWAITING HW</span><span class="st-pending zh">等待硬件就绪</span></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Surface Integration Map</h3>
+  <table>
+    <tr><td><strong>OpenSpace ↔ Hermes</strong></td><td>Team dashboard pulls matter context and agent-run history from Hermes memory store</td></tr>
+    <tr><td><strong>Open WebUI ↔ IronClaw</strong></td><td>All BYOK API calls route through IronClaw for key decryption and audit logging</td></tr>
+    <tr><td><strong>Warp ADE ↔ OpenCode</strong></td><td>Prompt changes authored in OpenCode are tested and validated in Warp ADE before deployment</td></tr>
+    <tr><td><strong>IronClaw ↔ All Surfaces</strong></td><td>IronClaw is the mandatory security boundary for any external network call — every surface that touches BYOK or external MCPs goes through it</td></tr>
+    <tr><td><strong>Hermes ↔ Context Graph</strong></td><td>Hermes feeds relationship data (matter↔document↔agent-run↔review-decision) into the context graph for RAG enrichment</td></tr>
+    <tr><td><strong>All Surfaces ↔ Tailscale Mesh</strong></td><td>Cross-node communication for all surfaces runs over the private Tailscale/WireGuard mesh — no surface traffic leaves the encrypted tunnel</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>表层集成映射</h3>
+  <table>
+    <tr><td><strong>OpenSpace ↔ Hermes</strong></td><td>团队看板从 Hermes 记忆存储中拉取事项上下文和 Agent 运行历史</td></tr>
+    <tr><td><strong>Open WebUI ↔ IronClaw</strong></td><td>所有 BYOK API 调用通过 IronClaw 进行密钥解密和审计日志记录</td></tr>
+    <tr><td><strong>Warp ADE ↔ OpenCode</strong></td><td>OpenCode 中编写的 Prompt 变更在 Warp ADE 中测试和验证后再部署</td></tr>
+    <tr><td><strong>IronClaw ↔ 所有表层</strong></td><td>IronClaw 是所有外部网络调用的强制性安全边界 — 每个涉及 BYOK 或外部 MCP 的表层都经过它</td></tr>
+    <tr><td><strong>Hermes ↔ 上下文图谱</strong></td><td>Hermes 将关系数据（事项↔文档↔Agent 运行↔审核决定）输入上下文图谱以丰富 RAG</td></tr>
+    <tr><td><strong>所有表层 ↔ Tailscale Mesh</strong></td><td>所有表层的跨节点通信通过私有 Tailscale/WireGuard Mesh 运行 — 表层流量不离开加密隧道</td></tr>
+  </table>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 5: PREREQUISITES CHECKLIST -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">✅</span> Prerequisites Checklist</h2>
+<p class="sec-subtitle">What must be in place before each phase begins. Joint tracking for Pacgate and Cubecloud.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">✅</span> 前置条件检查清单</h2>
+<p class="sec-subtitle">各阶段启动前必须就绪的事项。Pacgate 与 Cubecloud 联合跟踪。</p>
+</div>
+
+<div class="card-grid">
+  <!-- Hardware T-point prerequisites -->
+  <div class="card">
+    <div class="en"><h3>Hardware T-Point Prerequisites</h3></div>
+    <div class="zh"><h3>硬件 T 点前置条件</h3></div>
+    <ul class="checklist">
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Client confirms SKU selections in writing</span>
+          <span class="zh">甲方书面确认 SKU 选购项</span>
+          <span class="owner-tag owner-pacgate en">Pacgate</span><span class="owner-tag owner-pacgate zh">百宸</span>
+        </span>
+      </li>
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Site power / network / temperature / humidity / rack conditions meet Cubecloud written requirements</span>
+          <span class="zh">现场电源 / 网络 / 温湿度 / 机柜条件符合乙方书面要求</span>
+          <span class="owner-tag owner-pacgate en">Pacgate</span><span class="owner-tag owner-pacgate zh">百宸</span>
+        </span>
+      </li>
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Cubecloud remote access channel opened</span>
+          <span class="zh">乙方远程访问通道开通</span>
+          <span class="owner-tag owner-joint en">Joint</span><span class="owner-tag owner-joint zh">联合</span>
+        </span>
+      </li>
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Deposit payment received (¥91,760)</span>
+          <span class="zh">首期款项到账（¥91,760）</span>
+          <span class="owner-tag owner-pacgate en">Pacgate</span><span class="owner-tag owner-pacgate zh">百宸</span>
+        </span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Service T-point prerequisites -->
+  <div class="card">
+    <div class="en"><h3>Service T-Point Prerequisites</h3></div>
+    <div class="zh"><h3>服务 T 点前置条件</h3></div>
+    <ul class="checklist">
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Service deposit received (¥24,000)</span>
+          <span class="zh">服务首款到账（¥24,000）</span>
+          <span class="owner-tag owner-pacgate en">Pacgate</span><span class="owner-tag owner-pacgate zh">百宸</span>
+        </span>
+      </li>
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Hardware acceptance completed (HWOS-P01)</span>
+          <span class="zh">对应硬件已通过 HWOS 验收</span>
+          <span class="owner-tag owner-joint en">Joint</span><span class="owner-tag owner-joint zh">联合</span>
+        </span>
+      </li>
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Basic system environment ready (network / accounts / permissions)</span>
+          <span class="zh">基础系统环境具备（网络 / 账号 / 权限）</span>
+          <span class="owner-tag owner-cubecloud en">Cubecloud</span><span class="owner-tag owner-cubecloud zh">智方云</span>
+        </span>
+      </li>
+      <li>
+        <span class="check-ico check-wait">○</span>
+        <span>
+          <span class="en">Client provides: scope description, playbook drafts, template samples, matter folder structure</span>
+          <span class="zh">甲方提供：业务范围说明、playbook 草稿、模板样本、matter 文件夹结构</span>
+          <span class="owner-tag owner-pacgate en">Pacgate</span><span class="owner-tag owner-pacgate zh">百宸</span>
+        </span>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 5b: CLIENT ONBOARDING INFORMATION CHECKLIST -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">📋</span> Client Onboarding Information Checklist</h2>
+<p class="sec-subtitle">Accounts, credentials, infrastructure, and integration items Pacgate must provide or confirm before Cubecloud can proceed with deployment and BYOK setup. Items marked with * are Cubecloud-recommended additions.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">📋</span> 甲方入驻信息清单</h2>
+<p class="sec-subtitle">百宸需在 Cubecloud 部署及 BYOK 配置前提供或确认的账户、凭证、基础设施及集成项。标注 * 的为智方云建议补充项。</p>
+</div>
+
+<div class="card">
+  <div class="en">
+  <h3>Accounts &amp; Identity</h3>
+  <table>
+    <thead><tr><th>Item</th><th>Purpose</th><th>Owner</th><th>Status</th><th>Pacgate Response</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Public Email Account</strong></td>
+      <td>Team notifications, BYOK provider registration, Cloudflare admin, Docker Hub, GitHub recovery. Prefer Outlook — accessible from overseas and domestically in China.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>GitHub Account</strong></td>
+      <td>BYOK OAuth verifications, git/PR store for future application codebase, CI/CD integration. Cubecloud can provide registration guidance.</td>
+      <td><span class="owner-tag owner-joint">Joint</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Valid Domain Name</strong></td>
+      <td>Pacgate Law domain for Cloudflare Zero Trust network integration, SSL/TLS, WAF, and secure tunnel endpoints.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Cloudflare Account *</strong></td>
+      <td>Zero Trust Network Access, DNS management, WAF rules, tunnel endpoints for secure remote access to on-prem nodes.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Admin Contact List *</strong></td>
+      <td>Named contacts for: hardware receipt, network admin, legal workflow owner, IT security. Minimum 2 contacts per role.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="zh">
+  <h3>账户与身份</h3>
+  <table>
+    <thead><tr><th>项目</th><th>用途</th><th>负责方</th><th>状态</th><th>百宸回复</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>公共邮箱账户</strong></td>
+      <td>团队通知、BYOK 提供商注册、Cloudflare 管理、Docker Hub、GitHub 恢复。建议 Outlook — 境内外均可访问。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>GitHub 账户</strong></td>
+      <td>BYOK OAuth 验证、未来应用代码库 git/PR 存储、CI/CD 集成。智方云可提供注册指导。</td>
+      <td><span class="owner-tag owner-joint">联合</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>有效域名</strong></td>
+      <td>Pacgate Law 域名，用于 Cloudflare Zero Trust 网络集成、SSL/TLS、WAF 及安全隧道端点。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Cloudflare 账户 *</strong></td>
+      <td>Zero Trust 网络访问、DNS 管理、WAF 规则、本地节点安全远程访问隧道端点。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">建议开设</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>管理员联系人清单 *</strong></td>
+      <td>指定联系人：硬件接收、网络管理、法律工作流负责人、IT 安全。每角色至少 2 人。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">建议提供</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.2rem">
+  <div class="en">
+  <h3>Networking &amp; Infrastructure</h3>
+  <table>
+    <thead><tr><th>Item</th><th>Purpose</th><th>Owner</th><th>Status</th><th>Pacgate Response</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Tailscale VPS Networking</strong></td>
+      <td>Secure node-to-node mesh VPN between Device A and Device B, plus Cubecloud remote support access. Tailscale coordination or equivalent WireGuard-based mesh.</td>
+      <td><span class="owner-tag owner-cubecloud">Cubecloud</span></td>
+      <td><span class="st-pending">PLANNED</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Site Network Details</strong></td>
+      <td>Internal IP ranges, firewall rules, proxy requirements, NAT/gateway config. Needed for hardware T-point site readiness check.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Static IP or DDNS *</strong></td>
+      <td>If Pacgate office lacks static public IP, a DDNS provider (or Cloudflare Tunnel) is needed for stable remote access endpoints.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Backup Target *</strong></td>
+      <td>Local NAS, external drive, or cloud bucket for PostgreSQL dumps, model parameters, config backups, and matter data. Define retention policy.</td>
+      <td><span class="owner-tag owner-joint">Joint</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="zh">
+  <h3>网络与基础设施</h3>
+  <table>
+    <thead><tr><th>项目</th><th>用途</th><th>负责方</th><th>状态</th><th>百宸回复</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Tailscale VPS 组网</strong></td>
+      <td>设备 A 与设备 B 之间的安全节点对节点 Mesh VPN，以及智方云远程支持访问。Tailscale 协调或等效 WireGuard Mesh。</td>
+      <td><span class="owner-tag owner-cubecloud">智方云</span></td>
+      <td><span class="st-pending">计划中</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>现场网络详情</strong></td>
+      <td>内部 IP 范围、防火墙规则、代理需求、NAT/网关配置。硬件 T 点现场就绪检查所需。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>静态 IP 或 DDNS *</strong></td>
+      <td>若百宸办公室无固定公网 IP，需 DDNS 提供商（或 Cloudflare Tunnel）以稳定远程访问端点。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">建议确认</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>备份目标 *</strong></td>
+      <td>本地 NAS、外置硬盘或云端 Bucket，用于 PostgreSQL 转储、模型参数、配置备份及事项数据。定义保留策略。</td>
+      <td><span class="owner-tag owner-joint">联合</span></td>
+      <td><span class="st-pending">建议确认</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.2rem">
+  <div class="en">
+  <h3>Model Runtimes &amp; Registries</h3>
+  <table>
+    <thead><tr><th>Item</th><th>Purpose</th><th>Owner</th><th>Status</th><th>Pacgate Response</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Ollama (Local)</strong></td>
+      <td>Primary local LLM runtime. Three-tier model roster: Nemotron3:33b, Qwen3.6:27b, Qwen3.5:9b. Cubecloud pre-deploys as part of standard AI layer.</td>
+      <td><span class="owner-tag owner-cubecloud">Cubecloud</span></td>
+      <td><span class="st-active">DESIGNED</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>LM Studio (Optional)</strong></td>
+      <td>Alternative local model runner for experimentation, model comparison, and non-Ollama model formats. Useful for Pacgate-led model evaluation.</td>
+      <td><span class="owner-tag owner-cubecloud">Cubecloud</span></td>
+      <td><span class="st-pending">OPTIONAL</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Docker.io Account</strong></td>
+      <td>Container registry access for pulling Cubecloud service images, agent runtimes, and future CI/CD pipeline artifacts. Rate limits may apply without auth.</td>
+      <td><span class="owner-tag owner-joint">Joint</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>GHCR Access *</strong></td>
+      <td>GitHub Container Registry as secondary pull-through cache or private image store. Reduces Docker Hub rate-limit exposure.</td>
+      <td><span class="owner-tag owner-cubecloud">Cubecloud</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="zh">
+  <h3>模型运行时与注册表</h3>
+  <table>
+    <thead><tr><th>项目</th><th>用途</th><th>负责方</th><th>状态</th><th>百宸回复</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Ollama（本地）</strong></td>
+      <td>主要本地 LLM 运行时。三级模型阵容：Nemotron3:33b、Qwen3.6:27b、Qwen3.5:9b。智方云作为标准 AI 层预部署。</td>
+      <td><span class="owner-tag owner-cubecloud">智方云</span></td>
+      <td><span class="st-active">已设计</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>LM Studio（可选）</strong></td>
+      <td>替代本地模型运行器，用于实验、模型对比及非 Ollama 模型格式。适合百宸主导的模型评估。</td>
+      <td><span class="owner-tag owner-cubecloud">智方云</span></td>
+      <td><span class="st-pending">可选</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Docker.io 账户</strong></td>
+      <td>容器注册表访问，用于拉取智方云服务镜像、Agent 运行时及未来 CI/CD 管道制品。无认证可能触发速率限制。</td>
+      <td><span class="owner-tag owner-joint">联合</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>GHCR 访问 *</strong></td>
+      <td>GitHub Container Registry 作为辅助拉取缓存或私有镜像存储。降低 Docker Hub 速率限制风险。</td>
+      <td><span class="owner-tag owner-cubecloud">智方云</span></td>
+      <td><span class="st-pending">建议配置</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.2rem">
+  <div class="en">
+  <h3>BYOK &amp; API Credentials</h3>
+  <table>
+    <thead><tr><th>Item</th><th>Purpose</th><th>Owner</th><th>Status</th><th>Pacgate Response</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Anthropic API Key</strong></td>
+      <td>Claude Sonnet 4.6 for System A (Claude for Legal). Cloud-side API dependency — acknowledged in clarification. Key stays in Pacgate-controlled env.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>OpenAI API Key</strong></td>
+      <td>GPT-5.4 for fallback or comparison workflows. Optional if Anthropic + local Ollama cover primary needs.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">OPTIONAL</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>DeepSeek API Key</strong></td>
+      <td>DeepSeek-V4 for China-hosted alternative inference. Lower latency for domestic legal scenarios.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">OPTIONAL</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Qwen/DashScope API Key</strong></td>
+      <td>Qwen3.6 / qwen3-max via Alibaba DashScope. Domestic cloud inference with strong Chinese legal text performance.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">OPTIONAL</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>MiniMax API Key</strong></td>
+      <td>MiniMax-2.7 for additional domestic inference option. Evaluate relevance to legal workflows before provisioning.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">OPTIONAL</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="zh">
+  <h3>BYOK 与 API 凭证</h3>
+  <table>
+    <thead><tr><th>项目</th><th>用途</th><th>负责方</th><th>状态</th><th>百宸回复</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Anthropic API Key</strong></td>
+      <td>Claude Sonnet 4.6 用于系统 A（Claude for Legal）。云端 API 依赖 — 已在澄清中确认。密钥保留在百宸控制环境中。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>OpenAI API Key</strong></td>
+      <td>GPT-5.4 用于降级或对比工作流。若 Anthropic + 本地 Ollama 覆盖主要需求则为可选。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">可选</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>DeepSeek API Key</strong></td>
+      <td>DeepSeek-V4 用于国内托管替代推理。国内法律场景延迟更低。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">可选</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Qwen/DashScope API Key</strong></td>
+      <td>Qwen3.6 / qwen3-max 通过阿里云 DashScope。国内云端推理，中文法律文本性能优异。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">可选</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>MiniMax API Key</strong></td>
+      <td>MiniMax-2.7 用于额外国内推理选项。开通前评估与法律工作流的相关性。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">可选</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.2rem">
+  <div class="en">
+  <h3>Legal Data, MCPs &amp; Cloud IAM</h3>
+  <table>
+    <thead><tr><th>Item</th><th>Purpose</th><th>Owner</th><th>Status</th><th>Pacgate Response</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>Domestic Legal Services MCPs</strong></td>
+      <td>China-specific legal data sources: PKULaw (北大法宝), China Judgments Online (中国裁判文书网), local regulatory databases. Client decides which to adapt; Cubecloud integrates via MCP connectors.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">AWAITING DECISION</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Current Cloud IAM / Credentials</strong></td>
+      <td>Existing cloud provider accounts (Alibaba Cloud, AWS, Azure, etc.), IAM roles, and service credentials. Needed to assess integration surface and avoid privilege conflicts.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">AWAITING</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Existing Legal Software Inventory *</strong></td>
+      <td>List of current legal tools, document management systems, billing platforms, and research subscriptions. Identifies integration touchpoints and migration paths.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Initial Document Corpus *</strong></td>
+      <td>Sample contracts, opinion letters, memos, and regulatory filings for RAG seeding and playbook drafting. Minimum 50–100 documents recommended for meaningful starter retrieval.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Practice Area Priority List *</strong></td>
+      <td>Ranked list of practice areas to activate first (e.g., Data Compliance, M&A, IP, Antitrust). Drives playbook sequencing and model fine-tuning priority.</td>
+      <td><span class="owner-tag owner-pacgate">Pacgate</span></td>
+      <td><span class="st-pending">RECOMMENDED</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="zh">
+  <h3>法律数据、MCP 与云端 IAM</h3>
+  <table>
+    <thead><tr><th>项目</th><th>用途</th><th>负责方</th><th>状态</th><th>百宸回复</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>国内法律服务 MCP</strong></td>
+      <td>中国特有法律数据源：北大法宝、中国裁判文书网、地方监管数据库。甲方决定适配哪些；智方云通过 MCP 连接器集成。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">待甲方决定</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>现有云端 IAM / 凭证</strong></td>
+      <td>现有云提供商账户（阿里云、AWS、Azure 等）、IAM 角色及服务凭证。用于评估集成面及避免权限冲突。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">待提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>现有法律软件清单 *</strong></td>
+      <td>当前法律工具、文档管理系统、计费平台及研究订阅列表。识别集成触点和迁移路径。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">建议提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>初始文档语料库 *</strong></td>
+      <td>合同样本、法律意见书、备忘录及监管申报文件，用于 RAG 播种和 playbook 起草。建议至少 50–100 份文档以实现有意义的入门检索。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">建议提供</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>业务领域优先级清单 *</strong></td>
+      <td>按优先级排列的首批激活业务领域（如数据合规、并购、知识产权、反垄断）。驱动 playbook 排序及模型微调优先级。</td>
+      <td><span class="owner-tag owner-pacgate">百宸</span></td>
+      <td><span class="st-pending">建议提供</span></td>
+      <td></td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 6: INTEGRATION REGISTRY -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🔌</span> Integration Registry</h2>
+<p class="sec-subtitle">Open slots for MCPs, open-source repos, tools, databases, and skills. Status: planned / evaluating / integrated.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🔌</span> 集成注册表</h2>
+<p class="sec-subtitle">MCP、开源仓库、工具、数据库、技能的开放集成槽位。状态：计划中 / 评估中 / 已集成。</p>
+</div>
+
+<div class="card">
+  <div class="en">
+  <div class="int-row">
+    <span class="int-name">External Legal DB MCP</span>
+    <span class="int-type">MCP</span>
+    <span class="int-desc">Authority retrieval for statutes, regulations, case law — keeps primary law outside fragile one-off import</span>
+    <span class="st-pending">PLANNED</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pgvector</span>
+    <span class="int-type">DB Extension</span>
+    <span class="int-desc">PostgreSQL vector index for semantic search. Cosine similarity on nomic-embed-text embeddings.</span>
+    <span class="st-active">DESIGNED</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">tsvector FTS</span>
+    <span class="int-type">DB Feature</span>
+    <span class="int-desc">PostgreSQL full-text search layer. RRF fusion re-ranking with vector results.</span>
+    <span class="st-pending">PLANNED</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">Ollama (Local)</span>
+    <span class="int-type">Model Runtime</span>
+    <span class="int-desc">Three-tier local LLM: Nemotron3:33b / Qwen3.6:27b / Qwen3.5:9b. Fallback chain Main→Mid→Low.</span>
+    <span class="st-active">DESIGNED</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">BYOK Providers</span>
+    <span class="int-type">API Gateway</span>
+    <span class="int-desc">Anthropic (Claude Sonnet 4.6), OpenAI (GPT-5.4), DeepSeek (V4), Qwen (Qwen3.6/max), MiniMax (2.7)</span>
+    <span class="st-active">DESIGNED</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">Feishu Connector</span>
+    <span class="int-type">Integration</span>
+    <span class="int-desc">Optional extension — not Phase 1 baseline. Separate scoping after connector/billing method defined.</span>
+    <span class="st-pending">OPTIONAL</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">WeChat / Email Intake</span>
+    <span class="int-type">Integration</span>
+    <span class="int-desc">Optional next-layer extensions. Deferred beyond Phase 1 pilot surface.</span>
+    <span class="st-pending">DEFERRED</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-doc-validator (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">Browser-side document validation. Stub — no src/ yet.</span>
+    <span class="st-pending">STUB</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-rule-engine (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">Browser-side regex/rule execution. Stub — no src/ yet.</span>
+    <span class="st-pending">STUB</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-citation-check (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">Citation format validation in browser. Stub — no src/ yet.</span>
+    <span class="st-pending">STUB</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-clause-parser (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">Clause detection &amp; extraction in browser. Stub — no src/ yet.</span>
+    <span class="st-pending">STUB</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">Open-source Agent Frameworks</span>
+    <span class="int-type">OSS</span>
+    <span class="int-desc">Room for integrating community agent orchestration, tool-use frameworks, or MCP servers as they mature.</span>
+    <span class="st-pending">EVALUATING</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">Additional MCP Tools</span>
+    <span class="int-type">MCP</span>
+    <span class="int-desc">Open slot for document processing, research, compliance, or workflow MCP servers discovered during Phase 1.</span>
+    <span class="st-pending">OPEN</span>
+  </div>
+  </div>
+
+  <div class="zh">
+  <div class="int-row">
+    <span class="int-name">外部法律数据库 MCP</span>
+    <span class="int-type">MCP</span>
+    <span class="int-desc">法规、案例等权威检索 — 将一手法律来源保持在脆弱的单次导入之外</span>
+    <span class="st-pending">计划中</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pgvector</span>
+    <span class="int-type">数据库扩展</span>
+    <span class="int-desc">PostgreSQL 向量索引，用于语义搜索。基于 nomic-embed-text 嵌入的余弦相似度。</span>
+    <span class="st-active">已设计</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">tsvector FTS</span>
+    <span class="int-type">数据库功能</span>
+    <span class="int-desc">PostgreSQL 全文搜索层。与向量结果进行 RRF 融合重排序。</span>
+    <span class="st-pending">计划中</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">Ollama（本地）</span>
+    <span class="int-type">模型运行时</span>
+    <span class="int-desc">三级本地 LLM：Nemotron3:33b / Qwen3.6:27b / Qwen3.5:9b。降级链 Main→Mid→Low。</span>
+    <span class="st-active">已设计</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">BYOK 提供商</span>
+    <span class="int-type">API 网关</span>
+    <span class="int-desc">Anthropic（Claude Sonnet 4.6）、OpenAI（GPT-5.4）、DeepSeek（V4）、Qwen（Qwen3.6/max）、MiniMax（2.7）</span>
+    <span class="st-active">已设计</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">飞书连接器</span>
+    <span class="int-type">集成</span>
+    <span class="int-desc">可选扩展 — 非 Phase 1 基线。待连接器/计费方式确定后单独划定范围。</span>
+    <span class="st-pending">可选</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">微信 / 邮件入口</span>
+    <span class="int-type">集成</span>
+    <span class="int-desc">可选下一层扩展。推迟至 Phase 1 试点界面之后。</span>
+    <span class="st-pending">已推迟</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-doc-validator (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">浏览器端文档验证。存根 — 尚无 src/。</span>
+    <span class="st-pending">存根</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-rule-engine (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">浏览器端正则/规则执行。存根 — 尚无 src/。</span>
+    <span class="st-pending">存根</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-citation-check (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">浏览器端引文格式验证。存根 — 尚无 src/。</span>
+    <span class="st-pending">存根</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">pacgate-clause-parser (WASM)</span>
+    <span class="int-type">WASM Crate</span>
+    <span class="int-desc">浏览器端条款检测与提取。存根 — 尚无 src/。</span>
+    <span class="st-pending">存根</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">开源 Agent 框架</span>
+    <span class="int-type">OSS</span>
+    <span class="int-desc">为社区 Agent 编排、工具使用框架或 MCP 服务器的成熟集成预留空间。</span>
+    <span class="st-pending">评估中</span>
+  </div>
+  <div class="int-row">
+    <span class="int-name">其他 MCP 工具</span>
+    <span class="int-type">MCP</span>
+    <span class="int-desc">为 Phase 1 期间发现的文档处理、研究、合规或工作流 MCP 服务器预留的开放槽位。</span>
+    <span class="st-pending">开放</span>
+  </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 7: TIMELINE OVERVIEW -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">📅</span> Timeline Overview</h2>
+<p class="sec-subtitle">Full Phase 1 timeline from contract signing through annual renewal. Based on client-provided consolidated contract schedule.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">📅</span> 时间线总览</h2>
+<p class="sec-subtitle">从签约到年度续费的完整 Phase 1 时间线。基于甲方提供的三份合同综合版时间表。</p>
+</div>
+
+<div class="card">
+  <div class="en">
+  <div class="tl-phase active">
+    <div class="tl-label">D + 0 — Contract Signing Day</div>
+    <div class="tl-detail">Three contracts signed simultaneously: HWOS-P01 + LEGALAGENT-P01 + ADVISORY-P01. Advisory 12-month validity begins. <span class="st-active">DONE · 2026-06-16</span></div>
+  </div>
+  <div class="tl-phase active">
+    <div class="tl-label">D + 5 WD — Deposit Payment Deadline</div>
+    <div class="tl-detail">Combined first installment: ¥91,760 (HW ¥47,760 + Service ¥24,000 + Advisory ¥20,000). Late > 15 days → 0.05%/day penalty.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T-hardware — Hardware Baseline Start</div>
+    <div class="tl-detail">Three conditions: ① SKU confirmed in writing ② Site meets requirements ③ Remote access opened. 20-WD delivery countdown starts. Advisory: 5–8h for env prep, MCP planning.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 20 WD — Hardware Delivery Complete</div>
+    <div class="tl-detail">Hardware arrival · AI layer deploy · AgentOS enabled · System debug · Basic training (3 days on-site included). Written acceptance notice issued, 7-WD window opens.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 27 WD — Hardware Acceptance Window Closes</div>
+    <div class="tl-detail">7 WD to raise written objections; silence = acceptance. Milestone 1 payment (¥23,880) due within 5 WD of acceptance.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T-service — Service Baseline Start</div>
+    <div class="tl-detail">Four conditions: ① Service deposit received ② Hardware accepted ③ System env ready ④ Client provides materials. 30-WD countdown starts. Advisory: 12–18h for workflow design, prompt planning.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 30 WD — Agent Adaptation Delivery Complete</div>
+    <div class="tl-detail">Core deliverables: prompt drafts · workflow templates · Agent role config · review gate definitions · multi-agent orchestration. Copyright assigned to client. Competitive isolation permanent.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 37 WD — Service Acceptance Window Closes</div>
+    <div class="tl-detail">7 WD to raise objections; silence = acceptance. Milestone 2 payment (¥12,000) due within 5 WD.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">Final Acceptance + 5 WD — Final Payment</div>
+    <div class="tl-detail">Remaining balances: HW ¥7,960 + Service ¥4,000 = ¥11,960. Cumulative total: ¥139,600.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">Post-Delivery — Support &amp; Warranty</div>
+    <div class="tl-detail">90-day remote support · 1-year hardware warranty · 30-day data return post-termination. Advisory: 15–20h for KB import, system optimization, tuning.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">Signing + 12 Months — Advisory Expiry Deadline</div>
+    <div class="tl-detail">40h prepaid package expires. Unused hours forfeited. Overage: ¥500/h. Recommend review 2 months prior.</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">Final Acceptance + 12 Months — Annual Renewal</div>
+    <div class="tl-detail">¥4,400/year (ex-tax) for Cubecloud standard AI layer + AgentOS surface license renewal (2 sets). Includes software updates + basic remote ops support.</div>
+  </div>
+  </div>
+
+  <div class="zh">
+  <div class="tl-phase active">
+    <div class="tl-label">D + 0 — 签约日</div>
+    <div class="tl-detail">三份文件同时签署生效：HWOS-P01 + LEGALAGENT-P01 + ADVISORY-P01。顾问订单 12 个月有效期从今日起算。<span class="st-active">已完成 · 2026-06-16</span></div>
+  </div>
+  <div class="tl-phase active">
+    <div class="tl-label">D + 5 工作日 — 首期全额支付截止</div>
+    <div class="tl-detail">三份合同首期款项合并：¥91,760（硬件 ¥47,760 + 服务 ¥24,000 + 顾问 ¥20,000）。逾期超 15 天 → 0.05%/天罚息。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T 硬 — 硬件开工基准日</div>
+    <div class="tl-detail">三项条件：① 甲方书面确认 SKU ② 现场条件符合要求 ③ 远程访问通道开通。20 工作日交付倒计时启动。顾问：5–8h 环境准备、MCP 规划。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 20 工作日 — 硬件全部交付完成</div>
+    <div class="tl-detail">硬件到货 · AI 层部署 · AgentOS 启用 · 系统调试 · 基础培训（3 工作日现场安装已含）。乙方发出书面验收通知，7 工作日窗口期开始。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 27 工作日 — 硬件验收窗口关闭</div>
+    <div class="tl-detail">7 工作日内提出书面异议；逾期未提 = 视为验收通过。里程碑一付款（¥23,880）验收后 5 工作日内支付。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T 服 — 服务开工基准日</div>
+    <div class="tl-detail">四项条件：① 服务首款已到账 ② 硬件已通过验收 ③ 系统环境就绪 ④ 甲方提供必要资料。30 工作日倒计时启动。顾问：12–18h 工作流设计、Prompt 规划。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 30 工作日 — Agent 基础适配与交付完成</div>
+    <div class="tl-detail">核心交付物：Prompt 草稿 · 工作流模板 · Agent 角色配置 · 审核节点定义 · 多 Agent 编排逻辑。著作权归甲方所有；竞争隔离永久限制。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">T + 37 工作日 — 服务验收窗口关闭</div>
+    <div class="tl-detail">7 工作日内提出书面异议；逾期 = 视为通过。里程碑二付款（¥12,000）验收后 5 工作日内支付。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">最终验收 + 5 工作日 — Phase 1 全部尾款结清</div>
+    <div class="tl-detail">硬件尾款 ¥7,960 + 服务尾款 ¥4,000 = ¥11,960。累计 ¥139,600。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">交付后 — 售后支持与保修期</div>
+    <div class="tl-detail">90 天远程支持 · 1 年硬件标准售后保修 · 终止后 30 天归还全部数据。顾问：15–20h 知识库导入、Phase 2 评估、系统调优。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">签署后 12 个月 — 顾问时数到期警戒线</div>
+    <div class="tl-detail">40 小时预付包有效期届满，未用完自动失效。超额 ¥500/小时。建议提前 2 个月盘点余量。</div>
+  </div>
+  <div class="tl-phase">
+    <div class="tl-label">终验后满 12 个月 — 年度许可续费</div>
+    <div class="tl-detail">¥4,400/年（不含税）Cubecloud 标准 AI 层 + AgentOS 表层许可续期（2 套）。含软件更新与基础远程运维支持。</div>
+  </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- KEY PROTECTIONS SUMMARY -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="en">
+<h2 class="sec-title"><span class="ico">🛡️</span> Key Client Protections</h2>
+<p class="sec-subtitle">Contractual safeguards across all three agreements (HWOS-P01, LEGALAGENT-P01, ADVISORY-P01). Organized by category: payment, IP, data, and operational protections.</p>
+</div>
+<div class="zh">
+<h2 class="sec-title"><span class="ico">🛡️</span> 甲方关键保护条款</h2>
+<p class="sec-subtitle">三份合同（HWOS-P01、LEGALAGENT-P01、ADVISORY-P01）中的合同保障条款。按类别组织：付款、知识产权、数据及运营保护。</p>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Payment &amp; Penalty Protections</h3>
+      <p class="card-meta">Financial safeguards across all three contracts.</p>
+    </div>
+    <div class="zh">
+      <h3>付款与罚则保护</h3>
+      <p class="card-meta">三份合同中的财务保障条款。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Client Payment Overdue &gt; 15 Days</strong></td>
+        <td class="zh"><strong>甲方付款逾期 &gt; 15 天</strong></td>
+        <td class="en">Cubecloud may suspend work. Penalty: 0.05% per day on unpaid amount. Applies to both main contracts (HWOS + LEGALAGENT).</td>
+        <td class="zh">乙方可暂停工作。罚息：按未付额 0.05%/天计。适用于两份主合同（HWOS + LEGALAGENT）。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Cubecloud Delivery Delay &gt; 45 WD</strong></td>
+        <td class="zh"><strong>乙方交付延迟 &gt; 45 工作日</strong></td>
+        <td class="en">Client may terminate contract. Full refund within 15 working days. Includes 15-day cure period before termination right activates.</td>
+        <td class="zh">甲方可解除合同。15 工作日内全额退款。含 15 天治愈期，之后终止权方可行使。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Advisory Early Termination</strong></td>
+        <td class="zh"><strong>顾问订单提前终止</strong></td>
+        <td class="en">Unused prepaid hours refunded pro-rata. Exclusive to ADVISORY-P01 — main contracts do not carry this clause.</td>
+        <td class="zh">未用预付小时按比例退款。ADVISORY-P01 专属条款 — 主合同无此条款。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Advisory Expiry</strong></td>
+        <td class="zh"><strong>顾问时数到期</strong></td>
+        <td class="en">40h prepaid package expires 12 months from signing. Unused hours forfeited, no refund. Overage: ¥500/h billed monthly.</td>
+        <td class="zh">40 小时预付包签署后 12 个月到期。未用完小时自动失效，不予退款。超额：¥500/小时月结。</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>IP &amp; Competitive Isolation</h3>
+      <p class="card-meta">Intellectual property and market protection.</p>
+    </div>
+    <div class="zh">
+      <h3>知识产权与竞争隔离</h3>
+      <p class="card-meta">知识产权与市场保护条款。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Copyright Assignment</strong></td>
+        <td class="zh"><strong>著作权归属</strong></td>
+        <td class="en">All property rights in Phase 1 deliverables (prompts, workflows, agent configs, playbooks, templates) assigned to Pacgate. Covers both economic and moral rights under Chinese Copyright Law.</td>
+        <td class="zh">Phase 1 交付成果（Prompt、工作流、Agent 配置、Playbook、模板）全部财产性权利归甲方所有。涵盖中国著作权法下的经济权利与人身权利。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Competitive Isolation — Permanent</strong></td>
+        <td class="zh"><strong>竞争隔离 — 永久限制</strong></td>
+        <td class="en">Cubecloud may not provide, license, or transfer core deliverables to any third party in legal services, legal technology, or compliance domains. Restriction survives contract termination — permanent and irrevocable.</td>
+        <td class="zh">乙方不得向法律服务、法律科技或合规领域的任何第三方提供、许可或转让核心交付成果。限制不因合同终止而失效 — 永久且不可撤销。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Scope of Protected Assets</strong></td>
+        <td class="zh"><strong>受保护资产范围</strong></td>
+        <td class="en">Covers: prompt drafts, workflow templates, agent role configurations, review gate definitions, multi-agent orchestration logic, playbook adaptations, and Pacgate-specific tailoring. Does not restrict Cubecloud's general AI platform or OS surfaces.</td>
+        <td class="zh">涵盖：Prompt 草稿、工作流模板、Agent 角色配置、审核节点定义、多 Agent 编排逻辑、Playbook 适配及 Pacgate 专属定制。不限制智方云通用 AI 平台或 OS 表层。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="en">
+      <h3>Data &amp; Termination Protections</h3>
+      <p class="card-meta">Data sovereignty and exit rights.</p>
+    </div>
+    <div class="zh">
+      <h3>数据与终止保护</h3>
+      <p class="card-meta">数据主权与退出权利。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Post-Termination Data Return</strong></td>
+        <td class="zh"><strong>合同终止后数据归还</strong></td>
+        <td class="en">Within 30 days of termination: Cubecloud must return or permanently delete all client data — configuration files, logs, model parameters, prompt traces, indexes, authority registries, and matter folders. Pacgate-owned assets must remain exportable and reusable beyond Phase 1.</td>
+        <td class="zh">终止后 30 天内：乙方须归还或永久删除甲方全部数据 — 配置文件、日志、模型参数、Prompt 追踪、索引、权威注册表及事项文件夹。甲方自有资产须保持可导出、可在 Phase 1 之后复用。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Cubecloud Cessation Notice</strong></td>
+        <td class="zh"><strong>乙方停止运营通知</strong></td>
+        <td class="en">If Cubecloud expects to cease operations: 30-day advance written notice to Pacgate. Triggers data return and transition support obligations.</td>
+        <td class="zh">若乙方预期停止运营：提前 30 天书面通知甲方。触发数据归还及过渡支持义务。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Data Location Default</strong></td>
+        <td class="zh"><strong>数据存放默认规则</strong></td>
+        <td class="en">Source files and client materials remain on Pacgate-controlled local hardware by default. Any exception (cloud processing, external model invocation) must be explicit and narrow in scope.</td>
+        <td class="zh">源文件与客户材料默认保留在甲方控制的本地硬件上。任何例外（云端处理、外部模型调用）须明确且范围狭窄。</td>
+      </tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="en">
+      <h3>Operational Protections</h3>
+      <p class="card-meta">Service continuity and support safeguards.</p>
+    </div>
+    <div class="zh">
+      <h3>运营保护</h3>
+      <p class="card-meta">服务连续性与支持保障。</p>
+    </div>
+    <table>
+      <tr>
+        <td class="en"><strong>Third-Party AI Service Changes</strong></td>
+        <td class="zh"><strong>第三方 AI 服务变化</strong></td>
+        <td class="en">If a BYOK provider (Anthropic, OpenAI, etc.) deprecates or materially changes a model: Cubecloud must notify Pacgate within 5 working days and provide an alternative solution within 30 working days.</td>
+        <td class="zh">若 BYOK 提供商（Anthropic、OpenAI 等）弃用或实质性变更模型：乙方须在 5 工作日内通知甲方，并在 30 工作日内提供替代方案。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Remote Admin Access Governance</strong></td>
+        <td class="zh"><strong>远程管理访问治理</strong></td>
+        <td class="en">Remote access only for setup, support, and agreed troubleshooting. Scope, auditability, and shutoff mechanism documented. Pacgate retains admin rights over local systems.</td>
+        <td class="zh">远程访问仅限于设置、支持及约定的故障排除。范围、可审计性及关闭机制已记录。甲方保留本地系统管理员权限。</td>
+      </tr>
+      <tr>
+        <td class="en"><strong>Support &amp; Warranty Terms</strong></td>
+        <td class="zh"><strong>支持与保修条款</strong></td>
+        <td class="en">90-day remote support (HWOS Article 8). 1-year standard hardware warranty (Annex III). Advisory response: 3 working days, minimum billing unit 0.5h. OEM/vendor handles hardware warranty and replacement.</td>
+        <td class="zh">90 天远程支持（HWOS 第八条）。1 年标准硬件保修（附件三）。顾问响应：3 工作日，最小计费单位 0.5 小时。OEM/供应商负责硬件保修与更换。</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="en">
+<div class="card" style="margin-top:0.4rem">
+  <h3>Acceptance Hierarchy</h3>
+  <p class="card-meta">Four-layer acceptance structure. Each layer gates the next milestone payment.</p>
+  <table>
+    <tr><td><strong>1. Environment Layer</strong></td><td>Deployment complete and runnable in agreed local topology. Hardware acceptance triggers Milestone 1 payment (¥23,880).</td></tr>
+    <tr><td><strong>2. System 1 Layer</strong></td><td>Internal-lawyer scenario (Claude for Legal) demonstrated and reviewable. Part of service acceptance.</td></tr>
+    <tr><td><strong>3. System 2 Layer</strong></td><td>Prototype closed-loop scenario (Lavern) demonstrated with human review gate. Service acceptance triggers Milestone 2 payment (¥12,000).</td></tr>
+    <tr><td><strong>4. Handover Layer</strong></td><td>Documentation, credentials, operating guidance delivered. Final acceptance triggers remaining payment (¥11,960).</td></tr>
+  </table>
+</div>
+</div>
+
+<div class="zh">
+<div class="card" style="margin-top:0.4rem">
+  <h3>验收层级</h3>
+  <p class="card-meta">四层验收结构。每层通过后触发下一里程碑付款。</p>
+  <table>
+    <tr><td><strong>1. 环境层</strong></td><td>部署完成并在约定的本地拓扑中可运行。硬件验收触发里程碑一付款（¥23,880）。</td></tr>
+    <tr><td><strong>2. 系统一层</strong></td><td>内部律师场景（Claude for Legal）已演示并可审核。服务验收的一部分。</td></tr>
+    <tr><td><strong>3. 系统二层</strong></td><td>原型闭环场景（Lavern）已演示，含人工审核节点。服务验收触发里程碑二付款（¥12,000）。</td></tr>
+    <tr><td><strong>4. 交接层</strong></td><td>文档、凭证、操作指南已交付。最终验收触发尾款（¥11,960）。</td></tr>
+  </table>
+</div>
+</div>
+
+</main>
+
+<footer>
+  <div class="en">
+    Pacgate AI · Phase 1 Progress Reportcard · Contract signed 2026-06-16<br>
+    Prepared by Cubecloud for joint Pacgate-Cubecloud tracking. Not a legal document.<br>
+    <a href="../index.html">← Back to Pacgate AI Index</a>
+  </div>
+  <div class="zh">
+    Pacgate AI · Phase 1 进度报告卡 · 合同签署日期 2026-06-16<br>
+    由智方云编制，供百宸-智方云联合跟踪使用。非法律文件。<br>
+    <a href="../index.html">← 返回 Pacgate AI 首页</a>
+  </div>
+</footer>
+
+<script>
+function setLang(lang) {
+  if (lang === 'zh') {
+    document.body.classList.add('zh-mode');
+    document.documentElement.lang = 'zh';
+    document.title = 'Pacgate AI - Phase 1 进度报告卡';
+    document.getElementById('btn-en').classList.remove('active');
+    document.getElementById('btn-zh').classList.add('active');
+  } else {
+    document.body.classList.remove('zh-mode');
+    document.documentElement.lang = 'en';
+    document.title = 'Pacgate AI - Phase 1 Progress Reportcard';
+    document.getElementById('btn-zh').classList.remove('active');
+    document.getElementById('btn-en').classList.add('active');
+  }
+}
+</script>
+
+</body>
+</html>

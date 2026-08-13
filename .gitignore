@@ -1,0 +1,27 @@
+# Environment
+.env
+.env.local
+__pycache__/
+*.pyc
+.venv/
+
+# Rust build artifacts
+pacgate-ai/target/
+pacgate-ai/**/target/
+**/*.rs.bk
+
+# Docker
+*.log
+
+# Temp files
+test-*.json
+warmup*.json
+graphify-ollama.log
+
+# Graphify output (regenerable)
+pacgate-ai/crates/graphify-out/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

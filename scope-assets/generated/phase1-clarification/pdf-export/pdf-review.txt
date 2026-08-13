@@ -1,0 +1,10 @@
+annex-a-en.pdf`tType3=false`tPattern=true`tSizeKB=699.1
+annex-a-zh.pdf`tType3=true`tPattern=true`tSizeKB=427.1
+annex-b-en.pdf`tType3=false`tPattern=true`tSizeKB=508.4
+annex-b-zh.pdf`tType3=true`tPattern=true`tSizeKB=390.7
+annex-c-en.pdf`tType3=false`tPattern=true`tSizeKB=597.7
+annex-c-zh.pdf`tType3=true`tPattern=true`tSizeKB=425
+annex-d-en.pdf`tType3=false`tPattern=true`tSizeKB=484
+annex-d-zh.pdf`tType3=true`tPattern=true`tSizeKB=375.8
+reply-en.pdf`tType3=false`tPattern=true`tSizeKB=618.1
+reply-zh.pdf`tType3=true`tPattern=true`tSizeKB=472.3

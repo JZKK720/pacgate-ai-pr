@@ -1,0 +1,18 @@
+[package]
+name    = "pacgate-llm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pacgate-core = { path = "../pacgate-core" }
+serde.workspace       = true
+serde_json.workspace  = true
+reqwest.workspace     = true
+tokio.workspace       = true
+futures.workspace     = true
+tokio-stream.workspace = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+tracing.workspace     = true
+async-trait.workspace = true
+bytes.workspace       = true

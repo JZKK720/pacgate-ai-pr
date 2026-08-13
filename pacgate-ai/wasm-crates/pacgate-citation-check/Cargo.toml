@@ -1,0 +1,19 @@
+[package]
+name    = "pacgate-citation-check"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen.workspace       = true
+serde.workspace              = true
+serde_json.workspace         = true
+serde-wasm-bindgen.workspace = true
+thiserror.workspace          = true
+regex.workspace              = true
+once_cell.workspace          = true
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

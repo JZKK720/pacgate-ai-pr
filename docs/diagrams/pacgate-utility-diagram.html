@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pacgate AI — Utility Diagram · 系统结构图</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --accent: #2563eb;
+    --accent2: #7c3aed;
+    --green: #059669;
+    --gold: #d97706;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --card: #1c2128;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Pro Display', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    padding: 40px 24px 80px;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 56px;
+  }
+  header .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent2);
+    margin-bottom: 12px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.1s forwards;
+  }
+  header h1 {
+    font-size: clamp(28px, 4vw, 44px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.2s forwards;
+  }
+  header h1 span { color: var(--accent2); }
+  header p { color: var(--muted); font-size: 15px; opacity: 0; animation: fadeUp 0.6s 0.3s forwards; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* — Architecture Stack — */
+  .stack {
+    max-width: 900px;
+    margin: 0 auto 64px;
+  }
+  .stack-layer {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 8px;
+    opacity: 0;
+    transform: translateX(-24px);
+    transition: box-shadow 0.2s;
+  }
+  .stack-layer:hover { box-shadow: 0 0 24px rgba(37,99,235,0.15); }
+  .stack-layer.animate {
+    animation: slideIn 0.5s forwards;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-24px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .layer-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    padding: 14px 10px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #fff;
+    min-width: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .layer-body {
+    padding: 16px 20px;
+    flex: 1;
+    background: var(--card);
+  }
+  .layer-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .crate-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .crate-chip {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    opacity: 0;
+    transform: scale(0.9);
+    transition: all 0.15s;
+  }
+  .crate-chip:hover { transform: scale(1.05); filter: brightness(1.2); }
+  .crate-chip.animate {
+    animation: chipIn 0.3s forwards;
+  }
+  @keyframes chipIn {
+    from { opacity: 0; transform: scale(0.85); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* Layer color themes */
+  .l-client  .layer-label { background: #1e3a8a; }
+  .l-client  .crate-chip  { border-color: #3b82f6; color: #93c5fd; }
+  .l-api     .layer-label { background: #312e81; }
+  .l-api     .crate-chip  { border-color: #8b5cf6; color: #c4b5fd; }
+  .l-domain  .layer-label { background: #064e3b; }
+  .l-domain  .crate-chip  { border-color: #059669; color: #6ee7b7; }
+  .l-wasm    .layer-label { background: #78350f; }
+  .l-wasm    .crate-chip  { border-color: #d97706; color: #fcd34d; }
+  .l-storage .layer-label { background: #1e1b4b; }
+  .l-storage .crate-chip  { border-color: #6366f1; color: #a5b4fc; }
+  .l-llm     .layer-label { background: #4c1d95; }
+  .l-llm     .crate-chip  { border-color: #a855f7; color: #d8b4fe; }
+  .l-os      .layer-label { background: #1f2937; }
+  .l-os      .crate-chip  { border-color: #6b7280; color: #d1d5db; }
+
+  /* — Data flow diagram — */
+  .flow-section {
+    max-width: 900px;
+    margin: 0 auto 64px;
+  }
+  .section-label {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+  .flow-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0;
+    opacity: 0;
+    animation: fadeUp 0.8s 1.5s forwards;
+  }
+  .flow-node {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-size: 12px;
+    text-align: center;
+    min-width: 110px;
+    transition: border-color 0.2s;
+  }
+  .flow-node:hover { border-color: var(--accent); }
+  .flow-node .fn-title { font-weight: 600; font-size: 12px; }
+  .flow-node .fn-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .flow-arrow {
+    font-size: 18px;
+    color: var(--accent);
+    padding: 0 6px;
+    animation: arrowPulse 2s ease-in-out infinite;
+  }
+  @keyframes arrowPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  /* — WASM Ironclaw isolation box — */
+  .ironclaw-box {
+    max-width: 900px;
+    margin: 0 auto 40px;
+    border: 2px dashed var(--gold);
+    border-radius: 18px;
+    padding: 24px;
+    opacity: 0;
+    animation: fadeUp 0.7s 1.8s forwards;
+  }
+  .ironclaw-box .ib-title {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ironclaw-box .ib-title::before,
+  .ironclaw-box .ib-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--gold);
+    opacity: 0.3;
+  }
+  .wasm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .wasm-card {
+    background: rgba(217,119,6,0.08);
+    border: 1px solid rgba(217,119,6,0.3);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .wasm-card .wc-name { font-size: 12px; font-weight: 600; font-family: monospace; color: #fcd34d; margin-bottom: 4px; }
+  .wasm-card .wc-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .wasm-card .wc-badge {
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--gold);
+    background: rgba(217,119,6,0.15);
+    border-radius: 4px;
+    padding: 2px 6px;
+    display: inline-block;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 64px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  footer span { color: var(--accent2); }
+  /* i18n */
+  [data-lang="zh"] .en { display:none; }
+  [data-lang="en"] .zh { display:none; }
+</style>
+</head>
+<body>
+
+<div style="position:sticky;top:0;z-index:100;background:rgba(13,17,23,.95);backdrop-filter:blur(14px);border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;padding:0 32px;height:50px;">
+  <a href="../index.html" style="display:flex;align-items:center;gap:6px;color:#8b949e;font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid #30363d;border-radius:5px;transition:all .15s;">← <span class="en">Back to Index</span><span class="zh">返回首页</span></a>
+  <div style="display:flex;border:1px solid #30363d;border-radius:5px;overflow:hidden;">
+    <button onclick="setLang('en',this)" style="padding:4px 12px;border:none;background:#d97706;color:#0d1117;cursor:pointer;font-size:11px;font-weight:700" id="btn-en">EN</button>
+    <button onclick="setLang('zh',this)" style="padding:4px 12px;border:none;background:none;color:#8b949e;cursor:pointer;font-size:11px;font-weight:700" id="btn-zh">中文</button>
+  </div>
+</div>
+
+<header>
+  <div class="eyebrow">Pacgate AI · Utility Diagram · 系统结构图</div>
+  <h1><span>Pacgate AI</span> — <span class="en">How It's Structured</span><span class="zh">系统结构</span></h1>
+  <p><span class="en">16-crate Rust workspace · WASM Ironclaw vault · AMD RyzenAI NPU+GPU · 8 Cubecloud OS surfaces · Matter FSM · Authority Registry + Client KB · Postgres+pgvector</span><span class="zh">Rust 16 个 crate 工作区 · WASM Ironclaw 保险库 · AMD RyzenAI NPU+GPU · 智方云 OS 界面 · 案件 FSM · Postgres+pgvector</span></p>
+</header>
+
+<div class="en">
+<!-- Architecture Stack -->
+<div class="stack" id="stack">
+
+  <div class="stack-layer l-client" data-layer-delay="0">
+    <div class="layer-label"><span class="en">Client Tier</span><span class="zh">客户端</span></div>
+    <div class="layer-body">
+      <div class="layer-title">Browser / Desktop App</div>
+      <div class="crate-chips">
+        <span class="crate-chip">Next.js 15</span>
+        <span class="crate-chip">TypeScript</span>
+        <span class="crate-chip">Tailwind CSS</span>
+        <span class="crate-chip">shadcn/ui</span>
+        <span class="crate-chip">SSE streaming</span>
+        <span class="crate-chip">DOCX viewer</span>
+        <span class="crate-chip">Tabular grid</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-api" data-layer-delay="1">
+    <div class="layer-label"><span class="en">API Tier</span><span class="zh">API 层</span></div>
+    <div class="layer-body">
+      <div class="layer-title">Rust · Axum 0.7 · Tokio 1</div>
+      <div class="crate-chips">
+        <span class="crate-chip">pacgate-api</span>
+        <span class="crate-chip">pacgate-agent</span>
+        <span class="crate-chip">pacgate-llm</span>
+        <span class="crate-chip">pacgate-auth</span>
+        <span class="crate-chip">pacgate-tenant</span>
+        <span class="crate-chip">CorsLayer</span>
+        <span class="crate-chip">TraceLayer</span>
+        <span class="crate-chip">multipart upload</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-domain" data-layer-delay="2">
+    <div class="layer-label"><span class="en">Domain Tier</span><span class="zh">领域层</span></div>
+    <div class="layer-body">
+      <div class="layer-title">Business Logic Crates</div>
+      <div class="crate-chips">
+        <span class="crate-chip">pacgate-core</span>
+        <span class="crate-chip">pacgate-docx</span>
+        <span class="crate-chip">pacgate-rag</span>
+        <span class="crate-chip">pacgate-search</span>
+        <span class="crate-chip">pacgate-persona</span>
+        <span class="crate-chip">pacgate-workflow</span>
+        <span class="crate-chip">pacgate-template</span>
+        <span class="crate-chip">Matter FSM (11-state)</span>
+        <span class="crate-chip">Dual-mode agent</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-wasm" data-layer-delay="3">
+    <div class="layer-label"><span class="en">WASM Tier</span><span class="zh">WASM 层</span></div>
+    <div class="layer-body">
+      <div class="layer-title">Ironclaw TEE Vault — Signed Execution Units</div>
+      <div class="crate-chips">
+        <span class="crate-chip">pacgate-doc-validator</span>
+        <span class="crate-chip">pacgate-rule-engine</span>
+        <span class="crate-chip">pacgate-citation-check</span>
+        <span class="crate-chip">pacgate-clause-parser</span>
+        <span class="crate-chip">cdylib + rlib</span>
+        <span class="crate-chip">wasm-pack --target bundler</span>
+        <span class="crate-chip">No network access</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-storage" data-layer-delay="4">
+    <div class="layer-label"><span class="en">Storage Tier</span><span class="zh">存储层</span></div>
+    <div class="layer-body">
+      <div class="layer-title">Local-First · Zero-Config</div>
+      <div class="crate-chips">
+        <span class="crate-chip">Postgres + pgvector</span>
+        <span class="crate-chip">tsvector FTS</span>
+        <span class="crate-chip">sqlx 0.7</span>
+        <span class="crate-chip">Migrations</span>
+        <span class="crate-chip">Row-level tenant isolation</span>
+        <span class="crate-chip">Authority Registry (statutes)</span>
+        <span class="crate-chip">Client KB (matter docs)</span>
+        <span class="crate-chip">SQLite (edge/dev fallback)</span>
+        <span class="crate-chip">S3-compatible file storage</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-llm" data-layer-delay="5">
+    <div class="layer-label"><span class="en">Inference Tier</span><span class="zh">推理层</span></div>
+    <div class="layer-body">
+      <div class="layer-title">AMD RyzenAI · Ollama · BYOK</div>
+      <div class="crate-chips">
+        <span class="crate-chip">Nemotron3:33b (Main)</span>
+        <span class="crate-chip">Qwen3.6:27b (Mid)</span>
+        <span class="crate-chip">Qwen3.5:9b (Low)</span>
+        <span class="crate-chip">XDNA NPU</span>
+        <span class="crate-chip">AMD Radeon GPU</span>
+        <span class="crate-chip">Claude Sonnet 4.6</span>
+        <span class="crate-chip">GPT-5.4</span>
+        <span class="crate-chip">DeepSeek-V4</span>
+        <span class="crate-chip">qwen3-max</span>
+        <span class="crate-chip">MiniMax-2.7</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-os" data-layer-delay="6">
+    <div class="layer-label"><span class="en">OS Tier</span><span class="zh">OS 层</span></div>
+    <div class="layer-body">
+      <div class="layer-title">Cubecloud Agent OS Surfaces</div>
+      <div class="crate-chips">
+        <span class="crate-chip">OpenSpace · lineage</span>
+        <span class="crate-chip">Open WebUI · RAG chat</span>
+        <span class="crate-chip">Ironclaw · vault/TEE</span>
+        <span class="crate-chip">Hermes · memory/schedule</span>
+        <span class="crate-chip">Warp ADE · agentic terminal</span>
+        <span class="crate-chip">OpenCode · LSP coding</span>
+        <span class="crate-chip">OpenClaw · agent automations</span>
+        <span class="crate-chip">Open-Design · doc generation</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Data flow -->
+<div class="flow-section">
+  <div class="section-label">Request Data Flow · 请求数据流</div>
+  <div class="flow-diagram">
+    <div class="flow-node"><div class="fn-title">Browser</div><div class="fn-sub">Next.js</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">Axum API</div><div class="fn-sub">SSE / REST</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">Agent Loop</div><div class="fn-sub">max 10 rounds</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">LLM Router</div><div class="fn-sub">tier selection</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">Ollama</div><div class="fn-sub">AMD RyzenAI</div></div>
+    <div class="flow-arrow">↙</div>
+  </div>
+  <div class="flow-diagram" style="margin-top: 8px;">
+    <div class="flow-node"><div class="fn-title">Tool Dispatch</div><div class="fn-sub">10 tools</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">DocStore / KB</div><div class="fn-sub">pgvector</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">WASM Vault</div><div class="fn-sub">Ironclaw TEE</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">DOCX Engine</div><div class="fn-sub">OOXML ZIP</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">SSE Response</div><div class="fn-sub">citations + doc</div></div>
+  </div>
+</div>
+
+<!-- Ironclaw WASM detail -->
+<div class="ironclaw-box">
+  <div class="ib-title">Ironclaw TEE Vault — WASM Isolation Layer</div>
+  <div class="wasm-grid">
+    <div class="wasm-card">
+      <div class="wc-name">doc-validator</div>
+      <div class="wc-desc">Schema completeness check · Required fields validation · Format conformance</div>
+      <div class="wc-badge">cdylib + rlib</div>
+    </div>
+    <div class="wasm-card">
+      <div class="wc-name">rule-engine</div>
+      <div class="wc-desc">PEG-based clause rules · Jurisdiction-aware matching · Obligation extraction</div>
+      <div class="wc-badge">Signed allowlist</div>
+    </div>
+    <div class="wasm-card">
+      <div class="wc-name">citation-check</div>
+      <div class="wc-desc">Verbatim ≤25 words · Document reference integrity · Source existence verification</div>
+      <div class="wc-badge">No net access</div>
+    </div>
+    <div class="wasm-card">
+      <div class="wc-name">clause-parser</div>
+      <div class="wc-desc">Structured extraction · Parties, dates, obligations, governing law · JSON output</div>
+      <div class="wc-badge">TEE sealed</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="zh">
+<!-- Architecture Stack -->
+<div class="stack">
+
+  <div class="stack-layer l-client" data-layer-delay="0">
+    <div class="layer-label">客户端</div>
+    <div class="layer-body">
+      <div class="layer-title">浏览器 / 桌面应用</div>
+      <div class="crate-chips">
+        <span class="crate-chip">Next.js 15</span>
+        <span class="crate-chip">TypeScript</span>
+        <span class="crate-chip">Tailwind CSS</span>
+        <span class="crate-chip">shadcn/ui</span>
+        <span class="crate-chip">SSE 流式传输</span>
+        <span class="crate-chip">DOCX 查看器</span>
+        <span class="crate-chip">表格审阅网格</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-api" data-layer-delay="1">
+    <div class="layer-label">API 层</div>
+    <div class="layer-body">
+      <div class="layer-title">Rust · Axum 0.7 · Tokio 1</div>
+      <div class="crate-chips">
+        <span class="crate-chip">pacgate-api</span>
+        <span class="crate-chip">pacgate-agent</span>
+        <span class="crate-chip">pacgate-llm</span>
+        <span class="crate-chip">pacgate-auth</span>
+        <span class="crate-chip">pacgate-tenant</span>
+        <span class="crate-chip">CorsLayer</span>
+        <span class="crate-chip">TraceLayer</span>
+        <span class="crate-chip">multipart 上传</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-domain" data-layer-delay="2">
+    <div class="layer-label">领域层</div>
+    <div class="layer-body">
+      <div class="layer-title">业务逻辑 Crates</div>
+      <div class="crate-chips">
+        <span class="crate-chip">pacgate-core</span>
+        <span class="crate-chip">pacgate-docx</span>
+        <span class="crate-chip">pacgate-rag</span>
+        <span class="crate-chip">pacgate-search</span>
+        <span class="crate-chip">pacgate-persona</span>
+        <span class="crate-chip">pacgate-workflow</span>
+        <span class="crate-chip">pacgate-template</span>
+        <span class="crate-chip">Matter FSM（11 状态）</span>
+        <span class="crate-chip">双模式 Agent</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-wasm" data-layer-delay="3">
+    <div class="layer-label">WASM 层</div>
+    <div class="layer-body">
+      <div class="layer-title">Ironclaw TEE Vault — 签名执行单元</div>
+      <div class="crate-chips">
+        <span class="crate-chip">pacgate-doc-validator</span>
+        <span class="crate-chip">pacgate-rule-engine</span>
+        <span class="crate-chip">pacgate-citation-check</span>
+        <span class="crate-chip">pacgate-clause-parser</span>
+        <span class="crate-chip">cdylib + rlib</span>
+        <span class="crate-chip">wasm-pack --target bundler</span>
+        <span class="crate-chip">禁止网络访问</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-storage" data-layer-delay="4">
+    <div class="layer-label">存储层</div>
+    <div class="layer-body">
+      <div class="layer-title">本地优先 · 零配置</div>
+      <div class="crate-chips">
+        <span class="crate-chip">Postgres + pgvector</span>
+        <span class="crate-chip">tsvector FTS</span>
+        <span class="crate-chip">sqlx 0.7</span>
+        <span class="crate-chip">数据库迁移</span>
+        <span class="crate-chip">行级租户隔离</span>
+        <span class="crate-chip">权威登记库（法规）</span>
+        <span class="crate-chip">客户知识库（案件文档）</span>
+        <span class="crate-chip">SQLite（edge / dev 回退）</span>
+        <span class="crate-chip">S3-compatible 文件存储</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-llm" data-layer-delay="5">
+    <div class="layer-label">推理层</div>
+    <div class="layer-body">
+      <div class="layer-title">AMD RyzenAI · Ollama · BYOK</div>
+      <div class="crate-chips">
+        <span class="crate-chip">Nemotron3:33b（主层）</span>
+        <span class="crate-chip">Qwen3.6:27b（中层）</span>
+        <span class="crate-chip">Qwen3.5:9b（低层）</span>
+        <span class="crate-chip">XDNA NPU</span>
+        <span class="crate-chip">AMD Radeon GPU</span>
+        <span class="crate-chip">Claude Sonnet 4.6</span>
+        <span class="crate-chip">GPT-5.4</span>
+        <span class="crate-chip">DeepSeek-V4</span>
+        <span class="crate-chip">qwen3-max</span>
+        <span class="crate-chip">MiniMax-2.7</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack-layer l-os" data-layer-delay="6">
+    <div class="layer-label">OS 层</div>
+    <div class="layer-body">
+      <div class="layer-title">Cubecloud Agent OS 接入面</div>
+      <div class="crate-chips">
+        <span class="crate-chip">OpenSpace · 谱系</span>
+        <span class="crate-chip">Open WebUI · RAG 对话</span>
+        <span class="crate-chip">Ironclaw · vault / TEE</span>
+        <span class="crate-chip">Hermes · 记忆 / 调度</span>
+        <span class="crate-chip">Warp ADE · agentic 终端</span>
+        <span class="crate-chip">OpenCode · LSP 编码</span>
+        <span class="crate-chip">OpenClaw · agent 自动化</span>
+        <span class="crate-chip">Open-Design · 文档生成</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Data flow -->
+<div class="flow-section">
+  <div class="section-label">请求数据流</div>
+  <div class="flow-diagram">
+    <div class="flow-node"><div class="fn-title">浏览器</div><div class="fn-sub">Next.js</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">Axum API</div><div class="fn-sub">SSE / REST</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">Agent 循环</div><div class="fn-sub">最多 10 轮</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">LLM 路由器</div><div class="fn-sub">层级选择</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">Ollama</div><div class="fn-sub">AMD RyzenAI</div></div>
+    <div class="flow-arrow">↙</div>
+  </div>
+  <div class="flow-diagram" style="margin-top: 8px;">
+    <div class="flow-node"><div class="fn-title">工具调度</div><div class="fn-sub">10 个工具</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">DocStore / KB</div><div class="fn-sub">pgvector</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">WASM Vault</div><div class="fn-sub">Ironclaw TEE</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">DOCX 引擎</div><div class="fn-sub">OOXML ZIP</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-node"><div class="fn-title">SSE 响应</div><div class="fn-sub">引文 + 文档</div></div>
+  </div>
+</div>
+
+<!-- Ironclaw WASM detail -->
+<div class="ironclaw-box">
+  <div class="ib-title">Ironclaw TEE Vault — WASM 隔离层</div>
+  <div class="wasm-grid">
+    <div class="wasm-card">
+      <div class="wc-name">doc-validator</div>
+      <div class="wc-desc">模式完整性检查 · 必填字段校验 · 格式一致性</div>
+      <div class="wc-badge">cdylib + rlib</div>
+    </div>
+    <div class="wasm-card">
+      <div class="wc-name">rule-engine</div>
+      <div class="wc-desc">基于 PEG 的条款规则 · 面向法域的匹配 · 义务提取</div>
+      <div class="wc-badge">签名 allowlist</div>
+    </div>
+    <div class="wasm-card">
+      <div class="wc-name">citation-check</div>
+      <div class="wc-desc">逐字引用 ≤25 词 · 文档引用完整性 · 来源存在性校验</div>
+      <div class="wc-badge">禁止联网</div>
+    </div>
+    <div class="wasm-card">
+      <div class="wc-name">clause-parser</div>
+      <div class="wc-desc">结构化抽取 · 主体、日期、义务、适用法律 · JSON 输出</div>
+      <div class="wc-badge">TEE 封装</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<footer>
+  <span class="en">Pre-Proposal · All rights reserved by Cubecloud Limited Co.</span>
+  <span class="zh">预提案文件 · 版权所有，智方云有限公司</span>
+</footer>
+
+<script>
+  function setLang(l, btn) {
+    document.documentElement.dataset.lang = l;
+    document.querySelectorAll('#btn-en, #btn-zh').forEach(b => {
+      b.style.background = 'none'; b.style.color = '#8b949e';
+    });
+    btn.style.background = '#d97706'; btn.style.color = '#0d1117';
+    localStorage.setItem('pg-lang', l);
+    document.title = l === 'zh'
+      ? 'Pacgate AI — 系统结构图'
+      : 'Pacgate AI — Utility Diagram';
+  }
+  (function(){ const s = localStorage.getItem('pg-lang'); if(s) { const b = document.getElementById('btn-'+s); if(b) setLang(s, b); } })();
+
+  // Stack layers
+  const layers = document.querySelectorAll('.stack-layer');
+  const layerObserver = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const delay = parseInt(e.target.dataset.layerDelay) * 120;
+        setTimeout(() => {
+          e.target.classList.add('animate');
+          // Chips
+          const chips = e.target.querySelectorAll('.crate-chip');
+          chips.forEach((c, i) => {
+            setTimeout(() => c.classList.add('animate'), delay + i * 40);
+          });
+        }, delay);
+        layerObserver.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  layers.forEach(l => layerObserver.observe(l));
+</script>
+<script src="../assets/protect.js"></script>
+</body>
+</html>

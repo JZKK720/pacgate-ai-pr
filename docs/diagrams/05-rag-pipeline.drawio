@@ -1,0 +1,118 @@
+<mxfile host="app.diagrams.net" modified="2026-05-11T00:00:00.000Z" agent="Cubecloud/Pacgate-AI" version="24.7.17">
+  <diagram name="RAG Pipeline" id="rag-pipeline-05">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Title -->
+        <mxCell id="2" value="PACGATE AI — RAG &amp; KNOWLEDGE BASE PIPELINE (pacgate-rag · pacgate-search)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=15;fontStyle=1;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="16" width="1089" height="34" as="geometry"/>
+        </mxCell>
+
+        <!-- === INGEST PATH === -->
+        <mxCell id="I0" value="INGEST PIPELINE" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="1089" height="28" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="I1" value="Source Document&#xa;DOCX · PDF · TXT&#xa;(uploaded by user)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="110" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="I2" value="parser.rs&#xa;extract_text()&#xa;→ plain text string" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="258" y="110" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="I3" value="Chunker&#xa;512 tokens per chunk&#xa;64 token overlap&#xa;→ Vec&lt;Chunk&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="456" y="110" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="I4" value="Embedder&#xa;nomic-embed-text&#xa;via Ollama (NPU)&#xa;→ Vec&lt;f32&gt; 768-dim" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="654" y="110" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="I5a" value="pgvector upsert&#xa;IVFFlat cosine index&#xa;chunk_id → embedding vector(768)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="874" y="96" width="180" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="I5b" value="FTS5 index upsert&#xa;BM25 keyword index&#xa;chunk_id → text" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="874" y="162" width="180" height="56" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="eI12" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="I1" target="I2" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eI23" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="I2" target="I3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eI34" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="I3" target="I4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eI4a" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="I4" target="I5a" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eI4b" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="I4" target="I5b" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- === RETRIEVAL PATH === -->
+        <mxCell id="R0" value="RETRIEVAL PIPELINE" style="text;html=1;strokeColor=none;fillColor=#ffe6cc;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="40" y="260" width="1089" height="28" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="R1" value="User query&#xa;or kb_search tool call&#xa;{ text, filters }" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="R2" value="Embedder&#xa;embed query text&#xa;→ Vec&lt;f32&gt; 768-dim" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="258" y="300" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="R3a" value="pgvector&#xa;cosine similarity search&#xa;top-K semantic hits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="456" y="288" width="180" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="R3b" value="FTS5 BM25&#xa;keyword search&#xa;top-K lexical hits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="456" y="356" width="180" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="R4" value="RRF Fusion&#xa;Reciprocal Rank Fusion&#xa;semantic + lexical merged&#xa;→ re-ranked top-K" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="674" y="300" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="R5" value="Retrieved chunks&#xa;injected into&#xa;LLM context window&#xa;as tool result" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="914" y="300" width="180" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="eR12" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" source="R1" target="R2" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eR2a" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="R2" target="R3a" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eR2b" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="R2" target="R3b" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eRa4" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" source="R3a" target="R4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eRb4" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" source="R3b" target="R4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eR45" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="R4" target="R5" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- China legal data note -->
+        <mxCell id="CN" value="China Legal Data Integration (Phase 4):&#xa;北大法宝 API · 威科先行 API&#xa;(requires separate data partnership contracts)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="450" width="400" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="eCNI" value="future data feed" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d6b656;strokeWidth=1;dashed=1;fontSize=9;fontColor=#d6b656;" edge="1" source="CN" target="I1" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- MCP server note -->
+        <mxCell id="MCP" value="MCP Server (Phase 4):&#xa;kb_search exposed as MCP tool&#xa;→ DMS · 飞书 · 企微 · 钉钉 · OA integration" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="620" y="450" width="360" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="eMCPR" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=1;dashed=1;" edge="1" source="R5" target="MCP" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Footer -->
+        <mxCell id="99" value="Cubecloud Limited · 智方云 · Pacgate AI RAG Pipeline · May 2026" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontColor=#888888;" vertex="1" parent="1">
+          <mxGeometry x="40" y="556" width="1089" height="24" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

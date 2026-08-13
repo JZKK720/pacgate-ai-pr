@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pacgate AI — Local Legal AI Pilot · Deliverable Architecture · 本地法律 AI 试点</title>
+<style>
+:root {
+  --bg:      #070b14;
+  --surface: #0f1623;
+  --card:    #111827;
+  --card2:   #141c2e;
+  --border:  #1e2d4a;
+  --border2: #253552;
+  --gold:    #c8a84b;
+  --gold2:   #e8c97a;
+  --blue:    #3d6de8;
+  --green:   #2a7a54;
+  --purple:  #7c5ca6;
+  --red:     #b85450;
+  --text:    #e2e8f4;
+  --muted:   #6b7a99;
+  --muted2:  #4a5a78;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ── HEADER ── */
+#pg-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 40px;
+  height: 58px;
+  background: rgba(7,11,20,.95);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+.logo { display: flex; align-items: center; gap: 12px; }
+.logo-mark {
+  width: 34px; height: 34px;
+  background: linear-gradient(135deg, #c8a84b, #e8c97a);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 13px; color: #070b14; letter-spacing: -.5px;
+  flex-shrink: 0;
+}
+.logo-name { font-size: 15px; font-weight: 700; line-height: 1.2; }
+.logo-sub  { font-size: 10px; color: var(--muted); line-height: 1; }
+.hdr-right { display: flex; align-items: center; gap: 14px; }
+.badge-pre {
+  padding: 3px 9px;
+  background: rgba(200,168,75,.1);
+  border: 1px solid rgba(200,168,75,.3);
+  border-radius: 4px;
+  color: var(--gold);
+  font-size: 10px; font-weight: 700; letter-spacing: .6px;
+}
+.lang-btns { display: flex; border: 1px solid var(--border2); border-radius: 5px; overflow: hidden; }
+.lang-btn {
+  padding: 5px 12px; border: none; background: none;
+  color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 700;
+  transition: all .15s;
+}
+.lang-btn.active { background: var(--gold); color: #070b14; }
+
+/* ── DISCLAIMER ── */
+.disclaimer {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 40px;
+  background: rgba(200,168,75,.06);
+  border-bottom: 1px solid rgba(200,168,75,.15);
+  font-size: 12px; color: var(--gold2);
+}
+.disc-icon {
+  flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px;
+  background: var(--gold); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 800; color: #070b14;
+}
+
+/* ── HERO ── */
+.hero {
+  max-width: 1360px; margin: 0 auto;
+  padding: 64px 40px 52px;
+}
+.hero-eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--gold); margin-bottom: 14px;
+}
+.hero-title {
+  font-size: clamp(36px, 4.5vw, 52px);
+  font-weight: 800; letter-spacing: -.5px; line-height: 1.05;
+  color: var(--text); margin-bottom: 6px;
+}
+.hero-title span { color: var(--gold); }
+.hero-subtitle {
+  font-size: 20px; font-weight: 600; color: var(--muted);
+  margin-bottom: 18px;
+}
+.hero-desc {
+  font-size: 15px; color: var(--muted); max-width: 640px;
+  line-height: 1.75; margin-bottom: 36px;
+}
+.hero-meta { display: flex; gap: 40px; flex-wrap: wrap; }
+.meta-item { display: flex; flex-direction: column; gap: 3px; }
+.meta-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 1.8px;
+  text-transform: uppercase; color: var(--muted2);
+}
+.meta-value { font-size: 22px; font-weight: 800; color: var(--gold); line-height: 1; }
+.meta-value.compact { font-size: 16px; }
+.meta-sub   { font-size: 10px; color: var(--muted); }
+
+/* ── SECTIONS ── */
+.section {
+  max-width: 1360px; margin: 0 auto;
+  padding: 0 40px 52px;
+}
+.section-hdr {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 22px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sec-num {
+  width: 26px; height: 26px;
+  background: var(--card2); border: 1px solid var(--border2); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: var(--gold); flex-shrink: 0;
+}
+.sec-title  { font-size: 17px; font-weight: 700; color: var(--text); }
+.sec-sub    { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* ── CARD GRID ── */
+.card-grid { display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.card-grid.lg { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+
+.card {
+  background: var(--card2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 22px;
+  display: flex; flex-direction: column; gap: 10px;
+  text-decoration: none; color: inherit;
+  transition: border-color .18s, transform .18s, box-shadow .18s;
+  position: relative; overflow: hidden;
+}
+.card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 2px; background: transparent; transition: background .18s;
+}
+.card:hover { border-color: rgba(200,168,75,.45); transform: translateY(-2px); box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+.card:hover::before { background: linear-gradient(90deg, var(--gold), var(--gold2)); }
+
+.card-icon {
+  width: 38px; height: 38px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.ci-blue   { background: rgba(61,109,232,.14); }
+.ci-gold   { background: rgba(200,168,75,.12); }
+.ci-green  { background: rgba(42,122,84,.14); }
+.ci-purple { background: rgba(124,92,166,.14); }
+.ci-red    { background: rgba(184,84,80,.14); }
+
+.card-title    { font-size: 15px; font-weight: 700; line-height: 1.25; }
+.card-title-zh { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.card-eyebrow  { font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+.card-desc     { font-size: 12.5px; color: var(--muted); line-height: 1.55; flex: 1; }
+.card-tags     { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.tag {
+  padding: 2px 7px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; letter-spacing: .2px;
+}
+.t-blue   { background: rgba(61,109,232,.12); color: #7ba3ff; border: 1px solid rgba(61,109,232,.2); }
+.t-gold   { background: rgba(200,168,75,.1);  color: var(--gold2); border: 1px solid rgba(200,168,75,.18); }
+.t-green  { background: rgba(42,122,84,.12);  color: #5db882; border: 1px solid rgba(42,122,84,.2); }
+.t-purple { background: rgba(124,92,166,.12); color: #a989db; border: 1px solid rgba(124,92,166,.2); }
+.t-red    { background: rgba(184,84,80,.12);  color: #e07c79; border: 1px solid rgba(184,84,80,.2); }
+.t-gray   { background: rgba(107,122,153,.1); color: var(--muted); border: 1px solid rgba(107,122,153,.2); }
+
+.card-cta {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 6px; font-size: 12px;
+}
+.cta-label { color: var(--gold); font-weight: 600; }
+.cta-arrow { color: var(--gold); font-size: 14px; }
+.card-static { cursor: default; }
+.card-static-accent { cursor: default; border-color: rgba(200,168,75,.2); }
+.card-icon-xl {
+  width: 48px;
+  height: 48px;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.provider-list {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.provider-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.provider-name {
+  color: var(--gold);
+  font-weight: 700;
+  width: 80px;
+}
+.provider-model { color: var(--muted); }
+.card-desc-note {
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+/* Full-width card */
+.card.full { grid-column: 1 / -1; flex-direction: row; align-items: flex-start; gap: 18px; }
+.card.full .card-body { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+
+/* ── FOOTER ── */
+footer {
+  max-width: 1360px; margin: 0 auto;
+  padding: 32px 40px;
+  border-top: 1px solid var(--border);
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap;
+}
+.footer-left  { font-size: 12px; color: var(--muted); line-height: 1.8; }
+.footer-right { font-size: 11px; color: var(--muted2); text-align: right; line-height: 1.8; }
+.footer-logo  { font-weight: 700; color: var(--gold); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header id="pg-header">
+  <div class="logo">
+    <div class="logo-mark">PG</div>
+    <div>
+      <div class="logo-name">Pacgate AI</div>
+      <div class="logo-sub" data-i18n="logo_sub">Deliverable Architecture · Phase 1 Pilot</div>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span class="badge-pre" data-i18n="pre_badge">CONTRACT SIGNED</span>
+    <div class="lang-btns">
+      <button class="lang-btn active" onclick="i18n('en',this)">EN</button>
+      <button class="lang-btn" onclick="i18n('zh',this)">中文</button>
+    </div>
+  </div>
+</header>
+
+<!-- DISCLAIMER -->
+<div class="disclaimer">
+  <div class="disc-icon">!</div>
+  <span data-i18n="disclaimer">Contract signed 2026-06-16 · Phase 1 active · All rights reserved by Cubecloud Limited Company</span>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-eyebrow" data-i18n="hero_eyebrow">CUBECLOUD LIMITED × PACGATE LAW · 智方云 × 百胜律师事务所</div>
+  <h1 class="hero-title"><span>Pacgate AI</span></h1>
+  <p class="hero-subtitle" data-i18n="hero_subtitle">Local Legal AI Pilot · Deliverable Architecture</p>
+  <p class="hero-desc" data-i18n="hero_desc">Proposal and architecture set for a privacy-first local legal AI pilot built on Cubecloud AI stations with NPU+GPU acceleration and private deployment. The current commercial scope is a two-machine Phase 1 pilot with legal-agent adaptations and starter knowledge enablement, while the broader Pacgate SaaS workspace remains the future-state blueprint.</p>
+  <div class="hero-meta">
+    <div class="meta-item">
+      <span class="meta-label" data-i18n="m_crates">Rust Crates</span>
+      <span class="meta-value">16</span>
+      <span class="meta-sub" data-i18n="m_crates_s">workspace</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label" data-i18n="m_phases">Build Phases</span>
+      <span class="meta-value">7</span>
+      <span class="meta-sub" data-i18n="m_phases_s">Phase 0–7</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label" data-i18n="m_diagrams">Diagrams</span>
+      <span class="meta-value">8</span>
+      <span class="meta-sub" data-i18n="m_diagrams_s">3 animated + 5 draw.io</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label" data-i18n="m_date">Contract Signed</span>
+      <span class="meta-value compact">June 2026</span>
+      <span class="meta-sub" data-i18n="m_date_s">Phase 1 Active</span>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 1: OVERVIEW DIAGRAMS -->
+<section class="section">
+  <div class="section-hdr">
+    <div class="sec-num">①</div>
+    <h2 class="sec-title" data-i18n="s1_title">Overview Diagrams</h2>
+    <span class="sec-sub" data-i18n="s1_sub">Animated · Interactive · English / 中文</span>
+  </div>
+  <div class="card-grid">
+
+    <a class="card" href="diagrams/pacgate-concept-diagram.html">
+      <div class="card-icon ci-green">💡</div>
+      <div class="card-eyebrow" data-i18n="c1_eyebrow">Why It's Different</div>
+      <div class="card-title" data-i18n="c1_title">Concept Diagram</div>
+      <div class="card-title-zh" data-i18n="c1_title_zh">差异化概念图</div>
+      <p class="card-desc" data-i18n="c1_desc">Market differentiation · Harvey / Crosby / Moritz competitive map · PacGate AI as the general legal AI entry surface · Cubecloud OS surface mapping · dedicated AIPC/private platform vs. public-cloud SaaS</p>
+      <div class="card-tags">
+        <span class="tag t-green" data-i18n="t_product">Product</span>
+        <span class="tag t-blue" data-i18n="t_business">Business</span>
+        <span class="tag t-gray" data-i18n="t_animated">Animated</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="open_diagram">Open Diagram</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="diagrams/pacgate-function-diagram.html">
+      <div class="card-icon ci-blue">⚙</div>
+      <div class="card-eyebrow" data-i18n="c2_eyebrow">What It Does</div>
+      <div class="card-title" data-i18n="c2_title">Function Diagram</div>
+      <div class="card-title-zh" data-i18n="c2_title_zh">功能架构图</div>
+      <p class="card-desc" data-i18n="c2_desc">10-tool agent dispatcher · 3-tier LLM router (Nemotron3:33b / Qwen3.6:27b / Qwen3.5:9b) · DOCX engine · RAG · tabular review</p>
+      <div class="card-tags">
+        <span class="tag t-blue" data-i18n="t_technical">Technical</span>
+        <span class="tag t-gold" data-i18n="t_agent">Agent</span>
+        <span class="tag t-gray" data-i18n="t_animated">Animated</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="open_diagram">Open Diagram</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="diagrams/pacgate-utility-diagram.html">
+      <div class="card-icon ci-purple">🔧</div>
+      <div class="card-eyebrow" data-i18n="c3_eyebrow">How It's Structured</div>
+      <div class="card-title" data-i18n="c3_title">Utility Diagram</div>
+      <div class="card-title-zh" data-i18n="c3_title_zh">系统结构图</div>
+      <p class="card-desc" data-i18n="c3_desc">Rust 16-crate workspace · WASM Ironclaw vault · AMD RyzenAI NPU+GPU stack · Tailscale-connected Cubecloud Agent OS mesh · Postgres+pgvector RAG</p>
+      <div class="card-tags">
+        <span class="tag t-purple" data-i18n="t_architecture">Architecture</span>
+        <span class="tag t-blue" data-i18n="t_infra">Infrastructure</span>
+        <span class="tag t-gray" data-i18n="t_animated">Animated</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="open_diagram">Open Diagram</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+  </div>
+</section>
+
+<!-- SECTION 2: TECHNICAL ARCHITECTURE -->
+<section class="section">
+  <div class="section-hdr">
+    <div class="sec-num">②</div>
+    <h2 class="sec-title" data-i18n="s2_title">Technical Architecture Diagrams</h2>
+    <span class="sec-sub" data-i18n="s2_sub">draw.io · 5 diagrams · viewer required</span>
+  </div>
+  <div class="card-grid">
+
+    <a class="card full" href="diagrams/pacgate-diagrams-report.html">
+      <div class="card-icon ci-gold card-icon-xl">📐</div>
+      <div class="card-body">
+        <div class="card-eyebrow" data-i18n="cr_eyebrow">Full Technical Report · All 5 Diagrams</div>
+        <div class="card-title" data-i18n="cr_title">Architecture Diagrams Report</div>
+        <div class="card-title-zh" data-i18n="cr_title_zh">技术架构图报告（含五张图）</div>
+        <p class="card-desc" data-i18n="cr_desc">All 5 draw.io technical diagrams with embedded viewer, scope explanations, and EN/CN descriptions — system overview, LLM router, agent loop, DOCX engine, RAG pipeline. Requires internet for diagram viewer.</p>
+        <div class="card-tags">
+          <span class="tag t-gold" data-i18n="t_full_report">Full Report</span>
+          <span class="tag t-blue">draw.io</span>
+          <span class="tag t-green" data-i18n="t_all_diagrams">5 Diagrams</span>
+          <span class="tag t-gray">EN / 中文</span>
+        </div>
+        <div class="card-cta">
+          <span class="cta-label" data-i18n="open_report">Open Report</span>
+          <span class="cta-arrow">→</span>
+        </div>
+      </div>
+    </a>
+
+    <div class="card card-static">
+      <div class="card-icon ci-blue">🗺</div>
+      <div class="card-eyebrow">draw.io — 01</div>
+      <div class="card-title" data-i18n="d01_title">System Architecture Overview</div>
+      <div class="card-title-zh" data-i18n="d01_zh">系统架构总览</div>
+      <p class="card-desc" data-i18n="d01_desc">7-tier layered architecture: Client → API → Domain → WASM → Storage → Inference → Cubecloud OS. AMD RyzenAI inference with 3-tier local + 5 BYOK providers.</p>
+      <div class="card-tags">
+        <span class="tag t-blue" data-i18n="t_7_tiers">7 Tiers</span>
+        <span class="tag t-gold" data-i18n="t_byok">BYOK</span>
+        <span class="tag t-purple">AMD RyzenAI</span>
+      </div>
+    </div>
+
+    <div class="card card-static">
+      <div class="card-icon ci-gold">⚡</div>
+      <div class="card-eyebrow">draw.io — 02</div>
+      <div class="card-title" data-i18n="d02_title">LLM Router &amp; Inference Tiers</div>
+      <div class="card-title-zh" data-i18n="d02_zh">LLM 路由器与推理层</div>
+      <p class="card-desc" data-i18n="d02_desc">3 local Ollama tiers (Nemotron3:33b · Qwen3.6:27b · Qwen3.5:9b) + 5 BYOK cloud providers (Claude Sonnet 4.6 · GPT-5.4 · DeepSeek-V4 · Qwen3.6 · MiniMax-2.7). Fallback chain.</p>
+      <div class="card-tags">
+        <span class="tag t-gold" data-i18n="t_3_tiers">3 Local Tiers</span>
+        <span class="tag t-purple" data-i18n="t_5_byok">5 BYOK</span>
+        <span class="tag t-green" data-i18n="t_fallback">Fallback</span>
+      </div>
+    </div>
+
+    <div class="card card-static">
+      <div class="card-icon ci-green">🔄</div>
+      <div class="card-eyebrow">draw.io — 03</div>
+      <div class="card-title" data-i18n="d03_title">Agent Loop &amp; Tool Dispatcher</div>
+      <div class="card-title-zh" data-i18n="d03_zh">Agent 循环与工具调度</div>
+      <p class="card-desc" data-i18n="d03_desc">Max-10-round iterative tool dispatch cycle: build context → call LLM → dispatch tools → append results → loop. SSE streaming to client with citation extraction.</p>
+      <div class="card-tags">
+        <span class="tag t-green" data-i18n="t_10_tools">10 Tools</span>
+        <span class="tag t-blue" data-i18n="t_sse">SSE Stream</span>
+        <span class="tag t-gold" data-i18n="t_citations">Citations</span>
+      </div>
+    </div>
+
+    <div class="card card-static">
+      <div class="card-icon ci-purple">📄</div>
+      <div class="card-eyebrow">draw.io — 04</div>
+      <div class="card-title" data-i18n="d04_title">DOCX Engine Pipeline</div>
+      <div class="card-title-zh" data-i18n="d04_zh">DOCX 引擎流水线</div>
+      <p class="card-desc" data-i18n="d04_desc">3-path OOXML pipeline: (A) Generate from JSON structure · (B) Edit with word-level tracked changes (w:ins/w:del · Pacgate AI author) · (C) Parse &amp; extract plain text for RAG.</p>
+      <div class="card-tags">
+        <span class="tag t-purple">OOXML</span>
+        <span class="tag t-gold" data-i18n="t_tracked">Tracked Changes</span>
+        <span class="tag t-blue" data-i18n="t_3_paths">3 Paths</span>
+      </div>
+    </div>
+
+    <div class="card card-static">
+      <div class="card-icon ci-red">🔍</div>
+      <div class="card-eyebrow">draw.io — 05</div>
+      <div class="card-title" data-i18n="d05_title">RAG &amp; Knowledge Base Pipeline</div>
+      <div class="card-title-zh" data-i18n="d05_zh">RAG 与知识库流水线</div>
+      <p class="card-desc" data-i18n="d05_desc">Ingest: extract → chunk (512t/64t overlap) → embed (nomic-embed-text NPU) → pgvector + tsvector FTS. Retrieval: query embed → cosine + tsvector → RRF fusion re-rank. China legal data: Phase 4.</p>
+      <div class="card-tags">
+        <span class="tag t-red">pgvector</span>
+        <span class="tag t-blue" data-i18n="t_rrf">RRF Fusion</span>
+        <span class="tag t-gray" data-i18n="t_china_ph4">China Data · Ph4</span>
+      </div>
+    </div>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-gold">🦀</div>
+      <div class="card-eyebrow" data-i18n="rs_eyebrow">Rust Workspace · 16 Crates</div>
+      <div class="card-title" data-i18n="rs_title">Crate Status Overview</div>
+      <div class="card-title-zh" data-i18n="rs_title_zh">Crate 状态总览</div>
+      <p class="card-desc" data-i18n="rs_desc">4 implemented (core, llm, docx, agent), 7 backend stubs (auth, tenant, search, rag, persona, template, workflow), 4 WASM stubs (doc-validator, rule-engine, citation-check, clause-parser), 1 partial binary server (api). Full status in progress reportcard.</p>
+      <div class="card-tags">
+        <span class="tag t-gold" data-i18n="t_rust">Rust</span>
+        <span class="tag t-blue" data-i18n="t_16_crates">16 Crates</span>
+        <span class="tag t-purple" data-i18n="t_wasm">WASM</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_rust_status">View Crate Status</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-green">🖧</div>
+      <div class="card-eyebrow" data-i18n="os_eyebrow">AgentOS · 6 Surfaces per Node</div>
+      <div class="card-title" data-i18n="os_title">Cubecloud OS Surfaces</div>
+      <div class="card-title-zh" data-i18n="os_title_zh">Cubecloud OS 表层</div>
+      <p class="card-desc" data-i18n="os_desc">Six AgentOS surfaces deployed per AIPC node: OpenSpace (team dashboard), Open WebUI (private AI chat), IronClaw (security vault), Hermes (memory &amp; scheduling), Warp ADE (technical tuning), OpenCode (prompt adaptation). Full surface integration map in progress reportcard.</p>
+      <div class="card-tags">
+        <span class="tag t-green" data-i18n="t_6_surfaces">6 Surfaces</span>
+        <span class="tag t-blue" data-i18n="t_agentos">AgentOS</span>
+        <span class="tag t-gold">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_os_surfaces">View OS Surfaces</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-blue">⚙️</div>
+      <div class="card-eyebrow" data-i18n="aa_eyebrow">10-Tool Dispatcher · 3-Tier LLM Router</div>
+      <div class="card-title" data-i18n="aa_title">Agent Architecture</div>
+      <div class="card-title-zh" data-i18n="aa_title_zh">Agent 架构</div>
+      <p class="card-desc" data-i18n="aa_desc">Core agent system: 10-tool dispatcher, dual-mode AI (repeatable workflows / long-horizon reasoning), 3-tier LLM router with fallback chain, 11-state matter machine, 3-path DOCX engine, and max-10-round iterative agent loop with SSE streaming and citation extraction.</p>
+      <div class="card-tags">
+        <span class="tag t-blue" data-i18n="t_10_tools">10 Tools</span>
+        <span class="tag t-gold" data-i18n="t_3_tiers">3 Local Tiers</span>
+        <span class="tag t-green" data-i18n="t_sse">SSE Stream</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_agent_arch">View Agent Architecture</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+  </div>
+</section>
+
+<!-- SECTION 3: BUILD SPECIFICATION -->
+<section class="section">
+  <div class="section-hdr">
+    <div class="sec-num">③</div>
+    <h2 class="sec-title" data-i18n="s3_title">Build Specification</h2>
+    <span class="sec-sub" data-i18n="s3_sub">Phase 0–7 · Markdown</span>
+  </div>
+  <div class="card-grid lg">
+
+    <a class="card" href="PACGATE-AI-BUILD-PLANS.html">
+      <div class="card-icon ci-gold">📋</div>
+      <div class="card-eyebrow" data-i18n="cp_eyebrow">Phase 1 Pilot Proposal</div>
+      <div class="card-title" data-i18n="cp_title">Pilot Plans</div>
+      <div class="card-title-zh" data-i18n="cp_title_zh">试点方案</div>
+      <p class="card-desc" data-i18n="cp_desc">Client-facing Phase 1 pilot proposal covering buying logic, legal-agent reference models, two-machine local topology, delivery workstreams, deferred Phase 2 boundaries, and example package pricing for the first deployment.</p>
+      <div class="card-tags">
+        <span class="tag t-gold" data-i18n="t_spec">Specification</span>
+        <span class="tag t-blue" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-green">Markdown</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_plan">View Plan</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="PACGATE-AI-QUOTE-SUMMARY.html">
+      <div class="card-icon ci-green">💼</div>
+      <div class="card-eyebrow" data-i18n="qs_eyebrow">Commercial One-Page Summary</div>
+      <div class="card-title" data-i18n="qs_title">Quote Summary</div>
+      <div class="card-title-zh" data-i18n="qs_title_zh">报价摘要</div>
+      <p class="card-desc" data-i18n="qs_desc">One-page commercial sheet with dual-currency Phase 1 totals, optional advisory reserve, payment schedule, exclusions, and the current working pricing basis for the local pilot.</p>
+      <div class="card-tags">
+        <span class="tag t-green" data-i18n="t_quote">Quote</span>
+        <span class="tag t-blue" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-gold">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_quote">View Quote</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="PACGATE-AI-COMMERCIAL-APPENDIX.html">
+      <div class="card-icon ci-blue">🧾</div>
+      <div class="card-eyebrow" data-i18n="ca_eyebrow">PO / SOW Commercial Companion</div>
+      <div class="card-title" data-i18n="ca_title">Commercial Appendix</div>
+      <div class="card-title-zh" data-i18n="ca_title_zh">商业附录</div>
+      <p class="card-desc" data-i18n="ca_desc">Short companion appendix for purchase-order or SOW drafting, focused on milestone payments, assumptions, exclusions, advisory rates, change-control handling, and the stated USD/RMB basis.</p>
+      <div class="card-tags">
+        <span class="tag t-blue" data-i18n="t_appendix">Appendix</span>
+        <span class="tag t-green" data-i18n="t_sow">PO / SOW</span>
+        <span class="tag t-gold">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_appendix">View Appendix</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="qa/">
+      <div class="card-icon ci-purple">📎</div>
+      <div class="card-eyebrow" data-i18n="ch_eyebrow">Current Question Round</div>
+      <div class="card-title" data-i18n="ch_title">Clarification Hub</div>
+      <div class="card-title-zh" data-i18n="ch_title_zh">第一阶段答疑入口</div>
+      <p class="card-desc" data-i18n="ch_desc">Client-safe clarification entry for the current Phase 1 question round. Starts with the short reply letter, then routes to Annex A to D and the bilingual reply-pack PDFs without pushing viewers into the internal workboard.</p>
+      <div class="card-tags">
+        <span class="tag t-purple" data-i18n="t_clarification">Clarification</span>
+        <span class="tag t-blue" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-gold">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_clarification">Open Hub</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-green">📊</div>
+      <div class="card-eyebrow" data-i18n="rc_eyebrow">Joint Tracking · Contract Signed 2026-06-16</div>
+      <div class="card-title" data-i18n="rc_title">Progress Reportcard</div>
+      <div class="card-title-zh" data-i18n="rc_title_zh">进度报告卡</div>
+      <p class="card-desc" data-i18n="rc_desc">Bilingual Phase 1 progress dashboard: payment milestones, hardware node status (Device A/B), agentic workflow tracking, database &amp; knowledge progress, prerequisites checklist, client onboarding info, integration registry, and full contract timeline.</p>
+      <div class="card-tags">
+        <span class="tag t-green" data-i18n="t_tracking">Tracking</span>
+        <span class="tag t-blue" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-gold">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_reportcard">Open Reportcard</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-red">🛡️</div>
+      <div class="card-eyebrow" data-i18n="cp2_eyebrow">Contractual Safeguards · 4 Categories</div>
+      <div class="card-title" data-i18n="cp2_title">Key Client Protections</div>
+      <div class="card-title-zh" data-i18n="cp2_title_zh">甲方关键保护条款</div>
+      <p class="card-desc" data-i18n="cp2_desc">Payment penalties, IP &amp; competitive isolation (permanent), data sovereignty &amp; exit rights, operational safeguards, and 4-layer acceptance hierarchy. Organized by category across all three contracts.</p>
+      <div class="card-tags">
+        <span class="tag t-red" data-i18n="t_protections">Protections</span>
+        <span class="tag t-blue" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-gold">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_protections">View Protections</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-gold">🏛️</div>
+      <div class="card-eyebrow" data-i18n="pf_eyebrow">Client Profile · Beijing PRC Law Firm</div>
+      <div class="card-title" data-i18n="pf_title">Pacgate Law Firm</div>
+      <div class="card-title-zh" data-i18n="pf_title_zh">百宸律师事务所</div>
+      <p class="card-desc" data-i18n="pf_desc">Firm profile, practice areas (Data Compliance, AI Compliance, Web3/RWA, M&A, Antitrust, IP), Phase 1 role split (Pacgate owns legal logic, Cubecloud owns technical realization), client-provided inputs, and pending decision points.</p>
+      <div class="card-tags">
+        <span class="tag t-gold" data-i18n="t_client">Client</span>
+        <span class="tag t-blue" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-green">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_pacgate_firm">View Client Profile</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <a class="card" href="progress-reportcard/">
+      <div class="card-icon ci-blue">🏭</div>
+      <div class="card-eyebrow" data-i18n="cc_eyebrow">OEM AI Platform Delivery · Shenzhen</div>
+      <div class="card-title" data-i18n="cc_title">Cubecloud Vendor Profile</div>
+      <div class="card-title-zh" data-i18n="cc_title_zh">智方云供应商画像</div>
+      <p class="card-desc" data-i18n="cc_desc">Company profile, Phase 1 deliverables (hardware, AI layer, agent adaptation, knowledge, advisory), 5-team structure, operational boundaries, and full technology stack — AMD RyzenAI, Rust workspace, PostgreSQL, IronClaw, Tailscale.</p>
+      <div class="card-tags">
+        <span class="tag t-blue" data-i18n="t_vendor">Vendor</span>
+        <span class="tag t-gold" data-i18n="t_phase1">Phase 1</span>
+        <span class="tag t-green">HTML</span>
+      </div>
+      <div class="card-cta">
+        <span class="cta-label" data-i18n="view_cubecloud">View Vendor Profile</span>
+        <span class="cta-arrow">→</span>
+      </div>
+    </a>
+
+    <div class="card card-static card-static-accent">
+      <div class="card-icon ci-gold">🔑</div>
+      <div class="card-eyebrow" data-i18n="byok_eyebrow">BYOK Model Roster · Current</div>
+      <div class="card-title" data-i18n="byok_title">Supported BYOK Providers</div>
+      <div class="card-title-zh" data-i18n="byok_title_zh">支持的 BYOK 供应商</div>
+      <div class="provider-list">
+        <div class="provider-row">
+          <span class="provider-name">Anthropic</span>
+          <span class="provider-model">Claude Sonnet 4.6</span>
+        </div>
+        <div class="provider-row">
+          <span class="provider-name">OpenAI</span>
+          <span class="provider-model">GPT-5.4</span>
+        </div>
+        <div class="provider-row">
+          <span class="provider-name">DeepSeek</span>
+          <span class="provider-model">DeepSeek-V4</span>
+        </div>
+        <div class="provider-row">
+          <span class="provider-name">Qwen</span>
+          <span class="provider-model">Qwen3.6 · qwen3-max</span>
+        </div>
+        <div class="provider-row">
+          <span class="provider-name">MiniMax</span>
+          <span class="provider-model">MiniMax-2.7</span>
+        </div>
+      </div>
+      <p class="card-desc card-desc-note" data-i18n="byok_note">Keys AES-256-GCM encrypted at rest · decrypted only in Ironclaw vault at inference time · never logged</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-left">
+    <div><span class="footer-logo">Cubecloud Limited</span> · <span data-i18n="f_oemtag">智方云 · OEM Platform Delivery</span></div>
+    <div data-i18n="f_client">Client: Pacgate Law · 百胜律师事务所</div>
+    <div data-i18n="f_legal">Phase 1 active. Contract signed 2026-06-16. All rights reserved by Cubecloud Limited Company.</div>
+  </div>
+  <div class="footer-right">
+    <div data-i18n="f_valid">Phase 1 — Local Pilot · All rights reserved by Cubecloud Limited Company</div>
+    <div data-i18n="f_phase">Phase 1 — Local Pilot</div>
+    <div>pacgate-ai · Rust 2021 · Axum 0.7 · Tokio 1</div>
+  </div>
+</footer>
+
+<script>
+const T = {
+  en: {
+    logo_sub:    'Deliverable Architecture · Phase 1 Pilot',
+    pre_badge:   'CONTRACT SIGNED',
+    disclaimer:  'Contract signed 2026-06-16 · Phase 1 active · All rights reserved by Cubecloud Limited Company',
+    hero_eyebrow:'CUBECLOUD LIMITED × PACGATE LAW · 智方云 × 百胜律师事务所',
+    hero_subtitle:'Local Legal AI Pilot · Deliverable Architecture',
+    hero_desc:   'Proposal and architecture set for a privacy-first local legal AI pilot built on Cubecloud AI stations with NPU+GPU acceleration and private deployment. The current commercial scope is a two-machine Phase 1 pilot with legal-agent adaptations and starter knowledge enablement, while the broader Pacgate SaaS workspace remains the future-state blueprint.',
+    m_crates:'Rust Crates', m_crates_s:'workspace',
+    m_phases:'Build Phases', m_phases_s:'Phase 0–7',
+    m_diagrams:'Diagrams', m_diagrams_s:'3 animated + 5 draw.io',
+    m_date:'Contract Signed', m_date_s:'Phase 1 Active',
+    s1_title:'Overview Diagrams', s1_sub:'Animated · Interactive · English / 中文',
+    c1_eyebrow:'Why It\'s Different', c1_title:'Concept Diagram', c1_title_zh:'差异化概念图',
+    c1_desc:'Market differentiation · Harvey / Crosby / Moritz competitive map · 12-row capability matrix · PacGate AI as the general legal AI entry surface · Cubecloud OS surface mapping · dedicated AIPC/private platform vs. public-cloud SaaS · empowers law firms, does not replace them',
+    c2_eyebrow:'What It Does', c2_title:'Function Diagram', c2_title_zh:'功能架构图',
+    c2_desc:'10-tool agent dispatcher · dual-mode AI (Repeatable / LongHorizon) · 3-tier LLM router (Nemotron3:33b / Qwen3.6:27b / Qwen3.5:9b) · Matter State Machine (11 states) · DOCX engine · Authority Registry · RAG',
+    c3_eyebrow:'How It\'s Structured', c3_title:'Utility Diagram', c3_title_zh:'系统结构图',
+    c3_desc:'Rust 16-crate workspace · WASM Ironclaw vault · AMD RyzenAI NPU+GPU stack · Tailscale-connected Cubecloud Agent OS mesh · Postgres+pgvector RAG · Authority Registry (statutes) + Client KB (matters)',
+    s2_title:'Technical Architecture Diagrams', s2_sub:'draw.io · 5 diagrams · viewer required',
+    cr_eyebrow:'Full Technical Report · All 5 Diagrams', cr_title:'Architecture Diagrams Report', cr_title_zh:'技术架构图报告（含五张图）',
+    cr_desc:'All 5 draw.io technical diagrams with embedded viewer, scope explanations, and EN/CN descriptions — system overview, LLM router, agent loop, DOCX engine, RAG pipeline. Requires internet for diagram viewer.',
+    d01_title:'System Architecture Overview', d01_zh:'系统架构总览',
+    d01_desc:'7-tier layered architecture: Client → API → Domain → WASM → Storage → Inference → Cubecloud OS. AMD RyzenAI inference with 3-tier local + 5 BYOK providers.',
+    d02_title:'LLM Router & Inference Tiers', d02_zh:'LLM 路由器与推理层',
+    d02_desc:'3 local Ollama tiers (Nemotron3:33b · Qwen3.6:27b · Qwen3.5:9b) + 5 BYOK cloud providers (Claude Sonnet 4.6 · GPT-5.4 · DeepSeek-V4 · Qwen3.6 · MiniMax-2.7). Fallback chain.',
+    d03_title:'Agent Loop & Tool Dispatcher', d03_zh:'Agent 循环与工具调度',
+    d03_desc:'Max-10-round iterative tool dispatch cycle: build context → call LLM → dispatch tools → append results → loop. SSE streaming to client with citation extraction.',
+    d04_title:'DOCX Engine Pipeline', d04_zh:'DOCX 引擎流水线',
+    d04_desc:'3-path OOXML pipeline: (A) Generate from JSON structure · (B) Edit with word-level tracked changes (w:ins/w:del · Pacgate AI author) · (C) Parse & extract plain text for RAG.',
+    d05_title:'RAG & Knowledge Base Pipeline', d05_zh:'RAG 与知识库流水线',
+    d05_desc:'Ingest: extract → chunk (512t/64t overlap) → embed (nomic-embed-text NPU) → pgvector + tsvector FTS. Retrieval: query embed → cosine + tsvector → RRF fusion re-rank. China legal data: Phase 4.',
+    rs_eyebrow:'Rust Workspace · 16 Crates', rs_title:'Crate Status Overview', rs_title_zh:'Crate 状态总览',
+    rs_desc:'4 implemented (core, llm, docx, agent), 7 backend stubs (auth, tenant, search, rag, persona, template, workflow), 4 WASM stubs (doc-validator, rule-engine, citation-check, clause-parser), 1 partial binary server (api). Full status in progress reportcard.',
+    os_eyebrow:'AgentOS · 6 Surfaces per Node', os_title:'Cubecloud OS Surfaces', os_title_zh:'Cubecloud OS 表层',
+    os_desc:'Six AgentOS surfaces deployed per AIPC node: OpenSpace (team dashboard), Open WebUI (private AI chat), IronClaw (security vault), Hermes (memory & scheduling), Warp ADE (technical tuning), OpenCode (prompt adaptation). Full surface integration map in progress reportcard.',
+    aa_eyebrow:'10-Tool Dispatcher · 3-Tier LLM Router', aa_title:'Agent Architecture', aa_title_zh:'Agent 架构',
+    aa_desc:'Core agent system: 10-tool dispatcher, dual-mode AI (repeatable workflows / long-horizon reasoning), 3-tier LLM router with fallback chain, 11-state matter machine, 3-path DOCX engine, and max-10-round iterative agent loop with SSE streaming and citation extraction.',
+    s3_title:'Proposal & Quote', s3_sub:'Phase 1 pilot · HTML documents',
+    cp_eyebrow:'Phase 1 Pilot Proposal', cp_title:'Pilot Plans', cp_title_zh:'试点方案',
+    cp_desc:'Client-facing Phase 1 pilot proposal covering buying logic, legal-agent reference models, two-machine local topology, delivery workstreams, deferred Phase 2 boundaries, and dual-currency working package pricing for the first deployment.',
+    qs_eyebrow:'Commercial One-Page Summary', qs_title:'Quote Summary', qs_title_zh:'报价摘要',
+    qs_desc:'One-page commercial sheet with dual-currency Phase 1 totals, optional advisory reserve, payment schedule, exclusions, and the current working pricing basis for the local pilot.',
+    ca_eyebrow:'PO / SOW Commercial Companion', ca_title:'Commercial Appendix', ca_title_zh:'商业附录',
+    ca_desc:'Short companion appendix for purchase-order or SOW drafting, focused on milestone payments, assumptions, exclusions, advisory rates, change-control handling, and the stated USD/RMB basis.',
+    ch_eyebrow:'Current Question Round', ch_title:'Clarification Hub', ch_title_zh:'第一阶段答疑入口',
+    ch_desc:'Client-safe clarification entry for the current Phase 1 question round. Starts with the short reply letter, then routes to Annex A to D and the bilingual reply-pack PDFs without pushing viewers into the internal workboard.',
+    rc_eyebrow:'Joint Tracking · Contract Signed 2026-06-16', rc_title:'Progress Reportcard', rc_title_zh:'进度报告卡',
+    rc_desc:'Bilingual Phase 1 progress dashboard: payment milestones, hardware node status (Device A/B), agentic workflow tracking, database & knowledge progress, prerequisites checklist, client onboarding info, integration registry, and full contract timeline.',
+    cp2_eyebrow:'Contractual Safeguards · 4 Categories', cp2_title:'Key Client Protections', cp2_title_zh:'甲方关键保护条款',
+    cp2_desc:'Payment penalties, IP & competitive isolation (permanent), data sovereignty & exit rights, operational safeguards, and 4-layer acceptance hierarchy. Organized by category across all three contracts.',
+    pf_eyebrow:'Client Profile · Beijing PRC Law Firm', pf_title:'Pacgate Law Firm', pf_title_zh:'百宸律师事务所',
+    pf_desc:'Firm profile, practice areas (Data Compliance, AI Compliance, Web3/RWA, M&A, Antitrust, IP), Phase 1 role split (Pacgate owns legal logic, Cubecloud owns technical realization), client-provided inputs, and pending decision points.',
+    cc_eyebrow:'OEM AI Platform Delivery · Shenzhen', cc_title:'Cubecloud Vendor Profile', cc_title_zh:'智方云供应商画像',
+    cc_desc:'Company profile, Phase 1 deliverables (hardware, AI layer, agent adaptation, knowledge, advisory), 5-team structure, operational boundaries, and full technology stack — AMD RyzenAI, Rust workspace, PostgreSQL, IronClaw, Tailscale.',
+    byok_eyebrow:'BYOK Model Roster · Current', byok_title:'Supported BYOK Providers', byok_title_zh:'支持的 BYOK 供应商',
+    byok_note:'Keys AES-256-GCM encrypted at rest · decrypted only in Ironclaw vault at inference time · never logged',
+    t_product:'Product', t_business:'Business', t_animated:'Animated', t_technical:'Technical', t_agent:'Agent',
+    t_architecture:'Architecture', t_infra:'Infrastructure', t_7_tiers:'7 Tiers', t_byok:'BYOK',
+    t_3_tiers:'3 Local Tiers', t_5_byok:'5 BYOK', t_fallback:'Fallback', t_10_tools:'10 Tools',
+    t_sse:'SSE Stream', t_citations:'Citations', t_tracked:'Tracked Changes', t_3_paths:'3 Paths',
+    t_rrf:'RRF Fusion', t_china_ph4:'China Data · Ph4', t_spec:'Specification', t_phases_tag:'7 Phases', t_phase1:'Phase 1', t_quote:'Quote', t_appendix:'Appendix', t_clarification:'Clarification', t_sow:'PO / SOW',
+    t_full_report:'Full Report', t_all_diagrams:'5 Diagrams', t_tracking:'Tracking', t_rust:'Rust', t_16_crates:'16 Crates', t_wasm:'WASM', t_6_surfaces:'6 Surfaces', t_agentos:'AgentOS', t_protections:'Protections', t_client:'Client', t_vendor:'Vendor',
+    open_diagram:'Open Diagram', open_report:'Open Report', view_plan:'View Plan', view_quote:'View Quote', view_appendix:'View Appendix', view_clarification:'Open Hub', view_reportcard:'Open Reportcard', view_rust_status:'View Crate Status', view_os_surfaces:'View OS Surfaces', view_agent_arch:'View Agent Architecture', view_protections:'View Protections', view_pacgate_firm:'View Client Profile', view_cubecloud:'View Vendor Profile',
+    f_oemtag:'智方云 · OEM Platform Delivery', f_client:'Client: Pacgate Law · 百胜律师事务所',
+    f_legal:'Phase 1 active. Contract signed 2026-06-16. All rights reserved by Cubecloud Limited Company.',
+    f_valid:'Phase 1 — Local Pilot · All rights reserved by Cubecloud Limited Company', f_phase:'Phase 1 — Local Pilot',
+  },
+  zh: {
+    logo_sub:    '交付架构 · 第一阶段试点',
+    pre_badge:   '合同已签署',
+    disclaimer:  '合同已签署 2026-06-16 · Phase 1 进行中 · 版权所有，智方云有限公司',
+    hero_eyebrow:'智方云 × 百胜律师事务所 · CUBECLOUD LIMITED × PACGATE LAW',
+    hero_subtitle:'本地法律 AI 试点 · 交付架构',
+    hero_desc:   '这里汇集了面向 Pacgate 第一阶段本地法律 AI 试点的提案与架构材料，基于 Cubecloud AI 站点、NPU + GPU 加速与私有部署方式组织。当前商业范围是“两台机器 + 两套法律 Agent 适配 + 起步版知识启用”，而更完整的 Pacgate SaaS workspace 则继续保留为未来蓝图。',
+    m_crates:'Rust 组件', m_crates_s:'工作区',
+    m_phases:'建设阶段', m_phases_s:'阶段 0–7',
+    m_diagrams:'架构图表', m_diagrams_s:'3 张动态 + 5 张 draw.io',
+    m_date:'签约日期', m_date_s:'Phase 1 进行中',
+    s1_title:'概览图表', s1_sub:'动态交互展示 · 中英双语',
+    c1_eyebrow:'产品差异化定位', c1_title:'差异化概念图', c1_title_zh:'Concept Diagram',
+    c1_desc:'市场差异化 · Harvey / Crosby / Moritz 竞争地图 · 12 项能力矩阵 · PacGate AI 作为通用法律 AI 入口 · Cubecloud OS 平台映射 · 专属 AIPC/私有平台 vs. 公有云 SaaS · 赋能律师，而非取代律师',
+    c2_eyebrow:'核心功能', c2_title:'功能架构图', c2_title_zh:'Function Diagram',
+    c2_desc:'10 工具 Agent 调度 · 双模式 AI（标准化 / 长周期）· 三层 LLM 路由（Nemotron3:33b / Qwen3.6:27b / Qwen3.5:9b）· 案件状态机（11 个状态）· DOCX 引擎 · 权威登记库 · RAG',
+    c3_eyebrow:'系统架构', c3_title:'系统结构图', c3_title_zh:'Utility Diagram',
+    c3_desc:'Rust 16 crate 工作区 · WASM Ironclaw 隔离保险库 · AMD RyzenAI NPU + GPU 技术栈 · 通过 Tailscale 连接的 Cubecloud Agent OS 私有 mesh · Postgres + pgvector RAG · 权威登记库（法规）+ 客户 KB（案件）',
+    s2_title:'技术架构图', s2_sub:'draw.io · 5 张图 · 需联网查看',
+    cr_eyebrow:'完整技术报告 · 含五张图表', cr_title:'技术架构图报告', cr_title_zh:'Architecture Diagrams Report',
+    cr_desc:'含嵌入式查看器的 5 张 draw.io 技术图表，附范围说明与中英双语描述，覆盖系统总览、LLM 路由、Agent 循环、DOCX 引擎与 RAG 流水线。查看图表需要联网。',
+    d01_title:'系统架构总览', d01_zh:'System Architecture Overview',
+    d01_desc:'7 层架构：客户端 → API → 领域 → WASM → 存储 → 推理 → Cubecloud OS。AMD RyzenAI 推理，3 层本地模型 + 5 个 BYOK 供应商。',
+    d02_title:'LLM 路由器与推理层', d02_zh:'LLM Router & Inference Tiers',
+    d02_desc:'3 层本地 Ollama 模型（Nemotron3:33b · Qwen3.6:27b · Qwen3.5:9b）+ 5 个 BYOK 云端供应商（Claude Sonnet 4.6 · GPT-5.4 · DeepSeek-V4 · Qwen3.6 · MiniMax-2.7）。含降级链。',
+    d03_title:'Agent 循环与工具调度', d03_zh:'Agent Loop & Tool Dispatcher',
+    d03_desc:'最多 10 轮迭代工具调度循环：构建上下文 → 调用 LLM → 调度工具 → 追加结果 → 循环。SSE 流式推送至客户端，含引文提取。',
+    d04_title:'DOCX 引擎流水线', d04_zh:'DOCX Engine Pipeline',
+    d04_desc:'3 路径 OOXML 流水线：(A) 从 JSON 结构生成 · (B) 使用词级批注修改（w:ins/w:del · 作者 Pacgate AI）· (C) 解析提取纯文本供 RAG 使用。',
+    d05_title:'RAG 与知识库流水线', d05_zh:'RAG & Knowledge Base Pipeline',
+    d05_desc:'写入：提取 → 分块（512t/64t 重叠）→ 嵌入（nomic-embed-text NPU）→ pgvector + tsvector 全文索引。检索：查询嵌入 → 余弦 + tsvector → RRF 融合重排。中国法律数据：Phase 4。',
+    rs_eyebrow:'Rust 工作区 · 16 个 Crate', rs_title:'Crate 状态总览', rs_title_zh:'Crate Status Overview',
+    rs_desc:'4 个已实现（core、llm、docx、agent），7 个后端存根（auth、tenant、search、rag、persona、template、workflow），4 个 WASM 存根（doc-validator、rule-engine、citation-check、clause-parser），1 个部分完成的二进制服务端（api）。完整状态见进度报告卡。',
+    os_eyebrow:'AgentOS · 每节点 6 个表层', os_title:'Cubecloud OS 表层', os_title_zh:'Cubecloud OS Surfaces',
+    os_desc:'每台 AIPC 节点部署六个 AgentOS 表层：OpenSpace（团队看板）、Open WebUI（私有 AI 对话）、IronClaw（安全保险库）、Hermes（记忆与日程）、Warp ADE（技术调优）、OpenCode（Prompt 适配）。完整表层集成映射见进度报告卡。',
+    aa_eyebrow:'10 工具调度器 · 三层 LLM 路由器', aa_title:'Agent 架构', aa_title_zh:'Agent Architecture',
+    aa_desc:'核心 Agent 系统：10 工具调度器、双模式 AI（可重复工作流 / 长周期推理）、三层 LLM 路由器含降级链、11 状态事项状态机、3 路径 DOCX 引擎，以及最多 10 轮迭代 Agent 循环，含 SSE 流式推送与引文提取。',
+    s3_title:'方案与报价', s3_sub:'第一阶段试点 · HTML 文档',
+    cp_eyebrow:'第一阶段试点提案', cp_title:'试点方案', cp_title_zh:'Pilot Plans',
+    cp_desc:'面向客户的第一阶段试点提案，覆盖采购逻辑、法律 Agent 参考模型、两机本地拓扑、交付工作流、第二阶段边界，以及首轮部署的双币种工作报价。',
+    qs_eyebrow:'一页式商业摘要', qs_title:'报价摘要', qs_title_zh:'Quote Summary',
+    qs_desc:'一页式商业页，集中展示第一阶段双币种固定交付小计、可选顾问预留、付款节奏、排除项，以及当前本地试点工作报价基线。',
+    ca_eyebrow:'PO / SOW 商业配套页', ca_title:'商业附录', ca_title_zh:'Commercial Appendix',
+    ca_desc:'适合采购单或 SOW 起草的短版商业附录，聚焦里程碑付款、假设、排除项、顾问费率、变更处理，以及明确的 USD / RMB 基线。',
+    ch_eyebrow:'当前问题轮次', ch_title:'第一阶段答疑入口', ch_title_zh:'Clarification Hub',
+    ch_desc:'面向当前第一阶段问题轮次的对外答疑入口。建议先看简明回函，再按需打开附件 A 至 D，或直接下载中英双语回函包，不把访客带入内部工作板。',
+    rc_eyebrow:'联合跟踪 · 合同已签署 2026-06-16', rc_title:'进度报告卡', rc_title_zh:'Progress Reportcard',
+    rc_desc:'双语 Phase 1 进度看板：付款里程碑、硬件节点状态（设备 A/B）、Agentic 工作流跟踪、数据库与知识进度、前置条件检查清单、甲方入驻信息、集成注册表及完整合同时间线。',
+    cp2_eyebrow:'合同保障 · 4 大类别', cp2_title:'甲方关键保护条款', cp2_title_zh:'Key Client Protections',
+    cp2_desc:'付款罚则、知识产权与竞争隔离（永久）、数据主权与退出权利、运营保障，以及四层验收层级。按类别组织，覆盖全部三份合同。',
+    pf_eyebrow:'甲方画像 · 北京中国律师事务所', pf_title:'百宸律师事务所', pf_title_zh:'Pacgate Law Firm',
+    pf_desc:'律所画像、业务领域（数据合规、AI 合规、Web3/RWA、并购、反垄断、知识产权）、Phase 1 角色分工（百宸负责法律逻辑，智方云负责技术实现）、甲方提供内容及待决定事项。',
+    cc_eyebrow:'OEM AI 平台交付 · 深圳', cc_title:'智方云供应商画像', cc_title_zh:'Cubecloud Vendor Profile',
+    cc_desc:'公司画像、Phase 1 交付物（硬件、AI 层、Agent 适配、知识、顾问）、5 团队结构、运营边界及完整技术栈 — AMD RyzenAI、Rust 工作区、PostgreSQL、IronClaw、Tailscale。',
+    byok_eyebrow:'当前 BYOK 模型列表', byok_title:'支持的 BYOK 供应商', byok_title_zh:'Supported BYOK Providers',
+    byok_note:'密钥 AES-256-GCM 静态加密 · 仅在 Ironclaw 保险库推理时解密 · 从不记录日志',
+    t_product:'产品', t_business:'商业', t_animated:'动态交互', t_technical:'技术', t_agent:'智能体',
+    t_architecture:'架构', t_infra:'基础设施', t_7_tiers:'7 层', t_byok:'BYOK',
+    t_3_tiers:'3 本地层', t_5_byok:'5 BYOK', t_fallback:'降级链', t_10_tools:'10 工具',
+    t_sse:'SSE 流', t_citations:'引文', t_tracked:'批注修改', t_3_paths:'3 路径',
+    t_rrf:'RRF 融合', t_china_ph4:'中国数据 · Ph4', t_spec:'规格说明', t_phases_tag:'7 阶段', t_phase1:'第一阶段', t_quote:'报价', t_appendix:'附录', t_clarification:'答疑', t_sow:'PO / SOW',
+    t_full_report:'完整报告', t_all_diagrams:'5 张图表', t_tracking:'跟踪', t_rust:'Rust', t_16_crates:'16 Crate', t_wasm:'WASM', t_6_surfaces:'6 表层', t_agentos:'AgentOS', t_protections:'保护条款', t_client:'甲方', t_vendor:'乙方',
+    open_diagram:'打开图表', open_report:'打开报告', view_plan:'查看方案', view_quote:'查看报价', view_appendix:'查看附录', view_clarification:'打开入口', view_reportcard:'打开报告卡', view_rust_status:'查看 Crate 状态', view_os_surfaces:'查看 OS 表层', view_agent_arch:'查看 Agent 架构', view_protections:'查看保护条款', view_pacgate_firm:'查看甲方画像', view_cubecloud:'查看乙方画像',
+    f_oemtag:'智方云 · OEM 平台交付', f_client:'客户：百胜律师事务所 · Pacgate Law',
+    f_legal:'Phase 1 进行中。合同已签署 2026-06-16。智方云版权所有。',
+    f_valid:'Phase 1 — 本地试点 · 智方云版权所有', f_phase:'第一阶段 — 本地试点',
+  }
+};
+let curLang = 'en';
+function i18n(lang, btn) {
+  curLang = lang;
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.dataset.i18n;
+    if (T[lang] && T[lang][k] !== undefined) el.textContent = T[lang][k];
+  });
+  document.title = lang === 'zh'
+    ? 'Pacgate AI — 本地法律 AI 试点 · 交付架构'
+    : 'Pacgate AI — Local Legal AI Pilot · Deliverable Architecture';
+}
+</script>
+
+  <script src="assets/protect.js"></script>
+
+</body>
+</html>

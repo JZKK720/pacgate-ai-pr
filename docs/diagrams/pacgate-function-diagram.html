@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pacgate AI — Function Diagram · 功能架构图</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --accent: #2563eb;
+    --accent2: #7c3aed;
+    --gold: #d97706;
+    --green: #059669;
+    --red: #dc2626;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --card: #1c2128;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Pro Display', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    min-height: 100vh;
+    padding: 40px 24px 80px;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 56px;
+  }
+  header .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.1s forwards;
+  }
+  header h1 {
+    font-size: clamp(28px, 4vw, 44px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.2s forwards;
+  }
+  header h1 span { color: var(--accent); }
+  header p {
+    color: var(--muted);
+    font-size: 15px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.3s forwards;
+  }
+
+  /* — Central LLM Hub — */
+  .hub-wrapper {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 40px;
+    opacity: 0;
+    animation: fadeUp 0.7s 0.5s forwards;
+  }
+  .hub {
+    background: linear-gradient(135deg, #1e3a8a 0%, #312e81 100%);
+    border: 1.5px solid #3b82f6;
+    border-radius: 20px;
+    padding: 28px 48px;
+    text-align: center;
+    position: relative;
+    box-shadow: 0 0 40px rgba(37,99,235,0.25);
+  }
+  .hub::before {
+    content: '';
+    position: absolute;
+    inset: -1.5px;
+    border-radius: 21px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6, #3b82f6);
+    z-index: -1;
+    animation: borderPulse 3s ease-in-out infinite;
+  }
+  @keyframes borderPulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .hub-label { font-size: 11px; letter-spacing: 0.1em; color: #93c5fd; text-transform: uppercase; margin-bottom: 6px; }
+  .hub-title { font-size: 22px; font-weight: 700; }
+  .hub-sub { font-size: 13px; color: #93c5fd; margin-top: 4px; }
+  .hub-tiers {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .tier-chip {
+    background: rgba(59,130,246,0.2);
+    border: 1px solid #3b82f6;
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 11px;
+    color: #93c5fd;
+  }
+
+  /* — Tool Grid — */
+  .section-label {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+    max-width: 1000px;
+    margin: 0 auto 40px;
+  }
+  .tool-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 16px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    cursor: default;
+  }
+  .tool-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 20px rgba(37,99,235,0.2);
+    transform: translateY(-2px);
+  }
+  .tool-card .tool-num {
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+  .tool-card .tool-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .tool-card .tool-desc {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .tool-card.animate { animation: cardIn 0.5s forwards; }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* — Feature Rows — */
+  .feature-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    max-width: 1000px;
+    margin: 0 auto 16px;
+    opacity: 0;
+    animation: fadeUp 0.7s forwards;
+  }
+  @media (max-width: 700px) {
+    .feature-row { grid-template-columns: 1fr; }
+  }
+  .feature-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    transition: border-color 0.2s;
+  }
+  .feature-card:hover { border-color: var(--accent2); }
+  .feature-card .fc-icon { font-size: 24px; margin-bottom: 10px; }
+  .feature-card .fc-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .feature-card .fc-body { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+  /* — Data flow line animation — */
+  .flow-line {
+    width: 2px;
+    height: 40px;
+    background: linear-gradient(to bottom, #3b82f6, transparent);
+    margin: 0 auto;
+    opacity: 0.6;
+    animation: flowDown 1.5s ease-in-out infinite;
+  }
+  @keyframes flowDown {
+    0% { opacity: 0.2; }
+    50% { opacity: 0.8; }
+    100% { opacity: 0.2; }
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 64px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  footer span { color: var(--accent); }
+  /* i18n */
+  [data-lang="zh"] .en { display:none; }
+  [data-lang="en"] .zh { display:none; }
+</style>
+</head>
+<body>
+
+<div style="position:sticky;top:0;z-index:100;background:rgba(13,17,23,.95);backdrop-filter:blur(14px);border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;padding:0 32px;height:50px;">
+  <a href="../index.html" style="display:flex;align-items:center;gap:6px;color:#8b949e;font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid #30363d;border-radius:5px;transition:all .15s;">← <span class="en">Back to Index</span><span class="zh">返回首页</span></a>
+  <div style="display:flex;border:1px solid #30363d;border-radius:5px;overflow:hidden;">
+    <button onclick="setLang('en',this)" style="padding:4px 12px;border:none;background:#d97706;color:#0d1117;cursor:pointer;font-size:11px;font-weight:700" id="btn-en">EN</button>
+    <button onclick="setLang('zh',this)" style="padding:4px 12px;border:none;background:none;color:#8b949e;cursor:pointer;font-size:11px;font-weight:700" id="btn-zh">中文</button>
+  </div>
+</div>
+
+<header>
+  <div class="eyebrow">Pacgate AI · Function Diagram · 功能架构图</div>
+  <h1><span>Pacgate AI</span> — <span class="en">What It Does</span><span class="zh">功能详解</span></h1>
+  <p><span class="en">Matter-centric, compliance-first · 10-tool agent · dual-mode AI · DOCX engine · Authority Registry · RAG · MCP</span><span class="zh">以案件为中心，合规优先 · 10 工具智能体 · 双模式 AI · DOCX 引擎 · 法律依据库 · RAG · MCP</span></p>
+</header>
+
+<div class="en">
+<!-- LLM Hub -->
+<div class="hub-wrapper">
+  <div class="hub">
+    <div class="hub-label"><span class="en">Central Inference Engine</span><span class="zh">中心推理引擎</span></div>
+    <div class="hub-title"><span class="en">3-Tier LLM Router</span><span class="zh">3层 LLM 路由器</span></div>
+    <div class="hub-sub">Ollama · AMD RyzenAI NPU+GPU · BYOK</div>
+    <div class="hub-tiers">
+      <span class="tier-chip">Main · Nemotron3:33b</span>
+      <span class="tier-chip">Mid · Qwen3.6:27b</span>
+      <span class="tier-chip">Low · Qwen3.5:9b</span>
+      <span class="tier-chip">+ Claude Sonnet 4.6 / GPT-5.4 / DeepSeek-V4 / qwen3-max / MiniMax-2.7</span>
+    </div>
+  </div>
+</div>
+
+<div class="flow-line"></div>
+
+<!-- 10 Tools -->
+<div class="section-label" style="margin-top:24px"><span class="en">Agent Tool Dispatcher · 10 Tools</span><span class="zh">智能体工具调度器 · 10 个工具</span></div>
+<div class="tools-grid" id="toolsGrid">
+  <div class="tool-card" data-delay="0">
+    <div class="tool-num">TOOL 01</div>
+    <div class="tool-name">read_document</div>
+    <div class="tool-desc">Extract full text from uploaded DOCX/PDF for agent context</div>
+  </div>
+  <div class="tool-card" data-delay="1">
+    <div class="tool-num">TOOL 02</div>
+    <div class="tool-name">find_in_document</div>
+    <div class="tool-desc">Locate specific clause or text by keyword within a document</div>
+  </div>
+  <div class="tool-card" data-delay="2">
+    <div class="tool-num">TOOL 03</div>
+    <div class="tool-name">fetch_documents</div>
+    <div class="tool-desc">Retrieve multiple documents by ID for cross-document analysis</div>
+  </div>
+  <div class="tool-card" data-delay="3">
+    <div class="tool-num">TOOL 04</div>
+    <div class="tool-name">list_documents</div>
+    <div class="tool-desc">List all documents in a matter with metadata</div>
+  </div>
+  <div class="tool-card" data-delay="4">
+    <div class="tool-num">TOOL 05</div>
+    <div class="tool-name">generate_docx</div>
+    <div class="tool-desc">Create a new legal document from structured JSON sections and templates</div>
+  </div>
+  <div class="tool-card" data-delay="5">
+    <div class="tool-num">TOOL 06</div>
+    <div class="tool-name">edit_document</div>
+    <div class="tool-desc">Apply tracked changes (w:ins / w:del) to existing DOCX</div>
+  </div>
+  <div class="tool-card" data-delay="6">
+    <div class="tool-num">TOOL 07</div>
+    <div class="tool-name">replicate_document</div>
+    <div class="tool-desc">Clone a document with targeted variable substitutions</div>
+  </div>
+  <div class="tool-card" data-delay="7">
+    <div class="tool-num">TOOL 08</div>
+    <div class="tool-name">read_workflow</div>
+    <div class="tool-desc">Load a legal workflow template (160+ available) into agent context</div>
+  </div>
+  <div class="tool-card" data-delay="8">
+    <div class="tool-num">TOOL 09</div>
+    <div class="tool-name">read_table_cells</div>
+    <div class="tool-desc">Extract cell data from tabular review grid for structured analysis</div>
+  </div>
+  <div class="tool-card" data-delay="9">
+    <div class="tool-num">TOOL 10</div>
+    <div class="tool-name">kb_search</div>
+    <div class="tool-desc">Hybrid semantic + keyword search across Authority Registry (statutes, regs, circulars) and Client KB (matter docs). RRF fusion ranking. Returns source/jurisdiction/citation_priority metadata.</div>
+  </div>
+</div>
+
+<div class="flow-line"></div>
+
+<!-- Feature rows -->
+<div class="section-label" style="margin-top:24px"><span class="en">Core Feature Modules</span><span class="zh">核心功能模块</span></div>
+
+<div class="feature-row" style="animation-delay:0.8s">
+  <div class="feature-card">
+    <div class="fc-icon">📄</div>
+    <div class="fc-title">DOCX Engine</div>
+    <div class="fc-body">OOXML ZIP builder · Word-level tracked changes via <code>similar</code> crate · Legal heading hierarchy (1. → 1.1 → (a) → (i)) · Signature page generation · 9 legal templates</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🔍</div>
+    <div class="fc-title">RAG Pipeline</div>
+    <div class="fc-body">512-token chunks · pgvector cosine similarity · Postgres tsvector keyword search · RRF fusion ranking · Jurisdiction + practice area tagging</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">📋</div>
+    <div class="fc-title">Tabular Review</div>
+    <div class="fc-body">N documents × M questions grid · Parallel Tokio task pool (max 8 concurrent) · SSE streaming progress · XLSX export · Cell-level agent reasoning</div>
+  </div>
+</div>
+
+<div class="feature-row" style="animation-delay:1.0s">
+  <div class="feature-card">
+    <div class="fc-icon">⚖️</div>
+    <div class="fc-title">Citation System</div>
+    <div class="fc-body">Inline [1] markers · &lt;CITATIONS&gt; JSON block · Verbatim ≤25 words per citation · Post-generation citation integrity verification · Linked to source document</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🎭</div>
+    <div class="fc-title">Persona Engine</div>
+    <div class="fc-body">12 international legal personas · 8 China-specific personas (涉外律师, 合同律师, 知识产权律师 …) · Per-matter persona selection · Jurisdiction-aware system prompts</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🔗</div>
+    <div class="fc-title">MCP Integration</div>
+    <div class="fc-body">Pacgate exposes tools as MCP server · MCP client connects to DMS, 飞书/企微/钉钉, OA systems, calendar · Hermes persistent agent memory + scheduling</div>
+  </div>
+</div>
+<div class="feature-row" style="animation-delay:1.2s">
+  <div class="feature-card">
+    <div class="fc-icon">📖</div>
+    <div class="fc-title">Authority Registry</div>
+    <div class="fc-body">Separate KB store for statutes, regulations, and circulars. Each chunk carries: source / version_date / jurisdiction / applicability_scope / superseded_by / citation_priority. If no authoritative basis found, agent emits “依据不足，需律师复核” rather than hallucinating — feeding directly into MatterState::NeedsRevision.</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🤖</div>
+    <div class="fc-title">Dual-Mode Agent</div>
+    <div class="fc-body">WorkflowMode::Repeatable (Type A): fixed tool sequence, deterministic, compliance-grade. WorkflowMode::LongHorizon (Type B): multi-round, self-review via get_diff, parallel sub-agents for clause-level tasks. Mode selected per matter type at intake.</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">📉</div>
+    <div class="fc-title">Confidence Gap Handling</div>
+    <div class="fc-body">When Authority Registry search returns cosine &lt; threshold: agent inserts confidence flag, sets MatterState to NeedsRevision, blocks delivery. Lawyer receives annotated draft with flagged clauses. No auto-delivery on uncertain legal ground.</div>
+  </div>
+</div>
+<!-- Matter State Machine -->
+<div style="max-width:1000px;margin:48px auto 32px">
+  <div style="text-align:center;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px">Matter State Machine · 案件状态机 (11 States)</div>
+  <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:20px">
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">Submitted</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">IntakeChecking</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">NeedsClientInfo</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">QueuedForAI</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(5,150,105,0.12);border:1px solid rgba(5,150,105,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">AIProcessing</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(217,119,6,0.15);border:1px solid rgba(217,119,6,0.4);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;color:#fbbf24">LawyerReview ★</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(5,150,105,0.12);border:1px solid rgba(5,150,105,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">Approved</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">Delivered</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.08);border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">FollowUp / Closed</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:11px;color:var(--muted)">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="color:#fbbf24;font-weight:700;margin-bottom:4px">★ LawyerReview — Mandatory Gate</div>
+      No matter bypasses lawyer review. Every AI-generated output lands in <code>LawyerReview</code> before it can reach <code>Approved</code>. Confidence gap → <code>NeedsRevision</code>.
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="color:var(--accent);font-weight:700;margin-bottom:4px">NeedsRevision (re-entry)</div>
+      Any state from <code>LawyerReview</code> may transition to <code>NeedsRevision</code>. Agent re-runs with lawyer notes. Revision loop is bounded and audited.
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="color:#34d399;font-weight:700;margin-bottom:4px">Immutable Audit Entries</div>
+      Every state transition appends an immutable audit record: actor, timestamp, prev_state → next_state. Chain is tamper-evident by design.
+    </div>
+  </div>
+</div>
+
+<!-- Phase 1 Product Lines -->
+<div style="max-width:1000px;margin:48px auto 32px">
+  <div style="text-align:center;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px">Phase 1 Product Lines · 第一阶段产品线</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+    <div style="background:var(--card);border:1px solid rgba(37,99,235,0.3);border-radius:14px;padding:20px">
+      <div style="font-size:22px;margin-bottom:8px">🔐</div>
+      <div style="font-weight:700;margin-bottom:6px;color:#60a5fa">数据合规服务</div>
+      <div style="font-size:12px;color:var(--muted)">Cross-border data compliance · PIPL · DSL · CSL · Data localisation review · DPIA support · Standard contract assessment</div>
+    </div>
+    <div style="background:var(--card);border:1px solid rgba(124,58,237,0.3);border-radius:14px;padding:20px">
+      <div style="font-size:22px;margin-bottom:8px">🤖</div>
+      <div style="font-weight:700;margin-bottom:6px;color:#a78bfa">AI 产品合规服务</div>
+      <div style="font-size:12px;color:var(--muted)">AIGC compliance review · CAC algorithm filing support · AI service provider obligations · Recommendation system review</div>
+    </div>
+    <div style="background:var(--card);border:1px solid rgba(5,150,105,0.3);border-radius:14px;padding:20px">
+      <div style="font-size:22px;margin-bottom:8px">🌐</div>
+      <div style="font-weight:700;margin-bottom:6px;color:#34d399">Web3 / RWA 合规服务</div>
+      <div style="font-size:12px;color:var(--muted)">Real-world asset tokenisation legal review · Token offering structuring · NFT / blockchain product compliance · Regulatory jurisdiction mapping</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="zh">
+<!-- LLM Hub -->
+<div class="hub-wrapper">
+  <div class="hub">
+    <div class="hub-label">中心推理引擎</div>
+    <div class="hub-title">3 层 LLM 路由器</div>
+    <div class="hub-sub">Ollama · AMD RyzenAI NPU+GPU · BYOK</div>
+    <div class="hub-tiers">
+      <span class="tier-chip">主层 · Nemotron3:33b</span>
+      <span class="tier-chip">中层 · Qwen3.6:27b</span>
+      <span class="tier-chip">低层 · Qwen3.5:9b</span>
+      <span class="tier-chip">+ Claude Sonnet 4.6 / GPT-5.4 / DeepSeek-V4 / qwen3-max / MiniMax-2.7</span>
+    </div>
+  </div>
+</div>
+
+<div class="flow-line"></div>
+
+<!-- 10 Tools -->
+<div class="section-label" style="margin-top:24px">智能体工具调度器 · 10 个工具</div>
+<div class="tools-grid">
+  <div class="tool-card" data-delay="0">
+    <div class="tool-num">TOOL 01</div>
+    <div class="tool-name">read_document</div>
+    <div class="tool-desc">从上传的 DOCX / PDF 中提取全文，供 agent 作为上下文使用。</div>
+  </div>
+  <div class="tool-card" data-delay="1">
+    <div class="tool-num">TOOL 02</div>
+    <div class="tool-name">find_in_document</div>
+    <div class="tool-desc">按关键词在文档内部定位具体条款或文本片段。</div>
+  </div>
+  <div class="tool-card" data-delay="2">
+    <div class="tool-num">TOOL 03</div>
+    <div class="tool-name">fetch_documents</div>
+    <div class="tool-desc">按 ID 拉取多份文档，用于跨文档对照分析。</div>
+  </div>
+  <div class="tool-card" data-delay="3">
+    <div class="tool-num">TOOL 04</div>
+    <div class="tool-name">list_documents</div>
+    <div class="tool-desc">列出当前 Matter 下全部文档及其元数据。</div>
+  </div>
+  <div class="tool-card" data-delay="4">
+    <div class="tool-num">TOOL 05</div>
+    <div class="tool-name">generate_docx</div>
+    <div class="tool-desc">基于结构化 JSON 段落和模板生成新的法律文档。</div>
+  </div>
+  <div class="tool-card" data-delay="5">
+    <div class="tool-num">TOOL 06</div>
+    <div class="tool-name">edit_document</div>
+    <div class="tool-desc">对既有 DOCX 应用 tracked changes（<code>w:ins</code> / <code>w:del</code>）。</div>
+  </div>
+  <div class="tool-card" data-delay="6">
+    <div class="tool-num">TOOL 07</div>
+    <div class="tool-name">replicate_document</div>
+    <div class="tool-desc">复制现有文档，并对指定变量做定向替换。</div>
+  </div>
+  <div class="tool-card" data-delay="7">
+    <div class="tool-num">TOOL 08</div>
+    <div class="tool-name">read_workflow</div>
+    <div class="tool-desc">把法律工作流模板（160+）载入 agent 上下文。</div>
+  </div>
+  <div class="tool-card" data-delay="8">
+    <div class="tool-num">TOOL 09</div>
+    <div class="tool-name">read_table_cells</div>
+    <div class="tool-desc">从表格化审阅网格提取单元格数据，供结构化分析使用。</div>
+  </div>
+  <div class="tool-card" data-delay="9">
+    <div class="tool-num">TOOL 10</div>
+    <div class="tool-name">kb_search</div>
+    <div class="tool-desc">对 Authority Registry（法规、规章、通知）与 Client KB（案件文档）执行语义 + 关键词混合检索，并以 RRF 融合排序，返回 source / jurisdiction / citation_priority 元数据。</div>
+  </div>
+</div>
+
+<div class="flow-line"></div>
+
+<!-- Feature rows -->
+<div class="section-label" style="margin-top:24px">核心功能模块</div>
+
+<div class="feature-row" style="animation-delay:0.8s">
+  <div class="feature-card">
+    <div class="fc-icon">📄</div>
+    <div class="fc-title">DOCX 引擎</div>
+    <div class="fc-body">OOXML ZIP 构建器 · 基于 <code>similar</code> crate 的 Word 级 tracked changes · 法律标题层级（1. → 1.1 → (a) → (i)）· 签署页生成 · 9 个法律模板</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🔍</div>
+    <div class="fc-title">RAG 流水线</div>
+    <div class="fc-body">512-token 切块 · pgvector 余弦相似度 · Postgres tsvector 关键词检索 · RRF 融合排序 · jurisdiction + practice area 标签</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">📋</div>
+    <div class="fc-title">表格化审阅</div>
+    <div class="fc-body">N 份文档 × M 个问题网格 · 并行 Tokio 任务池（最多 8 并发）· SSE 流式进度 · XLSX 导出 · 单元格级 agent 推理</div>
+  </div>
+</div>
+
+<div class="feature-row" style="animation-delay:1.0s">
+  <div class="feature-card">
+    <div class="fc-icon">⚖️</div>
+    <div class="fc-title">引文系统</div>
+    <div class="fc-body">行内 [1] 标记 · <code>&lt;CITATIONS&gt;</code> JSON 块 · 每条引文 verbatim ≤25 词 · 生成后引文完整性校验 · 回链源文档</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🎭</div>
+    <div class="fc-title">Persona 引擎</div>
+    <div class="fc-body">12 个国际法律 persona · 8 个中国法 persona（涉外律师、合同律师、知识产权律师等）· 按 Matter 选择 persona · 面向法域的系统提示词</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🔗</div>
+    <div class="fc-title">MCP 集成</div>
+    <div class="fc-body">Pacgate 以 MCP server 方式暴露工具；MCP client 可连接 DMS、飞书 / 企微 / 钉钉、OA 系统与 calendar；Hermes 提供持久 agent 记忆与调度。</div>
+  </div>
+</div>
+<div class="feature-row" style="animation-delay:1.2s">
+  <div class="feature-card">
+    <div class="fc-icon">📖</div>
+    <div class="fc-title">权威登记库</div>
+    <div class="fc-body">独立知识库存放 statutes、regulations 与 circulars。每个 chunk 带有 source / version_date / jurisdiction / applicability_scope / superseded_by / citation_priority。若未找到权威依据，agent 输出“依据不足，需律师复核”，并直接进入 MatterState::NeedsRevision。</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">🤖</div>
+    <div class="fc-title">双模式 Agent</div>
+    <div class="fc-body"><code>WorkflowMode::Repeatable</code>（Type A）用于固定工具序列、确定性、合规级任务；<code>WorkflowMode::LongHorizon</code>（Type B）用于多轮推理、自我复核和 clause-level 并行子 Agent。模式在 intake 时按 Matter 类型选择。</div>
+  </div>
+  <div class="feature-card">
+    <div class="fc-icon">📉</div>
+    <div class="fc-title">低置信度处理</div>
+    <div class="fc-body">当 Authority Registry 检索结果余弦相似度低于阈值时，agent 会插入置信标记，将 MatterState 设为 NeedsRevision，并阻止交付。律师收到的是带标记条款的草稿，而不是不确定情况下的自动交付。</div>
+  </div>
+</div>
+<!-- Matter State Machine -->
+<div style="max-width:1000px;margin:48px auto 32px">
+  <div style="text-align:center;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px">案件状态机（11 个状态）</div>
+  <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:20px">
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">已提交</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">受理检查中</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">待补充客户信息</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">排队待 AI</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(5,150,105,0.12);border:1px solid rgba(5,150,105,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">AI 处理中</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(217,119,6,0.15);border:1px solid rgba(217,119,6,0.4);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;color:#fbbf24">律师复核 ★</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(5,150,105,0.12);border:1px solid rgba(5,150,105,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">已批准</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">已交付</span>
+    <span style="color:var(--muted);align-self:center;font-size:14px">→</span>
+    <span style="background:rgba(37,99,235,0.08);border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600">跟进 / 结案</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:11px;color:var(--muted)">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="color:#fbbf24;font-weight:700;margin-bottom:4px">★ 律师复核：强制闸门</div>
+      任何 Matter 都不能绕过 <code>LawyerReview</code>。所有 AI 生成结果都必须先进入律师复核，之后才可能到达 <code>Approved</code>。一旦出现置信缺口，就直接进入 <code>NeedsRevision</code>。
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="color:var(--accent);font-weight:700;margin-bottom:4px">NeedsRevision（重入）</div>
+      从 <code>LawyerReview</code> 出发，任何 Matter 都可能转入 <code>NeedsRevision</code>。Agent 会携带律师批注重新执行，修订回路有边界、可审计。
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="color:#34d399;font-weight:700;margin-bottom:4px">不可变审计记录</div>
+      每次状态迁移都会追加不可变审计记录，包含 actor、timestamp、prev_state → next_state。整条链路从设计上就是防篡改的。
+    </div>
+  </div>
+</div>
+
+<!-- Phase 1 Product Lines -->
+<div style="max-width:1000px;margin:48px auto 32px">
+  <div style="text-align:center;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px">第一阶段产品线</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+    <div style="background:var(--card);border:1px solid rgba(37,99,235,0.3);border-radius:14px;padding:20px">
+      <div style="font-size:22px;margin-bottom:8px">🔐</div>
+      <div style="font-weight:700;margin-bottom:6px;color:#60a5fa">数据合规服务</div>
+      <div style="font-size:12px;color:var(--muted)">跨境数据合规 · PIPL · DSL · CSL · 数据本地化审查 · DPIA 支持 · 标准合同评估</div>
+    </div>
+    <div style="background:var(--card);border:1px solid rgba(124,58,237,0.3);border-radius:14px;padding:20px">
+      <div style="font-size:22px;margin-bottom:8px">🤖</div>
+      <div style="font-weight:700;margin-bottom:6px;color:#a78bfa">AI 产品合规服务</div>
+      <div style="font-size:12px;color:var(--muted)">AIGC 合规审查 · CAC 算法备案支持 · AI 服务提供者义务梳理 · 推荐系统合规审查</div>
+    </div>
+    <div style="background:var(--card);border:1px solid rgba(5,150,105,0.3);border-radius:14px;padding:20px">
+      <div style="font-size:22px;margin-bottom:8px">🌐</div>
+      <div style="font-weight:700;margin-bottom:6px;color:#34d399">Web3 / RWA 合规服务</div>
+      <div style="font-size:12px;color:var(--muted)">现实世界资产通证化法律审查 · Token 发行结构设计 · NFT / 区块链产品合规 · 监管法域映射</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<footer>
+  <span class="en">Pre-Proposal · All rights reserved by Cubecloud Limited Co.</span>
+  <span class="zh">预提案文件 · 版权所有，智方云有限公司</span>
+</footer>
+
+<script>
+  function setLang(l, btn) {
+    document.documentElement.dataset.lang = l;
+    document.querySelectorAll('#btn-en, #btn-zh').forEach(b => {
+      b.style.background = 'none'; b.style.color = '#8b949e';
+    });
+    btn.style.background = '#d97706'; btn.style.color = '#0d1117';
+    localStorage.setItem('pg-lang', l);
+    document.title = l === 'zh'
+      ? 'Pacgate AI — 功能架构图'
+      : 'Pacgate AI — Function Diagram';
+  }
+  (function(){ const s = localStorage.getItem('pg-lang'); if(s) { const b = document.getElementById('btn-'+s); if(b) setLang(s, b); } })();
+
+  // Stagger tool cards
+  const cards = document.querySelectorAll('.tool-card');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const delay = parseInt(e.target.dataset.delay) * 80;
+        setTimeout(() => e.target.classList.add('animate'), delay);
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  cards.forEach(c => observer.observe(c));
+
+  // Feature rows
+  document.querySelectorAll('.feature-row').forEach((row, i) => {
+    row.style.animationDelay = (0.8 + i * 0.2) + 's';
+  });
+</script>
+<script src="../assets/protect.js"></script>
+</body>
+</html>

@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacgate AI - Phase 1 Pilot Plans</title>
+  <style>
+    :root {
+      --bg: #08101b;
+      --bg2: #0d1726;
+      --panel: rgba(12, 19, 31, 0.92);
+      --panel2: rgba(17, 28, 44, 0.94);
+      --line: #22324a;
+      --line-soft: rgba(34, 50, 74, 0.55);
+      --gold: #cfa652;
+      --gold-soft: #ebcf93;
+      --blue: #7fb8ff;
+      --green: #69c58a;
+      --text: #e7eef9;
+      --muted: #95a4bb;
+      --danger: #e17d7d;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, rgba(127, 184, 255, 0.10), transparent 28%),
+        radial-gradient(circle at top left, rgba(207, 166, 82, 0.12), transparent 24%),
+        linear-gradient(180deg, #09111d 0%, #07101a 50%, #08101b 100%);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+
+    a { color: inherit; }
+
+    .zh { display: none; }
+    body.zh-mode .en { display: none; }
+    body.zh-mode .zh { display: block; }
+    body.zh-mode .zh.inline { display: inline; }
+    body.zh-mode .zh.table-cell { display: table-cell; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0 1.4rem;
+      min-height: 60px;
+      background: rgba(8, 16, 27, 0.86);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(207, 166, 82, 0.14);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .brand-sep { color: var(--line); }
+
+    .brand-title {
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      color: var(--gold-soft);
+      background: rgba(207, 166, 82, 0.12);
+      border: 1px solid rgba(207, 166, 82, 0.30);
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+
+    .lang-switch button {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: 0.16s ease;
+    }
+
+    .lang-switch button.active {
+      background: rgba(207, 166, 82, 0.18);
+      color: var(--gold-soft);
+    }
+
+    .back-link {
+      text-decoration: none;
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+    }
+
+    .bar {
+      padding: 10px 1.4rem;
+      text-align: center;
+      border-bottom: 1px solid rgba(207, 166, 82, 0.18);
+      background: rgba(207, 166, 82, 0.05);
+      color: rgba(235, 207, 147, 0.86);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 30px 0 80px;
+    }
+
+    .lang-wrap {
+      display: block;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      gap: 1.2rem;
+      padding: 26px;
+      border: 1px solid rgba(207, 166, 82, 0.18);
+      border-radius: 28px;
+      background:
+        linear-gradient(135deg, rgba(207, 166, 82, 0.08), transparent 42%),
+        linear-gradient(180deg, rgba(18, 29, 44, 0.92), rgba(12, 20, 32, 0.96));
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      color: var(--gold-soft);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.55fr 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .hero-card,
+    .section,
+    .info-card,
+    .work-card,
+    .quote-card {
+      background: var(--panel);
+      border: 1px solid var(--line-soft);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero-card {
+      padding: 18px 18px 16px;
+    }
+
+    .hero-card h3,
+    .section h2,
+    .section h3,
+    .info-card h3,
+    .work-card h3,
+    .quote-card h3 {
+      margin: 0 0 0.7rem;
+      line-height: 1.2;
+    }
+
+    .hero-card h3,
+    .info-card h3,
+    .work-card h3,
+    .quote-card h3 {
+      font-size: 1rem;
+    }
+
+    .hero-card p,
+    .info-card p,
+    .work-card p,
+    .quote-card p,
+    .section p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .hero-card strong,
+    .section strong,
+    .info-card strong,
+    .work-card strong,
+    .quote-card strong {
+      color: var(--gold-soft);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 0.9rem;
+    }
+
+    .chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(127, 184, 255, 0.16);
+      background: rgba(127, 184, 255, 0.08);
+      font-size: 12px;
+      color: #dbe8ff;
+    }
+
+    .section {
+      margin-top: 20px;
+      padding: 22px;
+    }
+
+    .section h2 {
+      font-size: 1.24rem;
+      color: var(--gold-soft);
+    }
+
+    .section-note {
+      margin-top: 0.85rem;
+      padding: 14px 16px;
+      background: rgba(105, 197, 138, 0.08);
+      border: 1px solid rgba(105, 197, 138, 0.18);
+      border-radius: 16px;
+      color: #d5f0dd;
+      font-size: 14px;
+    }
+
+    .grid-2,
+    .grid-3,
+    .work-grid,
+    .quote-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .mt-16 {
+      margin-top: 16px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .work-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .quote-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .info-card,
+    .work-card,
+    .quote-card {
+      padding: 18px;
+    }
+
+    .label {
+      display: inline-flex;
+      margin-bottom: 0.7rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(207, 166, 82, 0.10);
+      border: 1px solid rgba(207, 166, 82, 0.22);
+      color: var(--gold-soft);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .info-card ul,
+    .work-card ul,
+    .quote-card ul,
+    .section ul,
+    .section ol {
+      margin: 0.85rem 0 0;
+      padding-left: 1.2rem;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    li { margin: 0.35rem 0; }
+
+    .table-wrap {
+      margin-top: 1rem;
+      overflow-x: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 700px;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 13px;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    th {
+      background: rgba(207, 166, 82, 0.08);
+      color: var(--gold-soft);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    td { color: var(--text); }
+
+    td:first-child { color: var(--gold-soft); }
+
+    .topology {
+      margin-top: 1rem;
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line-soft);
+      background: linear-gradient(180deg, rgba(10, 17, 28, 0.92), rgba(12, 21, 34, 0.96));
+      overflow-x: auto;
+    }
+
+    pre {
+      margin: 0;
+      color: #d7e5fb;
+      font-size: 12px;
+      line-height: 1.55;
+      font-family: "Cascadia Code", "JetBrains Mono", monospace;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 1rem;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 14px;
+      padding: 14px 16px;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .timeline-stage {
+      color: var(--gold-soft);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .timeline-item h4 {
+      margin: 0 0 0.4rem;
+      font-size: 0.98rem;
+    }
+
+    .timeline-item p { margin: 0; }
+
+    footer {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto 30px;
+      padding: 18px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .footer-mark {
+      color: var(--gold-soft);
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 920px) {
+      .hero-grid,
+      .grid-2,
+      .grid-3,
+      .work-grid,
+      .quote-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline-item {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      header {
+        align-items: flex-start;
+        padding-top: 10px;
+        padding-bottom: 10px;
+      }
+
+      .header-actions {
+        width: 100%;
+      }
+
+      main,
+      footer {
+        width: min(100vw - 20px, 1180px);
+      }
+
+      .hero,
+      .section,
+      .hero-card,
+      .info-card,
+      .work-card,
+      .quote-card {
+        border-radius: 18px;
+      }
+
+      .hero {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-mark">Cubecloud</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-title">
+        <span class="en">Pacgate AI Phase 1 Pilot</span>
+        <span class="zh">Pacgate AI 第一阶段试点</span>
+      </span>
+    </div>
+
+    <div class="header-actions">
+      <span class="badge">
+        <span class="en">Pre-Proposal</span>
+        <span class="zh">提案阶段</span>
+      </span>
+
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="active" data-lang="en" onclick="setLang('en', this)">EN</button>
+        <button data-lang="zh" onclick="setLang('zh', this)">中文</button>
+      </div>
+
+      <a class="back-link" href="index.html">
+        <span class="en">Back to Index</span>
+        <span class="zh">返回目录</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="bar">
+    <span class="en">Phase 1 commercial basis: fixed delivery subtotal USD 16,612 / CNY 119,600, plus optional remote advisory reserve USD 2,778 / CNY 20,000. USD figures are tax/VAT included; CNY figures are shown at a reference FX rate of USD 1 = CNY 7.20 and exclude the additional 3.5% VAT reserve. For the current client question round, open the <a href="qa/">Phase 1 Clarification Hub</a>.</span>
+    <span class="zh">第一阶段商务基线：固定交付小计 USD 16,612 / CNY 119,600，另可选远程顾问预留 USD 2,778 / CNY 20,000。USD 报价已含税；文中 CNY 金额按参考汇率 USD 1 = CNY 7.20 换算展示，且未计入额外 3.5% 增值税。如需查看本轮客户问答，请打开<a href="qa/">第一阶段答疑入口</a>。</span>
+  </div>
+
+  <main>
+    <div class="lang-wrap en">
+      <section class="hero">
+        <div class="eyebrow">Cubecloud Local Legal AI Pilot · Revised May 2026</div>
+        <h1>Pacgate AI - Phase 1 Pilot Plans</h1>
+        <p>This revision replaces the old full-build SaaS quotation with a services-first plan: two local AI machines, two tailored legal-agent deployments, starter knowledge and RAG enablement, and long-term advisory support. The full Pacgate SaaS build remains a later decision, not the thing being purchased now.</p>
+
+        <div class="hero-grid">
+          <div class="hero-card">
+            <h3>What Pacgate is buying now</h3>
+            <p>Cubecloud delivers a practical local pilot that Pacgate can operate, study, and expand: hardware first, legal agents second, knowledge structure third, and product discovery after real use. The current working commercial basis is USD 16,612 / CNY 119,600 for fixed delivery, with advisory held separate.</p>
+            <div class="chips">
+              <span class="chip">2 local AI systems</span>
+              <span class="chip">Claude for Legal adaptation</span>
+              <span class="chip">Lavern adaptation</span>
+              <span class="chip">Starter context graph + RAG</span>
+              <span class="chip">Fixed delivery: USD 16,612 / CNY 119,600</span>
+              <span class="chip">Optional 40h advisory: USD 2,778 / CNY 20,000</span>
+            </div>
+          </div>
+
+          <div class="hero-card">
+            <h3>What is intentionally deferred</h3>
+            <p>The full Pacgate SaaS quotation, broader end-client pricing, and later OEM or licensing economics are held back until Phase 1 proves the operating model and gives Pacgate real usage evidence.</p>
+            <div class="chips">
+              <span class="chip">No full SaaS quote yet</span>
+              <span class="chip">No locked end-client pricing</span>
+              <span class="chip">No Phase 2 commitment yet</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Commercial Thesis</h2>
+        <p>Pacgate does not need to buy the entire product vision on day one. The stronger commercial move is to buy a private pilot that produces immediate operating value: two local AI-capable machines under Cubecloud's standard layer, two legal-agent adaptations for side-by-side learning, and a starter knowledge foundation that begins compounding from the first engagement.</p>
+        <div class="section-note">Current pricing assumes three fixed delivery packages totaling USD 16,612 / CNY 119,600, with advisory billed separately. USD figures are tax/VAT included; CNY figures on this page are shown at a reference FX rate of USD 1 = CNY 7.20 and exclude the additional 3.5% VAT reserve.</div>
+
+        <div class="grid-2 mt-16">
+          <article class="info-card">
+            <span class="label">Immediate Value</span>
+            <h3>Private AI for daily legal work</h3>
+            <ul>
+              <li>Keep sensitive work on Pacgate-controlled hardware.</li>
+              <li>Let the team compare two strong open-source legal system patterns side by side.</li>
+              <li>Start building a private legal knowledge asset immediately instead of waiting for a later platform.</li>
+            </ul>
+          </article>
+
+          <article class="info-card">
+            <span class="label">Rollout Logic</span>
+            <h3>Services first, platform later</h3>
+            <ul>
+              <li>Phase 1: deployment and professional services.</li>
+              <li>Phase 2: managed support or subscription only if the operating model proves out.</li>
+              <li>Later: Pacgate SaaS or broader OEM packaging after real workflow evidence exists.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Reference Model</h2>
+        <p>Harvey, Crosby, and Moritz remain benchmark and business-model references. Claude for Legal and Lavern are the named Phase 1 implementation anchors. Mike and Suzie Law remain supporting pattern references.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Reference</th>
+                <th>Role</th>
+                <th>Why it matters now</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Harvey</td>
+                <td>Quality benchmark</td>
+                <td>Document workflow quality, citation discipline, trust design.</td>
+              </tr>
+              <tr>
+                <td>Crosby</td>
+                <td>Commercial proof point</td>
+                <td>Narrow workflows and transparent service packaging can sell before a broad platform exists.</td>
+              </tr>
+              <tr>
+                <td>Moritz</td>
+                <td>Services-first proof point</td>
+                <td>Practical launch path with clear scope and rapid iteration.</td>
+              </tr>
+              <tr>
+                <td>Claude for Legal</td>
+                <td>Phase 1 legal agent reference A</td>
+                <td>Practice bundles, playbooks, connectors, lawyer-review guardrails.</td>
+              </tr>
+              <tr>
+                <td>Lavern</td>
+                <td>Phase 1 legal agent reference B</td>
+                <td>Local multi-agent orchestration, evidence challenge, verification loops, deliverables.</td>
+              </tr>
+              <tr>
+                <td>Mike + Suzie Law</td>
+                <td>Supporting implementation patterns</td>
+                <td>Useful references for tracked changes, citations, workflow libraries, and local knowledge organization.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Phase 1 Topology</h2>
+        <p>The pilot is built around two local nodes under one Cubecloud operating layer, with separate legal-agent emphasis on each machine and a shared private knowledge base that Pacgate can grow over time.</p>
+
+        <div class="topology">
+<pre>┌────────────────────────────────────────────────────────────────────────────┐
+│                     PACGATE AI - PHASE 1 LOCAL PILOT                      │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Device A                                                                  │
+│ - Cubecloud AIPC-class system + external GPU dock pairing                 │
+│ - OpenSpace · Open WebUI · IronClaw · Hermes                              │
+│ - Claude for Legal adaptation                                             │
+│ - Focus: playbooks, connectors, structured legal workflows                │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Device B                                                                  │
+│ - Cubecloud AIPC-class system + external GPU dock pairing                 │
+│ - OpenSpace · Open WebUI · IronClaw · Hermes                              │
+│ - Lavern adaptation                                                       │
+│ - Focus: multi-agent review, debate, verification, deliverables           │
+├────────────────────────────────────────────────────────────────────────────┤
+│ Shared private layer                                                      │
+│ - Cubecloud Agent OS surface stack                                        │
+│ - Local models via Ollama / approved providers                            │
+│ - Starter authority registry and matter folders                           │
+│ - Context graph conventions and local retrieval layer                     │
+│ - Private node-to-node networking                                         │
+└────────────────────────────────────────────────────────────────────────────┘</pre>
+        </div>
+
+        <div class="grid-3 mt-16">
+          <article class="info-card">
+            <span class="label">Surface Layer</span>
+            <h3>Cubecloud operating surfaces</h3>
+            <p>OpenSpace for shared control, Open WebUI for private AI work, IronClaw for security boundaries, Hermes for memory and scheduled tasks, Warp ADE and OpenCode for tuning and extension work.</p>
+          </article>
+
+          <article class="info-card">
+            <span class="label">Knowledge Layer</span>
+            <h3>Starter context graph and RAG</h3>
+            <p>Phase 1 sets up the first authority registry, matter-folder conventions, retrieval patterns, and source-review habits. It does not pretend to be the final enterprise knowledge platform.</p>
+          </article>
+
+          <article class="info-card">
+            <span class="label">Deferred Layer</span>
+            <h3>Future Pacgate SaaS blueprint</h3>
+            <p>The Rust workspace in this repository remains the future-state product blueprint, but it is no longer presented as the immediate paid build scope.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Delivery Workstreams</h2>
+        <div class="work-grid">
+          <article class="work-card">
+            <span class="label">Workstream 1</span>
+            <h3>Two local AI systems</h3>
+            <p>Hardware confirmation, external GPU dock pairing, Cubecloud standard AI layer, Agent OS surface enablement, private networking baseline, and local storage/security setup.</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 2</span>
+            <h3>Claude for Legal adaptation</h3>
+            <p>Pacgate practice bundles, playbook and profile setup, starter workflows, review guardrails, and connector planning focused on data compliance, AI compliance, and Web3 or RWA matters.</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 3</span>
+            <h3>Lavern adaptation</h3>
+            <p>Pacgate-relevant specialist roles, evidence and counter-evidence review behavior, local run mode, verification loop, and deliverable-first working patterns.</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 4</span>
+            <h3>Starter context graph, knowledge, and RAG</h3>
+            <p>Authority registry structure, matter-folder conventions, local retrieval starter setup, and guidance on how Pacgate should build and review its private knowledge corpus.</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 5</span>
+            <h3>Onboarding and operating playbooks</h3>
+            <p>User onboarding, workflow demonstrations, operator notes, review boundaries, and handover materials so the team can keep learning after delivery.</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 6</span>
+            <h3>Advisory and Phase 2 discovery</h3>
+            <p>Remote or on-site assistance, workflow tuning, connector planning, and later SaaS discovery only after Phase 1 produces enough evidence to justify that next quote.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Quotation Structure</h2>
+        <p>This page now uses an editable package structure instead of the old locked build quotation. The current working commercial basis is a fixed subtotal of USD 16,612 / CNY 119,600, with optional advisory reserve and travel handled separately.</p>
+        <div class="section-note">USD figures on this page are tax/VAT included. CNY figures are shown at a reference FX rate of USD 1 = CNY 7.20 and do not yet include the additional 3.5% VAT reserve. For shorter PO / SOW wording, see the <a href="PACGATE-AI-COMMERCIAL-APPENDIX.html">commercial appendix</a>.</div>
+
+        <div class="quote-grid">
+          <article class="quote-card">
+            <span class="label">Package 1</span>
+            <h3>Hardware and local AI foundation</h3>
+            <p><strong>Working package total: USD 11,056 / CNY 79,600.</strong></p>
+            <ul>
+              <li>Two Cubecloud AIPC-class systems.</li>
+              <li>Two external GPU dock pairings.</li>
+              <li>Cubecloud standard AI layer deployment.</li>
+              <li>Agent OS surface enablement.</li>
+              <li>Private networking baseline.</li>
+            </ul>
+          </article>
+
+          <article class="quote-card">
+            <span class="label">Package 2</span>
+            <h3>Two legal agent deliveries</h3>
+            <p><strong>Working package total: USD 4,167 / CNY 30,000.</strong></p>
+            <ul>
+              <li>Claude for Legal adaptation for Pacgate.</li>
+              <li>Lavern adaptation for Pacgate.</li>
+              <li>Pacgate workflow and playbook tailoring.</li>
+              <li>Demonstration and review-boundary setup.</li>
+            </ul>
+          </article>
+
+          <article class="quote-card">
+            <span class="label">Package 3</span>
+            <h3>Starter knowledge and RAG enablement</h3>
+            <p><strong>Working package total: USD 1,389 / CNY 10,000.</strong></p>
+            <ul>
+              <li>Authority registry starter.</li>
+              <li>Matter-folder and context-graph conventions.</li>
+              <li>Local retrieval and RAG starter setup.</li>
+              <li>Handover and usage guidance.</li>
+            </ul>
+          </article>
+
+          <article class="quote-card">
+            <span class="label">Package 4</span>
+            <h3>Advisory and support</h3>
+            <p><strong>Working remote advisory is USD 70 / CNY 500 per hour; on-site support is quoted separately if needed.</strong></p>
+            <ul>
+              <li>Remote advisory support billed hourly.</li>
+              <li>On-site work quoted separately, plus travel.</li>
+              <li>Extra workflow or connector work quoted separately.</li>
+              <li>Phase 2 discovery treated as a later advisory track.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Package</th>
+                <th>Working amount (USD / CNY)</th>
+                <th>Commercial handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Package 1 - Hardware and local AI foundation</td>
+                <td>USD 11,056 / CNY 79,600</td>
+                <td>Final hardware model can move line items, but the package logic stays the same.</td>
+              </tr>
+              <tr>
+                <td>Package 2 - Two legal agent deliveries</td>
+                <td>USD 4,167 / CNY 30,000</td>
+                <td>Final tailoring scope is confirmed in the Phase 1 SOW.</td>
+              </tr>
+              <tr>
+                <td>Package 3 - Starter knowledge and RAG enablement</td>
+                <td>USD 1,389 / CNY 10,000</td>
+                <td>Knowledge scope can expand later, but the pilot starter package is fixed first.</td>
+              </tr>
+              <tr>
+                <td>Fixed Phase 1 delivery subtotal</td>
+                <td><strong>USD 16,612 / CNY 119,600</strong></td>
+                <td>Primary negotiation basis for the pilot delivery.</td>
+              </tr>
+              <tr>
+                <td>Optional 40-hour remote advisory reserve</td>
+                <td>USD 2,778 / CNY 20,000</td>
+                <td>Optional working reserve; billed only if purchased.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-wrap mt-16">
+          <table>
+            <thead>
+              <tr>
+                <th>Payment / rate line</th>
+                <th>Working amount (USD / CNY)</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Kickoff / procurement deposit</td>
+                <td>USD 9,967 / CNY 71,760</td>
+                <td>60% of the fixed delivery subtotal.</td>
+              </tr>
+              <tr>
+                <td>Milestone 1 - Two local systems operational</td>
+                <td>USD 4,984 / CNY 35,880</td>
+                <td>30% of the fixed delivery subtotal.</td>
+              </tr>
+              <tr>
+                <td>Final handover - Starter knowledge / RAG complete</td>
+                <td>USD 1,661 / CNY 11,960</td>
+                <td>10% of the fixed delivery subtotal.</td>
+              </tr>
+              <tr>
+                <td>Remote advisory rate</td>
+                <td>USD 70 / CNY 500 per hour</td>
+                <td>Travel and third-party subscriptions excluded. USD rate is tax included; CNY amount excludes the separate 3.5% VAT reserve.</td>
+              </tr>
+              <tr>
+                <td>On-site advisory rate</td>
+                <td>Quoted separately plus travel</td>
+                <td>Confirmed if on-site support is later required.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Phase 2 Decision Gate</h2>
+        <p>Only after the pilot succeeds should Pacgate and Cubecloud reopen the larger product question.</p>
+
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-stage">Decision 01</div>
+            <div>
+              <h4>Which workflows are repeatable enough to productize?</h4>
+              <p>Use real machine usage, lawyer feedback, and workflow logs instead of guessing too early.</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">Decision 02</div>
+            <div>
+              <h4>Which legal-agent patterns should become proprietary Pacgate features?</h4>
+              <p>Use side-by-side learning from Claude for Legal and Lavern to decide what Pacgate should own later.</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">Decision 03</div>
+            <div>
+              <h4>What data model should a Pacgate SaaS platform actually use?</h4>
+              <p>Base that answer on matter folders, authority structures, context-graph usage, and retrieval behavior observed in Phase 1.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="lang-wrap zh">
+      <section class="hero">
+        <div class="eyebrow">Cubecloud 本地法律 AI 试点 · 2026年5月修订版</div>
+        <h1>Pacgate AI - 第一阶段试点方案</h1>
+        <p>本页已用“服务优先”的第一阶段方案，替换旧版完整 SaaS 建设报价。当前重点是：两台本地 AI 机器、两套法律 Agent 适配、起步版知识与 RAG 启用，以及长期顾问支持。完整 Pacgate SaaS 建设是后续决策，而不是现在就采购的内容。</p>
+
+        <div class="hero-grid">
+          <div class="hero-card">
+            <h3>现在真正购买的内容</h3>
+            <p>Cubecloud 交付的是一套可运行、可学习、可扩展的本地试点：先硬件，后法律 Agent，再知识结构，最后才是基于真实使用的产品发现。当前工作商务基线为固定交付 USD 16,612 / CNY 119,600，顾问支持单独处理。</p>
+            <div class="chips">
+              <span class="chip">2 套本地 AI 系统</span>
+              <span class="chip">Claude for Legal 适配</span>
+              <span class="chip">Lavern 适配</span>
+              <span class="chip">起步版 context graph + RAG</span>
+              <span class="chip">固定交付：USD 16,612 / CNY 119,600</span>
+              <span class="chip">可选 40 小时顾问：USD 2,778 / CNY 20,000</span>
+            </div>
+          </div>
+
+          <div class="hero-card">
+            <h3>刻意延后的内容</h3>
+            <p>完整 Pacgate SaaS 报价、面向终端客户的更大定价模型，以及后续 OEM / licensing 经济结构，都会延后到第一阶段真正跑出结果之后再讨论。</p>
+            <div class="chips">
+              <span class="chip">暂不报完整 SaaS</span>
+              <span class="chip">暂不锁死终端客户定价</span>
+              <span class="chip">暂不承诺第二阶段范围</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>商业主张</h2>
+        <p>Pacgate 不需要在第一天就买下完整产品愿景。更合理的商业动作，是先买一个能立刻产生操作价值的私有试点：两台本地 AI 机器、两套法律 Agent 对照学习、再加上一个从第一阶段就开始积累的知识底座。</p>
+        <div class="section-note">当前报价按三组固定交付包合计 USD 16,612 / CNY 119,600 编排，顾问支持单独计费；USD 报价已含税，文中 CNY 金额按参考汇率 USD 1 = CNY 7.20 换算展示，且未计入额外 3.5% 增值税。</div>
+
+        <div class="grid-2 mt-16">
+          <article class="info-card">
+            <span class="label">即时价值</span>
+            <h3>先把私有 AI 用起来</h3>
+            <ul>
+              <li>让敏感工作尽量保留在 Pacgate 控制的硬件内。</li>
+              <li>让团队在真实工作中并行比较两种优秀开源法律系统模式。</li>
+              <li>立即开始沉淀私有法律知识资产，而不是继续等待未来平台。</li>
+            </ul>
+          </article>
+
+          <article class="info-card">
+            <span class="label">推进逻辑</span>
+            <h3>先服务，后平台</h3>
+            <ul>
+              <li>第一阶段：部署与专业服务。</li>
+              <li>第二阶段：只有在操作模型验证后，才讨论托管支持或订阅。</li>
+              <li>更后面：Pacgate SaaS 或更广泛 OEM 包装，在真实工作流证据出现后再展开。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>参考模型</h2>
+        <p>Harvey、Crosby 与 Moritz 继续作为质量与商业模式参考；Claude for Legal 与 Lavern 是第一阶段点名实施锚点；Mike 与 Suzie Law 则继续作为支撑型实现参考。</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>参考对象</th>
+                <th>角色</th>
+                <th>现在的意义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Harvey</td>
+                <td>质量标杆</td>
+                <td>文档工作流质量、引用纪律与可信设计的高标准。</td>
+              </tr>
+              <tr>
+                <td>Crosby</td>
+                <td>商业验证样本</td>
+                <td>证明更窄的工作流与透明服务打包，可以先于大平台卖出去。</td>
+              </tr>
+              <tr>
+                <td>Moritz</td>
+                <td>服务优先样本</td>
+                <td>证明清晰范围与快速迭代的可行 launch path。</td>
+              </tr>
+              <tr>
+                <td>Claude for Legal</td>
+                <td>第一阶段法律 Agent 参考 A</td>
+                <td>Practice bundle、playbook、connector 与律师审查边界。</td>
+              </tr>
+              <tr>
+                <td>Lavern</td>
+                <td>第一阶段法律 Agent 参考 B</td>
+                <td>本地多 Agent 编排、证据对抗、验证闭环与交付件导向。</td>
+              </tr>
+              <tr>
+                <td>Mike + Suzie Law</td>
+                <td>支撑型实现参考</td>
+                <td>对 tracked changes、引用、workflow library 与本地知识组织方式有直接参考价值。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>第一阶段拓扑</h2>
+        <p>整个试点围绕两台本地节点展开，运行在同一套 Cubecloud 操作层之上。每台机器各自承担不同的法律 Agent 重点能力，同时共享一层可以持续增长的私有知识底座。</p>
+
+        <div class="topology">
+<pre>┌────────────────────────────────────────────────────────────────────────────┐
+│                     PACGATE AI - 第一阶段本地试点                         │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 设备 A                                                                    │
+│ - Cubecloud AIPC 级系统 + 外接 GPU Dock 搭配                             │
+│ - OpenSpace · Open WebUI · IronClaw · Hermes                              │
+│ - Claude for Legal 适配版                                                 │
+│ - 重点：playbook、connector、结构化法律工作流                             │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 设备 B                                                                    │
+│ - Cubecloud AIPC 级系统 + 外接 GPU Dock 搭配                             │
+│ - OpenSpace · Open WebUI · IronClaw · Hermes                              │
+│ - Lavern 适配版                                                           │
+│ - 重点：多 Agent 审查、对抗、验证与交付件                                 │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 共享私有层                                                                │
+│ - Cubecloud Agent OS 表层栈                                               │
+│ - 通过 Ollama / 审批提供商运行本地模型                                    │
+│ - 起步版 authority registry 与 matter 文件夹                              │
+│ - Context graph 约定与本地检索层                                          │
+│ - 节点间私有网络连接                                                       │
+└────────────────────────────────────────────────────────────────────────────┘</pre>
+        </div>
+
+        <div class="grid-3 mt-16">
+          <article class="info-card">
+            <span class="label">表层</span>
+            <h3>Cubecloud 操作表层</h3>
+            <p>OpenSpace 用于共享控制，Open WebUI 用于私有 AI 工作，IronClaw 用于安全边界，Hermes 用于记忆与定时任务，Warp ADE 与 OpenCode 用于调优与扩展工作。</p>
+          </article>
+
+          <article class="info-card">
+            <span class="label">知识层</span>
+            <h3>起步版 context graph 与 RAG</h3>
+            <p>第一阶段先建立 authority registry、matter 文件夹约定、检索模式与来源复核习惯，并不把自己包装成已经完成的企业知识平台。</p>
+          </article>
+
+          <article class="info-card">
+            <span class="label">延后层</span>
+            <h3>未来 Pacgate SaaS 蓝图</h3>
+            <p>本仓库中的 Rust workspace 继续保留为未来产品蓝图，但不再被当作眼前付费交付的主范围来呈现。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>交付工作流</h2>
+        <div class="work-grid">
+          <article class="work-card">
+            <span class="label">Workstream 1</span>
+            <h3>两套本地 AI 系统</h3>
+            <p>完成硬件确认、外接 GPU Dock 搭配、Cubecloud 标准 AI 层、Agent OS 表层启用、私有网络基线，以及本地存储与安全配置。</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 2</span>
+            <h3>Claude for Legal 适配</h3>
+            <p>围绕数据合规、AI 合规与 Web3 / RWA 等重点场景，完成 Pacgate 的 practice bundle、playbook、profile、starter workflow 与 review guardrail 适配。</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 3</span>
+            <h3>Lavern 适配</h3>
+            <p>完成适合 Pacgate 的 specialist roles、evidence / counter-evidence 审查行为、本地运行模式、验证闭环与 deliverable-first 工作方式。</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 4</span>
+            <h3>起步版 context graph、知识与 RAG</h3>
+            <p>建立 authority registry 结构、matter 文件夹规范、本地检索 starter 设置，以及如何逐步建设私有知识语料的工作方法。</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 5</span>
+            <h3>Onboarding 与操作手册</h3>
+            <p>完成用户培训、场景演示、操作说明、审查边界与交接材料，让团队在交付后继续内部学习与迭代。</p>
+          </article>
+
+          <article class="work-card">
+            <span class="label">Workstream 6</span>
+            <h3>顾问支持与第二阶段发现</h3>
+            <p>提供远程或现场协助、工作流调优、connector 规划，并在第一阶段跑出足够证据之后，再进入更完整的 SaaS discovery。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>报价结构</h2>
+        <p>本页已经改为“可后续修改”的报价包结构，不再使用旧版锁死的建设报价。当前工作商务基线为固定交付小计 USD 16,612 / CNY 119,600，顾问预留与差旅单独处理。</p>
+        <div class="section-note">本页 USD 报价已含税；CNY 金额按参考汇率 USD 1 = CNY 7.20 换算展示，且尚未计入额外 3.5% 增值税。若需要更适合 PO / SOW 的短版表述，可查看<a href="PACGATE-AI-COMMERCIAL-APPENDIX.html">商业附录</a>。</div>
+
+        <div class="quote-grid">
+          <article class="quote-card">
+            <span class="label">Package 1</span>
+            <h3>硬件与本地 AI 基础层</h3>
+            <p><strong>当前包合计：USD 11,056 / CNY 79,600。</strong></p>
+            <ul>
+              <li>两套 Cubecloud AIPC 级系统。</li>
+              <li>两套外接 GPU Dock 搭配。</li>
+              <li>Cubecloud 标准 AI 层部署。</li>
+              <li>Agent OS 表层启用。</li>
+              <li>私有网络基线。</li>
+            </ul>
+          </article>
+
+          <article class="quote-card">
+            <span class="label">Package 2</span>
+            <h3>两套法律 Agent 交付</h3>
+            <p><strong>当前包合计：USD 4,167 / CNY 30,000。</strong></p>
+            <ul>
+              <li>面向 Pacgate 的 Claude for Legal 适配。</li>
+              <li>面向 Pacgate 的 Lavern 适配。</li>
+              <li>Pacgate workflow 与 playbook tailoring。</li>
+              <li>演示与审查边界设置。</li>
+            </ul>
+          </article>
+
+          <article class="quote-card">
+            <span class="label">Package 3</span>
+            <h3>起步版知识与 RAG 启用</h3>
+            <p><strong>当前包合计：USD 1,389 / CNY 10,000。</strong></p>
+            <ul>
+              <li>Authority registry starter。</li>
+              <li>Matter 文件夹与 context graph 约定。</li>
+              <li>本地 retrieval 与 RAG starter 设置。</li>
+              <li>交接与使用说明。</li>
+            </ul>
+          </article>
+
+          <article class="quote-card">
+            <span class="label">Package 4</span>
+            <h3>顾问与支持</h3>
+            <p><strong>当前远程顾问费率为 USD 70 / CNY 500 每小时；现场支持如需安排则单独报价。</strong></p>
+            <ul>
+              <li>远程顾问支持按小时计费。</li>
+              <li>现场工作如需安排则单独报价，并另计差旅。</li>
+              <li>额外 workflow / connector 工作单独报价。</li>
+              <li>第二阶段发现被视为后续顾问轨道。</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>报价包</th>
+                <th>工作金额（USD / CNY）</th>
+                <th>商业处理方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Package 1 - 硬件与本地 AI 基础层</td>
+                <td>USD 11,056 / CNY 79,600</td>
+                <td>最终硬件型号会影响行项目，但不会改变包结构。</td>
+              </tr>
+              <tr>
+                <td>Package 2 - 两套法律 Agent 交付</td>
+                <td>USD 4,167 / CNY 30,000</td>
+                <td>最终 tailoring 范围在第一阶段 SOW 中确认。</td>
+              </tr>
+              <tr>
+                <td>Package 3 - 起步版知识与 RAG 启用</td>
+                <td>USD 1,389 / CNY 10,000</td>
+                <td>知识范围可以后续扩展，但试点 starter 包先固定。</td>
+              </tr>
+              <tr>
+                <td>第一阶段固定交付小计</td>
+                <td><strong>USD 16,612 / CNY 119,600</strong></td>
+                <td>作为本次试点交付的主要谈判基线。</td>
+              </tr>
+              <tr>
+                <td>可选 40 小时远程顾问预留</td>
+                <td>USD 2,778 / CNY 20,000</td>
+                <td>仅在购买时计入。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-wrap mt-16">
+          <table>
+            <thead>
+              <tr>
+                <th>付款 / 费率项</th>
+                <th>工作金额（USD / CNY）</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Kickoff / 采购启动首款</td>
+                <td>USD 9,967 / CNY 71,760</td>
+                <td>固定交付小计的 60%。</td>
+              </tr>
+              <tr>
+                <td>Milestone 1 - 两套本地系统可运行</td>
+                <td>USD 4,984 / CNY 35,880</td>
+                <td>固定交付小计的 30%。</td>
+              </tr>
+              <tr>
+                <td>Final handover - 起步版知识 / RAG 完成交接</td>
+                <td>USD 1,661 / CNY 11,960</td>
+                <td>固定交付小计的 10%。</td>
+              </tr>
+              <tr>
+                <td>远程顾问费率</td>
+                <td>USD 70 / CNY 500 每小时</td>
+                <td>不含差旅与第三方订阅；USD 报价已含税，CNY 金额另预留 3.5% 增值税。</td>
+              </tr>
+              <tr>
+                <td>现场顾问费率</td>
+                <td>单独报价 + 差旅</td>
+                <td>如后续确需现场支持，再单独确认。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>第二阶段决策闸门</h2>
+        <p>只有当试点跑通之后，Pacgate 与 Cubecloud 才应该重新打开更大的产品问题。</p>
+
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-stage">Decision 01</div>
+            <div>
+              <h4>哪些工作流已经足够高频，值得产品化？</h4>
+              <p>应以真实机器使用、律师反馈与工作流日志为依据，而不是现在过早猜测。</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">Decision 02</div>
+            <div>
+              <h4>哪些法律 Agent 模式应转化为 Pacgate 自有能力？</h4>
+              <p>利用 Claude for Legal 与 Lavern 的并行学习结果，决定未来真正值得自有化的部分。</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">Decision 03</div>
+            <div>
+              <h4>Pacgate SaaS 平台最终应该采用什么数据模型？</h4>
+              <p>应基于第一阶段观察到的 matter 文件夹、authority 结构、context graph 使用方式与 retrieval 行为来回答。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-mark">Cubecloud</div>
+    <div>
+      <span class="en">Revised for customer feedback and Phase 1 pilot direction · Open-source references remain under their own licenses.</span>
+      <span class="zh">已根据客户反馈与第一阶段试点方向修订 · 开源参考系统继续遵循各自许可证。</span>
+    </div>
+  </footer>
+
+  <script>
+    function setLang(lang, button) {
+      document.body.classList.toggle('zh-mode', lang === 'zh');
+      document.documentElement.lang = lang === 'zh' ? 'zh' : 'en';
+      document.title = lang === 'zh'
+        ? 'Pacgate AI - 第一阶段试点方案'
+        : 'Pacgate AI - Phase 1 Pilot Plans';
+
+      document.querySelectorAll('.lang-switch button').forEach(function(btn) {
+        btn.classList.toggle('active', btn === button);
+      });
+
+      localStorage.setItem('pacgate-lang', lang);
+    }
+
+    (function initLang() {
+      var saved = localStorage.getItem('pacgate-lang') || 'en';
+      var button = document.querySelector('.lang-switch button[data-lang="' + saved + '"]');
+      if (button) {
+        setLang(saved, button);
+      }
+    })();
+  </script>
+</body>
+</html>

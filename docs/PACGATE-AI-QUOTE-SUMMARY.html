@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacgate AI - Phase 1 Quote Summary</title>
+  <style>
+    :root {
+      --bg: #08101b;
+      --panel: rgba(12, 19, 31, 0.94);
+      --panel2: rgba(18, 28, 44, 0.96);
+      --line: #22324a;
+      --line-soft: rgba(34, 50, 74, 0.55);
+      --gold: #cfa652;
+      --gold-soft: #ebcf93;
+      --blue: #7fb8ff;
+      --green: #69c58a;
+      --text: #e7eef9;
+      --muted: #95a4bb;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, rgba(127, 184, 255, 0.10), transparent 28%),
+        radial-gradient(circle at top left, rgba(207, 166, 82, 0.12), transparent 24%),
+        linear-gradient(180deg, #09111d 0%, #07101a 50%, #08101b 100%);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+
+    a { color: inherit; }
+
+    .en {}
+    .zh { display: none; }
+    body.zh-mode .en { display: none; }
+    body.zh-mode .zh { display: block; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0 1.4rem;
+      min-height: 60px;
+      background: rgba(8, 16, 27, 0.86);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(207, 166, 82, 0.14);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .brand-title {
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      color: var(--gold-soft);
+      background: rgba(207, 166, 82, 0.12);
+      border: 1px solid rgba(207, 166, 82, 0.30);
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+
+    .lang-switch button {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: 0.16s ease;
+    }
+
+    .lang-switch button.active {
+      background: rgba(207, 166, 82, 0.18);
+      color: var(--gold-soft);
+    }
+
+    .header-link {
+      text-decoration: none;
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+    }
+
+    .bar {
+      padding: 10px 1.4rem;
+      text-align: center;
+      border-bottom: 1px solid rgba(207, 166, 82, 0.18);
+      background: rgba(207, 166, 82, 0.05);
+      color: rgba(235, 207, 147, 0.86);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+    }
+
+    main {
+      width: min(1100px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 30px 0 80px;
+    }
+
+    .lang-wrap { display: block; }
+
+    .hero,
+    .section,
+    .metric-card,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line-soft);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      padding: 28px;
+      margin-bottom: 18px;
+      background:
+        linear-gradient(135deg, rgba(207, 166, 82, 0.08), transparent 42%),
+        linear-gradient(180deg, rgba(18, 29, 44, 0.92), rgba(12, 20, 32, 0.96));
+    }
+
+    .eyebrow {
+      color: var(--gold-soft);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 10px 0 12px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+
+    .hero p,
+    .panel p,
+    .section p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .hero-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .link-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      text-decoration: none;
+      border-radius: 999px;
+      border: 1px solid rgba(207, 166, 82, 0.22);
+      background: rgba(207, 166, 82, 0.07);
+      color: var(--gold-soft);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .metric-grid,
+    .grid-2 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .metric-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 18px;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .metric-card,
+    .panel {
+      padding: 18px;
+    }
+
+    .metric-card .label,
+    .panel .label {
+      display: inline-block;
+      margin-bottom: 10px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      background: rgba(207, 166, 82, 0.10);
+      color: var(--gold-soft);
+    }
+
+    .metric-value {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 800;
+      line-height: 1;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .section {
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+
+    .section h2,
+    .panel h3 {
+      margin: 0 0 12px;
+      line-height: 1.15;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 14px;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+      background: var(--panel2);
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(34, 50, 74, 0.55);
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--gold-soft);
+      background: rgba(207, 166, 82, 0.06);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+
+    li + li { margin-top: 8px; }
+
+    .footnote {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    footer {
+      width: min(1100px, calc(100vw - 32px));
+      margin: 0 auto 40px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .metric-grid,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      header {
+        padding: 10px 14px;
+      }
+
+      .header-actions {
+        justify-content: flex-start;
+      }
+
+      .hero,
+      .section,
+      .metric-card,
+      .panel {
+        border-radius: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-mark">QUOTE</div>
+      <div class="brand-title">
+        <span class="en">Pacgate AI Phase 1 Quote Summary</span>
+        <span class="zh">Pacgate AI 第一阶段报价摘要</span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <span class="badge">
+        <span class="en">Illustrative Draft</span>
+        <span class="zh">示例草案</span>
+      </span>
+
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="active" data-lang="en" onclick="setLang('en', this)">EN</button>
+        <button data-lang="zh" onclick="setLang('zh', this)">中文</button>
+      </div>
+
+      <a class="header-link" href="PACGATE-AI-BUILD-PLANS.html">
+        <span class="en">Open Full Plan</span>
+        <span class="zh">查看完整方案</span>
+      </a>
+
+      <a class="header-link" href="index.html">
+        <span class="en">Back to Index</span>
+        <span class="zh">返回目录</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="bar">
+    <span class="en">Phase 1 commercial summary. USD figures are tax/VAT included; CNY figures shown here use a reference FX rate of USD 1 = CNY 7.20 and exclude the additional 3.5% VAT reserve. For the current client question round, open the <a href="qa/">Phase 1 Clarification Hub</a>.</span>
+    <span class="zh">本页展示第一阶段商务摘要。USD 报价已含税；文中 CNY 金额按参考汇率 USD 1 = CNY 7.20 换算展示，且未计入额外 3.5% 增值税。如需查看本轮客户问答，请打开<a href="qa/">第一阶段答疑入口</a>。</span>
+  </div>
+
+  <main>
+    <div class="lang-wrap en">
+      <section class="hero">
+        <div class="eyebrow">Cubecloud Local Legal AI Pilot · May 2026 Revision</div>
+        <h1>Phase 1 Quote Summary</h1>
+        <p>This one-page summary is the commercial companion to the full Phase 1 pilot proposal. It packages the current negotiating basis for two local AI systems, two legal-agent adaptations, starter knowledge enablement, and separately billed advisory support.</p>
+        <div class="hero-links">
+          <a class="link-pill" href="PACGATE-AI-BUILD-PLANS.html">View the full pilot plan</a>
+          <a class="link-pill" href="PACGATE-AI-COMMERCIAL-APPENDIX.html">Open the commercial appendix</a>
+          <a class="link-pill" href="index.html">Return to the docs index</a>
+        </div>
+      </section>
+
+      <section class="metric-grid">
+        <article class="metric-card">
+          <span class="label">Fixed Delivery</span>
+          <div class="metric-value">USD 16,612</div>
+          <p>Packages 1-3 combined. Reference CNY amount: CNY 119,600. Includes 3 business days on-site installation and training at no extra charge.</p>
+        </article>
+
+        <article class="metric-card">
+          <span class="label">Optional Advisory (Selected)</span>
+          <div class="metric-value">USD 2,778</div>
+          <p>40-hour remote advisory reserve at CNY 20,000 (1 year validity), via standalone service order. Client has selected this option for the current contract.</p>
+        </article>
+
+        <article class="metric-card">
+          <span class="label">Optional On-Site</span>
+          <div class="metric-value">CNY 43,200</div>
+          <p>Reference price for a 5-day on-site support package, via standalone service order (travel extra).</p>
+        </article>
+
+        <article class="metric-card">
+          <span class="label">Payment Mix</span>
+          <div class="metric-value">60 / 30 / 10</div>
+          <p>Kickoff deposit, systems live, final knowledge handover.</p>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2>Included Scope</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Package 1</span>
+            <h3>Hardware and local AI foundation</h3>
+            <ul>
+              <li>Two Cubecloud AIPC-class systems sized for the pilot.</li>
+              <li>Two external GPU dock pairings and local storage / memory uplift.</li>
+              <li>Cubecloud standard AI layer deployment and Agent OS surface enablement.</li>
+              <li>Private networking baseline across the two systems.</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Packages 2-3</span>
+            <h3>Legal agents plus starter knowledge layer</h3>
+            <ul>
+              <li>Claude for Legal adaptation for Pacgate.</li>
+              <li>Lavern adaptation for Pacgate.</li>
+              <li>Pacgate playbook / workflow tailoring and demo-ready guardrails.</li>
+              <li>Authority registry starter, matter conventions, local retrieval / RAG setup, and handover guidance.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Package Pricing</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Package</th>
+                <th>Working amount (USD / CNY)</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Package 1 - Hardware and local AI foundation</td>
+                <td>USD 11,056 / CNY 79,600</td>
+                <td>Two AIPC-class systems, external GPU dock pairings, AI layer deployment, Agent OS surfaces, and private networking baseline.</td>
+              </tr>
+              <tr>
+                <td>Package 2 - Two legal agent deliveries</td>
+                <td>USD 4,167 / CNY 30,000</td>
+                <td>Claude for Legal adaptation, Lavern adaptation, workflow tailoring, and demonstration / review guardrails.</td>
+              </tr>
+              <tr>
+                <td>Package 3 - Starter knowledge and RAG enablement</td>
+                <td>USD 1,389 / CNY 10,000</td>
+                <td>Authority registry starter, matter-folder conventions, local retrieval / RAG setup, and handover materials.</td>
+              </tr>
+              <tr>
+                <td><strong>Fixed Phase 1 delivery subtotal</strong></td>
+                <td><strong>USD 16,612 / CNY 119,600</strong></td>
+                <td>Primary negotiating basis for the Phase 1 pilot.</td>
+              </tr>
+              <tr>
+                <td>Optional 40-hour remote advisory reserve</td>
+                <td>USD 2,778 / CNY 20,000</td>
+                <td>Optional reserve for support during the first operating period.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="footnote">USD figures above are tax/VAT included. CNY figures above are shown at a reference FX rate of USD 1 = CNY 7.20 and do not yet include the additional 3.5% VAT reserve. Final invoice currency, local-tax handling, and FX treatment are confirmed at contracting time.</div>
+      </section>
+
+      <section class="section">
+        <h2>Payment and Advisory Basis</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Payment Milestones</span>
+            <h3>Fixed delivery payment schedule</h3>
+            <ul>
+              <li>Kickoff / procurement deposit: USD 9,967 / CNY 71,760.</li>
+              <li>Milestone 1, two local systems operational: USD 4,984 / CNY 35,880.</li>
+              <li>Final handover, starter knowledge / RAG complete: USD 1,661 / CNY 11,960.</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Advisory &amp; On-Site</span>
+            <h3>Support services</h3>
+            <ul>
+              <li>All optional services, support, and add-on charges are listed in the consolidated <strong>Optional Services &amp; Add-On Schedule</strong>.</li>
+              <li>40-hour remote advisory reserve (1 year validity): CNY 20,000, via standalone Remote Advisory Service Order. Client has selected this option for the current contract.</li>
+              <li>Annual license renewal (Year 2 onwards): USD 611 / CNY 4,400 / year, via standalone Annual License Renewal Order (priced at 25% of initial license fee).</li>
+              <li>First-delivery on-site installation and training (3 business days): included in fixed delivery at no extra charge.</li>
+              <li>On-site support: 5-day package at CNY 43,200 reference price, via standalone On-Site Service Order (travel extra).</li>
+              <li>Travel and accommodation: billed separately at cost or quoted per trip.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Excluded or Deferred</h2>
+        <ul>
+          <li>The full Pacgate SaaS build is not included in this Phase 1 quotation.</li>
+          <li>End-client pricing, OEM licensing, and later platform commercial models are deferred until after the pilot produces evidence.</li>
+          <li>Travel, customer-owned research subscriptions, third-party data licences, and any separately applied CNY invoice VAT reserve are excluded from the fixed delivery subtotal.</li>
+          <li>Any scope expansion beyond the agreed pilot package is quoted separately.</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="lang-wrap zh">
+      <section class="hero">
+        <div class="eyebrow">Cubecloud 本地法律 AI 试点 · 2026年5月修订版</div>
+        <h1>第一阶段报价摘要</h1>
+        <p>本页是完整第一阶段试点提案对应的一页式商业摘要，用于集中展示当前的谈判基线：两套本地 AI 系统、两套法律 Agent 适配、起步版知识启用，以及单独计费的顾问支持。</p>
+        <div class="hero-links">
+          <a class="link-pill" href="PACGATE-AI-BUILD-PLANS.html">查看完整试点方案</a>
+          <a class="link-pill" href="PACGATE-AI-COMMERCIAL-APPENDIX.html">查看商业附录</a>
+          <a class="link-pill" href="index.html">返回文档目录</a>
+        </div>
+      </section>
+
+      <section class="metric-grid">
+        <article class="metric-card">
+          <span class="label">固定交付</span>
+          <div class="metric-value">USD 16,612</div>
+          <p>Package 1-3 合计；对应 CNY 金额为 CNY 119,600。含 3 个工作日首次交付现场安装与培训，不另收费。</p>
+        </article>
+
+        <article class="metric-card">
+          <span class="label">可选顾问（已选购）</span>
+          <div class="metric-value">USD 2,778</div>
+          <p>40 小时远程顾问预留 CNY 20,000（1 年有效），通过独立服务订单签署。本合同客户已选购此项。</p>
+        </article>
+
+        <article class="metric-card">
+          <span class="label">可选现场支持</span>
+          <div class="metric-value">CNY 43,200</div>
+          <p>5 天现场支持包参考价，通过独立服务订单签署（差旅另计）。</p>
+        </article>
+
+        <article class="metric-card">
+          <span class="label">付款节奏</span>
+          <div class="metric-value">60 / 30 / 10</div>
+          <p>Kickoff 首款、系统上线、知识交接完成。</p>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2>包含范围</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Package 1</span>
+            <h3>硬件与本地 AI 基础层</h3>
+            <ul>
+              <li>两套适配本次试点的 Cubecloud AIPC 级系统。</li>
+              <li>两套外接 GPU Dock 搭配与本地内存 / 存储升级。</li>
+              <li>Cubecloud 标准 AI 层部署与 Agent OS 表层启用。</li>
+              <li>两套系统之间的私有网络基线。</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Package 2-3</span>
+            <h3>法律 Agent 与起步版知识层</h3>
+            <ul>
+              <li>面向 Pacgate 的 Claude for Legal 适配。</li>
+              <li>面向 Pacgate 的 Lavern 适配。</li>
+              <li>Pacgate playbook / workflow tailoring 与可演示的审查边界设置。</li>
+              <li>Authority registry starter、matter 约定、本地 retrieval / RAG 设置与交接说明。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>报价明细</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>报价包</th>
+                <th>工作金额（USD / CNY）</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Package 1 - 硬件与本地 AI 基础层</td>
+                <td>USD 11,056 / CNY 79,600</td>
+                <td>含两套 AIPC 级系统、外接 GPU Dock、AI 层部署、Agent OS 表层与私有网络基线。</td>
+              </tr>
+              <tr>
+                <td>Package 2 - 两套法律 Agent 交付</td>
+                <td>USD 4,167 / CNY 30,000</td>
+                <td>含 Claude for Legal 适配、Lavern 适配、工作流 tailoring 与演示 / 审查边界。</td>
+              </tr>
+              <tr>
+                <td>Package 3 - 起步版知识与 RAG 启用</td>
+                <td>USD 1,389 / CNY 10,000</td>
+                <td>含 authority registry starter、matter 约定、本地 retrieval / RAG 与交接材料。</td>
+              </tr>
+              <tr>
+                <td><strong>第一阶段固定交付小计</strong></td>
+                <td><strong>USD 16,612 / CNY 119,600</strong></td>
+                <td>作为第一阶段试点的主要谈判基线。</td>
+              </tr>
+              <tr>
+                <td>可选 40 小时远程顾问预留</td>
+                <td>USD 2,778 / CNY 20,000</td>
+                <td>用于首个运行周期支持的可选预留。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="footnote">以上 USD 报价已含税。CNY 金额按参考汇率 USD 1 = CNY 7.20 换算展示，且尚未计入额外 3.5% 增值税；最终开票币种、本地税务处理与汇率处理，在签约时另行确认。</div>
+      </section>
+
+      <section class="section">
+        <h2>付款与顾问基线</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">付款里程碑</span>
+            <h3>固定交付付款安排</h3>
+            <ul>
+              <li>Kickoff / 采购启动首款：USD 9,967 / CNY 71,760。</li>
+              <li>Milestone 1，两套本地系统可运行：USD 4,984 / CNY 35,880。</li>
+              <li>Final handover，起步版知识 / RAG 完成交接：USD 1,661 / CNY 11,960。</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">顾问与现场服务</span>
+            <h3>支持服务</h3>
+            <ul>
+              <li>所有可选服务、支持与附加费用统一列于《<strong>可选服务与附加费用清单</strong>》。</li>
+              <li>40 小时远程顾问预留（1 年有效）：CNY 20,000，通过独立《远程顾问服务订单》签署。本合同客户已选购此项。</li>
+              <li>年度许可续费（第 2 年起）：USD 611 / CNY 4,400 / 年，通过独立《年度许可续费订单》签署（按初始许可费 25% 计）。</li>
+              <li>首次交付现场安装与培训（3 个工作日）：已包含在固定交付内，不另收费。</li>
+              <li>现场支持：5 天包 CNY 43,200 参考价，通过独立《现场服务订单》签署（差旅另计）。</li>
+              <li>差旅与住宿：按成本单独计费或按次报价。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>排除或延后内容</h2>
+        <ul>
+          <li>本报价不包含完整 Pacgate SaaS 建设。</li>
+          <li>面向终端客户的定价、OEM licensing 与后续平台商业模型，均延后到试点产生证据之后再讨论。</li>
+          <li>差旅、客户自有研究订阅、第三方数据许可，以及如按 CNY 开票时另计的 3.5% 增值税，不包含在固定交付小计内。</li>
+          <li>任何超出约定试点范围的扩容工作，均单独报价。</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span class="en">Prepared by Cubecloud Limited for Pacgate Law. Open-source references remain under their own licenses.</span>
+    <span class="zh">本页由 Cubecloud Limited 为 Pacgate Law 准备。开源参考系统继续遵循各自许可证。</span>
+  </footer>
+
+  <script>
+    function setLang(lang, button) {
+      document.body.classList.toggle('zh-mode', lang === 'zh');
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+      document.querySelectorAll('.lang-switch button').forEach((btn) => btn.classList.remove('active'));
+      button.classList.add('active');
+      document.title = lang === 'zh'
+        ? 'Pacgate AI - 第一阶段报价摘要'
+        : 'Pacgate AI - Phase 1 Quote Summary';
+    }
+  </script>
+
+  <script src="assets/protect.js"></script>
+</body>
+</html>

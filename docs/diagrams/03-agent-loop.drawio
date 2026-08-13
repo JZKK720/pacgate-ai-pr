@@ -1,0 +1,137 @@
+<mxfile host="app.diagrams.net" modified="2026-05-11T00:00:00.000Z" agent="Cubecloud/Pacgate-AI" version="24.7.17">
+  <diagram name="Agent Loop" id="agent-loop-03">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Title -->
+        <mxCell id="2" value="PACGATE AI — AGENT LOOP &amp; TOOL DISPATCHER" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=15;fontStyle=1;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="767" height="34" as="geometry"/>
+        </mxCell>
+        <!-- START -->
+        <mxCell id="10" value="User Message&#xa;+ Conversation History" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="264" y="74" width="240" height="64" as="geometry"/>
+        </mxCell>
+        <!-- Build context -->
+        <mxCell id="20" value="Build LLM Context&#xa;system_prompt_base + persona + history&#xa;+ enrich from prior tool events" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="224" y="178" width="320" height="64" as="geometry"/>
+        </mxCell>
+        <!-- Call LLM -->
+        <mxCell id="30" value="Call LlmRouter::complete()&#xa;or stream()&#xa;with tool_definitions()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="224" y="292" width="320" height="64" as="geometry"/>
+        </mxCell>
+        <!-- Decision: tool calls? -->
+        <mxCell id="40" value="Tool calls&#xa;in response?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="279" y="406" width="210" height="80" as="geometry"/>
+        </mxCell>
+        <!-- YES branch: dispatch tool -->
+        <mxCell id="50" value="ToolDispatcher::dispatch()&#xa;match tool_name → handler&#xa;(read_document · generate_docx&#xa;kb_search · edit_document…)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="520" y="406" width="260" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Append result -->
+        <mxCell id="55" value="Append ToolResult&#xa;to AgentMessage history" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="534" y="536" width="230" height="50" as="geometry"/>
+        </mxCell>
+        <!-- Counter check -->
+        <mxCell id="56" value="rounds &lt; max_rounds&#xa;(10)?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="539" y="636" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <!-- Loop back -->
+        <mxCell id="57" value="→ loop back to Call LLM" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=center;fontSize=10;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="554" y="716" width="170" height="28" as="geometry"/>
+        </mxCell>
+        <!-- Max rounds exceeded -->
+        <mxCell id="58" value="Max rounds exceeded&#xa;return partial result" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="554" y="764" width="190" height="48" as="geometry"/>
+        </mxCell>
+        <!-- NO branch: extract citations -->
+        <mxCell id="60" value="Extract Citations&#xa;&lt;CITATIONS&gt;[…]&lt;/CITATIONS&gt;&#xa;parse + verify with CitationVerifier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="224" y="536" width="280" height="64" as="geometry"/>
+        </mxCell>
+        <!-- Return -->
+        <mxCell id="70" value="AgentTurnResult&#xa;{ content, tool_calls, citations }&#xa;→ SSE stream to client" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="244" y="656" width="280" height="70" as="geometry"/>
+        </mxCell>
+        <!-- 10 tool side panel -->
+        <mxCell id="80" value="10 DISPATCHED TOOLS" style="swimlane;startSize=30;fillColor=#f8f8f8;strokeColor=#999999;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="406" width="190" height="340" as="geometry"/>
+        </mxCell>
+        <mxCell id="81" value="read_document" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="36" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="82" value="find_in_document" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="60" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="83" value="fetch_documents" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="84" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="84" value="list_documents" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="108" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="85" value="generate_docx" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="132" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="86" value="edit_document" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="156" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="87" value="replicate_document" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="180" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="88" value="read_workflow" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="204" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="89" value="read_table_cells" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="228" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="8a" value="kb_search" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="80">
+          <mxGeometry x="10" y="252" width="170" height="20" as="geometry"/>
+        </mxCell>
+        <!-- Edges -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="10" target="20" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" source="20" target="30" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" source="30" target="40" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- YES: tool calls exist -->
+        <mxCell id="e4" value="YES" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=2;fontSize=10;fontStyle=1;" edge="1" source="40" target="50" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" source="50" target="55" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" source="55" target="56" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Loop back to Call LLM -->
+        <mxCell id="e7" value="YES (continue)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;dashed=1;fontSize=9;fontColor=#82b366;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="56" target="30" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="691"/>
+              <mxPoint x="80" y="691"/>
+              <mxPoint x="80" y="324"/>
+              <mxPoint x="224" y="324"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="NO (max)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;fontSize=9;fontColor=#b85450;" edge="1" source="56" target="58" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- NO: no tool calls -->
+        <mxCell id="e9" value="NO" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontSize=10;fontStyle=1;" edge="1" source="40" target="60" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ea" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="60" target="70" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Footer -->
+        <mxCell id="99" value="Cubecloud Limited · 智方云 · Pacgate AI Agent Loop · May 2026" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontColor=#888888;" vertex="1" parent="1">
+          <mxGeometry x="30" y="860" width="767" height="24" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

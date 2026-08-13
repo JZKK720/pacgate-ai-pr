@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacgate AI - Annex C Systems and Knowledge</title>
+  <link rel="stylesheet" href="phase1-clarification-theme.css">
+</head>
+<body data-title-en="Pacgate AI - Annex C Systems and Knowledge" data-title-zh="Pacgate AI - 附件 C 系统与知识层">
+  <header>
+    <div class="brand">
+      <span class="brand-mark">Cubecloud</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-title">
+        <span class="en">Annex C - Systems &amp; Knowledge</span>
+        <span class="zh">附件 C - 系统与知识层</span>
+      </span>
+    </div>
+    <div class="header-actions">
+      <span class="badge">
+        <span class="en">Clarification Annex</span>
+        <span class="zh">澄清附件</span>
+      </span>
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="active" data-lang="en" onclick="setLang('en', this)">EN</button>
+        <button data-lang="zh" onclick="setLang('zh', this)">中文</button>
+      </div>
+      <a class="header-link" href="pacgate-phase1-clarification-reply.html">
+        <span class="en">Back to Reply</span>
+        <span class="zh">返回回函</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="bar">
+    <span class="en">This annex explains what the two reference systems are for, how human review stays in the loop, and what the Phase 1 knowledge layer really includes.</span>
+    <span class="zh">本附件说明两套参考系统分别用来做什么、人工复核如何保留，以及第一阶段知识层实际包含什么。</span>
+  </div>
+
+  <main>
+    <div class="lang-wrap en">
+      <section class="hero">
+        <div class="eyebrow">Annex C - Operating System Roles</div>
+        <h1>Systems, Review Logic, and Knowledge Structure</h1>
+        <p>This annex gives the plain-language answer to three questions: what System 1 is for, what System 2 is for, and what the knowledge layer really means in Phase 1. The short answer is that both systems are pilot paths, both keep a human review gate, and the knowledge layer is a starter structure - not a finished legal SaaS stack.</p>
+      </section>
+
+      <section class="section">
+        <h2>System Role Matrix</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>System</th>
+                <th>Phase 1 role</th>
+                <th>What should be demonstrated</th>
+                <th>What should not be overstated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>System 1 - internal lawyer workflow path</td>
+                <td>Improve internal lawyer efficiency for review, drafting support, and knowledge-assisted research</td>
+                <td>At least one real internal legal scenario with evidence-aware draft output and human review</td>
+                <td>Do not describe it as a fully productized, fully local, ecosystem-free upstream clone</td>
+              </tr>
+              <tr>
+                <td>System 2 - future client-delivery prototype path</td>
+                <td>Explore the future commercialization direction through a controlled prototype loop</td>
+                <td>A minimal closed loop: intake, structured analysis, draft output, lawyer approval, controlled release</td>
+                <td>Do not describe it as a finished commercial SaaS platform or a multi-tenant client system</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Reference System Boundary Notes</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Claude for Legal</span>
+            <h3>Use as an adaptation reference for the internal-lawyer path</h3>
+            <ul>
+              <li>Cubecloud should describe this as a reference workflow path for Pacgate's internal-lawyer pilot.</li>
+              <li>It should not be described as a finished, fully local, self-contained product image.</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Lavern</span>
+            <h3>Use as a prototype and structural reference for future commercialization thinking</h3>
+            <ul>
+              <li>Lavern is useful as a local-capable prototype and structural reference.</li>
+              <li>It should not be described as an already finished commercial product.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Knowledge and Authority Structure</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>Recommended Phase 1 position</th>
+                <th>Why this matters</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>External authoritative legal sources</td>
+                <td>Best handled through external legal database MCP or equivalent authoritative retrieval tools</td>
+                <td>Helps keep primary law and update-sensitive authority outside a fragile one-off import process.</td>
+              </tr>
+              <tr>
+                <td>Pacgate private materials</td>
+                <td>Should sit in Pacgate-controlled private knowledge and retrieval structure</td>
+                <td>This is where playbooks, templates, matter files, and internal review decisions compound value.</td>
+              </tr>
+              <tr>
+                <td>Authority registry</td>
+                <td>Phase 1 should deliver a starter structure for source tracking, version awareness, and review status</td>
+                <td>Provides provenance and governance without pretending the full legal corpus is complete on day one.</td>
+              </tr>
+              <tr>
+                <td>Context graph</td>
+                <td>Keep the initial structure light and oriented around client, matter, document, authority, agent run, and review decision relations</td>
+                <td>Creates reusable schema value while leaving mature graph architecture for later stages.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Human Review and User Entry Logic</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Human-in-the-loop</span>
+            <h3>Remain explicit about review gates</h3>
+            <ul>
+              <li>Draft outputs should remain drafts until a Pacgate lawyer approves them.</li>
+              <li>Evidence and source distinctions should remain visible to the reviewer.</li>
+              <li>Customer-facing release in any prototype path should sit behind a lawyer gate.</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Entry Surfaces</span>
+            <h3>Keep the pilot entry surface modest</h3>
+            <ul>
+              <li>Phase 1 should define a practical lawyer entry point first.</li>
+              <li>External intake channels such as Feishu, email, WeChat, or richer forms should be treated as optional next layers.</li>
+              <li>The prototype should prove workflow value before committing to platform-level intake architecture.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Role Split Between Pacgate and Cubecloud</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Pacgate role</span>
+            <h3>Own the legal operating logic</h3>
+            <ul>
+              <li>Pacgate should lead legal playbooks, review standards, matter logic, and document templates.</li>
+              <li>These are the parts that reflect Pacgate's own legal operating identity.</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label">Cubecloud role</span>
+            <h3>Support the technical realization and operating base</h3>
+            <ul>
+              <li>Cubecloud should focus on deployment support, environment validation, technical tuning, and troubleshooting.</li>
+              <li>Its role is to provide the technical base that allows Pacgate's legal logic to run in a disciplined way.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <div class="lang-wrap zh">
+      <section class="hero">
+        <div class="eyebrow">附件 C - 运行系统角色</div>
+        <h1>系统、复核逻辑与知识结构</h1>
+        <p>本附件用更直接的方式回答三个问题：系统 1 用来做什么、系统 2 用来做什么、第一阶段知识层到底意味着什么。简短结论是：两套系统都只是试点路径，都保留人工复核门槛，而知识层交付的是 starter 结构，不是完整法律 SaaS 技术栈。</p>
+      </section>
+
+      <section class="section">
+        <h2>系统角色矩阵</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>系统</th>
+                <th>第一阶段角色</th>
+                <th>应验证的内容</th>
+                <th>不应夸大的部分</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>系统 1 - 内部律师工作流路径</td>
+                <td>提升内部律师在审查、起草辅助和知识检索方面的效率</td>
+                <td>至少跑通一个真实内部法律场景，并输出带证据意识的草稿供人工复核</td>
+                <td>不应描述成完全产品化、完全本地且无生态依赖的上游克隆</td>
+              </tr>
+              <tr>
+                <td>系统 2 - 面向未来客户交付的原型路径</td>
+                <td>通过受控原型闭环探索未来商品化方向</td>
+                <td>跑通最小闭环：材料进入、结构化分析、草稿输出、律师审批、受控释放</td>
+                <td>不应描述成已完成的商业 SaaS 平台或多租户客户系统</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>参考系统边界说明</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Claude for Legal</span>
+            <h3>应作为内部律师路径的适配参考</h3>
+            <ul>
+              <li>更准确的说法是：它是供 Pacgate 内部律师试点使用的参考工作流路径。</li>
+              <li>不应把它写成一个已经完成、完全本地、完全独立的成品系统。</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Lavern</span>
+            <h3>应作为未来商品化思路的原型与结构参考</h3>
+            <ul>
+              <li>Lavern 的价值，在于它是可本地运行的原型和结构参考。</li>
+              <li>不应把它直接写成已经完成的商业产品。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>知识与 authority 结构</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>层级</th>
+                <th>建议的第一阶段立场</th>
+                <th>为什么重要</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>外部权威法源</td>
+                <td>更适合通过外部法律数据库 MCP 或其他权威检索工具处理</td>
+                <td>有助于让不断更新的 primary law 保持在可靠来源，而不是依赖一次性导入。</td>
+              </tr>
+              <tr>
+                <td>Pacgate 私有资料</td>
+                <td>应进入 Pacgate 自控的私有知识与检索结构</td>
+                <td>这里是 playbook、模板、matter 文件和内部复核结论持续积累价值的核心。</td>
+              </tr>
+              <tr>
+                <td>Authority registry</td>
+                <td>第一阶段应交付 source tracking、版本意识和 review status 的 starter 结构</td>
+                <td>在不假装“完整法规库已完成”的前提下，先建立 provenance 与治理能力。</td>
+              </tr>
+              <tr>
+                <td>Context graph</td>
+                <td>初始结构可保持轻量，围绕 client、matter、document、authority、agent run 和 review decision 关系构建</td>
+                <td>一方面形成可复用 schema，另一方面把成熟图谱架构留给后续阶段。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>人工复核与用户入口逻辑</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Human-in-the-loop</span>
+            <h3>应继续明确保留律师审批门槛</h3>
+            <ul>
+              <li>草稿输出在 Pacgate 律师批准前，应始终视为草稿。</li>
+              <li>证据与来源区别应对复核人保持可见。</li>
+              <li>任何原型路径下的对外释放，都应经过律师审批。</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">入口面</span>
+            <h3>先把试点入口收窄</h3>
+            <ul>
+              <li>第一阶段应先定义一个可落地的律师入口。</li>
+              <li>飞书、邮件、微信或更复杂表单等外部入口，应作为下一层可选扩展。</li>
+              <li>应先证明工作流价值，再决定是否建设平台级 intake 架构。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Pacgate 与 Cubecloud 的职责分工</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Pacgate 职责</span>
+            <h3>主导法律运行逻辑</h3>
+            <ul>
+              <li>Pacgate 应主导法律 playbook、复核标准、matter 逻辑和文档模板。</li>
+              <li>这些部分体现的是 Pacgate 自身的执业方法与运行方式。</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label">Cubecloud 职责</span>
+            <h3>支持技术落地和运行底座</h3>
+            <ul>
+              <li>Cubecloud 应聚焦部署支持、环境验证、技术调优和故障排查。</li>
+              <li>它的职责，是提供支撑 Pacgate 法律逻辑稳定运行的技术底座。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div>
+      <span class="footer-mark">Annex C</span>
+      <span class="en">Systems, review posture, and knowledge-layer boundary note.</span>
+      <span class="zh">系统、复核姿态与知识层边界说明附件。</span>
+    </div>
+    <div>
+      <span class="en">Use with Annex B for deployment boundary and Annex D for future platform options.</span>
+      <span class="zh">请与附件 B 的部署边界说明及附件 D 的后续平台选项说明配套使用。</span>
+    </div>
+  </footer>
+
+  <script src="phase1-clarification-shell.js"></script>
+</body>
+</html>

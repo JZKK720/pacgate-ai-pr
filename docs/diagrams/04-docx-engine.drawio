@@ -1,0 +1,113 @@
+<mxfile host="app.diagrams.net" modified="2026-05-11T00:00:00.000Z" agent="Cubecloud/Pacgate-AI" version="24.7.17">
+  <diagram name="DOCX Engine" id="docx-engine-04">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Title -->
+        <mxCell id="2" value="PACGATE AI — DOCX ENGINE PIPELINE (pacgate-docx)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=15;fontStyle=1;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="16" width="1089" height="34" as="geometry"/>
+        </mxCell>
+
+        <!-- PATH A: GENERATE -->
+        <mxCell id="A0" value="PATH A — GENERATE DOCX" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="1089" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="A1" value="Agent output&#xa;JSON structure&#xa;{ sections: [DocxSection] }" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="116" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="A2" value="DocxBuilder::from_json()&#xa;parse DocxSection enum&#xa;(Heading · Para · List · Table&#xa;SignaturePage · Recital)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="278" y="116" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="A3" value="builder.build()&#xa;render XML elements&#xa;legal numbering: 1. → 1.1 → (a) → (i)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="556" y="116" width="260" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="A4" value="ZIP assembly&#xa;content_types.xml · .rels&#xa;word/document.xml + styles.xml&#xa;word/settings.xml (trackChanges)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="854" y="116" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="eA12" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="A1" target="A2" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eA23" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="A2" target="A3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eA34" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" source="A3" target="A4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PATH B: EDIT / TRACKED CHANGES -->
+        <mxCell id="B0" value="PATH B — EDIT DOCUMENT (Tracked Changes)" style="text;html=1;strokeColor=none;fillColor=#fff2cc;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="40" y="218" width="1089" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="B1" value="DOCX bytes (existing)&#xa;+ TrackedEdit&#xa;{ old_text, new_text, author }" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="262" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="B2" value="apply_tracked_edit()&#xa;unzip DOCX&#xa;read word/document.xml" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="300" y="262" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="B3" value="similar::TextDiff::from_words()&#xa;compute word-level diff&#xa;(Levenshtein / patience)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="262" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="B4" value="Wrap diffs as OOXML:&#xa;&lt;w:ins w:author=&quot;Pacgate AI&quot;&gt;&#xa;&lt;w:del w:author=&quot;Pacgate AI&quot;&gt;&#xa;Rebuild ZIP → DOCX bytes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="840" y="262" width="250" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="eB12" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" source="B1" target="B2" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eB23" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" source="B2" target="B3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eB34" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#d6b656;strokeWidth=2;" edge="1" source="B3" target="B4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PATH C: PARSE / EXTRACT TEXT -->
+        <mxCell id="C0" value="PATH C — PARSE (Extract Text)" style="text;html=1;strokeColor=none;fillColor=#e1d5e7;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="364" width="1089" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="C1" value="DOCX bytes&#xa;(from upload or document store)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="408" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="C2" value="ZipArchive::new()&#xa;extract word/document.xml" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="300" y="408" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="C3" value="quick-xml reader&#xa;walk &lt;w:t&gt; elements&#xa;collect text runs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="408" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="C4" value="Plain text String&#xa;→ RAG chunking&#xa;→ kb_search indexing" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="820" y="408" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="eC12" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" source="C1" target="C2" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eC23" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" source="C2" target="C3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eC34" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" source="C3" target="C4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Shared output -->
+        <mxCell id="OUT" value="DOCX bytes → client download / document store" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="512" width="400" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="eA4OUT" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="A4" target="OUT" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eB4OUT" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" source="B4" target="OUT" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Crate modules legend -->
+        <mxCell id="LEG" value="pacgate-docx modules: lib.rs · ooxml.rs · styles.rs · builder.rs · diff.rs · parser.rs · templates.rs" style="text;html=1;strokeColor=none;fillColor=#f8f8f8;align=center;fontSize=11;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="590" width="1089" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Footer -->
+        <mxCell id="99" value="Cubecloud Limited · 智方云 · Pacgate AI DOCX Engine · May 2026" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontColor=#888888;" vertex="1" parent="1">
+          <mxGeometry x="40" y="628" width="1089" height="24" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

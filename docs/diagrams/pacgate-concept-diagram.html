@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pacgate AI — Concept Diagram · 差异化概念图</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --border: #30363d;
+    --accent: #2563eb;
+    --accent2: #7c3aed;
+    --green: #059669;
+    --gold: #d97706;
+    --red: #dc2626;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --card: #1c2128;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Pro Display', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    padding: 40px 24px 80px;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 56px;
+  }
+  header .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 12px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.1s forwards;
+  }
+  header h1 {
+    font-size: clamp(28px, 4vw, 44px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.2s forwards;
+  }
+  header h1 span { color: var(--green); }
+  header p { color: var(--muted); font-size: 15px; opacity: 0; animation: fadeUp 0.6s 0.3s forwards; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* — Market position table — */
+  .market-section {
+    max-width: 960px;
+    margin: 0 auto 64px;
+    opacity: 0;
+    animation: fadeUp 0.7s 0.5s forwards;
+  }
+  .section-label {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+  .market-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 14px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .market-table th {
+    background: var(--card);
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .market-table td {
+    background: var(--card);
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .market-table tr:last-child td { border-bottom: none; }
+  .market-table th:not(:last-child),
+  .market-table td:not(:last-child) { border-right: 1px solid var(--border); }
+  .yes { color: #34d399; }
+  .no  { color: #f87171; }
+  .partial { color: #fbbf24; }
+  .market-table tr.highlight td { background: #1a2235; }
+  .market-table tr.highlight td:first-child { border-left: 3px solid var(--accent); }
+
+  /* — Differentiator cards — */
+  .diff-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    max-width: 960px;
+    margin: 0 auto 64px;
+  }
+  .diff-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: border-color 0.2s, box-shadow 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .diff-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+  }
+  .diff-card.c-blue::before  { background: var(--accent); }
+  .diff-card.c-purple::before { background: var(--accent2); }
+  .diff-card.c-green::before  { background: var(--green); }
+  .diff-card.c-gold::before   { background: var(--gold); }
+  .diff-card:hover { border-color: var(--accent); box-shadow: 0 0 24px rgba(37,99,235,0.15); }
+  .diff-card.animate { animation: cardIn 0.5s forwards; }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .dc-number {
+    font-size: 36px;
+    font-weight: 800;
+    margin-bottom: 8px;
+    line-height: 1;
+  }
+  .dc-number.c-blue   { color: #3b82f6; }
+  .dc-number.c-purple { color: #8b5cf6; }
+  .dc-number.c-green  { color: #34d399; }
+  .dc-number.c-gold   { color: #fbbf24; }
+  .dc-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .dc-body { font-size: 12px; color: var(--muted); line-height: 1.65; }
+
+  /* — Deployment topology — */
+  .topology {
+    max-width: 960px;
+    margin: 0 auto 64px;
+    opacity: 0;
+    animation: fadeUp 0.8s 1.4s forwards;
+  }
+  .topo-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 16px;
+  }
+  @media (max-width: 600px) {
+    .topo-grid { grid-template-columns: 1fr; }
+    .topo-arrow { transform: rotate(90deg); }
+  }
+  .topo-node {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 24px;
+    border: 1px solid var(--border);
+  }
+  .topo-node .tn-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+  .topo-node ul { list-style: none; padding: 0; }
+  .topo-node ul li {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .topo-node ul li:last-child { border-bottom: none; }
+  .topo-node ul li::before { content: '·'; color: var(--accent); }
+  .topo-center {
+    text-align: center;
+    font-size: 28px;
+    color: var(--accent);
+    animation: arrowPulse 2s ease-in-out infinite;
+  }
+  @keyframes arrowPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  .topo-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    display: inline-block;
+  }
+  .tb-local  { background: rgba(5,150,105,0.15); color: #34d399; border: 1px solid #059669; }
+  .tb-cloud  { background: rgba(37,99,235,0.15); color: #93c5fd; border: 1px solid #2563eb; }
+
+  /* — Cubecloud surface map — */
+  .surface-map {
+    max-width: 960px;
+    margin: 0 auto 40px;
+    opacity: 0;
+    animation: fadeUp 0.8s 1.7s forwards;
+  }
+  .surface-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 12px;
+  }
+  .surface-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: start;
+    transition: border-color 0.2s;
+  }
+  .surface-card:hover { border-color: var(--accent2); }
+  .sc-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .sc-label { font-size: 11px; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 2px; }
+  .sc-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .sc-sub { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+  footer {
+    text-align: center;
+    margin-top: 64px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  footer span { color: var(--green); }
+  /* i18n */
+  [data-lang="zh"] .en { display:none; }
+  [data-lang="en"] .zh { display:none; }
+</style>
+</head>
+<body>
+
+<div style="position:sticky;top:0;z-index:100;background:rgba(13,17,23,.95);backdrop-filter:blur(14px);border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;padding:0 32px;height:50px;">
+  <a href="../index.html" style="display:flex;align-items:center;gap:6px;color:#8b949e;font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid #30363d;border-radius:5px;transition:all .15s;">← <span class="en">Back to Index</span><span class="zh">返回首页</span></a>
+  <div style="display:flex;border:1px solid #30363d;border-radius:5px;overflow:hidden;">
+    <button onclick="setLang('en',this)" style="padding:4px 12px;border:none;background:#d97706;color:#0d1117;cursor:pointer;font-size:11px;font-weight:700" id="btn-en">EN</button>
+    <button onclick="setLang('zh',this)" style="padding:4px 12px;border:none;background:none;color:#8b949e;cursor:pointer;font-size:11px;font-weight:700" id="btn-zh">中文</button>
+  </div>
+</div>
+
+<header>
+  <div class="eyebrow">Pacgate AI · Concept Diagram · 差异化概念图</div>
+  <h1><span>Pacgate AI</span> — <span class="en">Why It's Different</span><span class="zh">为什么与众不同</span></h1>
+  <p><span class="en">Dedicated AIPC + private local AI mesh · BYOK sovereignty · Cubecloud OS integration · Chinese law native</span><span class="zh">专属 AIPC + 私有本地 AI Mesh · BYOK 数据主权 · 智方云 OS 集成 · 中国法律原生</span></p>
+</header>
+
+<div class="en">
+<!-- Market comparison -->
+<div class="market-section">
+  <div class="section-label">Market Landscape Comparison · 市场对比</div>
+  <table class="market-table">
+    <thead>
+      <tr>
+        <th>Capability</th>
+        <th>Harvey</th>
+        <th>Crosby</th>
+        <th>Moritz</th>
+        <th>Mike / Suzie (OSS)</th>
+        <th>Pacgate AI</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="highlight">
+        <td>Local-first, data never leaves firm</td>
+        <td class="no">✗ Cloud SaaS</td>
+        <td class="no">✗ Crosbrain cloud</td>
+        <td class="no">✗ Cloud SaaS</td>
+        <td class="partial">△ Self-host option</td>
+        <td class="yes">✓ Dedicated AIPC / private mesh</td>
+      </tr>
+      <tr>
+        <td>Empowers the law firm (firm stays in control)</td>
+        <td class="yes">✓ Copilot for lawyers</td>
+        <td class="no">✗ Replaces law firm</td>
+        <td class="no">✗ MSO replaces firm</td>
+        <td class="yes">✓ Self-hosted tool</td>
+        <td class="yes">✓ Lawyer owns delivery</td>
+      </tr>
+      <tr class="highlight">
+        <td>Mandatory lawyer approval gate</td>
+        <td class="partial">△ Human-in-loop</td>
+        <td class="no">✗ Auto-deliver</td>
+        <td class="partial">△ 20% review</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ Hard FSM gate</td>
+      </tr>
+      <tr>
+        <td>Matter-centric workflow (not chatbot)</td>
+        <td class="partial">△ Matter concept</td>
+        <td class="partial">△ Intake flow</td>
+        <td class="no">✗ Document-centric</td>
+        <td class="no">✗ Chat-based</td>
+        <td class="yes">✓ 11-state FSM</td>
+      </tr>
+      <tr class="highlight">
+        <td>Chinese law native (中文 + 涉外)</td>
+        <td class="partial">△ Limited</td>
+        <td class="no">✗ US commercial only</td>
+        <td class="no">✗ US/EU/Asia generic</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ 8 CN personas</td>
+      </tr>
+      <tr>
+        <td>BYOK — firm's own model keys</td>
+        <td class="no">✗ Vendor lock-in</td>
+        <td class="no">✗ Vendor models</td>
+        <td class="no">✗ Vendor models</td>
+        <td class="partial">△ Manual config</td>
+        <td class="yes">✓ Per-tenant vault</td>
+      </tr>
+      <tr class="highlight">
+        <td>WASM-isolated validation (TEE)</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ Ironclaw vault</td>
+      </tr>
+      <tr>
+        <td>DOCX tracked changes (Word-compatible)</td>
+        <td class="yes">✓ OOXML native</td>
+        <td class="yes">✓</td>
+        <td class="partial">△</td>
+        <td class="yes">✓ fast-diff / similar</td>
+        <td class="yes">✓ Rust OOXML native</td>
+      </tr>
+      <tr class="highlight">
+        <td>AMD NPU hardware inference</td>
+        <td class="no">✗ Cloud only</td>
+        <td class="no">✗ Cloud only</td>
+        <td class="no">✗ Cloud only</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ Cubecloud AIPC</td>
+      </tr>
+      <tr>
+        <td>Open pricing / firm controls costs</td>
+        <td class="no">✗ $120k+/yr SaaS</td>
+        <td class="no">✗ $150–250/doc</td>
+        <td class="no">✗ $300–1500/doc</td>
+        <td class="yes">✓ Free OSS</td>
+        <td class="yes">✓ Dedicated deployment + service tiers</td>
+      </tr>
+      <tr class="highlight">
+        <td>MCP / OA / 飞书 / 企微 integration</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="partial">△ Suzie only</td>
+        <td class="yes">✓ Full MCP stack</td>
+      </tr>
+      <tr>
+        <td>Persistent agent memory + scheduling</td>
+        <td class="partial">△</td>
+        <td class="partial">△ Crosbrain</td>
+        <td class="no">✗</td>
+        <td class="partial">△</td>
+        <td class="yes">✓ Hermes agent</td>
+      </tr>
+      <tr>
+        <td>160+ legal workflow templates</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="partial">△ Suzie Law only</td>
+        <td class="yes">✓ + ZH localised</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Key differentiators -->
+<div class="section-label">Core Differentiators · 核心差异化</div>
+<div class="diff-grid" id="diffGrid">
+  <div class="diff-card c-blue" data-diff-delay="0">
+    <div class="dc-number c-blue">01</div>
+    <div class="dc-title"><span class="en">Dedicated AIPC + Private Mesh</span><span class="zh">专属 AIPC + 私有 Mesh</span></div>
+    <div class="dc-body">Sensitive matters can run on Pacgate-controlled dedicated Cubecloud Ryzen AI AIPC or workstation units, while multiple private local nodes can be joined over Tailscale under Cubecloud Agent OS. Documents, conversations, and keys stay inside Pacgate-controlled infrastructure rather than moving into a shared public-cloud workflow.</div>
+  </div>
+  <div class="diff-card c-purple" data-diff-delay="1">
+    <div class="dc-number c-purple">02</div>
+    <div class="dc-title"><span class="en">BYOK Tenant Model</span><span class="zh">BYOK 租户模型</span></div>
+    <div class="dc-body">Tenants supply their own LLM API keys. Keys are AES-256-GCM encrypted at rest, decrypted only inside the Ironclaw TEE vault at inference time. Neither Cubecloud nor Pacgate hold plaintext keys at any layer.</div>
+  </div>
+  <div class="diff-card c-green" data-diff-delay="2">
+    <div class="dc-number c-green">03</div>
+    <div class="dc-title"><span class="en">Chinese Law Native</span><span class="zh">中国法律原生</span></div>
+    <div class="dc-body">8 China-specific legal personas (涉外律师, 合同律师, 知识产权律师, 劳动律师 …). System prompts and workflows in Simplified Chinese. 北大法宝 / 威科先行 data API integration path. Legal numbering follows PRC convention.</div>
+  </div>
+  <div class="diff-card c-gold" data-diff-delay="3">
+    <div class="dc-number c-gold">04</div>
+    <div class="dc-title"><span class="en">Cubecloud OS Integration</span><span class="zh">智方云 OS 集成</span></div>
+    <div class="dc-body">Not a standalone app — Pacgate AI is an integrated surface of Cubecloud Agent OS. Matters → OpenSpace lineage. Review → Ironclaw TEE. Research → Hermes persistent memory. Draft → OpenCode LSP. Workflow → Warp ADE routing.</div>
+  </div>
+  <div class="diff-card c-blue" data-diff-delay="4">
+    <div class="dc-number c-blue">05</div>
+    <div class="dc-title"><span class="en">AMD RyzenAI Stack</span><span class="zh">AMD RyzenAI 算力栈</span></div>
+    <div class="dc-body">Cubecloud Ryzen AI stations use AMD XDNA NPU for embedding and prompt/prefill acceleration, AMD Radeon GPU for model decode, and CPU fallback for resilience. On supported units, 33B–35B class local models can exceed 50 tok/s eval and prompt/prefill can reach up to ~5,000 tok/s; MAX 395 class hardware can reach up to ~200 tok/s eval. This makes dedicated local deployment commercially viable against public-cloud legal AI pricing.</div>
+  </div>
+  <div class="diff-card c-purple" data-diff-delay="5">
+    <div class="dc-number c-purple">06</div>
+    <div class="dc-title"><span class="en">Rust + WASM Safety Core</span><span class="zh">Rust+WASM 安全核心</span></div>
+    <div class="dc-body">Server logic in Rust: memory-safe, OWASP-clean, no GC pauses. Compliance validation in WASM modules inside Ironclaw TEE: sandboxed, signed, no network access. TypeScript/Python LLM wrapper risks (prompt injection, path traversal) eliminated at language level.</div>
+  </div>
+  <div class="diff-card c-green" data-diff-delay="6">
+    <div class="dc-number c-green">07</div>
+    <div class="dc-title"><span class="en">Compliance-First Product Lines</span><span class="zh">合规优先产品线</span></div>
+    <div class="dc-body">Phase 1 launches three vertical compliance products on shared infrastructure: (1) Data compliance / cross-border data (PIPL · DSL · CSL); (2) AI product compliance (AIGC · CAC algorithm filing); (3) Web3 / RWA product compliance. Phase 2: commercial contract review, PE/VC investment agreement, redline + negotiation. Each product line shares the same Matter workflow engine — only the rule-mapping layer differs.</div>
+  </div>
+  <div class="diff-card c-gold" data-diff-delay="7">
+    <div class="dc-number c-gold">08</div>
+    <div class="dc-title"><span class="en">Matter-Centric, Not Chat-Centric</span><span class="zh">以案件为中心</span></div>
+    <div class="dc-body">Every client engagement is a structured Matter with an 11-state FSM: submitted → intake_checking → queued_for_ai → ai_processing → lawyer_review → approved → delivered → closed. Clients never trigger agents directly. Formal legal output is only visible after ReviewDecision::Approved. Compared to Crosby (auto-delivers) and Moritz (20% spot-check), Pacgate AI's mandatory approval gate is a compliance and liability differentiator for the Chinese market.</div>
+  </div>
+</div>
+
+<!-- Deployment topology -->
+<div class="topology">
+  <div class="section-label">Dedicated + Private Mesh Deployment · 专属部署与私有 Mesh 架构</div>
+  <div class="topo-grid">
+    <div class="topo-node">
+      <div class="topo-badge tb-local">LOCAL · Pacgate Private Nodes</div>
+      <div class="tn-title">Dedicated / Mesh Nodes</div>
+      <ul>
+        <li>Rust Axum server</li>
+        <li>Postgres + pgvector storage</li>
+        <li>Ollama inference (Nemotron3 · Qwen3.6 · Qwen3.5)</li>
+        <li>AMD XDNA NPU + Radeon GPU</li>
+        <li>Ironclaw WASM vault</li>
+        <li>All document data</li>
+        <li>BYOK key vault</li>
+        <li>Hermes agent scheduler</li>
+      </ul>
+    </div>
+    <div class="topo-center">⇄</div>
+    <div class="topo-node">
+      <div class="topo-badge tb-cloud">OPTIONAL · Control Plane</div>
+      <div class="tn-title">Optional Operations Layer</div>
+      <ul>
+        <li>Software distribution</li>
+        <li>Fleet visibility + usage analytics</li>
+        <li>Model update distribution</li>
+        <li>Software update channel</li>
+        <li>Multi-site orchestration</li>
+        <li>OpenSpace audit dashboard</li>
+        <li>No document data passes here</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Cubecloud OS surface map -->
+<div class="surface-map">
+  <div class="section-label"><span class="en">Pacgate AI × Cubecloud OS Surface Mapping</span><span class="zh">Pacgate AI × 智方云 OS 界面映射</span></div>
+  <div class="surface-grid">
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(217,119,6,0.15)">🧭</div>
+      <div>
+        <div class="sc-label">General Legal AI Needs</div>
+        <div class="sc-title">PacGate AI</div>
+        <div class="sc-sub">Front-door legal AI workspace · routes users into counsel, matters, research, and draft flows</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(37,99,235,0.15)">💬</div>
+      <div>
+        <div class="sc-label">Pacgate Counsel</div>
+        <div class="sc-title">Open WebUI</div>
+        <div class="sc-sub">SSE chat · citations · personas · knowledge base</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(5,150,105,0.15)">📁</div>
+      <div>
+        <div class="sc-label">Pacgate Matters</div>
+        <div class="sc-title">OpenSpace</div>
+        <div class="sc-sub">Matter lineage · document audit trail · version history</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(124,58,237,0.15)">✏️</div>
+      <div>
+        <div class="sc-label">Pacgate Draft</div>
+        <div class="sc-title">OpenCode</div>
+        <div class="sc-sub">LSP-aware DOCX editing · tracked change review</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(217,119,6,0.15)">🔒</div>
+      <div>
+        <div class="sc-label">Pacgate Review</div>
+        <div class="sc-title">Ironclaw</div>
+        <div class="sc-sub">WASM validation pipeline · TEE vault · clause parsing</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(37,99,235,0.15)">🔬</div>
+      <div>
+        <div class="sc-label">Pacgate Research</div>
+        <div class="sc-title">Hermes</div>
+        <div class="sc-sub">Persistent agent memory · scheduled deep research</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(5,150,105,0.15)">⚡</div>
+      <div>
+        <div class="sc-label">Pacgate Workflow</div>
+        <div class="sc-title">Warp ADE</div>
+        <div class="sc-sub">Agentic workflow execution · 160+ legal templates</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(124,58,237,0.15)">📚</div>
+      <div>
+        <div class="sc-label">Pacgate Knowledge</div>
+        <div class="sc-title">Open WebUI RAG</div>
+        <div class="sc-sub">KB indexing · hybrid semantic + BM25 retrieval</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(217,119,6,0.15)">⚙️</div>
+      <div>
+        <div class="sc-label">Pacgate Admin</div>
+        <div class="sc-title">OpenSpace Mgmt</div>
+        <div class="sc-sub">Tenant config · BYOK keys · usage dashboard</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(220,38,38,0.15)">🤖</div>
+      <div>
+        <div class="sc-label">Pacgate Automation</div>
+        <div class="sc-title">OpenClaw</div>
+        <div class="sc-sub">Agent automation pipelines · trigger-based multi-agent orchestration</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(16,185,129,0.15)">🎨</div>
+      <div>
+        <div class="sc-label">Pacgate Documentation</div>
+        <div class="sc-title">Open-Design</div>
+        <div class="sc-sub">0-to-1 client materials · pitch decks · legal report auto-generation</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="zh">
+<!-- Market comparison -->
+<div class="market-section">
+  <div class="section-label">市场格局对比</div>
+  <table class="market-table">
+    <thead>
+      <tr>
+        <th>能力项</th>
+        <th>Harvey</th>
+        <th>Crosby</th>
+        <th>Moritz</th>
+        <th>Mike / Suzie (OSS)</th>
+        <th>Pacgate AI</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="highlight">
+        <td>本地优先，数据不离开律所</td>
+        <td class="no">✗ 云端 SaaS</td>
+        <td class="no">✗ Crosbrain 云端</td>
+        <td class="no">✗ 云端 SaaS</td>
+        <td class="partial">△ 可自托管</td>
+        <td class="yes">✓ 专属 AIPC / 私有 Mesh</td>
+      </tr>
+      <tr>
+        <td>赋能律所，控制权留在律所</td>
+        <td class="yes">✓ 律师 Copilot</td>
+        <td class="no">✗ 替代律所</td>
+        <td class="no">✗ MSO 替代律所</td>
+        <td class="yes">✓ 自托管工具</td>
+        <td class="yes">✓ 律师掌控交付</td>
+      </tr>
+      <tr class="highlight">
+        <td>强制律师审批关口</td>
+        <td class="partial">△ 人工参与</td>
+        <td class="no">✗ 自动交付</td>
+        <td class="partial">△ 20% 抽查</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ 硬性 FSM 闸门</td>
+      </tr>
+      <tr>
+        <td>以案件为中心的工作流（不是聊天机器人）</td>
+        <td class="partial">△ 有 Matter 概念</td>
+        <td class="partial">△ Intake 流</td>
+        <td class="no">✗ 以文档为中心</td>
+        <td class="no">✗ 聊天式</td>
+        <td class="yes">✓ 11 状态 FSM</td>
+      </tr>
+      <tr class="highlight">
+        <td>中国法律原生（中文 + 涉外）</td>
+        <td class="partial">△ 能力有限</td>
+        <td class="no">✗ 仅美国商事</td>
+        <td class="no">✗ 美欧亚通用配置</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ 8 个中国法 persona</td>
+      </tr>
+      <tr>
+        <td>BYOK：律所自有模型密钥</td>
+        <td class="no">✗ 供应商锁定</td>
+        <td class="no">✗ 平台模型</td>
+        <td class="no">✗ 平台模型</td>
+        <td class="partial">△ 需手工配置</td>
+        <td class="yes">✓ 按租户独立 vault</td>
+      </tr>
+      <tr class="highlight">
+        <td>WASM 隔离校验（TEE）</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ Ironclaw vault</td>
+      </tr>
+      <tr>
+        <td>DOCX 修订标记（兼容 Word）</td>
+        <td class="yes">✓ 原生 OOXML</td>
+        <td class="yes">✓</td>
+        <td class="partial">△</td>
+        <td class="yes">✓ fast-diff / similar</td>
+        <td class="yes">✓ Rust 原生 OOXML</td>
+      </tr>
+      <tr class="highlight">
+        <td>AMD NPU 硬件推理</td>
+        <td class="no">✗ 仅云端</td>
+        <td class="no">✗ 仅云端</td>
+        <td class="no">✗ 仅云端</td>
+        <td class="no">✗</td>
+        <td class="yes">✓ Cubecloud AIPC</td>
+      </tr>
+      <tr>
+        <td>价格透明，律所控制成本</td>
+        <td class="no">✗ SaaS 每年 $120k+</td>
+        <td class="no">✗ 每份文档 $150–250</td>
+        <td class="no">✗ 每份文档 $300–1500</td>
+        <td class="yes">✓ 开源免费</td>
+        <td class="yes">✓ 专属部署 + 服务分层</td>
+      </tr>
+      <tr class="highlight">
+        <td>MCP / OA / 飞书 / 企微 集成</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="partial">△ 仅 Suzie</td>
+        <td class="yes">✓ 完整 MCP 栈</td>
+      </tr>
+      <tr>
+        <td>持久 Agent 记忆与调度</td>
+        <td class="partial">△</td>
+        <td class="partial">△ Crosbrain</td>
+        <td class="no">✗</td>
+        <td class="partial">△</td>
+        <td class="yes">✓ Hermes Agent</td>
+      </tr>
+      <tr>
+        <td>160+ 法律工作流模板</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="no">✗</td>
+        <td class="partial">△ 仅 Suzie Law</td>
+        <td class="yes">✓ 并已做中文本地化</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Key differentiators -->
+<div class="section-label">核心差异化</div>
+<div class="diff-grid">
+  <div class="diff-card c-blue" data-diff-delay="0">
+    <div class="dc-number c-blue">01</div>
+    <div class="dc-title">专属 AIPC + 私有 Mesh</div>
+    <div class="dc-body">敏感事项可以运行在 Pacgate 可控的 Cubecloud Ryzen AI AIPC 或一体式工作站上，多个本地私有节点也可在 Cubecloud Agent OS 下通过 Tailscale 连接成私有 mesh。文档、会话与密钥保留在 Pacgate 可控基础设施中，而不是进入共享的公有云工作流。</div>
+  </div>
+  <div class="diff-card c-purple" data-diff-delay="1">
+    <div class="dc-number c-purple">02</div>
+    <div class="dc-title">BYOK 租户模型</div>
+    <div class="dc-body">租户自行提供 LLM API 密钥。密钥以 AES-256-GCM 静态加密保存，仅在推理时于 Ironclaw TEE vault 内解密。无论 Cubecloud 还是 Pacgate，都不会在任何层持有明文密钥。</div>
+  </div>
+  <div class="diff-card c-green" data-diff-delay="2">
+    <div class="dc-number c-green">03</div>
+    <div class="dc-title">中国法律原生</div>
+    <div class="dc-body">内置 8 个中国法特定 persona，例如涉外律师、合同律师、知识产权律师、劳动律师等。系统提示词和工作流以简体中文为主，并预留北大法宝 / 威科先行数据接口接入路径。法律编号体系遵循中国惯例。</div>
+  </div>
+  <div class="diff-card c-gold" data-diff-delay="3">
+    <div class="dc-number c-gold">04</div>
+    <div class="dc-title">智方云 OS 集成</div>
+    <div class="dc-body">Pacgate AI 不是独立应用，而是 Cubecloud Agent OS 的一组集成能力面。案件进入 OpenSpace 做谱系与审计，复核在 Ironclaw TEE 中执行，研究沉淀到 Hermes 持久记忆，草拟由 OpenCode LSP 驱动，工作流通过 Warp ADE 编排。</div>
+  </div>
+  <div class="diff-card c-blue" data-diff-delay="4">
+    <div class="dc-number c-blue">05</div>
+    <div class="dc-title">AMD RyzenAI 算力栈</div>
+    <div class="dc-body">Cubecloud Ryzen AI 站点使用 AMD XDNA NPU 承担 embedding 与 prompt / prefill 加速，AMD Radeon GPU 承担模型 decode，并保留 CPU 回退链路以确保韧性。在适配设备上，33B–35B 级本地模型 eval 吞吐可超过 50 tok/s，prompt / prefill 可达约 5,000 tok/s；MAX 395 级硬件可达到约 200 tok/s eval。这让专属本地部署在商业上足以对抗公有云法律 AI 定价。</div>
+  </div>
+  <div class="diff-card c-purple" data-diff-delay="5">
+    <div class="dc-number c-purple">06</div>
+    <div class="dc-title">Rust + WASM 安全核心</div>
+    <div class="dc-body">服务端逻辑基于 Rust，具备内存安全特性、易于做 OWASP 清洁交付，也没有 GC 停顿。合规校验运行在 Ironclaw TEE 内的 WASM 模块中，具备沙箱、签名与断网能力，从语言层规避常见的 TypeScript / Python 包装器风险。</div>
+  </div>
+  <div class="diff-card c-green" data-diff-delay="6">
+    <div class="dc-number c-green">07</div>
+    <div class="dc-title">合规优先产品线</div>
+    <div class="dc-body">第一阶段先落三条垂直产品线，并共享同一套底层基础设施：(1) 数据合规 / 跨境数据（PIPL · DSL · CSL）；(2) AI 产品合规（AIGC · CAC 算法备案）；(3) Web3 / RWA 产品合规。第二阶段扩展到商事合同审查、PE/VC 投资协议、红线与谈判。各条线复用同一 Matter 工作流引擎，只在规则映射层区分。</div>
+  </div>
+  <div class="diff-card c-gold" data-diff-delay="7">
+    <div class="dc-number c-gold">08</div>
+    <div class="dc-title">以案件为中心，而非以聊天为中心</div>
+    <div class="dc-body">每一个客户委托都会变成一个结构化 Matter，并经历 11 状态 FSM：submitted → intake_checking → queued_for_ai → ai_processing → lawyer_review → approved → delivered → closed。客户不能直接触发 agent；正式法律输出只有在 ReviewDecision::Approved 后才可见。相较 Crosby 的自动交付和 Moritz 的 20% 抽查，Pacgate AI 的强制审批闸门，更适合作为中国市场的合规与责任差异化卖点。</div>
+  </div>
+</div>
+
+<!-- Deployment topology -->
+<div class="topology">
+  <div class="section-label">专属部署与私有 Mesh 架构</div>
+  <div class="topo-grid">
+    <div class="topo-node">
+      <div class="topo-badge tb-local">LOCAL · Pacgate AIPC</div>
+      <div class="tn-title">专属 / Mesh 节点</div>
+      <ul>
+        <li>Rust Axum 服务</li>
+        <li>Postgres + pgvector 存储</li>
+        <li>Ollama 推理（Nemotron3 · Qwen3.6 · Qwen3.5）</li>
+        <li>AMD XDNA NPU + Radeon GPU</li>
+        <li>Ironclaw WASM vault</li>
+        <li>全部文档数据</li>
+        <li>BYOK 密钥 vault</li>
+        <li>Hermes Agent 调度器</li>
+      </ul>
+    </div>
+    <div class="topo-center">⇄</div>
+    <div class="topo-node">
+      <div class="topo-badge tb-cloud">OPTIONAL · 控制平面</div>
+      <div class="tn-title">可选运营层</div>
+      <ul>
+        <li>软件分发</li>
+        <li>机群可见性与使用分析</li>
+        <li>模型更新分发</li>
+        <li>软件升级通道</li>
+        <li>多站点编排</li>
+        <li>OpenSpace 审计看板</li>
+        <li>不承载任何文档数据</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Cubecloud OS surface map -->
+<div class="surface-map">
+  <div class="section-label">Pacgate AI × 智方云 OS 界面映射</div>
+  <div class="surface-grid">
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(217,119,6,0.15)">🧭</div>
+      <div>
+        <div class="sc-label">通用法律 AI 需求</div>
+        <div class="sc-title">PacGate AI</div>
+        <div class="sc-sub">通用法律 AI 前台入口 · 将用户分流到问答、案件、研究与起草流程</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(37,99,235,0.15)">💬</div>
+      <div>
+        <div class="sc-label">Pacgate Counsel 法律问答</div>
+        <div class="sc-title">Open WebUI</div>
+        <div class="sc-sub">SSE 对话 · 引文展示 · persona 切换 · 知识库检索</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(5,150,105,0.15)">📁</div>
+      <div>
+        <div class="sc-label">Pacgate Matters 案件中心</div>
+        <div class="sc-title">OpenSpace</div>
+        <div class="sc-sub">Matter 谱系 · 文档审计链 · 版本历史</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(124,58,237,0.15)">✏️</div>
+      <div>
+        <div class="sc-label">Pacgate Draft 草拟协作</div>
+        <div class="sc-title">OpenCode</div>
+        <div class="sc-sub">感知 LSP 的 DOCX 编辑 · 修订审阅</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(217,119,6,0.15)">🔒</div>
+      <div>
+        <div class="sc-label">Pacgate Review 合规复核</div>
+        <div class="sc-title">Ironclaw</div>
+        <div class="sc-sub">WASM 校验流水线 · TEE vault · 条款解析</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(37,99,235,0.15)">🔬</div>
+      <div>
+        <div class="sc-label">Pacgate Research 深度研究</div>
+        <div class="sc-title">Hermes</div>
+        <div class="sc-sub">持久 Agent 记忆 · 定时深度研究任务</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(5,150,105,0.15)">⚡</div>
+      <div>
+        <div class="sc-label">Pacgate Workflow 工作流</div>
+        <div class="sc-title">Warp ADE</div>
+        <div class="sc-sub">Agentic 工作流执行 · 160+ 法律模板</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(124,58,237,0.15)">📚</div>
+      <div>
+        <div class="sc-label">Pacgate Knowledge 知识检索</div>
+        <div class="sc-title">Open WebUI RAG</div>
+        <div class="sc-sub">知识库索引 · 语义 + BM25 混合检索</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(217,119,6,0.15)">⚙️</div>
+      <div>
+        <div class="sc-label">Pacgate Admin 管理后台</div>
+        <div class="sc-title">OpenSpace Mgmt</div>
+        <div class="sc-sub">租户配置 · BYOK 密钥 · 使用量看板</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(220,38,38,0.15)">🤖</div>
+      <div>
+        <div class="sc-label">Pacgate Automation 自动化</div>
+        <div class="sc-title">OpenClaw</div>
+        <div class="sc-sub">Agent 自动化流水线 · 基于触发器的多 Agent 编排</div>
+      </div>
+    </div>
+    <div class="surface-card">
+      <div class="sc-icon" style="background:rgba(16,185,129,0.15)">🎨</div>
+      <div>
+        <div class="sc-label">Pacgate Documentation 交付材料</div>
+        <div class="sc-title">Open-Design</div>
+        <div class="sc-sub">0 到 1 客户材料 · 演示 deck · 法律报告自动生成</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<footer>
+  <span class="en">Pre-Proposal · All rights reserved by Cubecloud Limited Co.</span>
+  <span class="zh">预提案文件 · 版权所有，智方云有限公司</span>
+</footer>
+
+<script>
+  function setLang(l, btn) {
+    document.documentElement.dataset.lang = l;
+    document.querySelectorAll('#btn-en, #btn-zh').forEach(b => {
+      b.style.background = 'none'; b.style.color = '#8b949e';
+    });
+    btn.style.background = '#d97706'; btn.style.color = '#0d1117';
+    localStorage.setItem('pg-lang', l);
+    document.title = l === 'zh'
+      ? 'Pacgate AI — 差异化概念图'
+      : 'Pacgate AI — Concept Diagram';
+  }
+  (function(){ const s = localStorage.getItem('pg-lang'); if(s) { const b = document.getElementById('btn-'+s); if(b) setLang(s, b); } })();
+
+  // Differentiator cards stagger
+  const diffCards = document.querySelectorAll('.diff-card');
+  const diffObs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const delay = parseInt(e.target.dataset.diffDelay) * 100;
+        setTimeout(() => e.target.classList.add('animate'), delay);
+        diffObs.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  diffCards.forEach(c => diffObs.observe(c));
+</script>
+<script src="../assets/protect.js"></script>
+</body>
+</html>

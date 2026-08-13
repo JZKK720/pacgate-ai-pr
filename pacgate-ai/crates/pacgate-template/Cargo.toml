@@ -1,0 +1,12 @@
+[package]
+name    = "pacgate-template"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pacgate-core = { path = "../pacgate-core" }
+serde.workspace      = true
+serde_json.workspace = true
+anyhow.workspace     = true
+thiserror.workspace  = true
+once_cell.workspace  = true

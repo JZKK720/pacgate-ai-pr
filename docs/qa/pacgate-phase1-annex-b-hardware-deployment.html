@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacgate AI - Annex B Hardware and Deployment</title>
+  <link rel="stylesheet" href="phase1-clarification-theme.css">
+</head>
+<body data-title-en="Pacgate AI - Annex B Hardware and Deployment" data-title-zh="Pacgate AI - 附件 B 硬件与部署">
+  <header>
+    <div class="brand">
+      <span class="brand-mark">Cubecloud</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-title">
+        <span class="en">Annex B - Hardware &amp; Deployment</span>
+        <span class="zh">附件 B - 硬件与部署</span>
+      </span>
+    </div>
+    <div class="header-actions">
+      <span class="badge">
+        <span class="en">Clarification Annex</span>
+        <span class="zh">澄清附件</span>
+      </span>
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="active" data-lang="en" onclick="setLang('en', this)">EN</button>
+        <button data-lang="zh" onclick="setLang('zh', this)">中文</button>
+      </div>
+      <a class="header-link" href="pacgate-phase1-clarification-reply.html">
+        <span class="en">Back to Reply</span>
+        <span class="zh">返回回函</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="bar">
+    <span class="en">This annex explains the pilot hardware, deployment path, data boundary, and admin boundary without treating the pilot setup as a final production design.</span>
+    <span class="zh">本附件说明试点硬件、部署路径、数据边界和管理员权限边界，但不会把试点方案直接写成最终生产设计。</span>
+  </div>
+
+  <main>
+    <div class="lang-wrap en">
+      <section class="hero">
+        <div class="eyebrow">Annex B - Pilot Infrastructure Logic</div>
+        <h1>Hardware &amp; Deployment Position</h1>
+        <p>The key point is simple: Phase 1 pilot hardware is not the same as Phase 2 production hardware. The current setup should be described as a practical local pilot, not as the final long-term platform architecture.</p>
+
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Current Position</span>
+            <h3>Two-node pilot logic remains reasonable</h3>
+            <ul>
+              <li>A two-node AI-capable setup is still reasonable for the current pilot.</li>
+              <li>It only needs to support the agreed pilot workloads and the two reference paths.</li>
+              <li>It should also leave behind reusable operating assets for Pacgate.</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Boundary</span>
+            <h3>Production claims should not be overstated</h3>
+            <ul>
+              <li>The pilot hardware should not be described as the final multi-customer production environment.</li>
+              <li>That later production posture needs separate confirmation and will likely need stronger hardware.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Recommended Hardware Reply Structure</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Topic</th>
+                <th>Recommended answer</th>
+                <th>Why this framing matters</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Final BOM</td>
+                <td>To be frozen through a pre-procurement confirmation annex.</td>
+                <td>Prevents informal line-item answers from becoming accidental commercial commitments.</td>
+              </tr>
+              <tr>
+                <td>Node roles</td>
+                <td>Describe them as pilot nodes for parallel validation, not as a final multi-tenant production cluster.</td>
+                <td>Keeps pilot topology and future platform topology separate.</td>
+              </tr>
+              <tr>
+                <td>Model and concurrency expectations</td>
+                <td>State target ranges subject to final GPU, quantization path, and active model list.</td>
+                <td>Avoids promising exact throughput without the frozen hardware and workload definition.</td>
+              </tr>
+              <tr>
+                <td>Phase 2 server path</td>
+                <td>Present as a later option that will likely require stronger workstation or server hardware.</td>
+                <td>Stops Phase 2 production decisions from becoming implicit Phase 1 obligations.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Deployment and Handover Flow</h2>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-stage">Stage 1</div>
+            <div>
+              <h4>Pre-delivery setup and validation</h4>
+              <p>Cubecloud may stage and verify the pilot environment before final handover. This reduces first-day friction and gives Pacgate a cleaner acceptance path.</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">Stage 2</div>
+            <div>
+              <h4>Remote inspection and acceptance visibility</h4>
+              <p>Before office-side handover, Pacgate should be able to review the staged setup through remote access or recorded evidence.</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">Stage 3</div>
+            <div>
+              <h4>Office-side handover and local operation</h4>
+              <p>After delivery into Pacgate's office environment, the system should run under Pacgate-controlled hardware and network conditions, with remote support rules written down clearly.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Data and Admin Boundary Table</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Asset or activity</th>
+                <th>Default Phase 1 position</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Source files and client materials</td>
+                <td>Stored and processed on Pacgate-controlled local hardware by default</td>
+                <td>Any exception should be explicit and narrow.</td>
+              </tr>
+              <tr>
+                <td>Prompt and response traces</td>
+                <td>Retained locally unless an external model or support pathway is intentionally invoked</td>
+                <td>Logging policy should be configurable and documented.</td>
+              </tr>
+              <tr>
+                <td>Indexes, authority structures, and matter folders</td>
+                <td>Pacgate-owned local assets</td>
+                <td>These should remain exportable and reusable beyond Phase 1.</td>
+              </tr>
+              <tr>
+                <td>Remote admin access</td>
+                <td>Only as needed for setup, support, or agreed troubleshooting</td>
+                <td>Scope, auditability, and shutoff path should be documented.</td>
+              </tr>
+              <tr>
+                <td>Offline behavior</td>
+                <td>Local functions should remain available within the limits of the chosen models and dependencies</td>
+                <td>Features that rely on external APIs should be listed separately.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Support and Upgrade Responsibility</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">Support Split</span>
+            <h3>Each support responsibility should stay clear</h3>
+            <ul>
+              <li>OEM and hardware vendor - warranty and physical component replacement</li>
+              <li>Cubecloud - staging, deployment support, operating guidance, and agreed troubleshooting</li>
+              <li>Pacgate - office-side power, network, displays, and local access discipline unless separately arranged</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">Upgrade Path</span>
+            <h3>Reusable assets should be named clearly</h3>
+            <ul>
+              <li>Configuration, knowledge structure, matter organization, and prompt discipline should be designed to migrate forward.</li>
+              <li>Performance tuning for a future server environment should be treated as later work, not silently included now.</li>
+              <li>Pilot hardware can still remain useful later as development, backup, or edge-use assets.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <div class="lang-wrap zh">
+      <section class="hero">
+        <div class="eyebrow">附件 B - 试点基础设施逻辑</div>
+        <h1>硬件与部署立场</h1>
+        <p>这一组问题最关键的一点很简单：第一阶段试点硬件，不等于第二阶段生产硬件。当前方案应被表述为实用的本地试点，而不是未来长期平台架构。</p>
+
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">当前立场</span>
+            <h3>双节点试点逻辑仍然合理</h3>
+            <ul>
+              <li>对当前试点而言，双节点 AI 配置仍然合理。</li>
+              <li>它只需支撑约定的试点负载和两条参考路径。</li>
+              <li>同时，它还应留下 Pacgate 后续可复用的运行资产。</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">边界提醒</span>
+            <h3>不应夸大为长期生产能力</h3>
+            <ul>
+              <li>试点硬件不应直接写成未来多客户 SaaS 的长期生产环境。</li>
+              <li>后续生产方案需要单独确认，而且大概率需要更强配置。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>建议的硬件回复结构</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>主题</th>
+                <th>建议回复</th>
+                <th>为什么这样表达</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>最终 BOM</td>
+                <td>通过采购前确认附件冻结。</td>
+                <td>避免非正式逐项回复被误读为商业承诺。</td>
+              </tr>
+              <tr>
+                <td>节点角色</td>
+                <td>应描述为并行验证用的试点节点，而不是最终多租户生产集群。</td>
+                <td>把试点拓扑与未来平台拓扑清楚拆开。</td>
+              </tr>
+              <tr>
+                <td>模型与并发预期</td>
+                <td>应以目标区间表达，并受最终 GPU、量化路线和实际模型名单约束。</td>
+                <td>避免在硬件和负载尚未冻结前承诺精确吞吐量。</td>
+              </tr>
+              <tr>
+                <td>第二阶段服务器路径</td>
+                <td>应作为后续选项提出，预计需要更强工作站或服务器。</td>
+                <td>避免把第二阶段生产决策提前并入第一阶段义务。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>部署与交接流程</h2>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-stage">阶段 1</div>
+            <div>
+              <h4>交付前配置与验证</h4>
+              <p>Cubecloud 可先完成试点环境的预配置和验证，再进行最终交接。这样能减少交付首日摩擦，也让 Pacgate 的验收路径更清楚。</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">阶段 2</div>
+            <div>
+              <h4>远程可视化检查与验收见证</h4>
+              <p>在最终交付到 Pacgate 办公环境前，Pacgate 应能通过远程查看或录屏证据确认环境和场景验证结果。</p>
+            </div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-stage">阶段 3</div>
+            <div>
+              <h4>办公室侧交接与本地运行</h4>
+              <p>设备进入 Pacgate 办公环境后，应在 Pacgate 控制的硬件和网络条件下运行，并把远程支持规则清楚写入文档。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>数据与管理员边界表</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>资产或活动</th>
+                <th>第一阶段默认立场</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>源文件与客户材料</td>
+                <td>默认保存在并处理于 Pacgate 控制的本地硬件中</td>
+                <td>任何例外都应明确且收窄。</td>
+              </tr>
+              <tr>
+                <td>Prompt 与输出轨迹</td>
+                <td>除非主动调用外部模型或外部支持路径，否则默认本地保留</td>
+                <td>日志策略应支持配置并写入文档。</td>
+              </tr>
+              <tr>
+                <td>索引、authority 结构与 matter 文件夹</td>
+                <td>视为 Pacgate 自有本地资产</td>
+                <td>这些内容应能在第一阶段后继续导出和复用。</td>
+              </tr>
+              <tr>
+                <td>远程管理员权限</td>
+                <td>仅在安装、支持或双方同意的排障场景下启用</td>
+                <td>权限范围、审计性和关闭方式都应写清。</td>
+              </tr>
+              <tr>
+                <td>离线运行能力</td>
+                <td>在所选模型与依赖允许范围内，本地功能应可继续运行</td>
+                <td>依赖外部 API 的功能应单独列明。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>支持与升级责任</h2>
+        <div class="grid-2">
+          <article class="panel">
+            <span class="label">支持拆分</span>
+            <h3>各方支持责任应保持清楚</h3>
+            <ul>
+              <li>OEM / 硬件厂商 - 质保与物理部件更换</li>
+              <li>Cubecloud - 预配置、部署支持、运行指导和约定范围内排障</li>
+              <li>Pacgate - 办公室侧供电、网络、显示和本地访问纪律，除非另有约定</li>
+            </ul>
+          </article>
+
+          <article class="panel">
+            <span class="label">升级路径</span>
+            <h3>需要把可复用资产明确命名</h3>
+            <ul>
+              <li>配置、知识结构、matter 组织方式和 prompt 纪律应设计为可迁移资产。</li>
+              <li>未来服务器环境的性能调优应视作后续工作，而不是默认包含在当前范围内。</li>
+              <li>试点硬件未来仍可作为开发、备份或边缘使用节点保留价值。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div>
+      <span class="footer-mark">Annex B</span>
+      <span class="en">Pilot hardware and deployment framing for the current clarification round.</span>
+      <span class="zh">用于当前澄清轮次的试点硬件与部署说明附件。</span>
+    </div>
+    <div>
+      <span class="en">Use with Annex A for commercial scope and Annex C for system boundaries.</span>
+      <span class="zh">请与附件 A 的商务范围说明及附件 C 的系统边界说明配套使用。</span>
+    </div>
+  </footer>
+
+  <script src="phase1-clarification-shell.js"></script>
+</body>
+</html>
