@@ -64,20 +64,22 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-13, session 5)
+## Current status (as of 2026-08-13, session 6)
 
-### Done — Phase 1 critical path complete + Session 5 enrichment
+### Done — Phase 1 critical path complete + Sessions 5-6 enrichment
 
 - Full Rust workspace compiles cleanly (`cargo check` passes)
 - 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
-- Integration test scaffold added (`cargo test -p pacgate-api --test integration -- --ignored`, requires Postgres)
+- 3 YAML loader tests pass (`cargo test -p pacgate-workflow --test yaml_loader`)
+- Integration test scaffold added (`cargo test -p pacgate-api --test integration -- --ignored`, requires Postgres at `localhost:5433/pacgate_test`)
 - Storage layer: FsDocumentStore + MatterStore + TenantStore + SQL migrations (3 migrations)
 - Auth: JWT + argon2 + login/register + middleware + soul_id in Claims + **SOUL resolver middleware** (resolves soul_id → SoulPersona at request time, injects into request extensions)
 - API routes: matters, documents, chat, workflows, auth — all wired to real stores, **auth middleware now applied to protected routes**
+- **Chat handler wired to SOUL** — compose_persona_prompt() builds layered prompt from SoulPersona (preamble + boundary rules + output format) + optional persona_id, passed to AgentLoop::run()
 - LLM router: 7 providers, 3-tier routing
 - RAG: pgvector + tsvector hybrid retrieval + Ollama embeddings + chunk ingestor + **jurisdiction filtering + source level tagging** (SearchFilter struct, migration 003)
 - 20 legal personas (practice-area personas) + **10 SOUL personas** (Justin, Sylvie, A1-A8 complete BigLaw roster)
-- 10 workflow templates (contract review, DD, legal research, etc.)
+- **32 workflow templates** — 10 built-in + **22 YAML templates** loaded from `pacgate-ai/workflows/*.yaml` (investment_financing, contract_review, ma_due_diligence, litigation, compliance_corporate). YAML loader: `load_from_yaml_dir()`, `merge_workflows()`, `list_all_workflows()`
 - SOUL architecture: identity overlay types (SoulPersona, BoundaryRule, EscalationRule, etc.)
 - Legal domain enums: SourceLevel, ReviewStatus, SecurityLevel, RiskGrade, Jurisdiction
 - deer-flow Python adapter (~150 lines)
@@ -85,30 +87,33 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings reduced: 43 → 25 (remaining are dead-code scaffolding for not-yet-wired features)
-- Git: 10 commits on main, all pushed to origin
+- Git: 14 commits on main, 10 pushed to origin (4 pending push due to network)
 
 ### Next steps (resume from here on other machine)
 
-1. ~~Push pending commits~~ — DONE (all pushed)
-2. **Convert 150+ prompt templates** from client assets into pacgate-workflow
-3. ~~Add jurisdiction filtering + source level tagging to pacgate-rag~~ — DONE (SearchFilter + migration 003)
+1. **Push 4 pending commits** — `git push` (network was unavailable during session 6)
+2. **Convert remaining ~130 prompt templates** from client assets into YAML workflows (22/150+ done). See `pacgate-ai/workflows/*.yaml` for format. Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks)
+3. ~~Add jurisdiction filtering + source level tagging to pacgate-rag~~ — DONE
 4. **Add data source connectors** (15+ external legal databases, 3 Chinese MCP endpoints)
-5. ~~Add remaining BigLaw agents~~ — DONE (A2/A3/A6/A7 added, complete A1-A8 roster)
-6. ~~SOUL resolver middleware~~ — DONE (resolve_soul() + soul_resolver_middleware wired into router)
-7. ~~Clean up 38 clippy warnings~~ — DONE (43→25, remaining are dead-code scaffolding)
-8. ~~Integration test~~ — DONE (scaffold added, requires Postgres to run)
+5. ~~Add remaining BigLaw agents~~ — DONE (A1-A8 complete)
+6. ~~SOUL resolver middleware~~ — DONE
+7. ~~Clean up clippy warnings~~ — DONE (43→25)
+8. ~~Integration test scaffold~~ — DONE (compiles, requires Postgres at `localhost:5433/pacgate_test`)
 9. **qm TypeScript adapter** — Phase 2 collaboration runtime
-10. **Wire SOUL persona into chat handler** — read SoulPersona from request extensions in chat.rs, prepend system_preamble to the agent's system prompt
-11. **Run integration test** against real Postgres — verify the full flow works end-to-end
+10. ~~Wire SOUL persona into chat handler~~ — DONE (compose_persona_prompt + Extension extractor)
+11. **Run integration test** against real Postgres — port 5433 was not accessible from host during session 6 (Docker networking issue); test compiles and is ready to run when Postgres is reachable
+12. **Wire workflow YAML loading into API** — update `/api/workflows` route to use `list_all_workflows(Some(workflows_dir))` instead of just built-in workflows
+13. **Wire workflow steps to agent tools** — currently workflow steps carry `tool` + `parameters.system_prompt`, but the agent loop doesn't yet execute workflow steps sequentially. Need a `WorkflowExecutor` that drives `AgentLoop::run()` step by step.
 
 ### Important reminders
 
 - **Repo is private** — only accessible to JZKK720 account
 - **Windows proxy fix**: set `$env:NO_PROXY = "localhost,127.0.0.1,::1"` before graphify or Ollama tools
 - **sqlx uses postgres** (not sqlite) — workspace Cargo.toml has `features = ["postgres", ...]`
-- **All commits pushed** — repo is in sync with origin
+- **4 commits need pushing** — `git push` when network is available (session 6 ended with network issue)
 - **Client assets in pacgate-ai-assets/** — 150+ prompt templates, SOUL definitions, BigLaw architecture, data source configs. See deploy/PLANS.md for the enrichment plan.
-- **Integration test** — run with `cargo test -p pacgate-api --test integration -- --ignored` (requires Postgres at `localhost:5432/pacgate_test`)
+- **YAML workflows** — `pacgate-ai/workflows/*.yaml` (5 files, 22 templates). Load with `pacgate_workflow::load_from_yaml_dir()`. Test: `cargo test -p pacgate-workflow --test yaml_loader`
+- **Integration test** — run with `cargo test -p pacgate-api --test integration -- --ignored` (requires Postgres at `localhost:5433/pacgate_test`, user=hermes, password=changeme)
 - **RAG migration 003** — adds `jurisdiction` and `source_level` columns to `kb_chunks`, run automatically by `RagStore::run_migrations()`
 
 ## Commit checklist (before pushing from another machine)
