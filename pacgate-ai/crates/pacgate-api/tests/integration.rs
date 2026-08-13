@@ -29,7 +29,7 @@ use tower::ServiceExt;
 mod tests {
     use super::*;
 
-    const TEST_DB_URL: &str = "postgres://pacgate:pacgate@localhost:5432/pacgate_test";
+    const TEST_DB_URL: &str = "postgres://hermes:changeme@localhost:5433/pacgate_test";
     const TEST_DATA_DIR: &str = "./data/test-integration";
 
     /// Full end-to-end test: register → login → create matter → list matters.
