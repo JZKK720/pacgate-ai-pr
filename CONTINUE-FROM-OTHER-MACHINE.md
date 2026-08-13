@@ -64,26 +64,43 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-13)
+## Current status (as of 2026-08-13, session 4)
 
-### Done
+### Done — Phase 1 critical path complete
 - Full Rust workspace compiles cleanly (`cargo check` passes)
 - 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
 - Storage layer: FsDocumentStore + MatterStore + TenantStore + SQL migrations
-- Auth: JWT + argon2 + login/register + middleware
+- Auth: JWT + argon2 + login/register + middleware + soul_id in Claims
 - API routes: matters, documents, chat, workflows, auth — all wired to real stores
 - LLM router: 7 providers, 3-tier routing
+- RAG: pgvector + tsvector hybrid retrieval + Ollama embeddings + chunk ingestor
+- 20 legal personas (practice-area personas) + 6 SOUL personas (Justin, Sylvie, A1, A4, A5, A8)
+- 10 workflow templates (contract review, DD, legal research, etc.)
+- SOUL architecture: identity overlay types (SoulPersona, BoundaryRule, EscalationRule, etc.)
+- Legal domain enums: SourceLevel, ReviewStatus, SecurityLevel, RiskGrade
 - deer-flow Python adapter (~150 lines)
 - deer-flow wrapper Dockerfile
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
+- Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
+- Git: 4 commits on main, 2 pushed to origin (2 pending push due to network)
 
-### Next steps
-1. **pacgate-rag** — implement pgvector + tsvector for the KbSearch tool
-2. **pacgate-persona** — implement 20 legal personas
-3. **pacgate-workflow** — load 160+ workflow templates
-4. **Integration test** — start Postgres + pacgate-api, verify end-to-end
-5. **qm TypeScript adapter** — Phase 2 collaboration runtime
-6. **Clippy cleanup** — 38 warnings to fix (unused imports)
+### Next steps (resume from here on other machine)
+1. **Push pending commits** — `git push` (2 commits ahead of origin)
+2. **Convert 150+ prompt templates** from client assets into pacgate-workflow
+3. **Add jurisdiction filtering + source level tagging** to pacgate-rag
+4. **Add data source connectors** (15+ external legal databases, 3 Chinese MCP endpoints)
+5. **Add remaining BigLaw agents** (A2 Intake/Conflicts, A3 Domain Experts, A6 Devil's Advocate, A7 Document Pipeline)
+6. **SOUL resolver middleware** in pacgate-auth (resolves soul_id → SoulPersona at request time)
+7. **Clean up 38 clippy warnings** (unused imports)
+8. **Integration test** — start Postgres + pacgate-api, verify end-to-end
+9. **qm TypeScript adapter** — Phase 2 collaboration runtime
+
+### Important reminders
+- **Repo is private** — only accessible to JZKK720 account
+- **Windows proxy fix**: set `$env:NO_PROXY = "localhost,127.0.0.1,::1"` before graphify or Ollama tools
+- **sqlx uses postgres** (not sqlite) — workspace Cargo.toml has `features = ["postgres", ...]`
+- **2 commits need pushing** — `git push` when network is available
+- **Client assets in pacgate-ai-assets/** — 150+ prompt templates, SOUL definitions, BigLaw architecture, data source configs. See deploy/PLANS.md for the enrichment plan.
 
 ## Commit checklist (before pushing from another machine)
 
