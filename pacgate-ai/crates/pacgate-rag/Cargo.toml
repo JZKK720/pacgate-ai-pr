@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pacgate-core = { path = "../pacgate-core" }
-serde.workspace      = true
-serde_json.workspace = true
-sqlx.workspace       = true
-tokio.workspace      = true
-anyhow.workspace     = true
-thiserror.workspace  = true
-tracing.workspace    = true
-reqwest.workspace    = true
+pacgate-core  = { path = "../pacgate-core" }
+serde.workspace       = true
+serde_json.workspace  = true
+sqlx.workspace        = true
+tokio.workspace       = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+tracing.workspace     = true
+reqwest.workspace     = true
+uuid.workspace        = true
 bytes.workspace      = true
