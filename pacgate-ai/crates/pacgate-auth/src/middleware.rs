@@ -75,19 +75,22 @@ pub async fn soul_resolver_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     // Try to get Claims from extensions (injected by auth_middleware)
-    if let Some(claims) = request.extensions().get::<Claims>() {
-        if let Some(soul) = resolve_soul(claims) {
-            debug!(
-                "soul resolver: resolved soul_id={} -> persona={}",
-                claims.soul_id.as_deref().unwrap_or("none"),
-                soul.name
-            );
-            let mut request = request;
-            request.extensions_mut().insert(soul);
-            return Ok(next.run(request).await);
-        }
+    let soul = request.extensions().get::<Claims>()
+        .and_then(|claims| resolve_soul(claims));
+
+    if let Some(ref s) = soul {
+        debug!(
+            "soul resolver: resolved soul_id={} -> persona={}",
+            request.extensions().get::<Claims>()
+                .and_then(|c| c.soul_id.as_deref())
+                .unwrap_or("none"),
+            s.name
+        );
     }
 
-    // No Claims or no resolvable SOUL — pass through
+    // Always inject Option<SoulPersona> so downstream Extension extractors work.
+    // None means "no SOUL bound to this user" — handlers use default agent behavior.
+    let mut request = request;
+    request.extensions_mut().insert(soul);
     Ok(next.run(request).await)
 }
