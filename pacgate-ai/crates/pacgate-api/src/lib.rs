@@ -13,6 +13,7 @@ pub use error::ApiError;
 
 use axum::{
     Router,
+    middleware,
     routing::{get, post, put, delete},
 };
 use tower::ServiceBuilder;
@@ -28,15 +29,8 @@ pub fn build_router(state: AppState) -> Router {
         .allow_headers(Any)
         .allow_methods(Any);
 
-    Router::new()
-        // Health
-        .route("/health", get(|| async { "ok" }))
-
-        // Auth (no middleware required for login/register)
-        .route("/api/auth/login",    post(auth::login))
-        .route("/api/auth/register", post(auth::register))
-        .route("/api/auth/me",       get(auth::me))
-
+    // Protected routes — require JWT auth + SOUL resolver
+    let protected = Router::new()
         // Chat / agent
         .route("/api/chat",             post(chat::chat_handler))
         .route("/api/chat/stream",      post(chat::chat_stream_handler))
@@ -64,6 +58,28 @@ pub fn build_router(state: AppState) -> Router {
         // Tabular review
         .route("/api/tabular",          post(documents::start_tabular_review))
         .route("/api/tabular/:id",      get(documents::get_tabular_results))
+        // Auth-protected user info
+        .route("/api/auth/me",          get(auth::me))
+        // Apply auth middleware (verifies JWT, injects Claims)
+        // then SOUL resolver (resolves soul_id → SoulPersona, injects into extensions)
+        .layer(middleware::from_fn_with_state(
+            (*state.auth).clone(),
+            pacgate_auth::auth_middleware,
+        ))
+        .layer(middleware::from_fn(
+            pacgate_auth::soul_resolver_middleware,
+        ));
+
+    Router::new()
+        // Health (no auth)
+        .route("/health", get(|| async { "ok" }))
+
+        // Auth endpoints (no auth required for login/register)
+        .route("/api/auth/login",    post(auth::login))
+        .route("/api/auth/register", post(auth::register))
+
+        // Merge protected routes
+        .merge(protected)
 
         .layer(
             ServiceBuilder::new()

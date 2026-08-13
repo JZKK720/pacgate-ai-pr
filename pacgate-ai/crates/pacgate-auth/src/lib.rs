@@ -18,6 +18,25 @@ pub mod middleware;
 
 pub use error::AuthError;
 pub use middleware::auth_middleware;
+pub use middleware::soul_resolver_middleware;
+
+use pacgate_core::SoulPersona;
+
+/// Resolve a SOUL persona from the `soul_id` field in `Claims`.
+///
+/// Returns `None` if:
+/// - `Claims.soul_id` is `None` (no SOUL bound to this user)
+/// - The `soul_id` is not a valid UUID
+/// - No built-in SOUL persona matches the ID
+///
+/// This is called by `soul_resolver_middleware` after `auth_middleware`
+/// has verified the JWT and injected `Claims` into request extensions.
+pub fn resolve_soul(claims: &Claims) -> Option<SoulPersona> {
+    let soul_id_str = claims.soul_id.as_ref()?;
+    let uuid = Uuid::parse_str(soul_id_str).ok()?;
+    let persona_id = pacgate_core::PersonaId(uuid);
+    pacgate_persona::get_soul(&persona_id)
+}
 
 /// JWT claims extracted from a verified token.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -38,6 +57,7 @@ pub struct Claims {
 }
 
 /// Authentication service — JWT creation/verification + user management.
+#[derive(Clone)]
 pub struct AuthService {
     jwt_secret: String,
     db: PgPool,

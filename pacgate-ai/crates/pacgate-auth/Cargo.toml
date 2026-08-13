@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pacgate-core   = { path = "../pacgate-core" }
-pacgate-tenant = { path = "../pacgate-tenant" }
+pacgate-core    = { path = "../pacgate-core" }
+pacgate-tenant  = { path = "../pacgate-tenant" }
+pacgate-persona = { path = "../pacgate-persona" }
 serde.workspace         = true
 serde_json.workspace    = true
 sqlx.workspace          = true

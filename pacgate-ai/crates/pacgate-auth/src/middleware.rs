@@ -4,20 +4,21 @@
 //! and injects `Claims` into request extensions for downstream handlers.
 
 use axum::{
-    extract::Request,
+    extract::{Request, State},
     http::StatusCode,
     middleware::Next,
     response::Response,
 };
 use tracing::debug;
 
-use crate::AuthService;
+use crate::{AuthService, Claims, resolve_soul};
+use pacgate_core::SoulPersona;
 
 /// Auth middleware — verifies JWT and injects Claims into request extensions.
 ///
 /// Skips auth for health check and auth endpoints (login/register).
 pub async fn auth_middleware(
-    auth: AuthService,
+    State(auth): State<AuthService>,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -59,4 +60,35 @@ pub async fn auth_middleware(
             Err(StatusCode::UNAUTHORIZED)
         }
     }
+}
+
+/// SOUL resolver middleware — runs after `auth_middleware`.
+///
+/// Reads `Claims` from request extensions (injected by `auth_middleware`),
+/// resolves the `soul_id` to a `SoulPersona` via `pacgate_persona::get_soul()`,
+/// and injects the resolved `SoulPersona` into request extensions.
+///
+/// If no `Claims` are present (unauthenticated route), the middleware passes through.
+/// If `soul_id` is `None` or unresolvable, the middleware passes through without
+/// injecting a `SoulPersona` — downstream handlers treat `None` as "default identity".
+pub async fn soul_resolver_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    // Try to get Claims from extensions (injected by auth_middleware)
+    if let Some(claims) = request.extensions().get::<Claims>() {
+        if let Some(soul) = resolve_soul(claims) {
+            debug!(
+                "soul resolver: resolved soul_id={} -> persona={}",
+                claims.soul_id.as_deref().unwrap_or("none"),
+                soul.name
+            );
+            let mut request = request;
+            request.extensions_mut().insert(soul);
+            return Ok(next.run(request).await);
+        }
+    }
+
+    // No Claims or no resolvable SOUL — pass through
+    Ok(next.run(request).await)
 }
