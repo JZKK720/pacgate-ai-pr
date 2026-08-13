@@ -65,6 +65,7 @@ mod tests {
             tenant_id: "550e8400-e29b-41d4-a716-446655440001".to_string(),
             role: "attorney".to_string(),
             system_role: "user".to_string(),
+            soul_id: Some("550e8400-e29b-41d4-a716-446655440002".to_string()),
             exp: 1735689600,
         };
 
@@ -75,6 +76,7 @@ mod tests {
         assert_eq!(parsed.tenant_id, claims.tenant_id);
         assert_eq!(parsed.role, claims.role);
         assert_eq!(parsed.system_role, claims.system_role);
+        assert_eq!(parsed.soul_id, claims.soul_id);
         assert_eq!(parsed.exp, claims.exp);
     }
 

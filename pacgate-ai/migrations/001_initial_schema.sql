@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT NOT NULL DEFAULT 'attorney',  -- admin | attorney | paralegal | partner
     system_role   TEXT NOT NULL DEFAULT 'user',      -- admin | user (platform-level)
     display_name  TEXT,
+    soul_id       UUID,                        -- assigned SOUL persona (nullable)
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(tenant_id, email)

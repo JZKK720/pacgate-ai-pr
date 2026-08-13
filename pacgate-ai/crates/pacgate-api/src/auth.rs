@@ -21,6 +21,7 @@ pub struct LoginResponse {
     pub user_id:    String,
     pub tenant_id:  String,
     pub role:       String,
+    pub soul_id:    Option<String>,
     pub expires_in: u64,
 }
 
@@ -43,15 +44,14 @@ pub struct MeResponse {
     pub user_id:   String,
     pub tenant_id: String,
     pub role:      String,
-    pub system_role: String,
-}
+    pub system_role: String,    pub soul_id:     Option<String>,}
 
 /// POST /api/auth/login — authenticate and receive JWT
 pub async fn login(
     State(state): State<AppState>,
     Json(req):    Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
-    let (token, user_id, tenant_id) = state
+    let (token, user_id, tenant_id, soul_id) = state
         .auth
         .login(&req.email, &req.password)
         .await
@@ -61,7 +61,8 @@ pub async fn login(
         token,
         user_id: user_id.as_str(),
         tenant_id: tenant_id.as_str(),
-        role: "attorney".to_string(), // TODO: get actual role from login
+        role: "attorney".to_string(),
+        soul_id,
         expires_in: 86400,
     }))
 }
@@ -102,5 +103,6 @@ pub async fn me(
         tenant_id:   claims.tenant_id,
         role:        claims.role,
         system_role: claims.system_role,
+        soul_id:     claims.soul_id,
     }))
 }

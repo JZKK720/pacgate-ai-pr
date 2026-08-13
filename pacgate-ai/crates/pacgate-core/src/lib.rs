@@ -62,10 +62,11 @@ typed_id!(KbItemId);
 
 /// The three-tier model strategy (Main / Mid / Low) mapping to different
 /// capability/cost trade-offs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmTier {
     /// High-capability model — deep analysis, contract review, complex reasoning.
+    #[default]
     Main,
     /// Mid-capability model — tabular review, batch extraction, structured output.
     Mid,
@@ -420,6 +421,170 @@ pub struct Branding {
     pub display_name: Option<String>,
     pub logo_url:     Option<String>,
     pub primary_color: Option<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SOUL persona types (identity overlay, not workflow component)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A SOUL persona — defines a user's AI identity, behavioral rules, and output format.
+/// This is an identity overlay that wraps the agent's system prompt.
+/// Workflows stay identity-agnostic; the SOUL only affects prompt + enforcement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulPersona {
+    pub id:              PersonaId,
+    pub name:            String,
+    /// If bound to a specific user (None = reusable across users)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id:         Option<UserId>,
+    /// Identity modes — triggered by context (which workflow/matter type)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identity_modes:  Vec<IdentityMode>,
+    /// Core values the persona adheres to
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub core_values:     Vec<String>,
+    /// Hard boundary rules (red lines)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boundary_rules:  Vec<BoundaryRule>,
+    /// Output format for agent responses
+    #[serde(default)]
+    pub output_format:   OutputFormat,
+    /// Escalation rules — who to escalate to and when
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escalation_rules: Vec<EscalationRule>,
+    /// System prompt preamble — injected before the workflow's system prompt
+    pub system_preamble: String,
+    /// Description of this SOUL
+    pub description:     String,
+    /// Model tier preference for this persona (Main/Mid/Low)
+    #[serde(default)]
+    pub model_tier:      LlmTier,
+    /// Security level (A-E from the role pyramid)
+    #[serde(default)]
+    pub security_level:  SecurityLevel,
+}
+
+/// An identity mode within a SOUL — e.g., Justin's triple-role switching.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityMode {
+    /// Mode name (e.g., "managing_partner_assistant")
+    pub name:          String,
+    /// When to activate this mode (e.g., "when reviewing M&A documents")
+    pub trigger:       String,
+    /// Thinking mode for this identity (e.g., "analytical", "coordination")
+    pub thinking_mode: String,
+    /// Brief description of this mode's behavior
+    pub description:   String,
+}
+
+/// A boundary rule (red line) — what the agent must not do.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoundaryRule {
+    /// The rule text (e.g., "No legal conclusion without partner review")
+    pub rule:              String,
+    /// Where this rule is enforced
+    pub enforcement_point: EnforcementPoint,
+}
+
+/// Where a boundary rule is enforced.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementPoint {
+    /// Enforced by pacgate-auth middleware before/after API calls
+    #[default]
+    ApiMiddleware,
+    /// Enforced via system prompt instruction to the agent
+    AgentPrompt,
+    /// Enforced as a workflow checkpoint/gate
+    WorkflowGate,
+}
+
+/// Output format for agent responses.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputFormat {
+    /// Justin's format: conclusion / options / recommendation
+    Decision3Part,
+    /// Sylvie's format: 结论 / 依据 / 待确认事项
+    LegalOpinion3Part,
+    /// Standard legal output (no special formatting)
+    #[default]
+    Standard,
+}
+
+/// An escalation rule — when and where to escalate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscalationRule {
+    /// Condition text (e.g., "risk >= P2" or "any P0 finding")
+    pub condition:  String,
+    /// Target role to escalate to (e.g., "partner", "lead_lawyer")
+    pub target_role: String,
+    /// Whether escalation blocks the workflow or is advisory
+    pub blocking:   bool,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legal domain enums (from client assets)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Source level — the 4-level source grading from the client's requirements.
+/// Tags every RAG chunk and agent output with its provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceLevel {
+    /// 法规原文, 官方解读 — highest authority
+    AuthorityVerified,
+    /// 元典, 北大法宝 — auxiliary legal databases
+    AuxiliaryDB,
+    /// Firm templates, playbooks, historical samples
+    InternalTemplate,
+    /// AI-generated content — lowest authority
+    #[default]
+    ModelInference,
+}
+
+/// Review status — the 3-state labeling from the client's requirements.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    /// 有问题 — issue found
+    HasIssue,
+    /// 无问题 — no issue
+    NoIssue,
+    /// 资料不足 — insufficient data
+    #[default]
+    InsufficientData,
+}
+
+/// Security level — A-E from the client's role pyramid.
+/// Controls what actions a user can perform.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityLevel {
+    /// Partner — full access, can sign off
+    LevelA,
+    /// Lead lawyer — matter-level access
+    LevelB,
+    /// Handling lawyer — task-level access
+    LevelC,
+    /// Assistant — read-only
+    LevelD,
+    /// Intern — supervised read-only
+    #[default]
+    LevelE,
+}
+
+/// Risk grade — from the client's evaluation framework.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskGrade {
+    /// No risk
+    #[default]
+    Green,
+    /// Moderate risk
+    Yellow,
+    /// High risk
+    Red,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

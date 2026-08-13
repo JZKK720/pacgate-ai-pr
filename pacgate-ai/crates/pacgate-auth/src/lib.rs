@@ -30,6 +30,9 @@ pub struct Claims {
     pub role: String,
     /// Platform-level role: admin | user
     pub system_role: String,
+    /// SOUL persona ID — which identity overlay to activate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soul_id: Option<String>,
     /// Expiration time (Unix timestamp seconds)
     pub exp: usize,
 }
@@ -69,6 +72,7 @@ impl AuthService {
         tenant_id: &TenantId,
         role: &str,
         system_role: &str,
+        soul_id: Option<&str>,
     ) -> Result<String, AuthError> {
         let exp = (Utc::now() + Duration::hours(24)).timestamp() as usize;
 
@@ -77,6 +81,7 @@ impl AuthService {
             tenant_id: tenant_id.as_str(),
             role: role.to_string(),
             system_role: system_role.to_string(),
+            soul_id: soul_id.map(|s| s.to_string()),
             exp,
         };
 
@@ -93,9 +98,9 @@ impl AuthService {
         &self,
         email: &str,
         password: &str,
-    ) -> Result<(String, UserId, TenantId), AuthError> {
+    ) -> Result<(String, UserId, TenantId, Option<String>), AuthError> {
         let row = sqlx::query(
-            "SELECT id, tenant_id, password_hash, role, system_role FROM users WHERE email = $1",
+            "SELECT id, tenant_id, password_hash, role, system_role, soul_id FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_one(&self.db)
@@ -107,6 +112,7 @@ impl AuthService {
         let password_hash: Option<String> = row.get("password_hash");
         let role: String = row.get("role");
         let system_role: String = row.get("system_role");
+        let soul_id: Option<String> = row.get("soul_id");
 
         // Verify password
         let stored_hash = password_hash
@@ -114,8 +120,8 @@ impl AuthService {
 
         Self::verify_password(password, &stored_hash)?;
 
-        let token = self.create_token(&user_id, &tenant_id, &role, &system_role)?;
-        Ok((token, user_id, tenant_id))
+        let token = self.create_token(&user_id, &tenant_id, &role, &system_role, soul_id.as_deref())?;
+        Ok((token, user_id, tenant_id, soul_id))
     }
 
     /// Register a new user within a tenant.
