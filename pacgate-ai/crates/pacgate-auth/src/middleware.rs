@@ -75,13 +75,17 @@ pub async fn soul_resolver_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     // Try to get Claims from extensions (injected by auth_middleware)
-    let soul = request.extensions().get::<Claims>()
+    let soul = request
+        .extensions()
+        .get::<Claims>()
         .and_then(|claims| resolve_soul(claims));
 
     if let Some(ref s) = soul {
         debug!(
             "soul resolver: resolved soul_id={} -> persona={}",
-            request.extensions().get::<Claims>()
+            request
+                .extensions()
+                .get::<Claims>()
                 .and_then(|c| c.soul_id.as_deref())
                 .unwrap_or("none"),
             s.name
