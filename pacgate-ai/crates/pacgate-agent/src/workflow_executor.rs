@@ -20,18 +20,18 @@ use crate::AgentLoop;
 /// Result of executing a single workflow step.
 #[derive(Debug, Clone)]
 pub struct StepResult {
-    pub step_name:    String,
-    pub tool:         String,
-    pub content:      Option<String>,
-    pub citations:    Vec<pacgate_core::CitationRef>,
-    pub tools_used:   Vec<String>,
+    pub step_name: String,
+    pub tool: String,
+    pub content: Option<String>,
+    pub citations: Vec<pacgate_core::CitationRef>,
+    pub tools_used: Vec<String>,
 }
 
 /// Result of executing a complete workflow.
 #[derive(Debug, Clone)]
 pub struct WorkflowResult {
     pub workflow_name: String,
-    pub steps:         Vec<StepResult>,
+    pub steps: Vec<StepResult>,
     /// Final output from the last step (convenience accessor)
     pub final_content: Option<String>,
 }
@@ -39,10 +39,7 @@ pub struct WorkflowResult {
 impl WorkflowResult {
     /// Returns the output of the last step that produced content.
     pub fn last_output(&self) -> Option<&str> {
-        self.steps
-            .iter()
-            .rev()
-            .find_map(|s| s.content.as_deref())
+        self.steps.iter().rev().find_map(|s| s.content.as_deref())
     }
 }
 
@@ -60,14 +57,8 @@ fn extract_system_prompt(parameters: &serde_json::Value) -> Option<String> {
 /// - The step name and description
 /// - Any accumulated context from prior steps
 /// - A request to execute the step's tool with its parameters
-fn build_step_message(
-    step: &WorkflowStep,
-    prior_context: &[String],
-) -> String {
-    let mut msg = format!(
-        "## Task: {}\n\n{}\n\n",
-        step.name, step.description
-    );
+fn build_step_message(step: &WorkflowStep, prior_context: &[String]) -> String {
+    let mut msg = format!("## Task: {}\n\n{}\n\n", step.name, step.description);
 
     if !prior_context.is_empty() {
         msg.push_str("## Context from prior steps\n\n");
@@ -78,10 +69,7 @@ fn build_step_message(
 
     // Include non-system_prompt parameters as instructions
     if let Some(obj) = step.parameters.as_object() {
-        let extra: Vec<_> = obj
-            .iter()
-            .filter(|(k, _)| *k != "system_prompt")
-            .collect();
+        let extra: Vec<_> = obj.iter().filter(|(k, _)| *k != "system_prompt").collect();
         if !extra.is_empty() {
             msg.push_str("## Parameters\n\n");
             for (key, val) in extra {
@@ -140,10 +128,10 @@ impl<'a> WorkflowExecutor<'a> {
 
             // Record the result
             let step_result = StepResult {
-                step_name:  step.name.clone(),
-                tool:       step.tool.clone(),
-                content:    turn_result.content.clone(),
-                citations:  turn_result.citations.clone(),
+                step_name: step.name.clone(),
+                tool: step.tool.clone(),
+                content: turn_result.content.clone(),
+                citations: turn_result.citations.clone(),
                 tools_used: turn_result.tool_calls_made.clone(),
             };
 
@@ -155,10 +143,7 @@ impl<'a> WorkflowExecutor<'a> {
             results.push(step_result);
         }
 
-        let final_content = results
-            .iter()
-            .rev()
-            .find_map(|r| r.content.clone());
+        let final_content = results.iter().rev().find_map(|r| r.content.clone());
 
         info!(
             workflow = %workflow.name,
