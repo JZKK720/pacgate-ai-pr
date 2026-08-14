@@ -64,9 +64,9 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-14, session 8)
+## Current status (as of 2026-08-14, session 9)
 
-### Done — Phase 1 critical path complete + Sessions 5-8 enrichment
+### Done — Phase 1 critical path complete + Sessions 5-9 enrichment
 
 - Full Rust workspace compiles cleanly (`cargo check` passes)
 - 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
@@ -81,7 +81,8 @@ pacgate-ai-pr/
 - 20 legal personas (practice-area personas) + **10 SOUL personas** (Justin, Sylvie, A1-A8 complete BigLaw roster)
 - **51 YAML workflow templates** loaded from `pacgate-ai/workflows/*.yaml` (9 files). Categories: investment_financing, contract_review, ma_due_diligence, litigation, compliance_corporate, fund_lawyer, capital_markets, compliance_specialized, banking_general. YAML loader: `load_from_yaml_dir()`, `merge_workflows()`, `list_all_workflows()`
 - **WorkflowExecutor** — drives AgentLoop step-by-step through workflow templates, chains outputs as context. Re-exported from `pacgate_agent::WorkflowExecutor`
-- **Workflow execution API** — `POST /api/workflows/:id/execute` endpoint runs workflows end-to-end. `GET /api/workflows?category=X` filters by category.
+- **Workflow execution API** — `POST /api/workflows/:id/execute` endpoint runs workflows end-to-end. `GET /api/workflows?category=X&search=Y` filters by category and searches by keyword. `GET /api/workflows/categories` returns distinct categories with counts.
+- **Data source connectors** — `DataSourceConnector` trait in pacgate-search with `SearchRouter`. 6 connectors: 3 Chinese (元典/北大法宝/企查查, MCP stubs needing API keys) + 3 international (CourtListener/SEC EDGAR/GLEIF, active with free APIs). `default_router()` factory reads env vars. Results tagged with `source_level` and sorted by authority priority.
 - SOUL architecture: identity overlay types (SoulPersona, BoundaryRule, EscalationRule, etc.)
 - Legal domain enums: SourceLevel, ReviewStatus, SecurityLevel, RiskGrade, Jurisdiction
 - deer-flow Python adapter (~150 lines)
@@ -89,14 +90,14 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings reduced: 43 → 25 (remaining are dead-code scaffolding for not-yet-wired features)
-- Git: 25 commits on main, all pushed to origin
+- Git: 29 commits on main, all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
 1. ~~Push pending commits~~ — DONE (all pushed)
 2. **Convert remaining ~99 prompt templates** from client assets into YAML workflows (51/150+ done). See `pacgate-ai/workflows/*.yaml` for format. Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks). Remaining files with most templates: 诉讼律师(57 blocks), 非诉律师(52 blocks), 合规律师(38 blocks, 10 converted), 基金律师(32 blocks, 6 converted), 律师日常(27 blocks, 4 converted)
 3. ~~Add jurisdiction filtering + source level tagging to pacgate-rag~~ — DONE
-4. **Add data source connectors** (15+ external legal databases, 3 Chinese MCP endpoints)
+4. ~~Add data source connectors~~ — DONE (6 connectors, 3 active, 3 stubs needing API keys)
 5. ~~Add remaining BigLaw agents~~ — DONE (A1-A8 complete)
 6. ~~SOUL resolver middleware~~ — DONE
 7. ~~Clean up clippy warnings~~ — DONE (43→25)
@@ -108,9 +109,13 @@ pacgate-ai-pr/
 13. ~~Wire workflow steps to agent tools~~ — DONE (WorkflowExecutor)
 14. ~~Wire WorkflowExecutor into API~~ — DONE (`POST /api/workflows/:id/execute`)
 15. ~~Add workflow category filter~~ — DONE (`GET /api/workflows?category=X`)
-16. **Add workflow categories endpoint** — `GET /api/workflows/categories` returning distinct category list
-17. **Add workflow search** — search workflows by name/description keyword
-18. **Add data source connector trait** — define `DataSourceConnector` trait in pacgate-search for external legal database access
+16. ~~Add workflow categories endpoint~~ — DONE (`GET /api/workflows/categories`)
+17. ~~Add workflow search~~ — DONE (`GET /api/workflows?search=keyword`)
+18. ~~Add data source connector trait~~ — DONE (`DataSourceConnector` + `SearchRouter` in pacgate-search)
+19. **Wire SearchRouter into API** — add `GET /api/search?q=keyword` endpoint that uses SearchRouter to query external databases
+20. **Wire SearchRouter into A4 Research Agent** — update the `kb_search` tool or add a new `legal_search` tool in pacgate-agent that calls SearchRouter
+21. **Implement Chinese MCP connectors** — fill in YuanDian/PkuLaw/Qcc connector `search()` methods when MCP protocol is defined
+22. **Add data source health check endpoint** — `GET /api/search/health` returns connector status
 
 ### Important reminders
 
@@ -119,7 +124,8 @@ pacgate-ai-pr/
 - **sqlx uses postgres** (not sqlite) — workspace Cargo.toml has `features = ["postgres", ...]`
 - **All commits pushed** — repo is in sync with origin (session 7)
 - **Client assets in pacgate-ai-assets/** — 150+ prompt templates, SOUL definitions, BigLaw architecture, data source configs. See deploy/PLANS.md for the enrichment plan.
-- **YAML workflows** — `pacgate-ai/workflows/*.yaml` (9 files, 51 templates). Load with `pacgate_workflow::load_from_yaml_dir()`. Test: `cargo test -p pacgate-workflow --test yaml_loader`. API: `GET /api/workflows?category=X`, `GET /api/workflows/:id`, `POST /api/workflows/:id/execute`
+- **YAML workflows** — `pacgate-ai/workflows/*.yaml` (9 files, 51 templates). Load with `pacgate_workflow::load_from_yaml_dir()`. Test: `cargo test -p pacgate-workflow --test yaml_loader`. API: `GET /api/workflows?category=X&search=Y`, `GET /api/workflows/categories`, `GET /api/workflows/:id`, `POST /api/workflows/:id/execute`
+- **Data source connectors** — `pacgate-search` crate with `DataSourceConnector` trait, `SearchRouter`, 6 connectors (3 Chinese stubs + 3 international active). `default_router()` factory. Env vars: `YUANDIAN_API_KEY`, `PKULAW_API_KEY`, `QCC_API_KEY`, `COURTLISTENER_API_KEY`
 - **Integration test** — run with `cargo test -p pacgate-api --test integration -- --ignored` (requires Postgres at `localhost:5433/pacgate_test`, user=hermes, password=changeme)
 - **RAG migration 003** — adds `jurisdiction` and `source_level` columns to `kb_chunks`, run automatically by `RagStore::run_migrations()`
 
