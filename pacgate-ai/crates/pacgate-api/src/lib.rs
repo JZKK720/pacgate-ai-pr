@@ -56,6 +56,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Workflows
         .route("/api/workflows", get(workflows::list_workflows))
+        .route("/api/workflows/categories", get(workflows::list_workflow_categories))
         .route("/api/workflows/:id", get(workflows::get_workflow))
         .route(
             "/api/workflows/:id/execute",

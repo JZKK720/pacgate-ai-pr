@@ -34,9 +34,11 @@ pub struct WorkflowStepDetail {
 
 /// Query parameters for workflow listing.
 /// `category` filters by workflow category (e.g., "fund_formation", "litigation").
+/// `search` filters by keyword match in name or description.
 #[derive(Debug, Deserialize)]
 pub struct WorkflowListQuery {
     pub category: Option<String>,
+    pub search:   Option<String>,
 }
 
 pub async fn list_workflows(
@@ -50,13 +52,23 @@ pub async fn list_workflows(
         .map(|dir| pacgate_workflow::list_all_workflows(Some(dir.as_path())))
         .unwrap_or_else(pacgate_workflow::list_workflows);
 
+    let search_lower = query.search.as_ref().map(|s| s.to_lowercase());
+
     let summaries: Vec<WorkflowSummary> = workflows
         .iter()
         .filter(|w| {
-            query
+            // Category filter
+            let category_match = query
                 .category
                 .as_ref()
-                .map_or(true, |cat| &w.category == cat)
+                .map_or(true, |cat| &w.category == cat);
+
+            // Search filter (case-insensitive substring match on name + description)
+            let search_match = search_lower.as_ref().map_or(true, |s| {
+                w.name.to_lowercase().contains(s) || w.description.to_lowercase().contains(s)
+            });
+
+            category_match && search_match
         })
         .map(|w| WorkflowSummary {
             id: w.id.to_string(),
@@ -105,6 +117,45 @@ pub async fn get_workflow(
             })
             .collect(),
     }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow categories
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct CategoryInfo {
+    pub category:     String,
+    pub workflow_count: usize,
+}
+
+/// List all distinct workflow categories with counts.
+/// `GET /api/workflows/categories`
+pub async fn list_workflow_categories(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<CategoryInfo>>, ApiError> {
+    let workflows = state
+        .config
+        .workflows_dir
+        .as_ref()
+        .map(|dir| pacgate_workflow::list_all_workflows(Some(dir.as_path())))
+        .unwrap_or_else(pacgate_workflow::list_workflows);
+
+    // Group by category and count
+    let mut categories: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for w in &workflows {
+        *categories.entry(w.category.clone()).or_insert(0) += 1;
+    }
+
+    let result: Vec<CategoryInfo> = categories
+        .into_iter()
+        .map(|(category, count)| CategoryInfo {
+            category,
+            workflow_count: count,
+        })
+        .collect();
+
+    Ok(Json(result))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
