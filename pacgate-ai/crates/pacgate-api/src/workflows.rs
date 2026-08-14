@@ -38,7 +38,7 @@ pub struct WorkflowStepDetail {
 #[derive(Debug, Deserialize)]
 pub struct WorkflowListQuery {
     pub category: Option<String>,
-    pub search:   Option<String>,
+    pub search: Option<String>,
 }
 
 pub async fn list_workflows(
@@ -125,7 +125,7 @@ pub async fn get_workflow(
 
 #[derive(Debug, Serialize)]
 pub struct CategoryInfo {
-    pub category:     String,
+    pub category: String,
     pub workflow_count: usize,
 }
 
@@ -142,7 +142,8 @@ pub async fn list_workflow_categories(
         .unwrap_or_else(pacgate_workflow::list_workflows);
 
     // Group by category and count
-    let mut categories: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut categories: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     for w in &workflows {
         *categories.entry(w.category.clone()).or_insert(0) += 1;
     }
