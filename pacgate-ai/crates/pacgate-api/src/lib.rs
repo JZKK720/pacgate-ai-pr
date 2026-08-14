@@ -5,6 +5,7 @@ mod chat;
 mod documents;
 mod error;
 mod matters;
+mod search;
 mod state;
 mod workflows;
 
@@ -68,6 +69,10 @@ pub fn build_router(state: AppState) -> Router {
         // Tabular review
         .route("/api/tabular", post(documents::start_tabular_review))
         .route("/api/tabular/:id", get(documents::get_tabular_results))
+        // Legal search — query external databases via SearchRouter
+        .route("/api/search", get(search::search))
+        .route("/api/search/connectors", get(search::list_connectors))
+        .route("/api/search/health", get(search::search_health))
         // Auth-protected user info
         .route("/api/auth/me", get(auth::me))
         // Apply auth middleware (verifies JWT, injects Claims)

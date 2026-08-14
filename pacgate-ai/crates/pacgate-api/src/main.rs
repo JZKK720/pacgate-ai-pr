@@ -122,6 +122,9 @@ async fn main() -> anyhow::Result<()> {
     ));
     let agent_loop = Arc::new(AgentLoop::new(router.clone(), dispatcher.clone()));
 
+    // Create search router with all data source connectors
+    let search = Arc::new(pacgate_search::default_router());
+
     // Build application state
     let state = AppState {
         agent_loop,
@@ -132,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         matter_store,
         tenant_store,
         auth,
+        search,
         db: pool,
     };
 

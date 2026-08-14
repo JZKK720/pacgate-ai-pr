@@ -179,6 +179,7 @@ mod tests {
             matter_store,
             tenant_store,
             auth,
+            search: Arc::new(pacgate_search::default_router()),
             db: pool,
         };
 
@@ -434,6 +435,7 @@ mod tests {
             matter_store: Arc::new(pacgate_tenant::MatterStore::new(pool.clone())),
             tenant_store: Arc::new(pacgate_tenant::TenantStore::new(pool.clone())),
             auth: Arc::new(pacgate_auth::AuthService::new("test-secret", pool.clone())),
+            search: Arc::new(pacgate_search::default_router()),
             db: pool,
         };
 
