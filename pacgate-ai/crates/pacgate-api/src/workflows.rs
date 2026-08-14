@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     Json,
 };
 use pacgate_core::SoulPersona;
@@ -32,8 +32,16 @@ pub struct WorkflowStepDetail {
     pub tool:        String,
 }
 
+/// Query parameters for workflow listing.
+/// `category` filters by workflow category (e.g., "fund_formation", "litigation").
+#[derive(Debug, Deserialize)]
+pub struct WorkflowListQuery {
+    pub category: Option<String>,
+}
+
 pub async fn list_workflows(
     State(state): State<AppState>,
+    Query(query): Query<WorkflowListQuery>,
 ) -> Result<Json<Vec<WorkflowSummary>>, ApiError> {
     let workflows = state.config.workflows_dir
         .as_ref()
@@ -42,6 +50,9 @@ pub async fn list_workflows(
 
     let summaries: Vec<WorkflowSummary> = workflows
         .iter()
+        .filter(|w| {
+            query.category.as_ref().map_or(true, |cat| &w.category == cat)
+        })
         .map(|w| WorkflowSummary {
             id:          w.id.to_string(),
             name:        w.name.clone(),
