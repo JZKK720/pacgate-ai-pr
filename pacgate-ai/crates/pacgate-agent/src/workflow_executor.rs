@@ -12,7 +12,6 @@
 //! `pacgate-ai/workflows/*.yaml`, where each step's `parameters.system_prompt`
 //! contains the full prompt template from the client's prompt guides.
 
-use pacgate_core::AgentMessage;
 use pacgate_workflow::{Workflow, WorkflowStep};
 use tracing::{info, instrument};
 
