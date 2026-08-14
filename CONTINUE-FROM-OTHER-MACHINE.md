@@ -64,9 +64,9 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-14, session 9)
+## Current status (as of 2026-08-14, session 10)
 
-### Done — Phase 1 critical path complete + Sessions 5-9 enrichment
+### Done — Phase 1 critical path complete + Sessions 5-10 enrichment
 
 - Full Rust workspace compiles cleanly (`cargo check` passes)
 - 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
@@ -82,7 +82,7 @@ pacgate-ai-pr/
 - **51 YAML workflow templates** loaded from `pacgate-ai/workflows/*.yaml` (9 files). Categories: investment_financing, contract_review, ma_due_diligence, litigation, compliance_corporate, fund_lawyer, capital_markets, compliance_specialized, banking_general. YAML loader: `load_from_yaml_dir()`, `merge_workflows()`, `list_all_workflows()`
 - **WorkflowExecutor** — drives AgentLoop step-by-step through workflow templates, chains outputs as context. Re-exported from `pacgate_agent::WorkflowExecutor`
 - **Workflow execution API** — `POST /api/workflows/:id/execute` endpoint runs workflows end-to-end. `GET /api/workflows?category=X&search=Y` filters by category and searches by keyword. `GET /api/workflows/categories` returns distinct categories with counts.
-- **Data source connectors** — `DataSourceConnector` trait in pacgate-search with `SearchRouter`. 6 connectors: 3 Chinese (元典/北大法宝/企查查, MCP stubs needing API keys) + 3 international (CourtListener/SEC EDGAR/GLEIF, active with free APIs). `default_router()` factory reads env vars. Results tagged with `source_level` and sorted by authority priority.
+- **Legal search API** — `GET /api/search?q=keyword` queries all external databases via SearchRouter. `GET /api/search/connectors` lists connector status. `GET /api/search/health` health check. Optional params: jurisdiction, doc_type, limit, connector.
 - SOUL architecture: identity overlay types (SoulPersona, BoundaryRule, EscalationRule, etc.)
 - Legal domain enums: SourceLevel, ReviewStatus, SecurityLevel, RiskGrade, Jurisdiction
 - deer-flow Python adapter (~150 lines)
@@ -90,7 +90,7 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings reduced: 43 → 25 (remaining are dead-code scaffolding for not-yet-wired features)
-- Git: 29 commits on main, all pushed to origin
+- Git: 32 commits on main, all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -112,10 +112,13 @@ pacgate-ai-pr/
 16. ~~Add workflow categories endpoint~~ — DONE (`GET /api/workflows/categories`)
 17. ~~Add workflow search~~ — DONE (`GET /api/workflows?search=keyword`)
 18. ~~Add data source connector trait~~ — DONE (`DataSourceConnector` + `SearchRouter` in pacgate-search)
-19. **Wire SearchRouter into API** — add `GET /api/search?q=keyword` endpoint that uses SearchRouter to query external databases
-20. **Wire SearchRouter into A4 Research Agent** — update the `kb_search` tool or add a new `legal_search` tool in pacgate-agent that calls SearchRouter
-21. **Implement Chinese MCP connectors** — fill in YuanDian/PkuLaw/Qcc connector `search()` methods when MCP protocol is defined
-22. **Add data source health check endpoint** — `GET /api/search/health` returns connector status
+19. ~~Wire SearchRouter into API~~ — DONE (`GET /api/search?q=keyword`, `GET /api/search/connectors`, `GET /api/search/health`)
+20. ~~Add data source health check endpoint~~ — DONE (`GET /api/search/health`)
+21. **Wire SearchRouter into A4 Research Agent** — update the `kb_search` tool or add a new `legal_search` tool in pacgate-agent that calls SearchRouter
+22. **Implement Chinese MCP connectors** — fill in YuanDian/PkuLaw/Qcc connector `search()` methods when MCP protocol is defined
+23. **Convert remaining ~99 prompt templates** from client assets into YAML workflows (51/150+ done)
+24. **qm TypeScript adapter** — Phase 2 collaboration runtime
+25. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable
 
 ### Important reminders
 
