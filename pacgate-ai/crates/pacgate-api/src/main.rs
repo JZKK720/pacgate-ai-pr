@@ -115,15 +115,18 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     
-    let dispatcher = Arc::new(ToolDispatcher::new(
-        Arc::new(StubDocStore),
-        Arc::new(StubWorkflowStore),
-        Arc::new(StubKbStore),
-    ));
-    let agent_loop = Arc::new(AgentLoop::new(router.clone(), dispatcher.clone()));
-
     // Create search router with all data source connectors
     let search = Arc::new(pacgate_search::default_router());
+
+    let dispatcher = Arc::new(
+        ToolDispatcher::new(
+            Arc::new(StubDocStore),
+            Arc::new(StubWorkflowStore),
+            Arc::new(StubKbStore),
+        )
+        .with_search_router(search.clone()),
+    );
+    let agent_loop = Arc::new(AgentLoop::new(router.clone(), dispatcher.clone()));
 
     // Build application state
     let state = AppState {

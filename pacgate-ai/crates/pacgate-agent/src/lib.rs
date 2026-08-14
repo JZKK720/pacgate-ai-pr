@@ -89,6 +89,20 @@ pub struct KbSearchArgs {
     pub top_k: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LegalSearchArgs {
+    /// Search keywords
+    pub query: String,
+    /// Optional jurisdiction filter (e.g., "ChinaMainland", "UnitedStates")
+    pub jurisdiction: Option<String>,
+    /// Optional document type (e.g., "law", "case", "regulation")
+    pub doc_type: Option<String>,
+    /// Max results (default 10)
+    pub limit: Option<u32>,
+    /// Optional: search only a specific connector (e.g., "courtlistener", "gleif")
+    pub connector: Option<String>,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Document store trait (re-exported from pacgate-core)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +118,9 @@ pub struct ToolDispatcher {
     pub docs: Arc<dyn DocumentStore>,
     pub workflows: Arc<dyn WorkflowStore>,
     pub kb: Arc<dyn KbStore>,
+    /// Optional external legal database search router.
+    /// When set, the `legal_search` tool is available to the agent.
+    pub search_router: Option<Arc<pacgate_search::SearchRouter>>,
 }
 
 impl ToolDispatcher {
@@ -116,7 +133,13 @@ impl ToolDispatcher {
             docs,
             workflows,
             kb,
+            search_router: None,
         }
+    }
+
+    pub fn with_search_router(mut self, router: Arc<pacgate_search::SearchRouter>) -> Self {
+        self.search_router = Some(router);
+        self
     }
 
     #[instrument(skip(self), fields(tool = %call.tool_name))]
@@ -132,6 +155,7 @@ impl ToolDispatcher {
             "read_workflow" => self.read_workflow(call).await,
             "read_table_cells" => self.read_table_cells(call).await,
             "kb_search" => self.kb_search(call).await,
+            "legal_search" => self.legal_search(call).await,
             unknown => Err(PacgateError::ToolNotFound {
                 name: unknown.to_string(),
             }),
@@ -307,6 +331,35 @@ impl ToolDispatcher {
             .await?;
         Ok(serde_json::json!({ "chunks": chunks }))
     }
+
+    async fn legal_search(&self, call: &ToolCall) -> Result<serde_json::Value> {
+        let args: LegalSearchArgs = serde_json::from_value(call.arguments.clone())
+            .map_err(PacgateError::SerializationError)?;
+
+        let router = self.search_router.as_ref().ok_or_else(|| {
+            PacgateError::ToolNotFound {
+                name: "legal_search (no search router configured)".to_string(),
+            }
+        })?;
+
+        let mut query = pacgate_search::SearchQuery::new(&args.query)
+            .with_limit(args.limit.unwrap_or(10));
+
+        if let Some(ref j) = args.jurisdiction {
+            query = query.with_jurisdiction(j);
+        }
+        if let Some(ref dt) = args.doc_type {
+            query = query.with_doc_type(dt);
+        }
+
+        let results = if let Some(ref connector) = args.connector {
+            router.search_one(connector, &query).await
+        } else {
+            router.search_all(&query).await
+        };
+
+        Ok(serde_json::json!({ "results": results, "count": results.len() }))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,6 +492,21 @@ pub fn tool_definitions() -> Vec<OaiTool> {
                     "matter_id": { "type": "string" },
                     "query":     { "type": "string" },
                     "top_k":     { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 }
+                }
+            }),
+        ),
+        oai_tool(
+            "legal_search",
+            "Search external legal databases (CourtListener, SEC EDGAR, GLEIF, and Chinese databases when configured). Returns results tagged with source_level and jurisdiction. Use this for legal research — finding case law, regulations, SEC filings, and corporate registry data. Never fabricate citations — if no results, state 'search returned no results'.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query":       { "type": "string", "description": "Search keywords (e.g., 'breach of contract damages', 'company name')" },
+                    "jurisdiction": { "type": "string", "description": "Optional: ChinaMainland, UnitedStates, EuropeanUnion, etc." },
+                    "doc_type":    { "type": "string", "description": "Optional: law, case, regulation, filing, registry" },
+                    "limit":       { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
+                    "connector":   { "type": "string", "description": "Optional: search a specific connector (courtlistener, sec_edgar, gleif, yuandian, pkulaw, qcc)" }
                 }
             }),
         ),

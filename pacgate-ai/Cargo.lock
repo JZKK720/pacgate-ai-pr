@@ -1644,6 +1644,7 @@ dependencies = [
  "pacgate-core",
  "pacgate-docx",
  "pacgate-llm",
+ "pacgate-search",
  "pacgate-workflow",
  "serde",
  "serde_json",
