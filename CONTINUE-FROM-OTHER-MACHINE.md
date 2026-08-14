@@ -64,9 +64,9 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-14, session 10)
+## Current status (as of 2026-08-14, session 11)
 
-### Done — Phase 1 critical path complete + Sessions 5-10 enrichment
+### Done — Phase 1 critical path complete + Sessions 5-11 enrichment
 
 - Full Rust workspace compiles cleanly (`cargo check` passes)
 - 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
@@ -82,7 +82,7 @@ pacgate-ai-pr/
 - **51 YAML workflow templates** loaded from `pacgate-ai/workflows/*.yaml` (9 files). Categories: investment_financing, contract_review, ma_due_diligence, litigation, compliance_corporate, fund_lawyer, capital_markets, compliance_specialized, banking_general. YAML loader: `load_from_yaml_dir()`, `merge_workflows()`, `list_all_workflows()`
 - **WorkflowExecutor** — drives AgentLoop step-by-step through workflow templates, chains outputs as context. Re-exported from `pacgate_agent::WorkflowExecutor`
 - **Workflow execution API** — `POST /api/workflows/:id/execute` endpoint runs workflows end-to-end. `GET /api/workflows?category=X&search=Y` filters by category and searches by keyword. `GET /api/workflows/categories` returns distinct categories with counts.
-- **Legal search API** — `GET /api/search?q=keyword` queries all external databases via SearchRouter. `GET /api/search/connectors` lists connector status. `GET /api/search/health` health check. Optional params: jurisdiction, doc_type, limit, connector.
+- **Legal search agent tool** — `legal_search` tool in pacgate-agent with `SearchRouter` integration. A4 Research Agent can query external legal databases (CourtListener, SEC EDGAR, GLEIF, Chinese DBs) with jurisdiction/doc_type/connector filtering. Tool description instructs agent to never fabricate citations.
 - SOUL architecture: identity overlay types (SoulPersona, BoundaryRule, EscalationRule, etc.)
 - Legal domain enums: SourceLevel, ReviewStatus, SecurityLevel, RiskGrade, Jurisdiction
 - deer-flow Python adapter (~150 lines)
@@ -90,7 +90,7 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings reduced: 43 → 25 (remaining are dead-code scaffolding for not-yet-wired features)
-- Git: 32 commits on main, all pushed to origin
+- Git: 35 commits on main, all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -114,7 +114,7 @@ pacgate-ai-pr/
 18. ~~Add data source connector trait~~ — DONE (`DataSourceConnector` + `SearchRouter` in pacgate-search)
 19. ~~Wire SearchRouter into API~~ — DONE (`GET /api/search?q=keyword`, `GET /api/search/connectors`, `GET /api/search/health`)
 20. ~~Add data source health check endpoint~~ — DONE (`GET /api/search/health`)
-21. **Wire SearchRouter into A4 Research Agent** — update the `kb_search` tool or add a new `legal_search` tool in pacgate-agent that calls SearchRouter
+21. ~~Wire SearchRouter into A4 Research Agent~~ — DONE (`legal_search` tool in pacgate-agent with SearchRouter integration)
 22. **Implement Chinese MCP connectors** — fill in YuanDian/PkuLaw/Qcc connector `search()` methods when MCP protocol is defined
 23. **Convert remaining ~99 prompt templates** from client assets into YAML workflows (51/150+ done)
 24. **qm TypeScript adapter** — Phase 2 collaboration runtime
