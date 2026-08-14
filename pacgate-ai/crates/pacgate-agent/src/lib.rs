@@ -336,14 +336,15 @@ impl ToolDispatcher {
         let args: LegalSearchArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
 
-        let router = self.search_router.as_ref().ok_or_else(|| {
-            PacgateError::ToolNotFound {
+        let router = self
+            .search_router
+            .as_ref()
+            .ok_or_else(|| PacgateError::ToolNotFound {
                 name: "legal_search (no search router configured)".to_string(),
-            }
-        })?;
+            })?;
 
-        let mut query = pacgate_search::SearchQuery::new(&args.query)
-            .with_limit(args.limit.unwrap_or(10));
+        let mut query =
+            pacgate_search::SearchQuery::new(&args.query).with_limit(args.limit.unwrap_or(10));
 
         if let Some(ref j) = args.jurisdiction {
             query = query.with_jurisdiction(j);
