@@ -10,15 +10,15 @@
 use std::sync::Arc;
 
 use pacgate_core::{
-    AgentMessage, CitationRef, DocumentId, LlmTier, MatterId, MessageId,
-    PacgateError, Result, ToolCall, ToolResult,
+    AgentMessage, CitationRef, DocumentId, LlmTier, MatterId, MessageId, PacgateError, Result,
+    ToolCall, ToolResult,
 };
-use pacgate_llm::{ChatMessage, LlmRouter, OaiTool, OaiFunctionDef};
+use pacgate_llm::{ChatMessage, LlmRouter, OaiFunctionDef, OaiTool};
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
 
 pub mod workflow_executor;
-pub use workflow_executor::{WorkflowExecutor, WorkflowResult, StepResult};
+pub use workflow_executor::{StepResult, WorkflowExecutor, WorkflowResult};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool argument / result schemas
@@ -34,7 +34,7 @@ pub struct ReadDocumentArgs {
 #[derive(Debug, Deserialize)]
 pub struct FindInDocumentArgs {
     pub document_id: String,
-    pub query:       String,
+    pub query: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,17 +50,17 @@ pub struct ListDocumentsArgs {
 #[derive(Debug, Deserialize)]
 pub struct GenerateDocxArgs {
     pub matter_id: String,
-    pub filename:  String,
+    pub filename: String,
     pub structure: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct EditDocumentArgs {
-    pub document_id:    String,
-    pub find:           String,
-    pub replace:        String,
+    pub document_id: String,
+    pub find: String,
+    pub replace: String,
     pub context_before: Option<String>,
-    pub context_after:  Option<String>,
+    pub context_after: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,16 +77,16 @@ pub struct ReadWorkflowArgs {
 
 #[derive(Debug, Deserialize)]
 pub struct ReadTableCellsArgs {
-    pub matter_id:    String,
+    pub matter_id: String,
     pub document_ids: Vec<String>,
-    pub columns:      Vec<String>,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct KbSearchArgs {
     pub matter_id: String,
-    pub query:     String,
-    pub top_k:     Option<u32>,
+    pub query: String,
+    pub top_k: Option<u32>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,48 +101,54 @@ pub use pacgate_core::{DocumentStore, FindResult, KbChunk, KbStore, WorkflowStor
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct ToolDispatcher {
-    pub docs:      Arc<dyn DocumentStore>,
+    pub docs: Arc<dyn DocumentStore>,
     pub workflows: Arc<dyn WorkflowStore>,
-    pub kb:        Arc<dyn KbStore>,
+    pub kb: Arc<dyn KbStore>,
 }
 
 impl ToolDispatcher {
     pub fn new(
-        docs:      Arc<dyn DocumentStore>,
+        docs: Arc<dyn DocumentStore>,
         workflows: Arc<dyn WorkflowStore>,
-        kb:        Arc<dyn KbStore>,
+        kb: Arc<dyn KbStore>,
     ) -> Self {
-        Self { docs, workflows, kb }
+        Self {
+            docs,
+            workflows,
+            kb,
+        }
     }
 
     #[instrument(skip(self), fields(tool = %call.tool_name))]
     pub async fn dispatch(&self, call: &ToolCall) -> ToolResult {
         let result = match call.tool_name.as_str() {
-            "read_document"    => self.read_document(call).await,
+            "read_document" => self.read_document(call).await,
             "find_in_document" => self.find_in_document(call).await,
-            "fetch_documents"  => self.fetch_documents(call).await,
-            "list_documents"   => self.list_documents(call).await,
-            "generate_docx"    => self.generate_docx(call).await,
-            "edit_document"    => self.edit_document(call).await,
+            "fetch_documents" => self.fetch_documents(call).await,
+            "list_documents" => self.list_documents(call).await,
+            "generate_docx" => self.generate_docx(call).await,
+            "edit_document" => self.edit_document(call).await,
             "replicate_document" => self.replicate_document(call).await,
-            "read_workflow"    => self.read_workflow(call).await,
+            "read_workflow" => self.read_workflow(call).await,
             "read_table_cells" => self.read_table_cells(call).await,
-            "kb_search"        => self.kb_search(call).await,
-            unknown => Err(PacgateError::ToolNotFound { name: unknown.to_string() }),
+            "kb_search" => self.kb_search(call).await,
+            unknown => Err(PacgateError::ToolNotFound {
+                name: unknown.to_string(),
+            }),
         };
 
         match result {
             Ok(value) => ToolResult {
                 tool_call_id: call.id.clone(),
-                content:      value,
-                is_error:     false,
+                content: value,
+                is_error: false,
             },
             Err(e) => {
                 warn!(tool = %call.tool_name, error = %e, "tool execution failed");
                 ToolResult {
                     tool_call_id: call.id.clone(),
-                    content:      serde_json::json!({ "error": e.to_string() }),
-                    is_error:     true,
+                    content: serde_json::json!({ "error": e.to_string() }),
+                    is_error: true,
                 }
             }
         }
@@ -151,12 +157,14 @@ impl ToolDispatcher {
     async fn read_document(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let args: ReadDocumentArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
-        let id: DocumentId = args.document_id.parse()
+        let id: DocumentId = args
+            .document_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
         let text = match args.version {
             Some(v) => self.docs.read_version(&id, v).await?,
-            None    => self.docs.read(&id).await?,
+            None => self.docs.read(&id).await?,
         };
         Ok(serde_json::json!({ "document_id": args.document_id, "content": text }))
     }
@@ -164,7 +172,9 @@ impl ToolDispatcher {
     async fn find_in_document(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let args: FindInDocumentArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
-        let id: DocumentId = args.document_id.parse()
+        let id: DocumentId = args
+            .document_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
         let results = self.docs.find_in(&id, &args.query).await?;
@@ -177,7 +187,8 @@ impl ToolDispatcher {
 
         let mut docs = Vec::new();
         for raw_id in &args.document_ids {
-            let id: DocumentId = raw_id.parse()
+            let id: DocumentId = raw_id
+                .parse()
                 .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
             let content = self.docs.read(&id).await?;
             docs.push(serde_json::json!({ "document_id": raw_id, "content": content }));
@@ -188,7 +199,9 @@ impl ToolDispatcher {
     async fn list_documents(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let args: ListDocumentsArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
-        let matter_id: MatterId = args.matter_id.parse()
+        let matter_id: MatterId = args
+            .matter_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid matter_id: {e}")))?;
 
         let docs = self.docs.list_for_matter(&matter_id).await?;
@@ -198,10 +211,15 @@ impl ToolDispatcher {
     async fn generate_docx(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let args: GenerateDocxArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
-        let matter_id: MatterId = args.matter_id.parse()
+        let matter_id: MatterId = args
+            .matter_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid matter_id: {e}")))?;
 
-        let doc = self.docs.create_from_structure(&matter_id, &args.filename, &args.structure).await?;
+        let doc = self
+            .docs
+            .create_from_structure(&matter_id, &args.filename, &args.structure)
+            .await?;
         Ok(serde_json::json!({
             "document_id": doc.id,
             "name": doc.name,
@@ -213,16 +231,21 @@ impl ToolDispatcher {
     async fn edit_document(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let args: EditDocumentArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
-        let id: DocumentId = args.document_id.parse()
+        let id: DocumentId = args
+            .document_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
-        let doc = self.docs.apply_edit(
-            &id,
-            &args.find,
-            &args.replace,
-            args.context_before.as_deref(),
-            args.context_after.as_deref(),
-        ).await?;
+        let doc = self
+            .docs
+            .apply_edit(
+                &id,
+                &args.find,
+                &args.replace,
+                args.context_before.as_deref(),
+                args.context_after.as_deref(),
+            )
+            .await?;
 
         Ok(serde_json::json!({
             "document_id": doc.id,
@@ -242,7 +265,9 @@ impl ToolDispatcher {
             ));
         }
 
-        let id: DocumentId = args.document_id.parse()
+        let id: DocumentId = args
+            .document_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
         let copies = self.docs.replicate(&id, args.count).await?;
@@ -271,10 +296,15 @@ impl ToolDispatcher {
     async fn kb_search(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let args: KbSearchArgs = serde_json::from_value(call.arguments.clone())
             .map_err(PacgateError::SerializationError)?;
-        let matter_id: MatterId = args.matter_id.parse()
+        let matter_id: MatterId = args
+            .matter_id
+            .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid matter_id: {e}")))?;
 
-        let chunks = self.kb.search(&matter_id, &args.query, args.top_k.unwrap_or(5)).await?;
+        let chunks = self
+            .kb
+            .search(&matter_id, &args.query, args.top_k.unwrap_or(5))
+            .await?;
         Ok(serde_json::json!({ "chunks": chunks }))
     }
 }
@@ -419,7 +449,7 @@ fn oai_tool(name: &str, description: &str, parameters: serde_json::Value) -> Oai
     OaiTool {
         kind: "function".into(),
         function: OaiFunctionDef {
-            name:        name.into(),
+            name: name.into(),
             description: description.into(),
             parameters,
         },
@@ -436,7 +466,7 @@ pub fn build_system_prompt(persona_prompt: Option<&str>) -> String {
     let base = include_str!("system_prompt_base.txt");
     match persona_prompt {
         Some(persona) => format!("{base}\n\n## PRACTICE AREA INSTRUCTIONS\n\n{persona}"),
-        None          => base.to_string(),
+        None => base.to_string(),
     }
 }
 
@@ -447,16 +477,16 @@ pub fn build_system_prompt(persona_prompt: Option<&str>) -> String {
 /// Result of one agent turn: assistant text + citations + any tool execution log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTurnResult {
-    pub message_id:       MessageId,
-    pub content:          Option<String>,
-    pub citations:        Vec<CitationRef>,
-    pub tool_calls_made:  Vec<String>,
+    pub message_id: MessageId,
+    pub content: Option<String>,
+    pub citations: Vec<CitationRef>,
+    pub tool_calls_made: Vec<String>,
 }
 
 pub struct AgentLoop {
-    pub router:     Arc<LlmRouter>,
+    pub router: Arc<LlmRouter>,
     pub dispatcher: Arc<ToolDispatcher>,
-    pub tier:       LlmTier,
+    pub tier: LlmTier,
     /// Maximum tool-call rounds before aborting (prevents infinite loops)
     pub max_rounds: u32,
 }
@@ -466,7 +496,7 @@ impl AgentLoop {
         Self {
             router,
             dispatcher,
-            tier:       LlmTier::Main,
+            tier: LlmTier::Main,
             max_rounds: 10,
         }
     }
@@ -474,8 +504,8 @@ impl AgentLoop {
     #[instrument(skip(self, history, persona_prompt))]
     pub async fn run(
         &self,
-        history:       Vec<AgentMessage>,
-        user_message:  &str,
+        history: Vec<AgentMessage>,
+        user_message: &str,
         persona_prompt: Option<&str>,
     ) -> Result<AgentTurnResult> {
         let llm = self.router.get(self.tier)?;
@@ -485,20 +515,23 @@ impl AgentLoop {
 
         // Inject system prompt at the beginning
         let system_prompt = build_system_prompt(persona_prompt);
-        messages.insert(0, ChatMessage {
-            role:         "system".into(),
-            content:      Some(serde_json::Value::String(system_prompt)),
-            tool_calls:   None,
-            tool_call_id: None,
-            name:         None,
-        });
+        messages.insert(
+            0,
+            ChatMessage {
+                role: "system".into(),
+                content: Some(serde_json::Value::String(system_prompt)),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            },
+        );
 
         messages.push(ChatMessage {
-            role:         "user".into(),
-            content:      Some(serde_json::Value::String(user_message.to_string())),
-            tool_calls:   None,
+            role: "user".into(),
+            content: Some(serde_json::Value::String(user_message.to_string())),
+            tool_calls: None,
             tool_call_id: None,
-            name:         None,
+            name: None,
         });
 
         let mut tool_calls_made = Vec::new();
@@ -510,7 +543,7 @@ impl AgentLoop {
                 // Final answer
                 let citations = extract_citations(content.as_deref().unwrap_or(""));
                 return Ok(AgentTurnResult {
-                    message_id:      MessageId::new(),
+                    message_id: MessageId::new(),
                     content,
                     citations,
                     tool_calls_made,
@@ -522,40 +555,41 @@ impl AgentLoop {
 
             // Push assistant message with tool calls
             messages.push(ChatMessage {
-                role:         "assistant".into(),
-                content:      content.map(serde_json::Value::String),
-                tool_calls:   Some(
+                role: "assistant".into(),
+                content: content.map(serde_json::Value::String),
+                tool_calls: Some(
                     tool_calls
                         .iter()
                         .map(|tc| pacgate_llm::OaiToolCall {
-                            id:   tc.id.clone(),
+                            id: tc.id.clone(),
                             kind: "function".into(),
                             function: pacgate_llm::OaiFunctionCall {
-                                name:      tc.tool_name.clone(),
+                                name: tc.tool_name.clone(),
                                 arguments: tc.arguments.to_string(),
                             },
                         })
                         .collect(),
                 ),
                 tool_call_id: None,
-                name:         None,
+                name: None,
             });
 
             // Execute each tool and push results
             for tc in &tool_calls {
                 let result = self.dispatcher.dispatch(tc).await;
                 messages.push(ChatMessage {
-                    role:         "tool".into(),
-                    content:      Some(result.content.clone()),
-                    tool_calls:   None,
+                    role: "tool".into(),
+                    content: Some(result.content.clone()),
+                    tool_calls: None,
                     tool_call_id: Some(result.tool_call_id.clone()),
-                    name:         None,
+                    name: None,
                 });
             }
         }
 
         Err(PacgateError::LlmError(format!(
-            "agent loop exceeded max_rounds={}", self.max_rounds
+            "agent loop exceeded max_rounds={}",
+            self.max_rounds
         )))
     }
 
@@ -566,29 +600,49 @@ impl AgentLoop {
                 AgentMessage::System { content } => Some(ChatMessage {
                     role: "system".into(),
                     content: Some(serde_json::Value::String(content.clone())),
-                    tool_calls: None, tool_call_id: None, name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
                 }),
                 AgentMessage::User { content, .. } => Some(ChatMessage {
                     role: "user".into(),
                     content: Some(serde_json::Value::String(content.clone())),
-                    tool_calls: None, tool_call_id: None, name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
                 }),
-                AgentMessage::Assistant { content, tool_calls, .. } => Some(ChatMessage {
+                AgentMessage::Assistant {
+                    content,
+                    tool_calls,
+                    ..
+                } => Some(ChatMessage {
                     role: "assistant".into(),
                     content: content.clone().map(serde_json::Value::String),
-                    tool_calls: if tool_calls.is_empty() { None } else {
-                        Some(tool_calls.iter().map(|tc| pacgate_llm::OaiToolCall {
-                            id: tc.id.clone(),
-                            kind: "function".into(),
-                            function: pacgate_llm::OaiFunctionCall {
-                                name: tc.tool_name.clone(),
-                                arguments: tc.arguments.to_string(),
-                            },
-                        }).collect())
+                    tool_calls: if tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            tool_calls
+                                .iter()
+                                .map(|tc| pacgate_llm::OaiToolCall {
+                                    id: tc.id.clone(),
+                                    kind: "function".into(),
+                                    function: pacgate_llm::OaiFunctionCall {
+                                        name: tc.tool_name.clone(),
+                                        arguments: tc.arguments.to_string(),
+                                    },
+                                })
+                                .collect(),
+                        )
                     },
-                    tool_call_id: None, name: None,
+                    tool_call_id: None,
+                    name: None,
                 }),
-                AgentMessage::Tool { tool_call_id, content, .. } => Some(ChatMessage {
+                AgentMessage::Tool {
+                    tool_call_id,
+                    content,
+                    ..
+                } => Some(ChatMessage {
                     role: "tool".into(),
                     content: Some(content.clone()),
                     tool_calls: None,
@@ -615,35 +669,38 @@ impl AgentLoop {
 fn extract_citations(text: &str) -> Vec<CitationRef> {
     let start = match text.find("<CITATIONS>") {
         Some(i) => i + "<CITATIONS>".len(),
-        None    => return Vec::new(),
+        None => return Vec::new(),
     };
     let end = match text[start..].find("</CITATIONS>") {
         Some(i) => start + i,
-        None    => return Vec::new(),
+        None => return Vec::new(),
     };
     let json_str = text[start..end].trim();
 
     #[derive(Deserialize)]
     struct Raw {
         #[serde(rename = "ref")]
-        ref_num:     u32,
+        ref_num: u32,
         document_id: String,
-        page:        Option<u32>,
-        verbatim:    String,
+        page: Option<u32>,
+        verbatim: String,
     }
 
     let raws: Vec<Raw> = match serde_json::from_str(json_str) {
-        Ok(v)  => v,
-        Err(e) => { warn!(error = %e, "citation parse failed"); return Vec::new(); }
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "citation parse failed");
+            return Vec::new();
+        }
     };
 
     raws.into_iter()
         .filter_map(|r| {
             r.document_id.parse().ok().map(|doc_id| CitationRef {
-                ref_num:     r.ref_num,
+                ref_num: r.ref_num,
                 document_id: doc_id,
-                page:        r.page,
-                verbatim:    r.verbatim,
+                page: r.page,
+                verbatim: r.verbatim,
             })
         })
         .collect()
