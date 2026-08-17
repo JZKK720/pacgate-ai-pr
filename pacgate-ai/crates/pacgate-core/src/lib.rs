@@ -820,6 +820,278 @@ pub struct FileDirectoryEntry {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Due diligence agent config (from dd-agents 中国法智能体改写清单)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// DD agent domain — the 9 domain expert areas from the dd-agents rewrite spec.
+///
+/// Each maps to one agent in the dd-agents open-source system, rewritten for
+/// Chinese law (M&A due diligence for equity/asset/capital increases, focusing
+/// on non-listed companies, SOEs, and foreign-invested targets).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DdAgentDomain {
+    /// Legal — 标的权属, 公司治理, VIE/红筹, 重大合同, 诉讼执行
+    #[default]
+    Legal,
+    /// Finance — CAS准则, 两套账核查, 应收坏账, 或有负债, 财政补贴依赖
+    Finance,
+    /// Commercial — 客户集中度, 续约风险, 经销特许合规, 供应链依赖
+    Commercial,
+    /// ProductTech — 数据合规(三法), 等保, 开源许可, 关键技术绑定
+    ProductTech,
+    /// Cybersecurity — 等保合规, CIIO, 数据泄露报告, 数据本地化
+    Cybersecurity,
+    /// HR — 劳动合同, 社保公积金, 经济补偿金敞口, 劳务派遣, 股权激励
+    Hr,
+    /// Tax — 股权转让所得税, 特殊性税务重组, 土增税, 间接转让7号公告
+    Tax,
+    /// Regulatory — 经营者集中申报, 外资安审, 国资程序, 行业准入许可 (改动最大, P0)
+    Regulatory,
+    /// ESG — 环保合规, 排污许可, 安全生产, 双碳政策敞口
+    Esg,
+}
+
+impl DdAgentDomain {
+    /// Returns the Chinese name of this DD domain.
+    pub fn name_zh(&self) -> &'static str {
+        match self {
+            DdAgentDomain::Legal => "法律",
+            DdAgentDomain::Finance => "财务",
+            DdAgentDomain::Commercial => "商业",
+            DdAgentDomain::ProductTech => "产品技术",
+            DdAgentDomain::Cybersecurity => "网络安全",
+            DdAgentDomain::Hr => "人力",
+            DdAgentDomain::Tax => "税务",
+            DdAgentDomain::Regulatory => "监管合规",
+            DdAgentDomain::Esg => "ESG",
+        }
+    }
+}
+
+/// Severity level for DD findings — from the dd-agents rewrite spec.
+///
+/// P0 is the highest severity (deal-killer / one-vote veto).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DdSeverity {
+    /// P0 — 一票否决 (deal-killer): e.g., 未申报经营者集中, 国资程序瑕疵, 社保大额欠缴
+    #[default]
+    P0Veto,
+    /// P1 — 重大风险 (major risk): requires remediation before closing
+    P1Major,
+    /// P2 — 中等风险 (moderate risk): disclose and negotiate
+    P2Moderate,
+    /// P3 — 提示 (advisory): informational, no blocking
+    P3Advisory,
+}
+
+/// Focus area category — whether to keep, delete, or add/rewrite from the
+/// original US-law dd-agents to the Chinese-law version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusAreaAction {
+    /// 保留 — keep from the original US-law version (universal M&A concepts)
+    Keep,
+    /// 删除/弱化 — delete or weaken (US-specific content not applicable in China)
+    Delete,
+    /// 新增/重写 — add or rewrite for Chinese law
+    Add,
+}
+
+/// A single focus area for a DD agent — one item in the keep/delete/add list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DdFocusArea {
+    /// The focus area name (e.g., "标的权属核查", "VIE/红筹结构合规性")
+    pub name: String,
+    /// Action: keep, delete, or add
+    pub action: FocusAreaAction,
+    /// Default severity for findings in this area
+    pub default_severity: DdSeverity,
+    /// Chinese law references (e.g., "《公司法》", "《民法典》合同编", "32号令")
+    pub legal_basis: Vec<String>,
+}
+
+/// DD agent configuration — one per domain expert from the dd-agents rewrite spec.
+///
+/// Defines the focus areas, severity rules, citation format, and Chinese-law
+/// references for each of the 9 due diligence domain expert agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DdAgentConfig {
+    /// Which DD domain this config covers
+    pub domain: DdAgentDomain,
+    /// Display name (Chinese)
+    pub display_name: String,
+    /// Focus areas with keep/delete/add classification
+    pub focus_areas: Vec<DdFocusArea>,
+    /// Primary Chinese law references for this domain
+    pub primary_legal_basis: Vec<String>,
+    /// Citation format template (e.g., "《法律名称》第XX条" or "〔2023〕京01民终XXXX号")
+    pub citation_format: String,
+    /// Whether this domain has the highest priority (P0 deal-killers)
+    /// Regulatory domain has this set to true (前置审批 = 一票否决)
+    pub has_p0_veto: bool,
+}
+
+impl DdAgentConfig {
+    /// Get all focus areas that are new/rewritten for Chinese law
+    pub fn chinese_additions(&self) -> Vec<&DdFocusArea> {
+        self.focus_areas.iter().filter(|f| f.action == FocusAreaAction::Add).collect()
+    }
+
+    /// Get all focus areas that are kept from the original US version
+    pub fn retained_areas(&self) -> Vec<&DdFocusArea> {
+        self.focus_areas.iter().filter(|f| f.action == FocusAreaAction::Keep).collect()
+    }
+}
+
+/// Build the 9 DD agent configs from the dd-agents 中国法智能体改写清单.
+pub fn dd_agent_configs() -> Vec<DdAgentConfig> {
+    vec![
+        DdAgentConfig {
+            domain: DdAgentDomain::Legal,
+            display_name: "法律智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "控制权变更条款".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《民法典》合同编".into()] },
+                DdFocusArea { name: "反转让/限制转让条款".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《民法典》合同编".into()] },
+                DdFocusArea { name: "知识产权权属".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《专利法》".into(), "《商标法》".into()] },
+                DdFocusArea { name: "标的权属核查(土地/房产/知产/特许经营)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《民法典》物权编".into(), "《城市房地产管理法》".into()] },
+                DdFocusArea { name: "公司治理合规(决议有效性/国资进场/外资审批)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["《公司法》".into(), "32号令".into(), "《外商投资法》".into()] },
+                DdFocusArea { name: "VIE/红筹结构合规性".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["外商投资准入".into(), "37号文登记".into()] },
+                DdFocusArea { name: "代持/隐名股东".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《公司法》".into()] },
+                DdFocusArea { name: "对赌(估值调整)与回购条款效力".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《九民纪要》".into()] },
+                DdFocusArea { name: "诉讼与执行(被执行人/失信记录)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["裁判文书网".into(), "信用中国".into()] },
+            ],
+            primary_legal_basis: vec!["《公司法》".into(), "《民法典》合同编/物权编".into(), "《外商投资法》".into(), "32号令".into(), "《九民纪要》".into()],
+            citation_format: "法律名称 + 条款号（如《公司法》第XX条）".into(),
+            has_p0_veto: true,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Finance,
+            display_name: "财务智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "收入交叉核验(>5%偏差预警)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "单位经济(CAC/LTV/NRR/GRR)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P3Advisory, legal_basis: vec![] },
+                DdFocusArea { name: "会计准则口径(CAS vs 报表披露)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["CAS 14".into()] },
+                DdFocusArea { name: "两套账/体外循环核查".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["《公司法》".into()] },
+                DdFocusArea { name: "应收账款与坏账(账龄/集中度/关联方)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["CAS".into()] },
+                DdFocusArea { name: "或有负债(对外担保/民间借贷/表外融资)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《公司法》对外担保规定".into()] },
+                DdFocusArea { name: "财政补贴依赖(政府补助占利润比重)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+            ],
+            primary_legal_basis: vec!["企业会计准则(CAS)".into(), "《公司法》".into()],
+            citation_format: "CAS准则编号 + 报表科目".into(),
+            has_p0_veto: true,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Regulatory,
+            display_name: "监管合规智能体(改动最大)".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "反垄断(保留通用)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "经营者集中反垄断申报(SAMR)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["《反垄断法》".into(), "经营者集中申报标准规定".into()] },
+                DdFocusArea { name: "外商投资安全审查+负面清单".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["《外商投资法》".into(), "安全审查办法".into()] },
+                DdFocusArea { name: "国资监管程序(进场交易/评估备案/审批)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["32号令".into()] },
+                DdFocusArea { name: "行业准入许可(金融/医疗/教育/传媒/ICP)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["各行业准入许可法规".into()] },
+                DdFocusArea { name: "数据出境合规".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《数据安全法》".into(), "数据出境相关规定".into()] },
+            ],
+            primary_legal_basis: vec!["《反垄断法》".into(), "《外商投资法》".into(), "32号令".into(), "各行业准入许可法规".into()],
+            citation_format: "法律名称 + 条款号 / 行政法规名称".into(),
+            has_p0_veto: true,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Tax,
+            display_name: "税务智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "所得税合规(保留)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "股权转让所得税(自然人20%个税/企业)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["个人所得税法".into(), "企业所得税法".into()] },
+                DdFocusArea { name: "特殊性税务重组(财税〔2009〕59号递延纳税)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["财税〔2009〕59号".into()] },
+                DdFocusArea { name: "土地增值税与契税(资产收购)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["土地增值税规定".into(), "契税相关规定".into()] },
+                DdFocusArea { name: "间接转让(7号公告非居民间接转让风险)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["国家税务总局公告2015年第7号".into()] },
+                DdFocusArea { name: "税收优惠可持续性(高新/西部大开发)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "历史欠税与发票合规(虚开发票风险)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec![] },
+            ],
+            primary_legal_basis: vec!["企业所得税法".into(), "个人所得税法".into(), "财税〔2009〕59号".into(), "国家税务总局公告2015年第7号".into()],
+            citation_format: "税法名称 + 条款号 / 税务公告编号".into(),
+            has_p0_veto: true,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Commercial,
+            display_name: "商业智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "续约机制/客户流失风险".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "客户集中度(>30%预警)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "定价模型/最惠条款(MFN)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P3Advisory, legal_basis: vec![] },
+                DdFocusArea { name: "大客户合同控制权变更/转让限制条款".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《民法典》合同编".into()] },
+                DdFocusArea { name: "经销/特许网络合规(特许经营备案)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《商业特许经营管理条例》".into()] },
+                DdFocusArea { name: "供应商资质与独家依赖(卡脖子)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec![] },
+            ],
+            primary_legal_basis: vec!["《商业特许经营管理条例》".into(), "《民法典》合同编".into()],
+            citation_format: "法律名称 + 条款号".into(),
+            has_p0_veto: false,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::ProductTech,
+            display_name: "产品技术智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "DPA(数据处理协议)分析".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "技术SLA/数据可携/迁移复杂度".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P3Advisory, legal_basis: vec![] },
+                DdFocusArea { name: "数据合规(三法: PIPL/DSL/CSL)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《个人信息保护法》".into(), "《数据安全法》".into(), "《网络安全法》".into()] },
+                DdFocusArea { name: "数据出境安全评估/标准合同/认证".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["数据出境相关规定".into()] },
+                DdFocusArea { name: "等保(网络安全等级保护)定级与测评".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["等保2.0".into()] },
+                DdFocusArea { name: "软件正版化与开源许可(GPL传染性)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "关键技术与人员绑定(核心代码/竞业)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《劳动合同法》竞业限制".into()] },
+            ],
+            primary_legal_basis: vec!["《个人信息保护法》".into(), "《数据安全法》".into(), "《网络安全法》".into(), "等保2.0".into()],
+            citation_format: "法律名称 + 条款号".into(),
+            has_p0_veto: false,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Cybersecurity,
+            display_name: "网络安全智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "安全治理/事件历史/漏洞管理".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "等保合规(备案与测评报告)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["等保2.0".into()] },
+                DdFocusArea { name: "关键信息基础设施(CIIO)认定与额外义务".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["《网络安全法》关键信息基础设施保护".into()] },
+                DdFocusArea { name: "数据泄露中国报告义务(网信/行业主管部门)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《网络安全法》".into()] },
+                DdFocusArea { name: "关基与数据本地化(服务器/数据存储是否在境内)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["数据本地化要求".into()] },
+            ],
+            primary_legal_basis: vec!["《网络安全法》".into(), "等保2.0".into(), "关键信息基础设施保护".into()],
+            citation_format: "法律名称 + 条款号".into(),
+            has_p0_veto: true,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Hr,
+            display_name: "人力智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "人员构成/薪酬分析/关键人才保留".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P3Advisory, legal_basis: vec![] },
+                DdFocusArea { name: "劳动合同合规(书面签订率/期限/竞业)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["《劳动合同法》".into()] },
+                DdFocusArea { name: "社保与公积金(欠缴/少缴/基数不实)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["社会保险法".into(), "住房公积金管理条例".into()] },
+                DdFocusArea { name: "经济补偿金敞口(N/N+1测算)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《劳动合同法》第40/46/47条".into()] },
+                DdFocusArea { name: "劳务派遣与外包合规(派遣比例≤10%)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec!["劳务派遣暂行规定".into()] },
+                DdFocusArea { name: "股权激励(未行权期权/限制性股票处理)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+            ],
+            primary_legal_basis: vec!["《劳动合同法》".into(), "社会保险法".into(), "住房公积金管理条例".into(), "劳务派遣暂行规定".into()],
+            citation_format: "法律名称 + 条款号".into(),
+            has_p0_veto: true,
+        },
+        DdAgentConfig {
+            domain: DdAgentDomain::Esg,
+            display_name: "ESG智能体".into(),
+            focus_areas: vec![
+                DdFocusArea { name: "环境污染/环保许可(保留通用)".into(), action: FocusAreaAction::Keep, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "排污许可证/环评手续".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["排污许可管理条例".into()] },
+                DdFocusArea { name: "土壤污染(工业用地/搬迁场地历史责任)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P1Major, legal_basis: vec!["《土壤污染防治法》".into()] },
+                DdFocusArea { name: "环保处罚与限产记录(行政处罚/督察)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+                DdFocusArea { name: "安全生产(高危行业许可/事故历史)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P0Veto, legal_basis: vec!["安全生产法".into()] },
+                DdFocusArea { name: "双碳政策敞口(能耗双控/高耗能产能风险)".into(), action: FocusAreaAction::Add, default_severity: DdSeverity::P2Moderate, legal_basis: vec![] },
+            ],
+            primary_legal_basis: vec!["《环境保护法》".into(), "《土壤污染防治法》".into(), "排污许可管理条例".into(), "安全生产法".into()],
+            citation_format: "法律名称 + 条款号".into(),
+            has_p0_veto: true,
+        },
+    ]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Store traits (shared between pacgate-agent and pacgate-docx)
 // ─────────────────────────────────────────────────────────────────────────────
 

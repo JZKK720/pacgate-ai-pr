@@ -249,6 +249,507 @@ fn source_level_priority(level: &str) -> u8 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Connector registry — structured resource metadata from 百宸AI系统资源接入清单
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Priority tier for resource onboarding (from the client's resource list).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorPriority {
+    /// 优先接入 — first-phase critical connectors
+    #[default]
+    Priority,
+    /// 待评估 — needs evaluation before onboarding
+    Evaluate,
+    /// 采购评估 — commercial procurement evaluation
+    Procurement,
+    /// 自建 — self-built internal resource
+    SelfBuilt,
+    /// 免费可接 — free, can be connected immediately
+    FreeAvailable,
+    /// 备选 — backup/redundancy option
+    Backup,
+}
+
+/// Geographic/jurisdictional category for connector grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorRegion {
+    /// Chinese legal databases (元典, 北大法宝, 企查查, etc.)
+    ChinaMainland,
+    /// US legal databases (CourtListener, SEC EDGAR, Vaquill, etc.)
+    UnitedStates,
+    /// EU/European databases (EUR-Lex, Ansvar, CURIA, etc.)
+    Europe,
+    /// Hong Kong legal databases
+    HongKong,
+    /// Singapore legal databases
+    Singapore,
+    /// Global/multi-jurisdiction databases (vLex, JusMundi, WorldLII, etc.)
+    Global,
+    /// Offshore jurisdiction databases (BVI, Cayman, OpenCorporates, etc.)
+    Offshore,
+    /// Internal firm resources (knowledge bases, template libraries)
+    Internal,
+}
+
+/// Structured metadata for a registered data source connector.
+///
+/// From 百宸AI系统资源接入清单 v1/v2 — maps each external resource to its
+/// connector implementation, endpoint, auth method, priority, and status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectorMetadata {
+    /// Unique connector name (matches `DataSourceConnector::name()`)
+    pub name: String,
+    /// Human-readable display name (Chinese or English)
+    pub display_name: String,
+    /// Brief description of the resource
+    pub description: String,
+    /// Connector type: "MCP", "API", "网页", "MCP / API", etc.
+    pub connector_type: String,
+    /// Base URL or endpoint
+    pub url: String,
+    /// How to use / access method (from the resource list)
+    pub usage: String,
+    /// Auth method: "bearer_token", "api_key", "free", "account_login", "none"
+    pub auth_method: String,
+    /// Environment variable name for the API key (if applicable)
+    pub env_var: Option<String>,
+    /// Priority tier for onboarding
+    pub priority: ConnectorPriority,
+    /// Geographic region
+    pub region: ConnectorRegion,
+    /// Whether this connector is currently implemented in code
+    pub implemented: bool,
+}
+
+/// The connector registry — a structured catalog of all legal data sources
+/// from the client's resource onboarding list.
+///
+/// This replaces ad-hoc env var lookups with a formal registry that the API
+/// can expose via `GET /api/search/registry`.
+pub struct ConnectorRegistry {
+    entries: Vec<ConnectorMetadata>,
+}
+
+impl ConnectorRegistry {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn with_entry(mut self, entry: ConnectorMetadata) -> Self {
+        self.entries.push(entry);
+        self
+    }
+
+    pub fn entries(&self) -> &[ConnectorMetadata] {
+        &self.entries
+    }
+
+    /// Filter by region
+    pub fn by_region(&self, region: ConnectorRegion) -> Vec<&ConnectorMetadata> {
+        self.entries.iter().filter(|e| e.region == region).collect()
+    }
+
+    /// Filter by priority
+    pub fn by_priority(&self, priority: ConnectorPriority) -> Vec<&ConnectorMetadata> {
+        self.entries.iter().filter(|e| e.priority == priority).collect()
+    }
+
+    /// Only implemented connectors
+    pub fn implemented(&self) -> Vec<&ConnectorMetadata> {
+        self.entries.iter().filter(|e| e.implemented).collect()
+    }
+
+    /// Only connectors needing API keys (not yet available)
+    pub fn needs_credentials(&self) -> Vec<&ConnectorMetadata> {
+        self.entries.iter().filter(|e| !e.implemented && e.auth_method != "free" && e.auth_method != "none").collect()
+    }
+
+    /// Get the total count
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl Default for ConnectorRegistry {
+    fn default() -> Self {
+        Self::from_client_assets()
+    }
+}
+
+impl ConnectorRegistry {
+    /// Build the registry from the client's resource onboarding list
+    /// (百宸AI系统资源接入清单 v1/v2 + 境外法律数据库和网站).
+    pub fn from_client_assets() -> Self {
+        Self::new()
+            // ── Chinese legal databases (MCP/API) ──
+            .with_entry(ConnectorMetadata {
+                name: "yuandian".into(),
+                display_name: "元典法律数据库".into(),
+                description: "元典智库法律开放平台，提供法律幻觉核验、法规检索、企业信息聚合".into(),
+                connector_type: "MCP / API".into(),
+                url: "open.chineselaw.com".into(),
+                usage: "注册开放平台账号→申请 API Key→按 MCP 配置接入".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("YUANDIAN_API_KEY".into()),
+                priority: ConnectorPriority::Priority,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: true,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "pkulaw".into(),
+                display_name: "北大法宝".into(),
+                description: "国内权威法律法规、司法案例、专题/期刊数据库，MCP 法规语义检索".into(),
+                connector_type: "MCP / API".into(),
+                url: "mcp.pkulaw.com".into(),
+                usage: "采购机构授权→获取 Bearer Token→MCP 网关接入".into(),
+                auth_method: "bearer_token".into(),
+                env_var: Some("PKULAW_API_KEY".into()),
+                priority: ConnectorPriority::Priority,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: true,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "qcc".into(),
+                display_name: "企查查".into(),
+                description: "全国3.5亿+市场主体，300+数据维度：工商、股东、司法涉诉、经营风险".into(),
+                connector_type: "API".into(),
+                url: "openapi.qcc.com".into(),
+                usage: "注册开放平台→实名认证→获取 AppKey+SecretKey→Token 鉴权".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("QCC_API_KEY".into()),
+                priority: ConnectorPriority::Priority,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: true,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "fyopen".into(),
+                display_name: "法源开".into(),
+                description: "中国法律数据库，有免费额度，需充值".into(),
+                connector_type: "API".into(),
+                url: "www.fyopen.com".into(),
+                usage: "注册账号→验证码登录→API 调用".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("FYOPEN_API_KEY".into()),
+                priority: ConnectorPriority::Priority,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: true,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "wolters_kluwer".into(),
+                display_name: "威科先行".into(),
+                description: "威科先行法律信息库：法规、案例、实务内容、英文翻译版法规".into(),
+                connector_type: "网页 / API(洽谈)".into(),
+                url: "law.wkinfo.com.cn".into(),
+                usage: "机构订阅账号登录；API/数据对接需与销售洽谈".into(),
+                auth_method: "account_login".into(),
+                env_var: None,
+                priority: ConnectorPriority::Evaluate,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "faxin".into(),
+                display_name: "法信".into(),
+                description: "最高人民法院主管法律应用平台，权威裁判规则、案例、法律知识库".into(),
+                connector_type: "网页 / API(待确认)".into(),
+                url: "faxin.cn".into(),
+                usage: "机构订阅；是否提供开放接口需与官方确认".into(),
+                auth_method: "account_login".into(),
+                env_var: None,
+                priority: ConnectorPriority::Evaluate,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "npc_law_db".into(),
+                display_name: "国家法律法规数据库".into(),
+                description: "官方现行有效的法律、行政法规、地方性法规、司法解释，权威且免费".into(),
+                connector_type: "网页 / 检索接口".into(),
+                url: "flk.npc.gov.cn".into(),
+                usage: "网页检索；可定向抓取/对接（注意官方使用条款）".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "wenshu_court".into(),
+                display_name: "中国裁判文书网".into(),
+                description: "官方裁判文书库，量大权威；近年公众访问与批量获取有所收紧".into(),
+                connector_type: "网页(接口受限)".into(),
+                url: "wenshu.court.gov.cn".into(),
+                usage: "网页检索为主；批量需评估合规与可得性".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "tianyancha".into(),
+                display_name: "天眼查".into(),
+                description: "企业工商与风险数据 API，覆盖度与企查查相近，可作冗余/交叉校验源".into(),
+                connector_type: "API".into(),
+                url: "open.tianyancha.com".into(),
+                usage: "注册开放平台→申请 Token→REST 调用".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("TIANYANCHA_API_KEY".into()),
+                priority: ConnectorPriority::Backup,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "qixin".into(),
+                display_name: "启信宝".into(),
+                description: "合合信息旗下企业征信/工商数据 API，金融与尽调场景常用".into(),
+                connector_type: "API".into(),
+                url: "open.qixin.com".into(),
+                usage: "注册→企业认证→获取密钥→REST 调用".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("QIXIN_API_KEY".into()),
+                priority: ConnectorPriority::Backup,
+                region: ConnectorRegion::ChinaMainland,
+                implemented: false,
+            })
+            // ── US legal databases ──
+            .with_entry(ConnectorMetadata {
+                name: "courtlistener".into(),
+                display_name: "CourtListener (US Case Law)".into(),
+                description: "900万+美国联邦及州法院判决、案卷、法官数据；含语义检索".into(),
+                connector_type: "API / MCP / 网页".into(),
+                url: "courtlistener.com".into(),
+                usage: "注册获取免费 API Token；或接入社区 CourtListener MCP".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("COURTLISTENER_API_KEY".into()),
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::UnitedStates,
+                implemented: true,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "vaquill".into(),
+                display_name: "Vaquill AI".into(),
+                description: "美国法律研究平台，800万+联邦/州判决 + US Code/CFR，含引文核验".into(),
+                connector_type: "API / MCP".into(),
+                url: "vaquill.ai".into(),
+                usage: "注册账号→订阅→获取 API Key；接入 Vaquill MCP".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("VAQUILL_API_KEY".into()),
+                priority: ConnectorPriority::Evaluate,
+                region: ConnectorRegion::UnitedStates,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "sec_edgar".into(),
+                display_name: "SEC EDGAR (US Filings)".into(),
+                description: "美国证监会披露系统：上市公司年报/财报/内部人交易".into(),
+                connector_type: "API / MCP".into(),
+                url: "data.sec.gov".into(),
+                usage: "公开 API 免费；需声明 User-Agent".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::UnitedStates,
+                implemented: true,
+            })
+            // ── EU/European databases ──
+            .with_entry(ConnectorMetadata {
+                name: "eur_lex".into(),
+                display_name: "EUR-Lex".into(),
+                description: "欧盟官方法律门户：全部立法、判例、条约，24语言，提供 Webservice/SPARQL/REST".into(),
+                connector_type: "API / 网页".into(),
+                url: "eur-lex.europa.eu".into(),
+                usage: "注册 Webservice 账号→SOAP/SPARQL/REST 调用；网页免费检索".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::Europe,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "ansvar".into(),
+                display_name: "Ansvar (EU Compliance MCP)".into(),
+                description: "开源 MCP，覆盖 61 部欧盟法规（GDPR、AI Act、DORA、NIS2 等）4000+条文".into(),
+                connector_type: "MCP (开源)".into(),
+                url: "github.com/Ansvar-Systems/EU_compliance_MCP".into(),
+                usage: "自托管部署 MCP；接入 AI 系统".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::Evaluate,
+                region: ConnectorRegion::Europe,
+                implemented: false,
+            })
+            // ── Hong Kong ──
+            .with_entry(ConnectorMetadata {
+                name: "elegislation_hk".into(),
+                display_name: "香港法律参考资料系统 e-Legislation".into(),
+                description: "香港律政司官方、经核证的现行综合法例库（中英对照）".into(),
+                connector_type: "网页 / 数据".into(),
+                url: "elegislation.gov.hk".into(),
+                usage: "网页检索；可定向抓取（遵守使用条款）".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::HongKong,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "hklii".into(),
+                display_name: "HKLII".into(),
+                description: "香港法律资讯研究中心：判例与法例免费库，覆盖各级法院判决".into(),
+                connector_type: "网页 / 数据".into(),
+                url: "hklii.hk".into(),
+                usage: "网页检索；学术/抓取需遵守条款".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::HongKong,
+                implemented: false,
+            })
+            // ── Singapore ──
+            .with_entry(ConnectorMetadata {
+                name: "sso_sg".into(),
+                display_name: "Singapore Statutes Online".into(),
+                description: "新加坡总检察署官方免费法例库（现行与历史成文法、附属立法）".into(),
+                connector_type: "网页 / 数据".into(),
+                url: "sso.agc.gov.sg".into(),
+                usage: "网页检索；可定向抓取（遵守条款）".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::Singapore,
+                implemented: false,
+            })
+            // ── Global / multi-jurisdiction ──
+            .with_entry(ConnectorMetadata {
+                name: "gleif".into(),
+                display_name: "GLEIF (Global LEI Registry)".into(),
+                description: "全球法人识别编码基金会，免费 API 查询 LEI 记录".into(),
+                connector_type: "API (free)".into(),
+                url: "api.gleif.org".into(),
+                usage: "公开 API 免费，无需认证".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::Global,
+                implemented: true,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "vlex".into(),
+                display_name: "vLex / Vincent AI".into(),
+                description: "全球法律库（10亿+文档、17+国家），支持跨法域 AI 对比检索".into(),
+                connector_type: "商业订阅 / AI".into(),
+                url: "vlex.com".into(),
+                usage: "机构订阅；AI 检索与对比；接口对接需洽谈".into(),
+                auth_method: "account_login".into(),
+                env_var: None,
+                priority: ConnectorPriority::Procurement,
+                region: ConnectorRegion::Global,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "jusmundi".into(),
+                display_name: "Jus Mundi".into(),
+                description: "国际仲裁与跨境公法/投资争端专业库（裁决、条约、案例）".into(),
+                connector_type: "商业订阅 / API".into(),
+                url: "jusmundi.com".into(),
+                usage: "机构订阅；提供 API（需洽谈）".into(),
+                auth_method: "account_login".into(),
+                env_var: None,
+                priority: ConnectorPriority::Procurement,
+                region: ConnectorRegion::Global,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "worldlii".into(),
+                display_name: "WorldLII / CommonLII / AsianLII".into(),
+                description: "免费法律信息网联邦门户，200+法域，含香港/新加坡及英联邦判例".into(),
+                connector_type: "网页 / 数据".into(),
+                url: "worldlii.org".into(),
+                usage: "网页检索/定向抓取（遵守条款）".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::Global,
+                implemented: false,
+            })
+            // ── Offshore jurisdictions ──
+            .with_entry(ConnectorMetadata {
+                name: "opencorporates".into(),
+                display_name: "OpenCorporates".into(),
+                description: "全球公司注册数据门户，覆盖离岸法域公司信息".into(),
+                connector_type: "API".into(),
+                url: "opencorporates.com".into(),
+                usage: "注册账号→获取 API Key→REST 调用".into(),
+                auth_method: "api_key".into(),
+                env_var: Some("OPENCORPORATES_API_KEY".into()),
+                priority: ConnectorPriority::Evaluate,
+                region: ConnectorRegion::Offshore,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "offshore_leaks".into(),
+                display_name: "OffshoreLeaks (ICIJ)".into(),
+                description: "ICIJ 离岸泄密数据库，免费 API 接入".into(),
+                connector_type: "API (free)".into(),
+                url: "offshoreleaks.icij.org".into(),
+                usage: "免费 API 接入：offshoreleaks.icij.org/docs/reconciliation".into(),
+                auth_method: "free".into(),
+                env_var: None,
+                priority: ConnectorPriority::FreeAvailable,
+                region: ConnectorRegion::Offshore,
+                implemented: false,
+            })
+            // ── Internal firm resources (knowledge bases) ──
+            .with_entry(ConnectorMetadata {
+                name: "internal_cases".into(),
+                display_name: "内部案例与文书库".into(),
+                description: "律所历史案件、办案文书、检索报告、备忘录等，RAG 检索核心私域知识".into(),
+                connector_type: "文件/DMS + 向量库".into(),
+                url: "(内部系统)".into(),
+                usage: "文档接入 DMS/对象存储→OCR/解析→切分入向量库→检索增强".into(),
+                auth_method: "internal".into(),
+                env_var: None,
+                priority: ConnectorPriority::SelfBuilt,
+                region: ConnectorRegion::Internal,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "internal_templates".into(),
+                display_name: "合同与文书模板库".into(),
+                description: "标准合同/协议/通知/意见书模板与条款库，支撑起草与审查智能体".into(),
+                connector_type: "文件 + 向量库".into(),
+                url: "(内部系统)".into(),
+                usage: "模板结构化标注→入库→生成/审查时调用".into(),
+                auth_method: "internal".into(),
+                env_var: None,
+                priority: ConnectorPriority::SelfBuilt,
+                region: ConnectorRegion::Internal,
+                implemented: false,
+            })
+            .with_entry(ConnectorMetadata {
+                name: "internal_conflicts".into(),
+                display_name: "客户与项目档案（利冲）".into(),
+                description: "客户、对手方、关联方与项目台账，支撑利益冲突检索与立案合规".into(),
+                connector_type: "结构化DB".into(),
+                url: "(内部系统)".into(),
+                usage: "结构化入库→与企查查/企业数据联动做关联识别".into(),
+                auth_method: "internal".into(),
+                env_var: None,
+                priority: ConnectorPriority::SelfBuilt,
+                region: ConnectorRegion::Internal,
+                implemented: false,
+            })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Chinese connectors — MCP endpoints
 // ─────────────────────────────────────────────────────────────────────────────
 
