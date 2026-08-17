@@ -73,6 +73,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/search", get(search::search))
         .route("/api/search/connectors", get(search::list_connectors))
         .route("/api/search/health", get(search::search_health))
+        .route("/api/search/registry", get(search::list_registry))
+        // DD agent configs — 9 Chinese-law due diligence agent personas
+        .route("/api/dd-configs", get(search::list_dd_configs))
         // Auth-protected user info
         .route("/api/auth/me", get(auth::me))
         // Apply auth middleware (verifies JWT, injects Claims)

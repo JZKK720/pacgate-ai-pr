@@ -113,6 +113,32 @@ pub async fn list_connectors(
     Ok(Json(connectors))
 }
 
+/// List the full connector registry from client assets.
+///
+/// `GET /api/search/registry`
+///
+/// Returns all 27 data source entries from 百宸AI系统资源接入清单,
+/// including metadata (name, display_name, description, connector_type,
+/// url, usage, auth_method, env_var, priority, region, implemented).
+/// This is the structured catalog that deer-flow and qm can discover
+/// via API to know which databases are available and how to connect.
+pub async fn list_registry() -> Result<Json<Vec<pacgate_search::ConnectorMetadata>>, ApiError> {
+    let registry = pacgate_search::ConnectorRegistry::from_client_assets();
+    Ok(Json(registry.entries().to_vec()))
+}
+
+/// List all 9 Chinese-law due diligence agent configs.
+///
+/// `GET /api/dd-configs`
+///
+/// Returns the DD agent configs from dd-agents 中国法智能体改写清单.
+/// Each config contains focus areas (keep/delete/add), severity rules,
+/// Chinese law references, and citation format. Both deer-flow and qm
+/// can fetch these to render DD checklists or inject as system prompts.
+pub async fn list_dd_configs() -> Result<Json<Vec<pacgate_core::DdAgentConfig>>, ApiError> {
+    Ok(Json(pacgate_core::dd_agent_configs()))
+}
+
 /// Health check for all data source connectors.
 ///
 /// `GET /api/search/health`
