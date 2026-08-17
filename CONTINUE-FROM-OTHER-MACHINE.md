@@ -96,7 +96,7 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings: 25 → 32 (new dead-code scaffolding from archive taxonomy + connectors, will be wired up)
-- Git: 42 commits on main (session 12), all pushed to origin
+- Git: 44 commits on main (session 12), all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -128,7 +128,7 @@ pacgate-ai-pr/
 26. ~~Expose DD configs via API~~ — DONE (`GET /api/dd-configs`)
 27. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done). Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks). Remaining: 诉讼律师(~57), 非诉律师(~52), 合规律师(~28 remaining), 基金律师(~26 remaining), 律师日常(~23 remaining)
 28. **Add archive collection workflow templates** — the 3-phase project archive workflow from 项目档案目录及说明
-29. **Add international connectors** — Vaquill (US), Ansvar (EU), OpenCorporates (offshore), EUR-Lex from client asset credentials
+29. ~~Add international connectors~~ — DONE. 4 new connectors: Vaquill (US legal, API key), EUR-Lex (EU law, public REST), Ansvar (EU compliance MCP, API key), OpenCorporates (offshore corporate registry, API key). Total connectors now: 11 (4 Chinese + 7 international). Env vars: `VAQUILL_API_KEY`, `ANSVAR_API_KEY`, `OPENCORPORATES_API_KEY`. EUR-Lex is free (no key). ConnectorRegistry updated: 4 entries marked `implemented: true`.
 30. **Wire DD configs into WorkflowExecutor** — Phase 2: inject DdAgentConfig as system prompt layer when running DD workflows
 31. **qm TypeScript adapter** — Phase 2 collaboration runtime
 32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable at `localhost:5433/pacgate_test`
@@ -142,7 +142,7 @@ pacgate-ai-pr/
 - **All commits pushed** — repo is in sync with origin (session 12)
 - **Client assets in pacgate-ai-assets/** — 150+ prompt templates, SOUL definitions, BigLaw architecture, data source configs, project archive taxonomy. See deploy/PLANS.md for the enrichment plan.
 - **YAML workflows** — `pacgate-ai/workflows/*.yaml` (9 files, 51 templates). Load with `pacgate_workflow::load_from_yaml_dir()`. Test: `cargo test -p pacgate-workflow --test yaml_loader`. API: `GET /api/workflows?category=X&search=Y`, `GET /api/workflows/categories`, `GET /api/workflows/:id`, `POST /api/workflows/:id/execute`
-- **Data source connectors** — `pacgate-search` crate with `DataSourceConnector` trait, `SearchRouter`, 7 connectors (4 Chinese: YuanDian, PkuLaw, Qcc, FYOpen + 3 international: CourtListener, SEC EDGAR, GLEIF). `default_router()` factory. Env vars: `YUANDIAN_API_KEY`, `PKULAW_API_KEY`, `QCC_API_KEY`, `FYOPEN_API_KEY`, `COURTLISTENER_API_KEY`
+- **Data source connectors** — `pacgate-search` crate with `DataSourceConnector` trait, `SearchRouter`, 11 connectors (4 Chinese: YuanDian, PkuLaw, Qcc, FYOpen + 7 international: CourtListener, SEC EDGAR, GLEIF, Vaquill, EUR-Lex, Ansvar, OpenCorporates). `default_router()` factory. Env vars: `YUANDIAN_API_KEY`, `PKULAW_API_KEY`, `QCC_API_KEY`, `FYOPEN_API_KEY`, `COURTLISTENER_API_KEY`, `VAQUILL_API_KEY`, `ANSVAR_API_KEY`, `OPENCORPORATES_API_KEY`
 - **Integration test** — run with `cargo test -p pacgate-api --test integration -- --ignored` (requires Postgres at `localhost:5433/pacgate_test`, user=hermes, password=changeme)
 - **RAG migrations** — 003: adds `jurisdiction` + `source_level` columns; 004: adds `data_level` column (T1-T4). Run automatically by `RagStore::run_migrations()`
 - **Archive taxonomy** — `DataLevel` (T1-T4), `ArchiveDirectory` (00-08), `ProjectOverview`, `FileDirectoryEntry`, `ProjectBusinessModule` in `pacgate-core`. From client asset 百宸完整项目及事项档案提交目录与整理说明_v1.0
