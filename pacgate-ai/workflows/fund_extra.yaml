@@ -1,0 +1,1850 @@
+# Fund lawyer extra workflows
+# Derived from: 基金律师实用Prompts指南.md
+# Covers fund formation, compliance, investment, operations, exit, cross-border, filing, and disputes.
+# Complements fund_lawyer.yaml (which covers 基金架构设计, LPA核心条款起草, Side Letter起草, 基金管理人登记申请, 基金投资交易审阅, 基金年度备案).
+
+- id: "00000000-0000-0000-0000-000000000e01"
+  name: "双币种平行基金/联接基金架构协调"
+  description: "Design parallel fund / feeder fund coordination architecture between RMB and USD funds"
+  category: "fund_formation"
+  steps:
+    - name: "Search parallel fund regulations"
+      description: "Search for parallel fund and feeder fund regulatory requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate coordination framework"
+      description: "Generate parallel fund coordination mechanism framework"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请设计一个【人民币基金 + 美元基金】平行基金（Parallel Fund）或联接基金（Feeder Fund）的协调架构方案：
+
+          背景：
+          - GP团队：【同一管理团队】
+          - 投资策略：【同一投资策略，投向中国/全球项目】
+          - 人民币基金：【XX亿元，境内LP】
+          - 美元基金：【XX亿美元，境外LP】
+          - 投资项目限制：【某些项目仅人民币可投（如A股IPO前）/某些项目仅美元可投（如红筹架构）】
+
+          协调机制设计要求：
+          1. 投资分配机制（Deal Allocation）：
+             - 平行分配规则（按承诺资本比例 / 按项目可投性灵活分配）
+             - 专属投资机会的处理（仅一方可投的项目，另一方是否有补偿机制）
+             - 分配争议解决机制
+
+          2. 经济条款一致性：
+             - 管理费比例是否统一
+             - 业绩报酬比例和瀑布机制是否统一
+             - 门槛收益率是否统一
+             - 允许的合理差异范围
+
+          3. 治理协调：
+             - LPAC席位分配（两支基金各自的LPAC vs. 联合LPAC）
+             - 关键人条款是否联动触发
+             - 延长期决议是否联动
+
+          4. 利益冲突管理：
+             - GP对两支基金的公平对待义务
+             - Co-investment分配规则
+             - 费用分担原则
+
+          5. 信息交换与保密：
+             - 两支基金之间的信息共享边界
+             - 各LP的保密要求差异
+
+          6. 退出协调：
+             - 退出时机是否统一决策
+             - 退出方式差异处理（A股IPO vs. 海外IPO/并购）
+
+          请输出完整的协调机制文件框架，以及两支基金LPA中需要特别约定的交叉条款清单。
+
+- id: "00000000-0000-0000-0000-000000000e02"
+  name: "基金募集合规审查备忘录"
+  description: "Draft fund fundraising compliance review memorandum covering qualified investor and solicitation rules"
+  category: "fund_compliance"
+  steps:
+    - name: "Search fundraising regulations"
+      description: "Search for current AMAC fundraising and qualified investor rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance memo"
+      description: "Generate fundraising compliance review checklist and risk memo"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份基金募集合规审查备忘录，确保募集过程符合相关法律法规：
+
+          基金信息：
+          - 基金名称：【XXX基金】
+          - 基金类型：【私募股权/创投/证券】
+          - 注册地：【中国境内/开曼/香港】
+          - 目标LP类型：【国资/母基金/上市公司/高净值个人/境外机构】
+
+          合规审查维度：
+
+          一、境内基金募集合规（AMAC规则）
+          1. 合格投资者审查：
+             - 净资产/金融资产门槛核查（机构净资产不低于1000万元；个人金融资产不低于300万元，或最近三年个人年均收入不低于50万元）
+             - 投资经验要求核查
+             - 投资额不低于100万元的核查
+             - 特殊LP类型的额外合规要求：
+               * 国资LP：国资审批流程、审计要求、评估要求
+               * 上市公司LP：信息披露义务、董监事履职要求
+               * 保险资金LP：银保监会投资比例限制
+               * 社保基金LP：社保基金投资管理办法
+               * 外资LP：QFLP试点政策、外汇登记
+
+          2. 募集方式合规：
+             - 不得公开宣传的具体边界
+             - 合格投资者确认程序
+             - 募集路演材料的合规审查要点
+             - 基金推介材料的必备内容和禁止内容
+
+          3. 募集账户与资金安全：
+             - 募集监督账户设置
+             - 资金划转合规流程
+
+          4. 风险揭示与投资者适当性：
+             - 风险揭示书必备条款
+             - 风险评级与投资者风险承受能力匹配
+
+          二、境外基金募集合规（如适用）
+          1. 证券法豁免分析：
+             - Regulation S（离岸发行）
+             - Regulation D（美国境内合格投资者）
+             - 是否触发美国投资公司法（ICA）豁免条件（3(c)(1) / 3(c)(7)）
+             - 是否需要FATCA/CRS申报
+
+          2. 各目标募集地的当地合规：
+             - 香港：SFC Type 1牌照豁免条件 / 专业投资者规则
+             - 开曼：CIMA私募基金注册要求
+             - 新加坡：MAS证券与期货法豁免条件
+
+          请输出合规审查清单（表格格式）+ 关键风险提示。
+
+- id: "00000000-0000-0000-0000-000000000e03"
+  name: "基金投资限制与合规边界审查"
+  description: "Review fund investment restriction clauses for compliance and commercial reasonableness"
+  category: "fund_compliance"
+  steps:
+    - name: "Search investment restriction rules"
+      description: "Search for AMAC investment restriction and concentration rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate restriction review"
+      description: "Generate investment restriction clause draft and compliance comparison table"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审查基金的投资限制条款是否合规且商业合理，基金信息如下：
+
+          - 基金类型：【私募股权/创投/对冲/基础设施】
+          - 注册地：【中国/开曼/香港】
+          - 管理人登记地：【中国AMAC/香港SFC/开曼CIMA】
+
+          审查维度：
+
+          一、AMAC投资限制合规（境内基金）
+          1. 投资范围与备案类型的一致性核查
+          2. 具体投资比例限制：
+             - 单项目投资占基金规模的比例上限
+             - 债性投资限制（创投基金不得投资债权/PE基金的债性投资比例上限）
+             - 二级市场投资限制
+             - 房地产投资限制
+          3. 关联交易审查规则
+          4. 投资集中度限制
+
+          二、境外基金投资限制合规
+          1. 开曼基金的投资限制（LPA约定 vs. CIMA要求）
+          2. 限制清单设计：
+             - 单笔投资比例上限（建议不超过基金规模的20%）
+             - 杠杆使用限制
+             - 禁止投资清单（公开证券、衍生品、不动产——除非基础设施基金）
+             - 跨境投资限制（如投资中国企业的行业限制）
+          3. 投资限制豁免机制（LPAC同意豁免/比例门槛豁免）
+
+          三、特定投资人驱动的投资限制
+          1. 国资LP要求的投资限制（行业负面清单、反腐败承诺）
+          2. 保险资金LP要求的投资限制（保险资金投资PE比例上限）
+          3. 境外LP要求的ESG投资政策
+
+          请输出：投资限制条款建议文本（嵌入LPA的条款草案）+合规对照表。
+
+- id: "00000000-0000-0000-0000-000000000e04"
+  name: "基金持续合规与定期报告义务"
+  description: "Compile ongoing compliance and periodic reporting obligations checklist with compliance calendar"
+  category: "fund_compliance"
+  steps:
+    - name: "Search reporting obligations"
+      description: "Search for AMAC/CIMA/SFC periodic reporting requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance calendar"
+      description: "Generate ongoing compliance and reporting obligations timeline"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请编制一份基金存续期间的持续合规与定期报告义务清单：
+
+          基金信息：
+          - 基金类型：【私募股权/创投】
+          - 注册地：【中国/开曼/香港】
+          - 备案/注册机构：【AMAC/CIMA/SFC】
+          - 基金规模：【是否触发特殊监管阈值】
+
+          清单结构（按时间维度组织）：
+
+          一、境内基金（AMAC）持续合规
+          1. 定期报告：
+             - 季度报告（产品季度更新）：报送时间、内容要求
+             - 半年度报告：报送时间、内容要求
+             - 年度报告：报送时间、内容要求、审计要求
+             - 重大事项临时报告：触发条件、报送时限
+
+          2. 信息披露（对LP）：
+             - 投资运作信息（季度/半年度/年度）
+             - 基金净值信息
+             - 重大投资决策信息
+             - 关联交易信息
+             - 业绩报酬提取信息
+
+          3. 基金变更备案：
+             - 基金规模变更
+             - 投资范围变更
+             - 管理人/GP变更
+             - 基金清算
+
+          4. 合规自查与专项审计：
+             - 年度合规自查报告
+             - 专项审计触发条件
+
+          二、境外基金持续合规
+          1. 开曼CIMA：
+             - 私募基金年度审计要求
+             - 年度报表报送
+             - 基金资产估值频率与方法
+
+          2. 香港SFC（如管理人在港）：
+             - Type 9牌照持续合规
+             - 周报/月报/年报报送
+             - 管理人年度审计
+
+          3. FATCA/CRS申报：
+             - 申报时间与内容
+             - LP税务信息收集
+
+          三、专项合规
+          1. 反洗钱/KYC持续义务
+          2. 利益冲突定期审查
+          3. 投资者适当性持续管理
+
+          请输出时间线表格（按月/季度/年度标注各类报告和合规义务的截止时间）+合规日历模板。
+
+- id: "00000000-0000-0000-0000-000000000e05"
+  name: "基金管理人合规制度建设"
+  description: "Design a fund manager compliance management system covering risk, internal control, and disclosure"
+  category: "fund_compliance"
+  steps:
+    - name: "Search compliance system requirements"
+      description: "Search for AMAC manager compliance system requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance system"
+      description: "Generate compliance management system framework and key clauses"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请设计一套私募基金管理人的合规管理制度体系，适用于【新登记管理人/已有管理人升级合规体系】：
+
+          管理人信息：
+          - 管理人类型：【私募股权/创投/证券/混合】
+          - 管理规模：【XX亿】
+          - 团队规模：【XX人】
+
+          制度体系框架（请为每项制度起草内容概要和关键条款）：
+
+          1. 风险管理制度：
+             - 风险识别与分类（市场风险、信用风险、操作风险、合规风险、流动性风险）
+             - 风险评估方法与频率
+             - 风控委员会职责与议事规则
+             - 风险限额设置与监控
+             - 风险报告机制
+
+          2. 内部控制制度：
+             - 投资决策流程（投委会权限、决策程序、投票规则）
+             - 投前/投中/投后分离原则
+             - 授权管理制度
+             - 信息隔离墙制度
+
+          3. 合规管理制度：
+             - 合规审查嵌入业务流程的节点设计
+             - 合规咨询机制
+             - 合规违规处理机制
+             - 合规培训制度
+
+          4. 利益冲突防范制度：
+             - 冲突识别场景清单（多基金投资同一项目、管理人自有资金投资、LP关联方投资）
+             - 冲突披露与豁免机制
+             - 公平对待原则实施细则
+
+          5. 信息隔离墙制度：
+             - 敏感信息定义
+             - 物理与信息隔离措施
+             - 跨墙程序
+
+          6. 从业人员管理制度：
+             - 聘用审查与背景调查
+             - 职业行为准则
+             - 外部兼职与投资限制
+             - 离职审查与保密
+
+          7. 信息披露制度：
+             - 向LP的披露内容、频率、方式
+             - 向AMAC/CIMA的报送内容与时限
+             - 重大事项披露触发条件
+
+          8. 适当性管理制度：
+             - 投资者分类标准
+             - 产品风险评级方法
+             - 匹配规则与留痕
+
+          请为每项制度输出：制度框架 → 核心条款 → AMAC指引合规对照。
+
+- id: "00000000-0000-0000-0000-000000000e06"
+  name: "项目投资决策法律支持备忘录"
+  description: "Draft legal support memorandum for fund investment committee review of a target project"
+  category: "fund_investment"
+  steps:
+    - name: "Search investment restrictions"
+      description: "Search for foreign investment access and industry approval restrictions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate investment memo"
+      description: "Generate legal support memorandum for investment committee"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为基金投委会审议的拟投资项目起草法律支持备忘录：
+
+          项目信息：
+          - 项目名称：【XX公司】
+          - 行业：【SaaS/AI/新能源/消费/医疗】
+          - 投资阶段：【Seed/A轮/B轮/C轮/Pre-IPO/并购】
+          - 投资金额：【XX万元/万美元】
+          - 投资方式：【股权增资/老股转让/可转债/优先股】
+          - 基金角色：【领投/跟投/独家投资/与其他基金联合投资】
+
+          备忘录结构：
+          1. 项目法律风险概览（Executive Summary）
+             - 一句话结论：建议投委会【批准/附条件批准/否决】
+             - 🔴/🟡/🟢风险标注
+
+          2. 核心法律风险详述（按重要性排列）：
+             - 股权结构与治理风险（代持、质押、历史沿革瑕疵）
+             - 业务合规风险（行业资质、许可、监管政策）
+             - 知识产权风险（权属、侵权、开源合规）
+             - 劳动用工风险（核心员工竞业、社保合规）
+             - 数据合规风险（数据来源合法性、隐私政策、出境）
+             - 税务风险（欠税、优惠依赖、转移定价）
+             - 诉讼与争议风险
+             - 对基金投资方式的法律限制（如外资准入限制、行业审批）
+
+          3. 投资协议关键条款建议：
+             - 基于法律风险，哪些风险应转化为投资协议的保护条款
+             - 对赌/回购触发条件建议
+             - 交割条件建议
+             - 陈述与保证的重点条款建议
+             - 投后权利建议（信息权、检查权、一票否决事项）
+
+          4. 合规审批路径（如需）：
+             - 外商投资安全审查/ODI备案/行业审批
+
+          5. 投后法律工作建议：
+             - 投后合规监控重点
+             - 后续融资轮次的权利保护策略
+             - 退出路径的法律可行性初判
+
+          输出为3-5页的法律支持备忘录，格式规范、重点突出。
+
+- id: "00000000-0000-0000-0000-000000000e07"
+  name: "Co-investment 协议起草"
+  description: "Draft co-investment agreement between fund LP and fund on the same project"
+  category: "fund_investment"
+  steps:
+    - name: "Generate co-investment agreement"
+      description: "Generate co-investment agreement framework with three-version clauses"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份Co-investment（联合投资）协议，适用于基金LP与基金在同一项目上的联合投资：
+
+          参与方：
+          - 主基金：【XXX基金】
+          - Co-investment LP：【XX母基金/XX家族办公室/XX保险公司】
+          - 投资项目：【XX公司】
+          - 主基金投资金额：【XX万元】
+          - Co-investment金额：【XX万元】
+          - 投资方式：【与主基金同股同权/不同类别股份】
+
+          协议核心条款：
+          1. 投资分配规则：
+             - Co-investment机会的分配原则（按承诺资本比例/按LP意愿/优先分配大LP）
+             - 拒绝Co-investment机会的处理
+             - 专属投资机会（仅特定LP可参与的交易）
+
+          2. 经济条款：
+             - 管理费：【是否减免Co-investment的管理费（通常减免或降至0.5-1%）】
+             - 业绩报酬：【是否对Co-investment部分收取carried interest（通常不收或降低）】
+             - 其他费用分担：【项目尽调费、法律费如何分担】
+
+          3. 投资条件与权利：
+             - Co-investment是否与主基金"同股同权"（pari passu）
+             - 如不同权：Co-investor的权利范围（信息权、退出权、保护性条款）
+             - Co-investor是否签署项目公司的投资协议
+
+          4. 退出安排：
+             - 退出时机是否与主基金一致
+             - 部分退出的分配机制
+             - Co-investor优先退出的条件（如有）
+
+          5. 风险与免责：
+             - GP对Co-investment的尽职调查义务范围
+             - Co-investor自行决策声明
+             - GP免责条款
+
+          6. 限制性条款：
+             - Co-investment总额上限
+             - 单项目Co-investment比例上限
+             - Co-investor的竞投禁止
+
+          请输出完整协议框架 + 关键条款的三种版本（GP友好/LP友好/市场中间）。
+
+- id: "00000000-0000-0000-0000-000000000e08"
+  name: "投后管理法律支持——董事/观察员履职指引"
+  description: "Draft director / board observer duty guidelines for fund-appointed representatives"
+  category: "fund_investment"
+  steps:
+    - name: "Generate director guidelines"
+      description: "Generate director/observer duty guidelines document"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为基金向被投企业委派的【董事/董事会观察员】起草履职指引：
+
+          背景：
+          - 基金名称：【XXX基金】
+          - 被投企业：【XX公司】
+          - 基金持有股权比例：【XX%】
+          - 委派角色：【1名董事 / 1名观察员】
+          - 公司治理结构：【3/5席董事会，创始人占2席，投资人占1席】
+
+          履职指引内容：
+
+          1. 角色定位与权限边界：
+             - 董事的权利与义务（出席、表决、提议、质询）
+             - 观察员的权利与限制（出席但不表决、获取材料、提问）
+             - 与基金利益的关系（董事/观察员代表基金利益但应遵守公司治理规则）
+
+          2. 利益冲突处理：
+             - 当基金利益与公司整体利益冲突时的处理原则
+             - 多支基金投资同一企业时不同董事的协调
+             - 保密义务的边界（哪些信息可以向基金披露，哪些属于公司机密）
+
+          3. 关键事项决策参与清单：
+             - 必须向基金报告的事项清单：
+               * 重大融资/股权变动
+               * 核心高管变动
+               * 重大诉讼/监管处罚
+               * 业务方向重大调整
+               * 拟IPO/并购决策
+             - 需要基金事先授权才能表决的事项：
+               * 低于预设估值的后续融资
+               * 创始人股权稀释超过XX%
+               * 公司章程修改
+               * 关联交易审批
+
+          4. 信息权行使：
+             - 定期获取的信息清单（月度/季度财务报表、业务报告、关键指标）
+             - 临时获取信息的触发条件和请求程序
+
+          5. 合规与风控观察：
+             - 需特别关注的合规风险信号清单
+             - 发现问题时的报告路径和时限
+
+          6. 争议处理：
+             - 董事会争议时的表决策略
+             - 与创始人/其他投资人的沟通策略
+             - 争议升级时基金层面的介入机制
+
+          7. 免责与保护：
+             - 董事/观察员的赔偿责任限制
+             - 基金为董事/观察员提供的D&O保险安排
+
+          输出为实务指引文档（非正式法律意见），便于委派人员日常参考。
+
+- id: "00000000-0000-0000-0000-000000000e09"
+  name: "基金收益分配瀑布机制设计与计算示例"
+  description: "Design distribution waterfall mechanism with detailed calculation examples for three waterfall types"
+  category: "fund_operations"
+  steps:
+    - name: "Generate waterfall design"
+      description: "Generate distribution waterfall design and calculation examples"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下基金设计收益分配瀑布机制，并提供详细的计算示例：
+
+          基金参数：
+          - 基金规模：【10亿元人民币】
+          - 管理费：【投资期2%（按承诺资本），退出期1%（按在投资本）】
+          - 门槛收益率（Preferred Return）：【8%/年复利】
+          - 业绩报酬（Carried Interest）：【20%】
+          - Catch-up条款：【有/无】
+          - 回拨机制（Clawback）：【有，GP在基金清算时需返还超额分配】
+          - 管理费抵消（Fee Offset）：【管理费从收益中抵扣80%】
+
+          请设计以下三种瀑布机制的对比分析和计算示例：
+
+          瀑布A——欧洲式瀑布（Whole Fund / All Capital First）：
+          1. 第一步：返还LP的全部承诺资本
+          2. 第二步：返还LP的门槛收益（8%年复利，自缴款日起算）
+          3. 第三步：Catch-up（GP获取剩余收益的100%直到GP累计获得总收益的20%）
+          4. 第四步：剩余收益20%归GP，80%归LP
+
+          瀑布B——美国式瀑布（Deal-by-Deal / Partial Return）：
+          1. 第一步：返还LP当笔投资的出资额
+          2. 第二步：返还LP当笔投资的门槛收益
+          3. 第三步：Catch-up
+          4. 第四步：20/80 split
+             - 注：允许GP在部分项目盈利时获得carried interest，而不需等待所有资本返还
+
+          瀑布C——简化式瀑布（无Catch-up）：
+          1. 第一步：返还LP出资
+          2. 第二步：返还LP门槛收益
+          3. 第三步：剩余收益20%归GP，80%归LP（GP的20%直接从第三步开始分配，无需catch-up）
+
+          计算示例：
+          假设基金有3个项目，分别投入3亿、3亿、4亿，
+          项目A：退出收回6亿（盈利3亿）
+          项目B：退出收回2.4亿（亏损0.6亿）
+          项目C：退出收回8亿（盈利4亿）
+          管理费总计：【请按投资期5年+退出期3年计算总管理费】
+
+          请分别用三种瀑布机制计算：
+          1. 每步分配的具体金额
+          2. GP累计获得的carried interest
+          3. LP累计获得的净收益率
+          4. Clawback触发金额（如有）
+
+          输出为对比表格+逐步计算过程。
+
+- id: "00000000-0000-0000-0000-000000000e0a"
+  name: "基金估值与NAV报告法律审查要点"
+  description: "Compile legal review checklist for fund valuation and NAV report"
+  category: "fund_operations"
+  steps:
+    - name: "Search valuation guidelines"
+      description: "Search for valuation methodology guidelines and NAV reporting requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate valuation review"
+      description: "Generate valuation and NAV report legal review checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请编制一份基金估值与NAV（Net Asset Value）报告的法律审查要点清单：
+
+          基金信息：
+          - 基金类型：【私募股权/创投/基础设施】
+          - 估值基准：【中国/国际PE/VC估值指引 / IFRS / US GAAP】
+          - 估值频率：【季度/半年度/年度】
+          - 估值机构：【内部估值委员会 / 第三方估值机构】
+
+          审查要点清单：
+
+          一、估值方法合规性
+          1. 估值方法论选择：
+             - 各发展阶段项目的适用估值方法（成本法/市场法/收益法）
+             - 早期项目（Seed/A轮）：成本法为主，公允价值调整的触发条件
+             - 成长期项目（B/C轮）：市场法（可比公司/可比交易）
+             - Pre-IPO/成熟项目：收益法/市场法
+             - 退投/亏损项目：减值测试方法
+
+          2. 估值方法变更的合规处理：
+             - 变更触发条件
+             - 变更审批流程（估值委员会/LPAC）
+             - 变更对NAV的影响披露
+
+          二、NAV计算合规性
+          1. 管理费计算准确性核查
+          2. 业绩报酬预提（accrued carried interest）的计算方法与合理性
+          3. 基金费用列支的合规性（哪些费用由基金承担 vs. 管理人承担）
+          4. 未实缴资本的处理（是否在NAV中体现）
+          5. 外汇折算方法（境外基金投资境内项目的人民币/美元折算）
+
+          三、披露合规性
+          1. NAV报告需包含的信息清单（AMAC/CIMA/SFC要求）
+          2. 估值假设与限制的披露要求
+          3. 重大估值调整的特别说明义务
+          4. 第三方估值机构的使用声明
+
+          四、审计配合
+          1. 年度审计的估值配合要求
+          2. 审计师对估值的关注重点
+          3. 估值底稿的保存要求
+
+          请输出审查清单表格 + 估值合规风险红黑榜。
+
+- id: "00000000-0000-0000-0000-000000000e0b"
+  name: "LP沟通与报告模板体系"
+  description: "Design a fund LP communication and reporting template system"
+  category: "fund_operations"
+  steps:
+    - name: "Generate LP report templates"
+      description: "Generate LP communication and reporting template system"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请设计一套基金LP沟通与报告模板体系：
+
+          基金信息：
+          - 基金名称：【XXX基金】
+          - LP类型：【国资LP/市场化母基金/家族办公室/境外机构】
+          - 报告频率：【季度+年度】
+
+          模板体系（请为每种报告设计内容框架）：
+
+          1. 季度运营报告（Quarterly Report）：
+             - 致LP信（GP对基金运营的评述）
+             - 基金概况（NAV、IRR、DPI、TVPI、RVPI）
+             - 投资组合概览（每个项目的名称、行业、投资金额、持股比例、当前估值、估值变动）
+             - 新增投资/退出/减值项目详述
+             - 基金财务摘要（资产、负债、管理费、已分配收益）
+             - 重大事项通报（诉讼、监管、管理团队变动）
+             - 下季度展望
+             - 合规与风控通报
+
+          2. 年度报告（Annual Report）：
+             - GP年度总结与战略评述
+             - 基金全年度业绩指标（IRR、DPI、TVPI、RVPI、与同业基准比较）
+             - 投资组合年度变动详述
+             - 估值方法论与年度估值调整
+             - 基金财务报表（资产负债表、损益表）
+             - 管理人合规与内控年度评述
+             - 下年度投资与退出展望
+             - 审计师意见摘要
+
+          3. 资本缴款通知（Capital Call Notice）：
+             - 缴款金额与用途（项目投资/管理费/基金费用）
+             - 缴款截止日期与逾期利息
+             - 缴款银行账户信息
+             - 缴款的法律依据（LPA条款引用）
+
+          4. 分配通知（Distribution Notice）：
+             - 分配金额与来源（项目退出收益/分红/其他）
+             - 分配的瀑布机制计算明细
+             - LP应得金额与扣税信息
+             - 分配方式（现金/实物分配/再投资）
+             - 收款银行账户确认
+
+          5. 重大事项临时通知（Material Event Notice）：
+             - 关键人事件通知
+             - 诉讼/监管事件通知
+             - 投资限制突破通知
+             - 基金延期决议通知
+
+          6. 税务信息收集通知（FATCA/CRS）：
+             - LP税务信息收集问卷
+             - 自证声明表格
+
+          每种报告标注：AMAC/CIMA/SFC要求的必备内容 vs. 市场惯例的最佳实践内容。
+          输出为Word模板文档集合。
+
+- id: "00000000-0000-0000-0000-000000000e0c"
+  name: "基金延长期与重组决策法律备忘录"
+  description: "Draft legal memorandum on fund extension and restructuring decisions for unexited projects"
+  category: "fund_operations"
+  steps:
+    - name: "Search extension and continuation rules"
+      description: "Search for fund extension, continuation fund, and GP-led secondary guidelines"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate extension memo"
+      description: "Generate fund extension and restructuring decision memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就基金即将到期但仍有未退出项目的情形，起草一份基金延长期与重组决策的法律备忘录：
+
+          基金信息：
+          - 基金名称：【XXX基金】
+          - 当前期限：【5年投资期+3年退出期，已到期】
+          - 未退出项目：【3-5个项目，估值合计XX亿，预计再需2-3年退出】
+          - LP态度：【大部分LP同意延期/部分LP反对延期/国资LP需内部审批】
+
+          备忘录结构：
+
+          一、延长期方案分析
+          1. LPA约定的延长期机制：
+             - 自动延期条款（GP有权延期1年×2次？需LPAC同意？）
+             - 无过错解散权触发条件（LP是否有权在延期时解散基金）
+             - 延期期间的管理费调整（降至1%或更低）
+
+          2. LP同意机制：
+             - LPAC同意 vs. 全体LP投票（LPA约定的不同门槛）
+             - 反对延期的LP的退出机制（是否可按NAV折价退出/是否有"尾随基金"安排）
+             - 国资LP的内部审批流程与时间线
+
+          3. 延期期间的管理调整：
+             - 管理费调整条款修改
+             - GP团队调整（关键人条款是否重新触发）
+             - 投资限制（通常延期期间仅管理存量项目，不做新增投资）
+
+          二、基金重组方案（如延期不可行）
+          1. 尾随基金（Tail Vehicle / Continuation Fund）：
+             - 将未退出项目转入新设立的续存基金
+             - 新基金的商业条款设计
+             - LP的roll-over选择权（按NAV转入新基金或按NAV折价退出）
+             - 新基金LP的引入（二级市场买家）
+
+          2. 项目级重组：
+             - 每个未退出项目单独设立SPV
+             - LP按项目选择roll-over或退出
+             - 管理费和carried interest的重新安排
+
+          3. GP-led Secondary：
+             - GP主导的二级市场交易方案
+             - 估值与定价机制
+             - LP利益保护（独立估值、LPAC审查、无冲突声明）
+             - ILPA Guidelines对GP-led secondary的指引
+
+          三、LP退出机制（如不同意延期/重组）
+          1. 按NAV退出（公允价值）
+          2. 按NAV折价退出（折扣率市场惯例）
+          3. 实物分配（in-kind distribution，将未退出项目的股权直接分配给LP）
+          4. 二级市场出售LP份额
+
+          请分析各方案的利弊、法律可行性、税务影响，并给出推荐方案。
+
+- id: "00000000-0000-0000-0000-000000000e0d"
+  name: "基金退出路径法律可行性分析"
+  description: "Analyze legal feasibility of fund exit paths (IPO, M&A, secondary, dividends) for portfolio"
+  category: "fund_exit"
+  steps:
+    - name: "Search exit regulations"
+      description: "Search for IPO lock-up, reduction, and secondary sale regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate exit analysis"
+      description: "Generate exit path feasibility matrix and strategy recommendation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为基金投资组合的退出路径进行法律可行性分析：
+
+          基金信息：
+          - 境内人民币基金 / 境外美元基金
+          - 投资组合：【5-8个项目清单】
+          - 每个项目的行业、持股比例、投资金额、当前估值
+
+          请为每个项目分析以下退出路径的法律可行性：
+
+          | 退出路径 | 法律可行性 | 优势 | 劣势/风险 | 预计时间线 | 推荐优先级 |
+
+          一、IPO退出
+          1. A股IPO（人民币基金项目）：
+             - 注册制下的审核要点
+             - 基金作为股东的信息披露义务
+             - 锁定期要求（控股股东36个月/其他股东12个月/创投基金特殊豁免）
+             - 减持规则限制
+             - 创投基金减持特别规定（反向挂钩机制）
+
+          2. 港股IPO（美元基金项目）：
+             - HKEX上市规则对PE股东的要求
+             - 基金作为股东的披露义务
+             - 禁售期安排
+             - 红筹架构项目的特殊考虑
+
+          3. 美股IPO（如适用）：
+             - SEC注册声明对PE股东的披露要求
+             - 144规则限制性证券的转售
+             - Lock-up协议惯例
+
+          二、并购/股权转让退出
+          1. 向战略买家出售
+          2. 向其他PE基金出售（secondary sale）
+          3. 创始人/管理层回购
+          4. 向上市公司出售（被上市公司并购）
+
+          三、S基金/二级市场出售
+          1. LP份额出售（基金层面）
+          2. 项目权益出售（项目层面）
+          3. 定价机制（NAV折扣率市场惯例）
+          4. 买方尽职调查关注点
+
+          四、分红/利息退出
+          1. 项目公司分红（适用于已盈利项目）
+          2. 可转债利息与本金回收
+
+          请输出每个项目的退出路径矩阵 + 整体退出策略建议。
+
+- id: "00000000-0000-0000-0000-000000000e0e"
+  name: "基金清算法律程序"
+  description: "Draft fund liquidation legal procedure guide for onshore and offshore funds"
+  category: "fund_exit"
+  steps:
+    - name: "Search liquidation procedures"
+      description: "Search for fund liquidation and deregistration procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate liquidation guide"
+      description: "Generate fund liquidation procedure timeline and documents"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份基金清算法律程序指引：
+
+          基金信息：
+          - 基金名称：【XXX基金】
+          - 基金类型：【有限合伙/公司/契约】
+          - 注册地：【中国/开曼/香港】
+          - 清算原因：【期限届满/LP决议解散/GP决定解散/其他】
+
+          一、境内基金清算程序（有限合伙型）
+          1. 清算决议与通知：
+             - 清算决议的形成（全体合伙人决议/LPA约定条件触发）
+             - 向AMAC的清算报告与注销备案
+             - 向LP的清算通知
+
+          2. 清算人确定：
+             - 清算人（GP/全体LP指定/法院指定）的职责与权限
+             - 清算人履职时间线
+
+          3. 资产处置与分配顺序：
+             - 清算费用
+             - 基金债务
+             - LP出资返还
+             - 门槛收益（如有未分配部分）
+             - GP业绩报酬（如有未分配部分）
+             - 剩余收益按比例分配
+
+          4. 税务处理：
+             - 清算分配的所得税处理（个人LP/企业LP）
+             - 清算所得税申报
+
+          5. 工商注销：
+             - 合伙企业注销登记流程
+             - 所需材料清单
+
+          二、境外基金清算程序（开曼ELP）
+          1. 清算决议与程序：
+             - LPA约定的自愿清算程序
+             - 开曼法下的清算程序（Exempted Limited Partnership Act）
+             - CIMA注销/ deregistration程序
+
+          2. 资产处置与分配：
+             - 瀑布机制的最后执行
+             - Clawback的最终计算与执行
+             - 未完成项目的实物分配（in-kind distribution）
+
+          3. 税务申报：
+             - 最终税务清算
+             - FATCA/CRS的关闭申报
+
+          请输出完整的清算流程时间线 + 各步骤所需文件清单 + 清算分配计算示例。
+
+- id: "00000000-0000-0000-0000-000000000e0f"
+  name: "GP转让与基金管理权交接"
+  description: "Draft memorandum on GP transfer and fund management succession legal framework"
+  category: "fund_exit"
+  steps:
+    - name: "Search GP transfer rules"
+      description: "Search for GP transfer and manager change filing requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate GP transfer memo"
+      description: "Generate GP transfer and succession memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就GP转让（GP Transfer）和基金管理权交接（Succession）的法律框架起草备忘录：
+
+          背景：
+          - 当前GP：【XX资本管理有限公司】
+          - 拟受让GP/新管理人：【YY资本管理有限公司】
+          - 基金名称：【XXX基金】
+          - 基金当前状态：【投资期/退出期/延长期】
+          - 未退出项目：【X个】
+
+          备忘录结构：
+
+          一、GP转让的法律路径分析
+          1. LPA约定的GP转让条件：
+             - 是否需要LPAC同意/全体LP同意
+             - 转让限制条款（锁定期、受让方资质要求）
+             - 转让价格确定机制
+
+          2. 管理人变更的法律程序：
+             - AMAC管理人变更备案（境内基金）
+             - CIMA管理人变更注册（境外基金）
+             - SFC牌照转让/新管理人牌照申请（香港管理公司）
+
+          3. 转让对LP的影响：
+             - 管理费条款是否随转让调整
+             - 关键人条款是否重新触发
+             - LP是否有无过错解散权触发
+
+          二、关键人员安排
+          1. 新GP团队的核心人员要求
+          2. 关键人条款的重新约定
+          3. 原GP团队的过渡期安排
+
+          三、权益交接
+          1. GP权益（GP份额、carried interest权益、管理费权益）的转让定价
+          2. 业绩报酬的历史积累与新GP的分配安排
+          3. Clawback责任的承继安排
+
+          四、对基金的影响评估
+          1. 对基金备案/注册状态的影响
+          2. 对基金投资承诺的影响
+          3. 对未退出项目管理的影响
+          4. 对LP信心的影响
+
+          请分析各路径的法律可行性，并给出推荐方案。
+
+- id: "00000000-0000-0000-0000-000000000e10"
+  name: "QFLP/QDLP/QDII 基金通道设立"
+  description: "Analyze compliance path for establishing cross-border funds via QFLP/QDLP/QDII channels"
+  category: "cross_border_fund"
+  steps:
+    - name: "Search QFLP/QDLP policies"
+      description: "Search for QFLP/QDLP pilot city policies and requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate channel analysis"
+      description: "Generate channel comparison matrix and recommended path"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析通过【QFLP/QDLP/QDII】通道设立跨境基金的合规路径：
+
+          通道类型及基金信息：
+          - 通道类型：【QFLP（境外资金入境投资）/QDLP（境内资金出境投资海外基金）/QDII（境内资金出境投资海外证券）】
+          - 基金管理人：【XX资本】
+          - 目标规模：【XX亿元】
+          - 投资策略：【投资中国PE项目/投资海外PE基金/投资海外二级市场】
+          - 试点城市：【上海/北京/深圳/青岛/重庆/海南】
+
+          一、QFLP试点基金（境外资金入境投资中国项目）
+          1. 各试点城市的QFLP政策对比：
+             - 设立条件（管理人资质、基金规模、外资比例）
+             - 投资范围限制
+             - 外汇便利化程度（额度申请、结汇路径、利润汇回）
+             - 税收政策（所得税处理、税收协定适用）
+
+          2. QFLP基金设立流程：
+             - 管理人设立（外商投资股权投资管理企业）
+             - 基金设立（外商投资股权投资企业）
+             - 试点资格申请流程与时间线
+             - 外汇额度申请
+
+          3. 常见QFLP限制与解决方案：
+             - 投资范围限制（不得投资二级市场、房地产等）
+             - 外资行业准入限制
+             - LP结构限制
+
+          二、QDLP试点基金（境内资金出境投资海外基金）
+          1. 各试点城市的QDLP政策对比
+          2. QDLP基金设立流程
+          3. 额度申请与外汇管理
+          4. LP募集的境内合规要点
+
+          三、QDII通道（如适用）
+          1. 金融机构QDII vs. 私募基金QDLP的路径选择
+          2. 投资范围差异
+
+          请输出通道对比矩阵 + 推荐通道方案 + 设立时间线。
+
+- id: "00000000-0000-0000-0000-000000000e11"
+  name: "开曼/BVI 基金架构的 ES 法规合规"
+  description: "Analyze Economic Substance Regulations compliance obligations for Cayman/BVI fund entities"
+  category: "cross_border_fund"
+  steps:
+    - name: "Search economic substance rules"
+      description: "Search for Cayman/BVI Economic Substance Regulations requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate ES compliance"
+      description: "Generate economic substance compliance path matrix and filing template"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析开曼/BVI基金相关实体在经济实质法（Economic Substance Regulations）下的合规义务：
+
+          涉及实体：
+          - 开曼ELP（豁免有限合伙，基金实体）
+          - 开曼GP公司
+          - 开曼SPC（独立投资组合公司，如适用）
+          - BVI公司（如作为平行基金载体）
+
+          分析框架：
+
+          1. ES法规适用性判断：
+             - 每个实体是否属于"相关实体"（Relevant Entity）
+             - 是否从事"相关活动"（Relevant Activity）
+             - 基金管理活动（Fund Management Business）的定义与范围
+
+          2. 合规义务分析：
+             - 对从事基金管理活动的实体：
+               * 在开曼/BVI的"核心收入产生活动"（CIGA）要求
+               * 人员配置要求（适格员工数量）
+               * 物理存在要求（办公场所）
+               * 支出要求（在开曼/BVI的运营支出）
+               * 指导与管理要求（董事会会议）
+
+             - 对豁免实体：
+               * 哪些实体可以主张豁免（如基金实体本身通常不从事相关活动）
+               * 豁免申报义务
+
+          3. 合规策略选择：
+             - 策略A：在开曼/BVI建立实质性运营（招聘员工、租赁办公室）
+             - 策略B：将管理活动外包给开曼/BVI的持牌管理人
+             - 策略C：利用豁免条款（证明实体不从事相关活动）
+             - 各策略的成本与风险对比
+
+          4. 申报义务：
+             - 年度ES申报时间与内容
+             - 违规处罚
+
+          请输出合规路径矩阵 + 年度申报模板。
+
+- id: "00000000-0000-0000-0000-000000000e12"
+  name: "FATCA/CRS 合规与LP税务信息管理"
+  description: "Compile FATCA/CRS compliance and LP tax information management plan"
+  category: "cross_border_fund"
+  steps:
+    - name: "Search FATCA/CRS rules"
+      description: "Search for FATCA/CRS reporting requirements for funds"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate FATCA/CRS plan"
+      description: "Generate FATCA/CRS compliance plan and LP tax questionnaire"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为基金编制FATCA/CRS合规与LP税务信息管理方案：
+
+          基金信息：
+          - 基金注册地：【开曼/中国/香港】
+          - 管理人注册地：【中国/香港/开曼】
+          - LP构成：【中国LP+境外LP】
+          - 基金GIIN/注册状态：【待确定】
+
+          合规方案：
+
+          一、FATCA合规（美国海外账户税收合规法）
+          1. 基金的FATCA身份认定：
+             - 是否为"外国金融机构"（FFI）
+             - 适用哪种合规路径（Participating FFI / Reporting Model 1 FFI / Reporting Model 2 FFI / Exempt Beneficial Owner / Deemed Compliant FFI）
+             - GIIN注册流程
+
+          2. LP尽职调查与分类：
+             - 美国LP vs. 非美国LP的识别
+             - US Indicia的筛查规则
+             - WP/WT exemption的处理
+
+          3. 申报义务：
+             - 申报内容（账户余额、收入、付款信息）
+             - 申报时间（年度）
+             - 申报路径（开曼→IRS / 通过IGA）
+
+          二、CRS合规（统一报告标准）
+          1. 基金的CRS身份认定：
+             - 是否为"报告金融机构"（Reporting Financial Institution）
+             - 参与CRS的法域确定（开曼为参与法域）
+
+          2. LP尽职调查与分类：
+             - LP的税务居民身份确认
+             - 自证声明（Self-Certification）的收集与验证
+             - 可报告账户的识别
+
+          3. 申报义务：
+             - 申报内容（账户余额、收入、付款信息）
+             - 申报时间（年度）
+             - 申报路径（开曼→开曼DITC→CRS交换机制）
+
+          三、中国LP的特殊税务问题
+          1. 基金收益分配的中国个人所得税/企业所得税处理
+          2. 税收协定优惠的适用条件
+          3. 境外所得的纳税申报义务
+          4. 基金层面的税务代扣义务（如有）
+
+          四、LP税务信息收集与管理
+          1. LP税务问卷模板（FATCA+CRS合一版）
+          2. 自证声明模板
+          3. 税务信息更新机制（年度更新触发条件）
+          4. 税务信息保密与数据保护
+
+          请输出合规方案 + LP税务问卷模板 + 申报时间线日历。
+
+- id: "00000000-0000-0000-0000-000000000e13"
+  name: "基金跨境投资的外商投资与外汇合规"
+  description: "Analyze foreign investment and foreign exchange compliance for cross-border fund investment"
+  category: "cross_border_fund"
+  steps:
+    - name: "Search FDI and ODI rules"
+      description: "Search for foreign investment negative list and ODI approval requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate cross-border compliance"
+      description: "Generate compliance decision tree and process timelines"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析基金跨境投资涉及的外商投资与外汇合规问题：
+
+          投资场景：
+          - 美元基金投资中国境内项目
+          - 人民币基金投资境外项目（通过ODI）
+          - 双币基金的投资路径选择
+
+          一、美元基金投资境内项目
+          1. 外商投资准入限制：
+             - 《外商投资准入负面清单》2024版行业限制分析
+             - 特殊管理措施行业的投资路径（VIE架构是否可行）
+             - CFIUS/FDI审查的交互影响
+
+          2. 投资方式选择：
+             - 直接投资境内公司（内资转外商投资企业）
+             - 投资红筹架构（境外持股，间接投资）
+             - 通过QFLP通道投资
+             - 各方式的设立流程、时间线、税务成本对比
+
+          3. 外汇管理：
+             - FDI外汇登记流程
+             - 资本金结汇规则（意愿结汇/支付结汇）
+             - 利润汇回路径与税务影响
+             - 退出资金汇出路径（股权转让/减资/清算）
+
+          二、人民币基金投资境外项目
+          1. ODI审批/备案流程：
+             - 发改委/商务部/外汇管理局的ODI备案/核准
+             - 所需材料清单与时间线
+             - 大额投资（3亿美元以上）的特殊审批要求
+
+          2. 投资架构设计：
+             - 直接投资 vs. 通过SPV投资
+             - SPV设立地选择（香港/新加坡/开曼/BVI）的税务效率分析
+
+          3. 利润汇回与外汇管理：
+             - 利润汇回路径
+             - 税收协定优惠的适用
+
+          请输出合规路径决策树 + 各场景的流程时间线 + 税务成本对比。
+
+- id: "00000000-0000-0000-0000-000000000e14"
+  name: "基金产品变更备案与重大事项报告"
+  description: "Prepare fund product change filing and material event reporting to AMAC"
+  category: "fund_filing"
+  steps:
+    - name: "Search change filing rules"
+      description: "Search for AMAC product change filing and material event reporting requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate change filing"
+      description: "Generate change filing materials framework and material event report template"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助准备基金产品变更备案和重大事项临时报告：
+
+          场景选择（按实际情况勾选）：
+          A. 基金规模变更（扩募/减募）
+          B. 投资范围变更
+          C. 基金期限变更（延长期决议）
+          D. GP/管理人变更
+          E. 关键人事件
+          F. 基金清算/注销
+          G. 其他重大事项（诉讼、监管处罚、LP违约等）
+
+          一、产品变更备案（AMAC）
+          针对场景【A/B/C/D/E/F】，请梳理以下内容：
+
+          1. 备案触发条件：
+             - 哪些变更需要主动向AMAC备案
+             - 哪些变更仅需在下次定期报告中更新
+             - 备案的时间要求（变更后XX个工作日内）
+
+          2. 备案材料清单：
+             - 变更说明/申请报告
+             - 变更相关的决议文件（LP决议/LPAC决议/GP决议）
+             - 变更后的LPA/合同修订版
+             - LP知情/同意的证明文件
+             - 法律意见书（哪些变更需要律师出具法律意见书）
+
+          3. AMBERS系统操作步骤：
+             - 变更备案的填报路径
+             - 常见退回原因及应对
+             - 补正时限与流程
+
+          4. 变更对基金存续状态的影响：
+             - 变更是否影响基金的"存续运作"状态
+             - 变更是否触发管理人异常公示
+
+          二、重大事项临时报告
+          针对场景【E/G】，请起草重大事项临时报告：
+
+          1. 报告内容框架：
+             - 事项概述（发生时间、涉及主体、事项性质）
+             - 对基金的影响评估（财务影响、运作影响、LP利益影响）
+             - 已采取/拟采取的应对措施
+             - LP权利提示（如LP因此享有解散权/退出权）
+
+          2. 报送要求：
+             - 向AMAC报送的时间要求（重大事项发生后XX个工作日内）
+             - 向LP披露的时间要求（LPA约定）
+             - 报送方式（AMBERS系统/书面报告）
+
+          3. 专项法律意见书（如需）：
+             - 事项的法律定性
+             - 对基金合规的影响分析
+             - 对LP权利的影响分析
+             - 应对建议
+
+          请输出变更备案全套材料框架 + 重大事项临时报告模板 + AMBERS操作指引。
+
+- id: "00000000-0000-0000-0000-000000000e15"
+  name: "管理人年度信息更新与自查"
+  description: "Prepare fund manager annual information update and compliance self-inspection"
+  category: "fund_filing"
+  steps:
+    - name: "Search manager update rules"
+      description: "Search for AMAC manager annual information update and self-inspection requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate update and self-check"
+      description: "Generate manager information update checklist and compliance self-inspection report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助准备私募基金管理人的年度信息更新与合规自查：
+
+          管理人信息：
+          - 管理人名称：【XX资本管理有限公司】
+          - 管理人编码：【XXXXXX】
+          - 管理人类型：【私募股权/创投/证券/混合】
+          - 管理规模：【XX亿】
+          - 实控人：【XX】
+          - 高管团队：【XX人】
+
+          一、管理人年度信息更新（AMAC）
+          请梳理以下更新事项：
+
+          1. 必须更新的事项清单：
+             - 股东/合伙人信息变动（新引入/退出/持股比例变化）
+             - 实际控制人变动（穿透认定是否发生变化）
+             - 高管人员变动（法定代表人、合规风控负责人、基金经理等）
+             - 注册资本/实缴资本变动
+             - 办公地址变动
+             - 管理规模更新（在管基金数量和规模）
+             - 从业人员数量变动
+             - 分支机构变动
+
+          2. 更新时间要求：
+             - 各类信息变动的报送时限（变动后5个工作日内/年度更新时一并报送）
+             - AMBERS系统的更新操作路径
+
+          3. 高管变动的特殊备案：
+             - 新任高管的资质审查要点
+             - 高管变动是否需要出具专项法律意见书
+             - 离任高管的备案要求
+
+          二、管理人年度合规自查
+          请按照AMAC最新自律规则，编制管理人合规自查报告框架：
+
+          1. 自查维度清单：
+             - 基本运营合规：
+               * 实缴资本是否满足最低要求
+               * 是否存在冲突业务（民间借贷、担保、保理、小额贷款等）
+               * 是否存在异地经营未备案
+               * 是否存在办公场所不独立
+             - 从业人员合规：
+               * 高管是否具备任职资质
+               * 从业人员是否全员登记
+               * 是否存在兼职/挂靠
+               * 是否存在从业人员投资未报备
+             - 基金管理合规：
+               * 在管基金是否全部备案
+               * 是否存在未备案产品
+               * 基金投资是否超出备案范围
+               * 是否存在资金池运作
+               * 是否存在期限错配
+               * 是否存在自融
+               * 是否存在关联交易未披露
+             - 信息披露合规：
+               * 是否按期向LP披露信息
+               * 是否按期向AMAC报送定期报告
+               * 重大事项是否及时报告
+             - 风控内控合规：
+               * 风控制度是否有效执行
+               * 利益冲突防范是否到位
+               * 适当性管理是否合规
+               * 募集行为是否合规
+
+          2. 自查发现问题的整改方案：
+             - 对每个自查发现的问题，标注风险等级（高/中/低）
+             - 提出整改措施和整改时限
+             - 是否需要向AMAC主动报告
+
+          3. 自查报告输出格式：
+             - 按AMAC要求的自查报告格式编制
+
+          请输出管理人信息更新清单 + 合规自查报告框架 + 常见自查问题整改对照表。
+
+- id: "00000000-0000-0000-0000-000000000e16"
+  name: "开曼/CIMA年度合规与境外基金协会披露"
+  description: "Prepare offshore fund annual compliance filing and association disclosure (CIMA/SFC/BVI/FATCA/CRS)"
+  category: "fund_filing"
+  steps:
+    - name: "Search offshore filing rules"
+      description: "Search for CIMA/SFC/BVI annual compliance and filing requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate offshore filing"
+      description: "Generate annual compliance calendar and filing comparison checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助准备境外基金的年度合规报送与协会披露：
+
+          基金信息：
+          - 基金注册地：【开曼/BVI/香港】
+          - 基金类型：【开曼ELP/BVI公司/香港OFC】
+          - 注册/登记机构：【CIMA/BVI FSC/SFC】
+          - 管理人注册地：【香港/开曼/新加坡】
+          - 报告年度：【20XX年度】
+
+          一、开曼CIMA年度合规报送
+          1. 私募基金年度审计与报送：
+             - CIMA对私募基金（Private Fund）的年度审计要求：
+               * 审计报告提交截止日期（通常为财务年度结束后6个月内）
+               * 审计师资质要求（CIMA认可审计师清单）
+               * 审计报告必备内容
+             - 私募基金年度报表报送：
+               * 年度报表内容清单（Fund Annual Return）
+               * 报送时间与方式
+               * 未报送/迟报送的处罚（罚款标准）
+
+          2. CIMA注册管理人年度合规：
+             - 管理人的年度审计要求
+             - 管理人的年度合规报告
+             - 管理人信息更新（董事变动、股权变动等）
+
+          3. 经济实质法年度申报：
+             - ES申报截止日期（每年12月31日前）
+             - 申报内容（相关活动分类、CIGA情况、支出等）
+             - 豁免实体的简化申报要求
+
+          二、香港SFC年度合规报送（如管理人在港）
+          1. Type 9牌照年度合规：
+             - 年度审计与报送
+             - 管理人信息更新
+             - 财务资源合规证明
+
+          2. 基金年度报告（如为香港OFC/公募基金）：
+             - SFC规定的基金年度报告内容
+             - 报送时间与方式
+
+          三、BVI FSC年度合规（如适用）
+          1. BVI基金的年度审计要求
+          2. BVI经济实质法申报
+          3. BVI公司年度登记费缴纳
+
+          四、FATCA/CRS年度申报
+          1. FATCA年度申报：
+             - 申报截止日期
+             - 申报内容（账户数量、余额、收入等汇总）
+             - 申报路径（开曼DITC→IRS/通过IGA）
+
+          2. CRS年度申报：
+             - 申报截止日期
+             - 申报内容（可报告账户数量、余额、收入等）
+             - 申报路径（开曼DITC→CRS自动交换）
+
+          请输出年度合规日历（标注每个报送的截止日期和所需材料）+ 各机构的报送对照清单。
+
+- id: "00000000-0000-0000-0000-000000000e17"
+  name: "基金高频违规类型识别与处罚应对"
+  description: "Identify high-frequency fund violations and draft penalty response plan"
+  category: "fund_disputes"
+  steps:
+    - name: "Search AMAC enforcement cases"
+      description: "Search for AMAC disciplinary cases and enforcement trends in recent years"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate violation response"
+      description: "Generate violation red-black list and penalty response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请梳理基金领域的高频违规类型，并为我们的基金/管理人起草违规自查与处罚应对方案：
+
+          基金/管理人信息：
+          - 管理人名称：【XX资本管理有限公司】
+          - 在管基金：【X支，规模合计XX亿】
+          - 关注的违规类型：【请根据实际情况勾选】
+
+          请搜索AMAC近3年的纪律处分案例和监管动态，梳理以下高频违规类型：
+
+          一、募集环节违规（最高频）
+          1. 向非合格投资者募集：
+             - 违规表现：未做合格投资者审查/降低门槛/拆分转让
+             - AMAC处分类型：警告/公开谴责/暂停会员资格/注销管理人登记
+             - 自查要点：合格投资者确认程序的完整性
+
+          2. 公开宣传/变相公开宣传：
+             - 违规表现：微信公众号推文/朋友圈推介/论坛路演未经合格投资者确认
+             - 处分案例引用
+             - 自查要点：募集材料的合规审查留痕
+
+          3. 未设募集监督账户/资金挪用：
+             - 违规表现：募集资金未进入监督账户/直接划入管理人账户/挪用至其他项目
+             - 严重后果：可能涉嫌非法集资/诈骗
+             - 自查要点：募集账户设置与资金流转合规
+
+          4. 夸大宣传/虚假陈述：
+             - 违规表现：承诺保本保收益/夸大过往业绩/隐瞒重大风险
+             - 处分案例
+             - 自查要点：推介材料的真实性和合规性
+
+          二、运作环节违规
+          1. 资金池运作：
+             - 违规表现：不同基金之间混同运作/新基金募资偿还旧基金/期限错配
+             - AMAC专项整治重点
+             - 自查要点：各基金资产独立性
+
+          2. 关联交易未披露/未审批：
+             - 违规表现：管理人关联方与基金之间的交易未向LP披露/未经LPAC同意
+             - 处分案例
+             - 自查要点：关联交易识别与披露机制
+
+          3. 投资超出备案范围：
+             - 违规表现：备案为PE基金但实际从事二级市场投资/债权投资/房地产投资
+             - 处分案例
+             - 自查要点：投资范围与备案类型一致性核查
+
+          4. 未按约定估值/虚增NAV：
+             - 违规表现：估值方法不符合指引/选择性估值调整/虚增NAV以维持管理费
+             - 处分案例
+             - 自查要点：估值方法合规性与执行一致性
+
+          三、管理人持续合规违规
+          1. 实控人/高管变动未备案：
+             - 违规表现：股东变更/实控人变更/高管离职未及时向AMAC报告
+             - 处分类型：公示异常/警告
+             - 自查要点：信息更新及时性
+
+          2. 未报送定期报告/年度报告：
+             - 违规表现：未按期报送季度/年度报告
+             - 处分后果：公示异常→6个月未补报→注销风险
+             - 自查要点：报送日历的执行检查
+
+          3. 冲突业务：
+             - 违规表现：管理人同时从事民间借贷/担保/保理/小额贷款等冲突业务
+             - AMAC态度：严格禁止
+             - 自查要点：业务范围审查
+
+          四、处罚应对方案
+          1. 收到AMAC反馈/整改通知的应对流程：
+             - 第一步：限期阅读通知，理解违规定性
+             - 第二步：组织内部自查，确认违规事实
+             - 第三步：制定整改方案（含整改措施、时限、责任人）
+             - 第四步：报送整改报告
+             - 第五步：持续跟进公示状态恢复
+
+          2. 收到纪律处分决定书的应对：
+             - 是否可以申诉/复议
+             - 申诉时限与程序
+             - 处分对管理人业务的影响评估（新基金备案受限/LP信任损失）
+
+          3. 公示异常的恢复流程：
+             - 异常公示的触发条件
+             - 恢复正常公示的条件和流程
+             - 6个月未恢复→注销的应对
+
+          4. 管理人注销的后果与退出方案：
+             - 在管基金的处置方案（管理人更换/基金清算）
+             - LP沟通与安抚策略
+             - 品牌与业务重建方案
+
+          请输出高频违规红黑榜（违规类型×处罚后果×自查要点）+处罚应对流程图+整改报告模板。
+
+- id: "00000000-0000-0000-0000-000000000e18"
+  name: "LP-GP争议处理——LP权利行使与GP抗辩"
+  description: "Draft legal analysis memorandum on LP-GP disputes covering LP rights and GP defenses"
+  category: "fund_disputes"
+  steps:
+    - name: "Search LP-GP dispute cases"
+      description: "Search for LP-GP dispute cases and relevant regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate dispute memo"
+      description: "Generate LP-GP dispute analysis memorandum and evidence checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就基金LP与GP之间的争议起草法律分析备忘录：
+
+          争议背景：
+          - 争议类型：【请勾选：GP未按约定分配收益 / GP管理费收取争议 / GP关联交易未披露 / 关键人事件触发争议 / 基金延期LP不同意 / GP挪用基金资产 / LP要求查阅基金账册被拒绝 / LP主张无过错解散权 / 其他】
+          - 基金名称：【XXX基金】
+          - 争议LP：【XX母基金/XX国资LP/XX家族办公室】
+          - 争议金额/影响：【XX万元 / 基金XX%的LP份额】
+          - LPA关键条款：【请提供或引用LPA关于争议事项的条款编号】
+
+          请搜索相关案例和法规，从以下维度分析：
+
+          一、LP权利的法律基础
+          1. 《合伙企业法》下有限合伙人的法定权利：
+             - 知情权（查阅财务账册的范围和方式）
+             - 监督权（对GP执行合伙事务的监督）
+             - 解散权（特定条件下请求解散合伙企业）
+             - 退出权（LPA约定条件下退伙）
+
+          2. LPA约定的LP权利（基于LPA条款分析）：
+             - LPAC的权利范围（哪些事项需LPAC同意）
+             - LP的否决事项清单
+             - LP的无过错解散权条件
+             - LP的知情权增强条款（如Side Letter约定）
+
+          3. AMAC规则下的LP保护：
+             - 信息披露义务对LP知情权的支撑
+             - 合规制度对LP监督权的支撑
+
+          二、GP的法定与约定义务
+          1. GP的核心义务清单：
+             - 勤勉尽责义务
+             - 诚实信用义务
+             - 公平对待义务（多基金之间）
+             - 忠诚义务（关联交易披露与避免利益冲突）
+             - 信息披露义务
+
+          2. GP的抗辩要点：
+             - 商业判断原则的适用（投资决策属于GP的商业判断）
+             - LPAC同意的抗辩效力
+             - LPA免责条款的效力边界
+             - 不可抗力/市场变化导致损失的抗辩
+
+          三、争议解决路径分析
+          1. 协商解决：
+             - LPAC会议讨论
+             - GP与争议LP的直接谈判
+             - 可能的和解方案（信息权增强/管理费调整/退出安排）
+
+          2. 仲裁/诉讼：
+             - LPA约定的争议解决方式（仲裁条款分析——仲裁机构、仲裁地、仲裁规则）
+             - 仲裁/诉讼的策略考量：
+               * LP立场：主张GP违约/违反忠实义务/请求解散/请求赔偿
+               * GP立场：商业判断抗辩/LPA免责/LP已知情同意
+             - 证据组织要点（邮件往来、LPAC决议、基金报告、财务记录）
+             - 保全策略（基金账户冻结/GP份额冻结的风险评估）
+
+          3. 行政途径：
+             - 向AMAC投诉的适用场景与效果
+             - AMAC的纪律处分对争议的影响
+
+          四、风险与方案评估
+          请对各解决路径的风险、成本、时间线、成功率进行评估，并给出推荐方案。
+
+          输出为争议分析备忘录 + 证据组织清单 + 谈判策略要点。
+
+- id: "00000000-0000-0000-0000-000000000e19"
+  name: "投资者索赔与群体性争议应对"
+  description: "Draft response plan for investor (LP) claims and group disputes"
+  category: "fund_disputes"
+  steps:
+    - name: "Search investor claim cases"
+      description: "Search for AMAC disciplinary cases and judicial precedents on investor claims"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate claim response"
+      description: "Generate investor claim response plan and settlement agreement framework"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就基金投资者（LP）的索赔诉求起草应对方案：
+
+          索赔背景：
+          - 索赔LP：【单个LP/多个LP联合/全体LP】
+          - 索赔事由：【基金亏损超预期 / GP未按约定分配 / 基金未按期退出 / GP挪用 / 信息披露不充分 / 其他】
+          - 索赔诉求：【返还投资本金 / 赔偿损失 / 解散基金 / 更换GP / 查阅基金全部资料 / 其他】
+          - 索赔金额：【XX万元】
+          - 是否已委托律师：【是/否】
+          - 是否已提起仲裁/诉讼：【是/否】
+
+          请搜索AMAC纪律处分案例和相关司法判例，从以下维度分析应对方案：
+
+          一、索赔诉求的法律分析
+          1. 每项索赔诉求的法律依据审查：
+             - 是否有《合伙企业法》/LPA/AMAC规则的支持
+             - GP的抗辩空间有多大
+             - 索赔金额的计算依据是否合理
+
+          2. 基金亏损 vs. GP责任的区分：
+             - 正常投资损失（市场风险）vs. GP过错导致的损失
+             - 商业判断原则对GP投资决策的保护边界
+             - LP签署的风险揭示书对索赔的影响
+
+          二、群体性争议的特殊应对
+          1. 多LP联合索赔的组织特征：
+             - LP之间的利益是否一致（国资LP vs. 民营LP诉求可能不同）
+             - 是否有牵头LP/代表LP
+             - LP是否在寻求媒体/监管渠道施加压力
+
+          2. 群体性争议的分层应对策略：
+             - 对核心索赔LP：重点谈判，争取和解
+             - 对跟随索赔LP：观察策略，利用核心LP谈判结果辐射
+             - 对观望LP：主动沟通，防止被裹挟加入索赔
+
+          3. 舆情与监管风险管控：
+             - 索赔是否可能被媒体报道
+             - LP是否已经/可能向AMAC投诉
+             - 双轨应对策略（法律应对+舆情管控+监管沟通）
+
+          三、和解方案设计
+          1. 可选和解方案：
+             - 信息权增强（向索赔LP提供更详细的基金运营信息）
+             - 管理费调整/退还部分管理费
+             - 退出安排（按NAV/NAV折扣退出/实物分配）
+             - 利益分配机制调整（提高门槛收益率/降低carried interest）
+             - GP治理承诺（增设LPAC席位/关联交易审批强化）
+             - 赔偿方案（一次性赔偿/分期赔偿/以未来收益抵扣）
+
+          2. 和解协议起草要点：
+             - 和解范围（是否包含全部已知和未知索赔）
+             - 和解条件（保密义务/不再投诉/不再诉讼）
+             - 和解对其他LP的影响（是否需要LPAC知情/MFN条款触发）
+             - 和解的法律效力确认
+
+          四、诉讼/仲裁应对（如和解失败）
+          1. GP的答辩策略：
+             - 商业判断抗辩
+             - LP已签署风险揭示书
+             - LPA免责条款
+             - 市场不可控因素
+          2. 反索赔策略（如适用）：
+             - LP违约（未按时缴款/违反保密义务）
+          3. 证据准备清单
+
+          请输出索赔应对方案 + 和解协议模板框架 + 答辩要点清单。
+
+- id: "00000000-0000-0000-0000-000000000e1a"
+  name: "基金监管调查/检查应对"
+  description: "Draft response plan for fund regulatory investigation or inspection"
+  category: "fund_disputes"
+  steps:
+    - name: "Search inspection focus"
+      description: "Search for AMAC/CSRC inspection focus areas and common penalties"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate inspection response"
+      description: "Generate regulatory inspection response manual and material checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就基金/管理人面临监管调查或检查起草应对方案：
+
+          调查/检查背景：
+          - 调查/检查主体：【AMAC / 证监局 / 地方金融监管局 / 其他】
+          - 调查/检查原因：【日常抽查 / LP投诉触发 / 异常公示触发 / 媒体报道触发 / 其他基金违规牵连 / 专项检查】
+          - 调查/检查范围：【管理人整体合规 / 特定基金运作 / 募集行为 / 关联交易 / 其他】
+          - 是否已收到正式通知：【是/否，收到日期：【XX】】
+          - 要求提交材料的时间：【XX日内】
+
+          请搜索近年AMAC/证监局对私募基金检查的重点和常见处罚，编制应对方案：
+
+          一、监管检查的重点领域预判
+          1. AMAC日常检查重点（近年趋势）：
+             - 合格投资者审查底稿
+             - 募集行为合规（推介材料、路演记录）
+             - 基金资产独立性（是否资金池）
+             - 关联交易识别与披露
+             - 信息披露及时性与完整性
+             - 管理人内控制度执行情况
+             - 冲突业务排查
+
+          2. 证监局/地方金融监管局检查重点：
+             - 是否涉嫌非法集资
+             - 是否超范围经营
+             - 是否有保本保收益承诺
+             - 资金流向追踪
+
+          二、材料准备与自查
+          1. 监管要求提交的材料清单预判：
+             - 管理人基本信息与历史变更记录
+             - 在管基金清单与基本信息
+             - 募集过程材料（合格投资者确认表、风险揭示书签署记录）
+             - 基金合同/LPA
+             - 投资决策记录（投委会决议、尽调报告）
+             - 基金财务报表与审计报告
+             - 信息披露记录（向LP的报告、向AMAC的报送）
+             - 内控制度文本与执行记录
+             - 关联交易清单与审批记录
+             - 从业人员登记信息
+
+          2. 自查要点（对照检查重点）：
+             - 逐项自查，发现问题的预整改
+             - 合规解释准备（对历史瑕疵的解释口径）
+
+          三、检查配合策略
+          1. 检查流程了解：
+             - AMAC现场检查/非现场检查的一般流程
+             - 检查人员可能提出的问题预判
+             - 管理人配合义务的范围
+
+          2. 配合策略：
+             - 指定专人对接检查组
+             - 材料提供的节奏控制（先提供基本材料，补充材料分批提供）
+             - 口头回答的策略（如实陈述但注意口径一致性）
+             - 对无法提供材料的合规解释
+
+          3. 检查期间的注意事项：
+             - 不隐瞒/不伪造材料
+             - 对自查发现的问题主动说明整改方案
+             - 保密义务（不向LP/外界透露检查细节，除非有披露义务）
+
+          四、检查结果应对
+          1. 收到整改通知的应对：
+             - 整改方案制定与报送
+             - 整改时限内的整改执行
+             - 整改完成报告
+
+          2. 收到纪律处分/行政处罚的应对：
+             - 处分类型与影响评估
+             - 申诉/行政复议路径（如适用）
+             - 处分对业务的影响管控
+
+          请输出监管检查应对手册 + 材料准备清单 + 自查对照表 + 检查常见问题预判与口径准备。
+
+- id: "00000000-0000-0000-0000-000000000e1b"
+  name: "基金清算争议与GP责任追究"
+  description: "Draft legal memorandum on liquidation disputes and GP liability pursuit"
+  category: "fund_disputes"
+  steps:
+    - name: "Search liquidation dispute cases"
+      description: "Search for judicial and arbitration cases on fund liquidation disputes"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate liquidation dispute memo"
+      description: "Generate liquidation dispute analysis memorandum and liability decision tree"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就基金清算过程中LP对GP的责任追究争议起草法律备忘录：
+
+          争议背景：
+          - 基金名称：【XXX基金】
+          - 基金当前状态：【即将到期/已到期进入清算/清算进行中】
+          - 基金整体业绩：【亏损/微盈/未达门槛收益】
+          - LP诉求：【追究GP管理失职责任 / 要求GP返还全部/部分业绩报酬（Clawback） / 主张GP赔偿损失 / 其他】
+          - GP立场：【投资亏损属正常市场风险 / 已勤勉尽责 / LPA免责条款保护 / 其他】
+
+          请搜索基金清算纠纷的司法判例和仲裁案例，从以下维度分析：
+
+          一、Clawback（回拨机制）的执行争议
+          1. Clawback的法律基础：
+             - LPA约定的Clawback条款效力分析
+             - Clawback的计算方法争议（whole fund vs. deal-by-deal下的不同计算）
+             - Clawback的执行障碍（GP已分配收益无法追回/GP主体已注销/GP资产不足）
+
+          2. LP追回业绩报酬的法律路径：
+             - 按LPA条款主张Clawback
+             - 超出LPA约定主张GP欺诈/重大过失
+             - 穿透追索GP股东/实控人个人资产的条件
+
+          二、GP管理失职的责任追究
+          1. GP失职的认定标准：
+             - 勤勉尽责义务的司法认定标准（搜索判例）
+             - 投资决策失职 vs. 商业判断失误的区分
+             - 内控缺失导致损失的责任认定
+             - 未按投资限制投资的责任认定
+
+          2. LP可主张的赔偿范围：
+             - 直接损失（因GP失职导致的额外损失）
+             - 间接损失（基金亏损中GP失职贡献的部分）
+             - 管理费退还是否可主张
+             - LP投资机会损失的赔偿可行性
+
+          三、清算分配争议
+          1. 瀑布机制执行争议：
+             - 门槛收益率计算争议（复利/单利、起算日期争议）
+             - Catch-up计算争议
+             - 管理费抵消计算争议
+             - Clawback与最终分配的衔接
+
+          2. 实物分配争议：
+             - 未退出项目的实物分配估值争议
+             - LP拒绝接受实物分配的处理
+             - 实物分配后的GP持续义务
+
+          3. 清算费用争议：
+             - 清算费用的范围与合理性
+             - 清算人费用由谁承担（GP/LP/基金）
+
+          四、GP退出与责任限制
+          1. GP清算中的责任限制条款效力：
+             - LPA中GP责任限制条款的司法审查
+             - 责任限制不覆盖的情形（欺诈/故意违约/重大过失）
+
+          2. GP解散/注销后LP的追索路径：
+             - GP为有限合伙时——穿透GP的GP追索
+             - GP为公司时——股东/实控人追索条件
+             - GP已注销时——清算未了债务的处理
+
+          请输出争议分析备忘录 + Clawback计算争议对照表 + GP责任追究路径决策树。

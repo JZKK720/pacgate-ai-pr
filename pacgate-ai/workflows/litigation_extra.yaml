@@ -1,0 +1,2546 @@
+# Litigation extra workflows
+# Derived from: 诉讼律师实用Prompts指南.md
+# Covers templates NOT already present in litigation.yaml (49 workflows).
+# IDs: 00000000-0000-0000-0000-000000000b01 .. 00000000-0000-0000-0000-000000000b31
+
+- id: "00000000-0000-0000-0000-000000000b01"
+  name: "案件初步评估"
+  description: "Comprehensive initial case assessment with facts, claims, jurisdiction, parties, and risk matrix"
+  category: "litigation"
+  steps:
+    - name: "Search legal basis"
+      description: "Search for applicable causes of action and legal authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate assessment"
+      description: "Generate initial case assessment report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件材料，进行全面的案件初步评估：
+
+          【上传/粘贴：起诉状、合同文本、往来函件、已有证据清单等】
+
+          评估框架：
+          1. 案件事实梳理：
+             - 按时间线整理关键事实
+             - 识别核心争议焦点（不超过3-5个）
+             - 标注事实争议 vs. 法律争议
+
+          2. 请求权基础分析：
+             - 列出所有可能的请求权基础（违约/侵权/不当得利/缔约过失/无因管理等）
+             - 各请求权的构成要件逐一分析
+             - 请求权竞合时的选择策略（哪个更有利于当事人）
+             - 诉讼时效审查
+
+          3. 管辖分析：
+             - 级别管辖（基层/中级/高级法院）
+             - 地域管辖（合同履行地/被告住所地/不动产所在地等）
+             - 协议管辖条款的有效性审查
+             - 是否存在主管问题（仲裁 vs. 诉讼）
+
+          4. 当事人分析：
+             - 原告/被告主体资格
+             - 是否需要追加当事人（必要共同诉讼/第三人）
+             - 诉讼地位选择（本诉/反诉/第三人撤销之诉）
+
+          5. 风险评估矩阵：
+             - 每个争议焦点的胜诉概率（高/中/低）
+             - 判决金额预估范围
+             - 执行可行性预判
+             - 时间与成本预估
+
+          6. 策略建议：
+             - 起诉/应诉的总体策略方向
+             - 是否建议先行调解/谈判
+             - 是否需要申请财产保全/证据保全
+             - 需要补充收集的证据清单
+
+          输出格式：案件评估报告（Word文档），含风险评估矩阵表和时间线图。
+
+- id: "00000000-0000-0000-0000-000000000b02"
+  name: "代理意见/代理词起草"
+  description: "Draft a structured agency opinion/advocacy brief organized by issue with evidence and legal authority"
+  category: "litigation"
+  steps:
+    - name: "Search supporting precedents"
+      description: "Search for supporting legal rules and similar-case reasoning"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate advocacy brief"
+      description: "Generate a structured agency opinion/advocacy brief"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件材料和庭审情况，起草一份代理词：
+
+          案件信息：
+          - 案号：【XX】
+          - 当事人：【我方当事人】
+          - 案由：【如：买卖合同纠纷】
+          - 我方身份：【原告/被告】
+          - 庭审日期：【XX】
+
+          【上传/粘贴：起诉状、答辩状、证据清单、庭审笔录要点、相关法律条文】
+
+          代理词结构：
+          1. 开头：
+             - 致法院称呼
+             - 简述代理人身份和授权范围
+
+          2. 事实概述（简明扼要）：
+             - 一段话概括案件核心事实
+             - 点明核心争议焦点
+
+          3. 代理意见（分点论述，每点为一个争议焦点）：
+             每个争议焦点的论述结构：
+             a. 我方观点（结论先行）
+             b. 事实依据（引用证据，如"见证据X第X页"）
+             c. 法律依据（引用法条+司法解释+指导性案例裁判规则）
+             d. 对方观点的驳斥
+             e. 小结
+
+          4. 结论：
+             - 重申诉讼请求
+             - 请求法院支持
+
+          5. 补充意见（如有）：
+             - 庭审中对方新提出观点的回应
+             - 庭后补充提交的证据说明
+
+          代理词要求：
+          - 论证逻辑严密，层次分明
+          - 法条引用准确（民法典/司法解释/部门法）
+          - 类案参考（引用指导性案例或典型案例裁判规则）
+          - 语言规范、专业、有力
+          - 篇幅控制在【3000-5000字】
+
+          请使用华宇元典数据库检索支持我方观点的类案裁判规则。
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000b03"
+  name: "证据清单编制"
+  description: "Compile a complete evidence list grouped by proof purpose with admissibility and probative analysis"
+  category: "litigation"
+  steps:
+    - name: "Read evidence documents"
+      description: "Read evidence materials for the case"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate evidence list"
+      description: "Generate a complete evidence list with probative analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件材料，编制一份完整的证据清单：
+
+          案件信息：
+          - 案由：【如：建设工程施工合同纠纷】
+          - 我方身份：【原告/被告】
+          - 诉讼请求：【简述】
+
+          【上传/粘贴：所有已有证据材料目录】
+
+          证据清单要求：
+
+          1. 按证明目的分组编排：
+             第一组：主体资格证据
+             第二组：合同关系成立证据
+             第三组：合同履行证据
+             第四组：违约事实证据
+             第五组：损失证据
+             第六组：【其他】
+
+          2. 每项证据包含：
+             | 序号 | 证据名称 | 证据形式（原件/复印件/电子数据） | 证明目的 | 证明对象 | 页码/出处 | 备注 |
+
+          3. 证据形式合规性审查：
+             - 原件 vs. 复印件的举证要求
+             - 电子数据的存证要求（区块链存证/公证/时间戳）
+             - 域外证据的公证认证要求
+             - 外文证据的翻译要求
+
+          4. 证明力分析：
+             - 直接证据 vs. 间接证据
+             - 本证 vs. 反证
+             - 每项证据的证明力强弱预判
+             - 证据链条的完整性评估
+
+          5. 证据薄弱点与补强建议：
+             - 哪些事实缺乏充分证据
+             - 建议补充收集的证据
+             - 是否需要申请法院调查收集证据
+             - 是否需要申请鉴定/勘验
+
+          输出为表格（docx文档），含证据清单和证明力分析。
+
+- id: "00000000-0000-0000-0000-000000000b04"
+  name: "证据质证意见"
+  description: "Draft cross-examination opinions on each opposing evidence item across authenticity, legality, relevance, and probative value"
+  category: "litigation"
+  steps:
+    - name: "Read opposing evidence"
+      description: "Read the opposing party's evidence list and materials"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate cross-examination opinions"
+      description: "Generate itemized cross-examination opinions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下对方提交的证据清单和证据材料，起草质证意见：
+
+          【上传/粘贴：对方证据清单及证据材料】
+
+          质证框架（对每项证据逐一质证）：
+
+          每项证据的质证维度：
+          1. 真实性：
+             - 原件/复印件核对情况
+             - 电子数据的真实性（存证方式、哈希值校验）
+             - 是否申请鉴定真伪
+             质证意见：认可真实性 / 不认可真实性 / 真实性无法确认
+
+          2. 合法性：
+             - 证据取得方式是否合法
+             - 是否侵犯他人合法权益（如偷录偷拍）
+             - 是否违反法律禁止性规定
+             质证意见：认可合法性 / 不认可合法性
+
+          3. 关联性：
+             - 与本案争议焦点的关联程度
+             - 证明对象的范围
+             质证意见：认可关联性 / 不认可关联性（说明理由）
+
+          4. 证明力：
+             - 证据的证明力大小
+             - 是否存在矛盾或瑕疵
+             - 与其他证据的印证关系
+             质证意见：证明力强 / 证明力弱 / 无证明力
+
+          5. 综合质证意见：
+             - 对该证据的总体意见（认可 / 部分认可 / 不认可）
+             - 不认可的具体理由
+             - 需要进一步说明的事项
+
+          输出格式：逐项证据质证意见表 + 综合质证意见
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000b05"
+  name: "电子证据审查"
+  description: "Review legality and probative value of electronic evidence with authenticity, legality, and relevance analysis"
+  category: "litigation"
+  steps:
+    - name: "Search electronic evidence rules"
+      description: "Search legal basis for electronic evidence admissibility"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate electronic evidence review"
+      description: "Generate electronic evidence review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审查以下电子证据的合法性和证明力：
+
+          电子证据信息：
+          - 证据类型：【微信聊天记录 / 电子邮件 / 短信 / 区块链存证 / 网页截图 / 系统日志】
+          - 取证方式：【公证 / 区块链存证平台 / 截屏 / 原始设备展示】
+          - 证据内容概述：【简述】
+
+          审查维度：
+
+          1. 真实性审查：
+             - 电子数据的生成、存储、传输环节是否可靠
+             - 是否经过篡改（哈希值校验/数字签名验证）
+             - 存证平台的资质和可信度
+             - 公证保全的规范性（《电子数据公证保管规范》）
+
+          2. 合法性审查：
+             - 取证主体是否合法
+             - 取证过程是否侵犯他人合法权益
+             - 是否属于非法证据排除情形
+             - 参照《最高人民法院关于民事诉讼证据的若干规定》第90-94条
+
+          3. 关联性审查：
+             - 电子数据与待证事实的关联性
+             - 数据内容是否完整（有无断章取义）
+
+          4. 证明力评估：
+             - 电子数据单独定案的可能性
+             - 是否需要其他证据补强
+             - 与其他证据的印证关系
+
+          5. 质证/举证建议：
+             - 如为我方证据：如何最大化证明力
+             - 如为对方证据：质证攻击点
+             - 是否需要申请司法鉴定
+
+          请引用《民事诉讼法》第66条、最高院《关于民事诉讼证据的若干规定》相关条文、
+          《人民法院在线诉讼规则》关于电子证据的规定。
+          使用华宇元典数据库检索相关案例。
+
+- id: "00000000-0000-0000-0000-000000000b06"
+  name: "司法鉴定申请书"
+  description: "Draft a judicial appraisal application with necessity argument and risk contingency analysis"
+  category: "litigation"
+  steps:
+    - name: "Search appraisal rules"
+      description: "Search legal basis for judicial appraisal applications"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate appraisal application"
+      description: "Generate a judicial appraisal application"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件情况，起草一份司法鉴定申请书：
+
+          鉴定事项：【如：对XX合同上"XX"签名的真实性进行鉴定 / 对XX工程造价进行鉴定 / 对XX电子数据的形成时间进行鉴定】
+
+          申请背景：
+          - 案号：【XX】
+          - 申请方：【原告/被告】
+          - 鉴定对象：【简述】
+          - 申请鉴定的理由：【如：对方提交的合同签名疑似伪造 / 工程量存在重大争议】
+
+          申请书结构：
+          1. 申请人与被申请人信息
+          2. 鉴定事项（明确、具体）
+          3. 鉴定目的（与待证事实的关联性）
+          4. 申请鉴定的理由：
+             - 案件涉及专门性问题
+             - 该问题对裁判结果有实质性影响
+             - 除鉴定外无法通过其他方式查明
+          5. 鉴定材料清单：
+             - 拟提交鉴定的检材
+             - 拟提交鉴定的样本
+             - 材料来源说明
+          6. 拟选择的鉴定机构（如适用）
+          7. 鉴定费用承担承诺
+
+          同时请分析：
+          - 鉴定的必要性论证（防止法院以"无必要"驳回）
+          - 鉴定可能的结果及各结果对我方的影响
+          - 鉴定不成（无法得出结论）的风险预案
+
+          引用《民事诉讼法》第79条、最高院《关于民事诉讼证据的若干规定》第30-42条。
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000b07"
+  name: "类案检索报告"
+  description: "Search similar cases and produce a retrieval report with adjudication rules and implications for the case"
+  category: "litigation"
+  steps:
+    - name: "Search similar cases"
+      description: "Search for similar cases and adjudication rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate retrieval report"
+      description: "Generate a similar-case retrieval report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下案件进行类案检索并出具检索报告：
+
+          案件信息：
+          - 案由：【如：股权转让纠纷中的对赌协议效力】
+          - 核心法律问题：【如：投资方与目标公司（而非股东）签订的对赌协议，目标公司未完成减资程序时，投资方能否主张回购】
+          - 我方立场：【投资方/目标公司/原股东】
+
+          检索要求：
+
+          1. 检索范围：
+             - 最高人民法院指导性案例
+             - 最高人民法院公报案例
+             - 最高人民法院裁判文书
+             - 高级人民法院典型案例
+             - 近3年同类案件裁判趋势
+
+          2. 检索维度：
+             - 按"对赌协议效力""目标公司回购""减资程序"等关键词
+             - 按案由"股权转让纠纷""合同纠纷"
+             - 按法院层级（最高院→高院→中院）
+
+          3. 检索结果分析：
+             | 案号 | 审理法院 | 裁判要旨 | 裁判结果 | 与本案的相似点 | 对我方的影响 |
+
+          4. 裁判规则归纳：
+             - 主流裁判观点（多数法院的裁判倾向）
+             - 少数/分歧观点
+             - 裁判规则的演变趋势
+             - 影响裁判结果的关键因素
+
+          5. 对本案的启示：
+             - 类案对我方主张的支持度
+             - 对方可能援引的不利类案
+             - 区分本案与不利类案的策略
+
+          使用华宇元典法律数据库进行检索。
+          输出为类案检索报告（Word文档），附裁判文书原文链接。
+
+- id: "00000000-0000-0000-0000-000000000b08"
+  name: "法律适用分析"
+  description: "Deep legal application analysis of a statute including text, legislative intent, judicial interpretation, and case application"
+  category: "litigation"
+  steps:
+    - name: "Search legal authority"
+      description: "Search statutes, judicial interpretations, and cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate legal analysis"
+      description: "Generate a legal application analysis memo"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下法律问题进行深度的法律适用分析：
+
+          法律问题：【如：民法典第580条"不能实现合同目的"的认定标准——在持续性供货合同中，部分迟延履行是否构成合同目的不能实现】
+
+          分析框架：
+          1. 法条文本分析：
+             - 法条原文及文义解释
+             - 构成要件拆解
+             - 法律后果
+
+          2. 立法背景与目的解释：
+             - 立法沿革（从原《合同法》第94条到《民法典》第563条、580条的变化）
+             - 立法目的
+
+          3. 司法解释：
+             - 最高院相关司法解释条文
+             - 理解与适用中的权威解读
+
+          4. 裁判规则：
+             - 最高院在类似案件中的裁判口径
+             - 各地高院的裁判倾向差异
+             - 典型案例的裁判要旨
+
+          5. 学理观点：
+             - 主流学说
+             - 争议观点
+             - 比较法参考（如适用）
+
+          6. 本案适用分析：
+             - 将法律规则适用于本案事实
+             - 预判法院可能的裁判方向
+             - 我方主张的法律依据和论证策略
+             - 对方可能的反驳及我方应对
+
+          请使用华宇元典数据库检索法条、司法解释和案例。
+          输出为法律分析备忘录。
+
+- id: "00000000-0000-0000-0000-000000000b09"
+  name: "裁判文书分析"
+  description: "Analyze a judgment document to extract adjudication rules and assess its value and quality for the case"
+  category: "litigation"
+  steps:
+    - name: "Read judgment document"
+      description: "Read the judgment document for analysis"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate judgment analysis"
+      description: "Generate a judgment document analysis report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下裁判文书，提炼对本案有价值的裁判规则：
+
+          【上传/粘贴裁判文书全文】
+
+          分析框架：
+          1. 案件基本信息：
+             - 案号、审理法院、裁判日期
+             - 当事人信息（类型化处理，隐去真实名称）
+             - 案由
+
+          2. 争议焦点：
+             - 法院归纳的争议焦点
+             - 与本案争议焦点的对应关系
+
+          3. 裁判要旨：
+             - 法院的核心裁判观点（逐条提炼）
+             - 法律适用逻辑
+             - 关键说理段落
+
+          4. 裁判规则提炼：
+             - 从该案中可以提炼的裁判规则
+             - 该规则的适用条件
+             - 该规则的适用限制
+
+          5. 对本案的价值：
+             - 支持我方主张的裁判观点
+             - 不支持我方主张的裁判观点
+             - 如何区分/援引该案
+
+          6. 裁判文书质量评估：
+             - 说理是否充分
+             - 法律适用是否准确
+             - 是否存在同案不同判的情况
+             - 是否具有上诉/再审的价值（如为不利判决）
+
+          请使用华宇元典数据库交叉验证该案的效力状态（是否被再审改判）。
+          输出为裁判文书分析报告。
+
+- id: "00000000-0000-0000-0000-000000000b0a"
+  name: "法律法规时效性审查"
+  description: "Review the currency and accuracy of applicable laws and judicial interpretations with replacement suggestions"
+  category: "litigation"
+  steps:
+    - name: "Search current legal validity"
+      description: "Search current validity of each cited law and interpretation"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate validity review"
+      description: "Generate a legal validity review table"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审查以下案件中适用的法律法规的时效性和准确性：
+
+          案件适用法规清单：
+          【列出本案拟引用的所有法律法规、司法解释】
+
+          审查维度：
+          1. 法律法规时效性：
+             - 是否已被废止或修改
+             - 是否被新法取代
+             - 施行日期与案件事实发生时间的关系（法的溯及力问题）
+             - 过渡期条款的适用
+
+          2. 司法解释时效性：
+             - 现行有效版本确认
+             - 是否有新的司法解释出台
+             - 旧司法解释与新司法解释的衔接
+
+          3. 地方性法规/规章：
+             - 适用范围确认
+             - 与上位法的一致性
+
+          4. 引用准确性：
+             - 法条编号是否正确（注意民法典施行后的条文编号变化）
+             - 法条内容是否准确
+             - 是否存在引用已失效条文的错误
+
+          5. 替代法规建议：
+             - 如发现已失效法规，提供现行有效的替代法规
+             - 新旧法规的内容差异分析
+
+          特别提醒：
+          - 《民法典》施行后，原《合同法》《物权法》《侵权责任法》等已废止
+          - 注意最高院陆续出台的民法典各编司法解释
+          - 注意2023年修订的《民事诉讼法》条文变化
+
+          使用华宇元典数据库核实每条法规的现行有效性。
+          输出为法规时效性审查表。
+
+- id: "00000000-0000-0000-0000-000000000b0b"
+  name: "庭审方案"
+  description: "Prepare a comprehensive trial plan covering goals, issues, evidence, examination, debate, and settlement strategy"
+  category: "litigation"
+  steps:
+    - name: "Read case materials"
+      description: "Read pleadings, evidence lists, and advocacy drafts"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate trial plan"
+      description: "Generate a comprehensive trial plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件材料，制定一份庭审方案：
+
+          案件信息：
+          - 案号：【XX】
+          - 案由：【XX纠纷】
+          - 我方身份：【原告/被告】
+          - 庭审日期：【XX】
+          - 审理程序：【一审普通程序/简易程序/二审】
+
+          【上传/粘贴：起诉状、答辩状、证据清单、对方证据清单、已提交的代理意见草稿】
+
+          庭审方案结构：
+
+          1. 庭审目标：
+             - 核心目标（如：说服法院支持全部诉请 / 说服法院驳回对方诉请）
+             - 底线目标（如：至少争取到部分诉请支持 / 减少赔偿金额）
+
+          2. 争议焦点预判：
+             - 法院可能归纳的争议焦点（2-5个）
+             - 每个争议焦点的我方核心观点
+             - 每个争议焦点的对方可能观点
+
+          3. 举证质证方案：
+             - 我方证据出示顺序和重点强调
+             - 对方证据的质证要点（逐项）
+             - 可能的补充证据（庭后提交）
+
+          4. 法庭调查阶段发言要点：
+             - 事实补充陈述要点
+             - 对对方事实陈述的回应
+
+          5. 法庭辩论提纲：
+             第一轮辩论：
+             - 核心观点陈述（控制在5-10分钟）
+             - 法律依据和类案参考
+
+             第二轮辩论：
+             - 针对对方观点的反驳
+             - 补充强调关键论点
+
+             第三轮（如有）：
+             - 总结性发言
+
+          6. 可能的法庭提问及应对：
+             - 法官可能提出的问题（预判5-10个）
+             - 每个问题的应对要点
+
+          7. 调解/和解策略：
+             - 是否愿意调解
+             - 调解的底线条件
+             - 调解的谈判策略
+
+          8. 庭审后行动计划：
+             - 代理词提交期限和要点
+             - 补充证据收集计划
+             - 与客户沟通计划
+
+          输出为Word文档，庭审当日携带使用。
+
+- id: "00000000-0000-0000-0000-000000000b0c"
+  name: "交叉询问/发问提纲"
+  description: "Prepare a court examination outline for opposing parties, witnesses, and own witnesses with follow-up strategy"
+  category: "litigation"
+  steps:
+    - name: "Read case materials"
+      description: "Read case facts and evidence for examination design"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate examination outline"
+      description: "Generate a court examination outline"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件情况，准备法庭发问提纲：
+
+          案件信息：【简述案件核心事实和争议】
+          需要发问的对象：
+          1. 对方当事人
+          2. 对方证人（如适用）
+          3. 我方证人（引导性发问）
+
+          发问提纲要求：
+
+          一、对对方当事人的发问：
+          每个问题的设计原则：
+          - 问题目的（确认事实/暴露矛盾/引导承认不利事实/限制抗辩空间）
+          - 预期回答（对方可能的回答：有利/不利/回避）
+          - 追问策略（根据不同回答的后续追问）
+
+          问题清单（按目的分组）：
+          A组：确认对我方有利的事实
+          - Q1: 【问题】
+            - 目的：【确认XX事实】
+            - 预期回答：【对方可能承认/否认】
+            - 追问：【如否认，追问"那您如何解释证据X中的XX内容？"】
+
+          B组：暴露对方陈述的矛盾
+          - Q: 【问题】
+            - 目的：【揭示对方在XX问题上的前后矛盾】
+            - 追问策略：【引用对方先前陈述或证据】
+
+          C组：限制对方抗辩空间
+          - Q: 【问题】
+            - 目的：【让对方承认某个前提，限制其后续抗辩】
+            - 封闭式问题设计（是/否回答）
+
+          二、对对方证人的发问：
+          - 质疑证人可信度的问题
+          - 质疑证言真实性的问题
+          - 暴露证言矛盾的问题
+
+          三、对我方证人的引导性发问：
+          - 帮助证人清晰陈述有利事实
+          - 预先解释可能被对方质疑的问题
+
+          发问技巧提醒：
+          - 避免诱导性提问（对方证人）
+          - 避免复合问题
+          - 准备好异议应对（对方律师可能提出异议）
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000b0d"
+  name: "庭审笔录要点预判"
+  description: "Predict key matters to be recorded at trial including admissions, new evidence, judge questions, and deadlines"
+  category: "litigation"
+  steps:
+    - name: "Read case materials"
+      description: "Read case information for trial record prediction"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate trial record checklist"
+      description: "Generate a trial attention checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请预判本案庭审中需要重点关注的记录事项：
+
+          案件信息：【简述】
+
+          需要法庭记录的关键内容清单：
+          1. 对方当庭自认的事实（需要确认法官记录在案）
+             - 预判对方可能在庭审中自认的事实
+             - 自认后的法律效果（免除了我方举证责任）
+
+          2. 对方变更或补充的诉讼请求/答辩意见
+             - 是否超出举证期限
+             - 是否需要答辩期
+
+          3. 对方提交的新证据
+             - 是否属于逾期举证
+             - 是否属于"新证据"
+             - 我方是否需要质证准备期
+
+          4. 法官庭审中的发问
+             - 法官关注的重点问题（反映裁判倾向）
+             - 法官要求补充查明的事实
+
+          5. 庭审中我方的关键陈述
+             - 确保重要观点被准确记录
+             - 庭后核对笔录的要点清单
+
+          6. 调解环节的记录
+             - 调解方案的内容
+             - 双方的态度
+
+          7. 庭审程序事项
+             - 举证期限截止日
+             - 代理词提交期限
+             - 下次开庭时间（如适用）
+
+          输出为庭审注意事项清单，供律师庭审中参考。
+
+- id: "00000000-0000-0000-0000-000000000b0e"
+  name: "上诉状起草"
+  description: "Draft an appeal petition identifying errors in fact-finding, legal application, and procedure with supporting precedents"
+  category: "litigation"
+  steps:
+    - name: "Search supporting precedents"
+      description: "Search for similar cases supporting the appeal grounds"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate appeal petition"
+      description: "Generate an appeal petition"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下一审判决，起草一份上诉状：
+
+          【上传/粘贴一审判决书全文】
+
+          上诉信息：
+          - 上诉人：【我方当事人】
+          - 被上诉人：【对方当事人】
+          - 一审法院：【XX法院】
+          - 一审判决结果：【简述判项】
+
+          上诉状结构：
+          1. 上诉请求：
+             - 明确请求撤销/变更一审判决的具体判项
+             - 明确请求改判的具体内容（金额/行为/确认）
+             - 一审、二审诉讼费承担
+
+          2. 上诉理由（分点论述）：
+             每个上诉理由的结构：
+             a. 一审裁判的错误：
+                - 指出一审判决在事实认定/法律适用/程序方面的具体错误
+                - 引用一审判决书的具体段落（第X页第X行）
+
+             b. 正确的认定/适用应当是：
+                - 事实认定方面：指出正确的事实认定及证据支撑
+                - 法律适用方面：指出正确的法律适用及法条依据
+                - 程序方面：指出程序违法及法律后果
+
+             c. 类案支持（如适用）：
+                - 引用最高院/上级法院的类案裁判规则
+
+          3. 常见上诉理由分类（请逐一审查是否适用）：
+             - 事实认定错误：
+               * 认定事实缺乏证据证明
+               * 认定事实的主要证据是伪造的
+               * 认定事实的主要证据未经质证
+               * 对当事人逾期提供的证据未组织质证
+               * 遗漏重要事实
+
+             - 法律适用错误：
+               * 适用法律错误（法条引用错误/理解错误）
+               * 确定民事责任违背当事人约定
+               * 违反法律适用规则
+
+             - 程序违法：
+               * 审判组织不合法
+               * 应当回避的审判人员未回避
+               * 剥夺当事人辩论权利
+               * 未经传票传唤缺席判决
+               * 遗漏必须参加诉讼的当事人
+
+          请使用华宇元典数据库检索支持上诉理由的类案。
+          输出为Word文档，注意上诉期限（判决15日/裁定10日）。
+
+- id: "00000000-0000-0000-0000-000000000b0f"
+  name: "再审申请审查与起草"
+  description: "Review the 13 statutory retrial grounds and draft a retrial application with strategy advice"
+  category: "litigation"
+  steps:
+    - name: "Search retrial precedents"
+      description: "Search for similar retrial cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate retrial application"
+      description: "Generate a retrial grounds review and retrial application"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下生效判决，审查是否具备申请再审的条件，并起草再审申请书：
+
+          【上传/粘贴生效判决书全文】
+
+          第一步：再审事由审查
+          请逐一审查《民事诉讼法》第207条规定的13项再审事由是否成立：
+
+          1. 有新的证据，足以推翻原判决/裁定的
+             - 是否存在未提交的关键证据
+             - 该证据的发现时间及逾期提交理由
+
+          2. 原判决/裁定认定的基本事实缺乏证据证明的
+
+          3. 原判决/裁定认定事实的主要证据是伪造的
+
+          4. 原判决/裁定认定事实的主要证据未经质证的
+
+          5. 对审理案件需要的主要证据，当事人因客观原因不能自行收集，书面申请法院调查收集，法院未调查收集的
+
+          6. 原判决/裁定适用法律确有错误的
+
+          7. 审判组织的组成不合法的或者依法应当回避的审判人员没有回避的
+
+          8. 无诉讼行为能力人未经法定代理人代为诉讼或者应当参加诉讼的当事人，因不能归责于本人或者其诉讼代理人的事由，未参加诉讼的
+
+          9. 违反法律规定，剥夺当事人辩论权利的
+
+          10. 未经传票传唤，缺席判决的
+
+          11. 原判决/裁定遗漏或者超出诉讼请求的
+
+          12. 据以作出原判决/裁定的法律文书被撤销或者变更的
+
+          13. 审判人员在审理该案件时有贪污受贿，徇私舞弊，枉法裁判行为的
+
+          对每项事由：✅成立 / ❌不成立 / ⚠️需要进一步核实
+          给出分析依据。
+
+          第二步：再审策略建议
+          - 最有利的再审事由组合（建议选择1-3项最有把握的事由）
+          - 再审管辖法院（向上一级法院/原审法院申请）
+          - 再审期限审查（6个月内？）
+          - 新证据的准备
+
+          第三步：起草再审申请书
+          - 再审申请人/被申请人信息
+          - 再审请求
+          - 再审事由及理由（逐条论述）
+          - 新证据清单（如有）
+
+          请使用华宇元典数据库检索相关再审案例。
+          输出再审事由审查报告 + 再审申请书（Word文档）。
+
+- id: "00000000-0000-0000-0000-000000000b10"
+  name: "再审新证据准备"
+  description: "Analyze whether new evidence meets the retrial standard and prepare a submission strategy"
+  category: "litigation"
+  steps:
+    - name: "Search new evidence precedents"
+      description: "Search for typical cases on new evidence recognition"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate new evidence analysis"
+      description: "Generate a new evidence analysis report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助分析和准备再审申请中的"新证据"：
+
+          案件背景：【简述原审情况和败诉原因】
+          拟提交的新证据：【描述新证据的内容和发现经过】
+
+          分析框架：
+
+          1. 新证据的认定标准：
+             - 是否符合《民事诉讼法》第207条第1项"新的证据"
+             - 参照最高院《关于适用<民事诉讼法>的解释》第387-388条：
+               a. 原审庭审结束前已客观存在，庭审结束后新发现的证据
+               b. 原审庭审结束前已经发现，但因客观原因无法取得或在规定的期限内不能提供的证据
+               c. 原审庭审结束后原作出鉴定意见、勘验笔录者重新鉴定、勘验，推翻原结论的
+             - 该证据是否足以推翻原判决
+
+          2. 逾期举证的正当理由：
+             - 为何在原审中未提交
+             - 是否存在客观障碍
+             - 是否存在故意或重大过失
+
+          3. 新证据的证明力分析：
+             - 单独能否推翻原判决
+             - 与原审证据的综合分析
+             - 对方可能的质证意见和应对
+
+          4. 新证据的形式要件：
+             - 证据形式合规性（原件/公证/认证等）
+             - 证据来源合法性
+
+          5. 提交策略：
+             - 与再审申请书一并提交 vs. 申请再审后补充提交
+             - 是否需要申请法院调查收集
+
+          请使用华宇元典数据库检索"新证据"认定的典型案例。
+          输出新证据分析报告。
+
+- id: "00000000-0000-0000-0000-000000000b11"
+  name: "财产保全申请书"
+  description: "Draft a property preservation application with necessity, security, and priority analysis"
+  category: "litigation"
+  steps:
+    - name: "Search preservation rules"
+      description: "Search legal basis for property preservation"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate preservation application"
+      description: "Generate a property preservation application"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份财产保全申请书：
+
+          保全信息：
+          - 申请人：【我方当事人】
+          - 被申请人：【对方当事人】
+          - 案号/案由：【如：诉前保全/诉中保全，案号XX】
+          - 保全请求金额：【XX万元】
+          - 拟保全财产：【简述，如：被申请人银行账户/房产/股权】
+
+          申请书结构：
+          1. 请求事项：
+             - 请求查封/冻结/扣押被申请人价值XX万元的财产
+             - 具体财产线索：
+               * 财产1：【银行账户、开户行、账号（如已知）】
+               * 财产2：【房产地址、不动产权证号（如已知）】
+               * 财产3：【股权：公司名称、持股比例】
+
+          2. 事实与理由：
+             - 申请人与被申请人之间的纠纷概况
+             - 采取财产保全的必要性：
+               * 被申请人有转移/隐匿/变卖财产的可能
+               * 不采取保全将导致判决难以执行
+               * 具体风险信号（如：被申请人近期有大额转账/资产出售/注销公司等行为）
+             - 保全财产的价值与诉讼请求的匹配性
+
+          3. 担保情况：
+             - 担保方式：【现金担保/保险保函/实物担保/第三人保证】
+             - 担保金额：【等于或大于保全金额】
+             - 担保财产/保函信息
+
+          4. 保全标的的优先级排序（如有多项财产线索）
+
+          同时请分析：
+          - 超标的保全的风险（保全金额不得超过诉讼请求金额）
+          - 轮候查封的影响
+          - 保全错误的赔偿责任
+
+          输出为Word文档，附担保材料清单。
+
+- id: "00000000-0000-0000-0000-000000000b12"
+  name: "强制执行申请书"
+  description: "Draft an enforcement application with execution items, asset leads, and special requests"
+  category: "litigation"
+  steps:
+    - name: "Search enforcement rules"
+      description: "Search legal basis for enforcement procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate enforcement application"
+      description: "Generate an enforcement application"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下生效法律文书，起草一份强制执行申请书：
+
+          【上传/粘贴生效判决书/调解书/仲裁裁决书】
+
+          执行信息：
+          - 申请执行人：【我方当事人】
+          - 被执行人：【对方当事人】
+          - 执行依据：【判决书/调解书/仲裁裁决书，文号XX】
+          - 生效日期：【XX】
+          - 申请执行标的：
+            1. 金钱给付：【本金XX元 + 利息/违约金（计算至实际付清之日） + 诉讼费XX元】
+            2. 行为给付：【如：协助办理股权变更登记/腾退房屋】
+            3. 迟延履行金/加倍部分债务利息：【计算依据和金额】
+
+          申请书结构：
+          1. 申请执行事项（明确、具体、可执行）
+          2. 执行依据概述（判决文号、判项内容、生效情况）
+          3. 被执行人未履行情况说明
+          4. 被执行人财产线索：
+             - 银行账户
+             - 不动产
+             - 车辆
+             - 股权/投资收益
+             - 应收账款/到期债权
+             - 知识产权
+             - 其他财产性权益
+
+          5. 申请执行的特殊请求（如适用）：
+             - 限制高消费
+             - 纳入失信被执行人名单
+             - 限制出境
+             - 搜查令申请
+
+          同时请分析：
+          - 申请执行期限（2年，是否在期限内）
+          - 迟延履行期间债务利息的计算方式
+          - 执行不能的风险预案
+          - 参与分配（如被执行人有多方债权人）的策略
+
+          引用《民事诉讼法》第243-264条执行程序相关规定。
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000b13"
+  name: "执行异议与复议"
+  description: "Draft an enforcement objection application with legal basis and remedy path analysis"
+  category: "litigation"
+  steps:
+    - name: "Search objection rules"
+      description: "Search legal basis for enforcement objections and review"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate objection application"
+      description: "Generate an enforcement objection application"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下情况，起草一份执行异议申请书：
+
+          异议背景：
+          - 执行案号：【XX】
+          - 异议人：【我方当事人：案外人/被执行人/利害关系人】
+          - 异议类型：【执行行为异议 / 案外人异议 / 参与分配异议】
+          - 执行法院：【XX】
+          - 执行行为：【简述，如：查封了异议人的房产/拍卖程序违法/分配方案不合理】
+
+          异议申请书结构：
+
+          1. 异议请求：
+             - 明确请求法院撤销/变更/中止的具体执行行为
+             - 如为案外人异议：请求中止对XX标的的执行，确认异议人对XX财产享有所有权/其他足以排除执行的权利
+
+          2. 事实与理由：
+             - 执行行为的违法性分析（执行行为异议）：
+               * 违反法定程序的具体表现
+               * 超标的查封/扣押
+               * 查封案外人财产
+               * 评估/拍卖程序违法
+
+             - 排除执行的权利基础（案外人异议）：
+               * 异议人对执行标的享有的实体权利（所有权/用益物权/担保物权/租赁权等）
+               * 该权利是否足以排除执行
+               * 参照《最高院关于人民法院办理执行异议和复议案件若干问题的规定》相关条款
+                 （如第28条一般买受人排除执行的条件、第29条消费者购房人排除执行的条件等）
+
+          3. 证据清单：
+             - 证明异议人权利的证据
+             - 证明执行行为违法的证据
+
+          4. 法律依据：
+             - 《民事诉讼法》第232条（执行行为异议）/第234条（案外人异议）
+             - 相关司法解释
+
+          同时请分析：
+          - 异议审查期间是否停止执行（一般不停止，但可申请中止）
+          - 异议被驳回后的救济路径（向上一级法院申请复议 / 提起案外人执行异议之诉）
+          - 异议成功率预判
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000b14"
+  name: "执行不能应对方案"
+  description: "Develop a response plan when the judgment debtor has no executable assets, covering enforcement, added parties, and recovery actions"
+  category: "litigation"
+  steps:
+    - name: "Search enforcement remedies"
+      description: "Search legal basis for enforcement remedies and recovery actions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate response plan"
+      description: "Generate an enforcement-failure response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          本案判决生效后进入执行程序，但被执行人无可供执行财产，请协助制定应对方案：
+
+          案件信息：
+          - 执行标的：【XX万元】
+          - 被执行人：【公司/个人】
+          - 已穷尽的执行措施：【简述，如：已查封银行账户（余额不足）、已查封房产（轮候查封/有抵押）】
+          - 法院态度：【拟终结本次执行程序】
+
+          应对方案：
+
+          1. 终本前争取的执行措施：
+             - 申请法院采取的措施清单：
+               * 限制高消费
+               * 纳入失信被执行人名单
+               * 限制出境
+               * 罚款/拘留
+               * 搜查令
+               * 审计令（要求被执行人提交财务报告）
+             - 申请法院调查令，律师持令调查：
+               * 银行流水（查找转移财产线索）
+               * 不动产交易记录
+               * 股权变更记录
+
+          2. 追加被执行人：
+             - 追加股东（未实缴出资/抽逃出资/一人公司财产混同）
+             - 追加合伙人/分支机构/总公司
+             - 追加担保人
+             - 追加被挂靠方
+             - 分析追加的法律依据和证据要求
+
+          3. 撤销权诉讼（《民法典》第538-542条）：
+             - 是否发现被执行人无偿转让/低价处分财产
+             - 撤销权诉讼的管辖、时效、举证
+             - 撤销权诉讼与执行的衔接
+
+          4. 代位权诉讼（《民法典》第535-537条）：
+             - 是否存在被执行人对第三人的到期债权
+             - 代位权诉讼的条件和策略
+
+          5. 破产申请：
+             - 被执行人为企业时，申请其破产清算/重整
+             - 通过破产程序发现隐匿财产
+             - 破产撤销权（追溯1年内的不当处分行为）
+
+          6. 刑事追诉（如适用）：
+             - 拒不执行判决、裁定罪（《刑法》第313条）
+             - 合同诈骗罪/职务侵占罪（如涉及）
+             - 移送公安的时机和策略
+
+          7. 终本后的监控：
+             - 定期查询被执行人财产状况
+             - 发现财产后申请恢复执行
+             - 终本后的5年时效管理
+
+          请联网搜索被执行人公开信息（工商变更、新增诉讼、资产拍卖等）。
+          输出执行应对方案。
+
+- id: "00000000-0000-0000-0000-000000000b15"
+  name: "公司控制权争夺"
+  description: "Develop a corporate control contest litigation strategy across shareholder, governance, equity, and damages levels"
+  category: "litigation"
+  steps:
+    - name: "Search control contest precedents"
+      description: "Search for typical corporate control dispute cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate control strategy"
+      description: "Generate a corporate control contest litigation strategy"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下公司情况，制定公司控制权争夺的诉讼策略：
+
+          公司信息：
+          - 公司名称：【XX】
+          - 股权结构：【A持股60%，B持股40%】
+          - 核心争议：【如：B试图夺取控制权/法定代表人变更/公章证照争夺】
+          - 我方当事人：【A/B/公司】
+
+          策略分析框架：
+
+          1. 控制权争夺路径分析：
+             a. 股东会/董事会层面：
+                - 召集权争夺（谁有权召集临时股东会）
+                - 表决权争夺（表决权委托/一致行动协议/代理投票）
+                - 决议效力之诉（确认无效/撤销/不成立）
+
+             b. 公司治理层面：
+                - 法定代表人变更之诉
+                - 董事/监事变更之诉
+                - 公章证照返还之诉
+                - 公司证照补办策略
+
+             c. 股权层面：
+                - 股权确认之诉（代持关系确认/否认）
+                - 股权转让效力之诉
+                - 股东资格确认/否认之诉
+                - 股东除名（未出资/抽逃出资）
+
+             d. 损害赔偿层面：
+                - 损害公司利益责任之诉（董监高违信义务）
+                - 股东代表诉讼
+                - 关联交易损害责任之诉
+
+          2. 诉讼组合策略：
+             - 主攻诉讼：【核心诉讼请求】
+             - 配套诉讼：【辅助诉讼，制造谈判筹码】
+             - 保全策略：【财产保全/证据保全/行为保全】
+             - 行政举报/投诉（如涉及工商、税务、证券监管）
+
+          3. 关键法律问题：
+             - 公司法（2024年修订）相关条款适用
+             - 公司章程的特殊约定审查
+             - 股东协议/投资协议中的特殊条款
+
+          4. 谈判与诉讼的配合：
+             - 诉讼作为谈判杠杆的策略
+             - 和解的时机和条件
+             - 控制权过渡方案
+
+          请使用华宇元典数据库检索公司控制权纠纷的典型案例。
+          输出诉讼策略方案。
+
+- id: "00000000-0000-0000-0000-000000000b16"
+  name: "证券虚假陈述责任纠纷"
+  description: "Analyze securities misrepresentation liability including materiality, causation, responsible parties, and loss calculation"
+  category: "litigation"
+  steps:
+    - name: "Search securities precedents"
+      description: "Search for latest securities misrepresentation cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate securities analysis"
+      description: "Generate a securities misrepresentation litigation analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下证券虚假陈述案件情况，进行诉讼分析：
+
+          案件信息：
+          - 上市公司：【XX】
+          - 虚假陈述行为类型：【虚假记载/误导性陈述/重大遗漏/不正当披露】
+          - 虚假陈述实施日：【XX】
+          - 虚假陈述揭露日/更正日：【XX】
+          - 我方当事人：【投资者/上市公司/董监高/中介机构】
+          - 投资损失：【XX万元】
+
+          分析框架：
+
+          1. 虚假陈述行为的认定：
+             - 是否具有"重大性"（参照《证券法》第80条/81条重大事件标准）
+             - 虚假陈述行为的类型分析
+             - 实施日、揭露日/更正日的认定
+             - 参照《最高院关于审理证券市场虚假陈述侵权民事赔偿案件的若干规定》（2022年）
+
+          2. 因果关系分析：
+             - 交易因果关系（投资者是否因虚假陈述而买入/卖出）
+               * 推定因果关系成立的条件
+               * 被告的免责抗辩（投资者明知/内幕交易/操纵市场等）
+             - 损失因果关系（投资者损失是否由虚假陈述导致）
+               * 系统性风险扣除（大盘下跌因素）
+               * 非系统性风险扣除（行业因素/公司自身经营因素）
+               * 损失计算方法（移动加权平均法/前30日均价法等）
+
+          3. 责任主体分析：
+             - 发行人/上市公司的无过错责任
+             - 董监高的过错推定责任（如何举证免责）
+             - 控股股东/实际控制人的连带责任
+             - 中介机构（券商/律所/会所/评估机构）的过错推定责任
+               * 各中介机构的责任边界
+               * "看门人"责任的最新司法实践
+
+          4. 损失计算：
+             - 基准日及基准价的确定
+             - 投资差额损失计算
+             - 投资差额损失对应的佣金和印花税
+
+          5. 诉讼策略（根据我方身份）：
+             - 投资者方：如何最大化赔偿（示范判决+代表人诉讼）
+             - 上市公司/董监高方：如何抗辩（重大性抗辩/因果关系抗辩/免责事由）
+             - 中介机构方：如何抗辩（勤勉尽责抗辩/责任范围限制）
+
+          请使用华宇元典数据库检索最新证券虚假陈述案例。
+          分析中注意2022年司法解释与2003年规定的区别。
+          输出诉讼分析报告。
+
+- id: "00000000-0000-0000-0000-000000000b17"
+  name: "建设工程施工合同纠纷"
+  description: "Analyze construction contract disputes covering validity, price, priority right, schedule, quality, and appraisal"
+  category: "litigation"
+  steps:
+    - name: "Search construction precedents"
+      description: "Search for construction contract dispute cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate construction analysis"
+      description: "Generate a construction contract dispute litigation analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下建设工程纠纷情况，进行诉讼分析：
+
+          案件信息：
+          - 工程名称：【XX】
+          - 合同类型：【施工总承包/专业分包/劳务分包】
+          - 合同金额：【XX万元】
+          - 争议类型：【工程款拖欠/工程质量/工期延误/工程量争议】
+          - 我方身份：【承包人/发包人/实际施工人】
+          - 工程状态：【已竣工验收/未完工/已使用未验收】
+
+          分析框架：
+
+          1. 合同效力审查：
+             - 是否存在挂靠/违法分包/转包（合同无效情形）
+             - 是否必须招标而未招标（合同无效）
+             - 中标合同 vs. 阴阳合同的效力冲突（黑白合同问题）
+             - 合同无效但工程验收合格的处理（《民法典》第793条/建工司法解释一第24条）
+
+          2. 工程价款争议：
+             - 结算依据：合同约定 vs. 签证变更 vs. 司法鉴定
+             - "黑白合同"结算依据的认定（建工司法解释一第2条）
+             - 固定价合同 vs. 可调价合同的结算差异
+             - 未完工工程的价款结算
+             - 工程量争议的处理（施工日志/签证/监理记录）
+
+          3. 工程价款优先受偿权：
+             - 优先受偿权的主体（承包人/实际施工人能否主张）
+             - 优先受偿权的范围（工程款本金 vs. 利息/违约金/利润）
+             - 优先受偿权的期限（18个月，自发包人应付之日起算）
+             - 优先受偿权与抵押权/购房人权利的顺位
+
+          4. 工期争议：
+             - 实际工期 vs. 合同工期
+             - 工期顺延的签证与索赔
+             - 工期延误的损失计算
+
+          5. 质量争议：
+             - 质量缺陷的责任归属
+             - 是否需要质量鉴定
+             - 修复费用 vs. 减少工程款
+
+          6. 实际施工人特殊保护：
+             - 实际施工人向发包人主张权利的条件
+             - 发包人在欠付工程款范围内的责任
+
+          7. 司法鉴定策略：
+             - 是否需要申请工程造价鉴定
+             - 鉴定材料的准备
+             - 鉴定异议的提出策略
+
+          请使用华宇元典数据库检索建设工程纠纷案例。
+          引用《民法典》建工合同章、《最高院关于审理建设工程施工合同纠纷案件适用法律问题的解释（一）》。
+          输出诉讼分析报告。
+
+- id: "00000000-0000-0000-0000-000000000b18"
+  name: "破产与重整"
+  description: "Analyze bankruptcy and reorganization covering causes, claims, avoidance, administrator duties, and restructuring plans"
+  category: "litigation"
+  steps:
+    - name: "Search bankruptcy precedents"
+      description: "Search for bankruptcy cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate bankruptcy analysis"
+      description: "Generate a bankruptcy legal analysis report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下破产案件情况，进行法律分析：
+
+          案件信息：
+          - 破产企业：【XX公司】
+          - 破产类型：【清算/重整/和解】
+          - 我方身份：【债务人/债权人/投资人/管理人】
+          - 已知负债：【约XX亿元】
+          - 主要资产：【简述】
+
+          分析框架：
+
+          1. 破产原因审查（《企业破产法》第2条）：
+             - 不能清偿到期债务
+             - 资产不足以清偿全部债务
+             - 明显缺乏清偿能力
+             - 是否存在"僵局"情况下的重整申请
+
+          2. 申报债权分析：
+             - 债权类型梳理（职工债权/税款债权/普通债权/有财产担保债权）
+             - 各类债权的清偿顺位
+             - 待确定债权/争议债权的处理
+             - 未到期债权的加速到期
+             - 附条件/附期限债权的处理
+
+          3. 破产撤销权与无效行为：
+             - 破产申请前1年内的可撤销行为（无偿转让/非正常价格交易/提前清偿/提供担保/放弃债权）
+             - 破产申请前6个月内的偏颇清偿（债务人已具备破产原因，仍对个别债权人进行清偿，《企业破产法》第32条）
+             - 破产无效行为（隐匿转移财产/虚构债务/承认不真实债务）
+             - 追回财产的诉讼策略
+
+          4. 管理人职责（如我方为管理人）：
+             - 接管与调查
+             - 债权审查与确认
+             - 营业管理决定
+             - 财产变价方案
+             - 分配方案
+
+          5. 重整方案设计（如适用）：
+             - 债务重组方案（债转股/展期/减免/分期）
+             - 引入投资人的方案
+             - 经营方案
+             - 各组债权人的清偿率测算
+             - 重整方案的通过策略（分组表决）
+
+          6. 债权人权益保护（如我方为债权人）：
+             - 申报债权的策略
+             - 债权审查异议
+             - 债权人会议的表决策略
+             - 担保物的取回/暂停行使担保权
+             - 对重整方案的反对与谈判
+
+          7. 关联企业实质合并破产（如适用）：
+             - 实质合并的条件
+             - 实质合并对各企业债权人的影响
+
+          请使用华宇元典数据库检索破产案例。
+          引用《企业破产法》及相关司法解释。
+          输出破产法律分析报告。
+
+- id: "00000000-0000-0000-0000-000000000b19"
+  name: "资产追踪与欺诈诉讼"
+  description: "Develop an asset tracing and fraud litigation strategy including avoidance actions and cross-border cooperation"
+  category: "litigation"
+  steps:
+    - name: "Search asset tracing rules"
+      description: "Search legal basis for avoidance actions and asset recovery"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate asset tracing strategy"
+      description: "Generate an asset tracing and fraud litigation strategy"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助制定资产追踪与欺诈诉讼策略：
+
+          案件背景：
+          - 我方债权人：【简述债权来源和金额】
+          - 债务人：【简述，如：自然人/离岸公司】
+          - 已发现的可疑资产转移行为：【简述，如：债务人将房产无偿转让给配偶/将股权低价转让给关联方/在境外设立信托】
+          - 债务人资产分布：【境内/境外，涉及哪些法域】
+
+          资产追踪与诉讼策略：
+
+          1. 资产追踪：
+             - 境内资产追踪路径：
+               * 银行流水分析（大额转出记录）
+               * 不动产交易记录（近期过户记录）
+               * 股权变更记录（工商档案）
+               * 车辆登记变更
+               * 保险/理财产品
+               * 第三方支付账户
+             - 境外资产追踪路径（如适用）：
+               * 离岸公司注册信息（BVI/开曼/塞舌尔）
+               * 境外不动产
+               * 境外银行账户
+               * 信托/基金安排
+
+          2. 可撤销/无效行为分析：
+             - 民法典撤销权诉讼（第538-542条）：
+               * 无偿行为撤销：举证较易，但1年除斥期间
+               * 有偿行为撤销：需证明受让人恶意
+               * 撤销权诉讼的管辖与诉讼请求设计
+             - 合同无效之诉：
+               * 恶意串通损害他人利益（《民法典》第154条）
+               * 虚假意思表示（《民法典》第146条）
+             - 破产撤销权（如债务人已进入破产程序）
+             - 刑事追赃（如涉及合同诈骗/职务侵占/洗钱）
+
+          3. 诉讼方案：
+             - 主诉讼：债权人撤销权之诉
+               * 原告：债权人
+               * 被告：债务人 + 受让人
+               * 诉讼请求：撤销转让行为 + 返还财产
+               * 管辖：被告住所地法院
+             - 配套诉讼/措施：
+               * 财产保全（查封已转移的财产）
+               * 确认之诉（确认转让合同无效）
+               * 代位权诉讼（如债务人怠于向受让人追索）
+             - 刑事报案（如构成犯罪）
+
+          4. 跨法域协作（如资产在境外）：
+             - 境外法院的辅助取证/资产冻结
+             - 跨境判决/裁决的承认与执行
+             - 与境外律师的协作框架
+
+          5. 证据收集策略：
+             - 申请法院调查令
+             - 公证保全
+             - 委托专业调查机构
+             - 境外证据的公证认证
+
+          请联网搜索债务人公开信息。
+          输出资产追踪与诉讼策略方案。
+
+- id: "00000000-0000-0000-0000-000000000b1a"
+  name: "境内商事仲裁程序专项"
+  description: "Provide procedural strategy for domestic commercial arbitration including clause validity, arbitrator selection, and award risk"
+  category: "arbitration"
+  steps:
+    - name: "Search arbitration rules"
+      description: "Search for applicable arbitration rules and procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate arbitration procedure memo"
+      description: "Generate an arbitration procedure strategy memo and deadline calendar"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下境内商事仲裁案件提供程序策略支持：
+
+          案件信息：
+          - 仲裁机构：【贸仲CIETAC/北仲BAC/上仲/深国仲/当地仲裁委】
+          - 我方身份：【申请人/被申请人】
+          - 争议类型与金额：【XX纠纷，XX万元】
+          - 仲裁条款原文：【粘贴】
+          - 案件阶段：【拟提起/已受理/组庭/审理中/裁决后】
+
+          程序支持内容：
+
+          1. 仲裁条款效力审查：
+             - 机构约定不明/约定了不存在的机构的效力认定
+             - "或裁或审"条款的无效风险与应对
+             - 仲裁条款效力异议的提出时机（首次开庭前）与管辖路径（机构决定 vs. 法院确认）
+
+          2. 机构与规则要点（按所选机构）：
+             - 适用仲裁规则版本、仲裁费计算、审限
+             - 简易程序适用门槛与利弊
+
+          3. 仲裁员选定策略：
+             - 名册内候选人的背景研究维度（专业领域/裁判倾向/回避风险）
+             - 首席仲裁员的产生方式与共同指定策略
+             - 仲裁员披露与回避申请的时机
+
+          4. 程序节点管理：
+             - 答辩与反请求期限、证据提交轮次、庭审安排
+             - 与诉讼的差异提醒（证据规则更灵活/一裁终局/不公开）
+
+          5. 保全衔接：仲裁中财产/证据/行为保全需经仲裁机构转交法院的流程与时间
+
+          6. 裁决后风险防控：
+             - 撤销仲裁裁决的法定事由（《仲裁法》第58条）自查——程序瑕疵预防清单
+             - 不予执行抗辩的预判
+             - 调解书/和解裁决的选择
+
+          输出程序策略备忘录 + 关键期限日历。
+
+- id: "00000000-0000-0000-0000-000000000b1b"
+  name: "海事海商纠纷专项"
+  description: "Provide litigation strategy for maritime disputes covering jurisdiction, claims, ship arrest, and limitation of liability"
+  category: "litigation"
+  steps:
+    - name: "Search maritime rules"
+      description: "Search for maritime law and precedents"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate maritime strategy"
+      description: "Generate a maritime litigation strategy memo and preservation plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下海事海商纠纷提供诉讼策略支持：
+
+          案件信息：
+          - 纠纷类型：【货损货差/提单纠纷（无单放货等）/船舶碰撞/海难救助/共同海损/船舶买卖建造纠纷/船员劳务/海上保险合同/港口作业】
+          - 当事人：【托运人/收货人/承运人/船东/货代/保险人】，我方身份：【XX】
+          - 涉案船舶/货物：【船名、航次、货物与金额】
+          - 涉外因素：【提单适用法/仲裁条款（伦敦仲裁？）/船旗国/方便旗】
+
+          策略支持内容：
+
+          1. 管辖与程序路径：
+             - 海事法院专门管辖（11家海事法院的地域分工）与协议管辖/仲裁条款效力
+             - 提单背面并入的外国仲裁条款对收货人的约束力认定
+             - 涉外案件的法律适用（《海商法》/《涉外民事关系法律适用法》/国际公约）
+
+          2. 关键请求权与抗辩分析（按纠纷类型）：
+             - 货损货差：承运人识别（船东/期租人）、适航义务与免责事由（航海过失免责）、单位责任限制（每件/每公斤SDR标准）
+             - 无单放货：正本提单持有人的索赔路径、记名提单的特殊规则
+             - 碰撞/救助/共同海损：过失比例认定、救助报酬、理算规则（约克-安特卫普规则）
+
+          3. 船舶扣押与海事请求保全：
+             - 可扣押情形（海事请求清单）、姊妹船扣押
+             - 扣押申请材料与担保、活扣 vs. 死扣的选择
+             - 反担保与错误扣船的赔偿风险
+
+          4. 海事赔偿责任限制：
+             - 责任限制主体与可限制债权、丧失限制权利的情形
+             - 责任限制基金的设立程序与对扣押的解除效果
+
+          5. 特殊时效提醒：海上货物运输向承运人索赔1年、其他海事请求2年等特殊时效
+
+          6. 证据要点：海事事故调查报告、航海日志、检验报告、气象证明
+
+          输出诉讼策略备忘录 + 保全方案 + 时效与程序节点日历。
+
+- id: "00000000-0000-0000-0000-000000000b1c"
+  name: "婚姻家事案件初步评估"
+  description: "Initial assessment of a family law case covering claims feasibility, key disputes, and path recommendation"
+  category: "family_law"
+  steps:
+    - name: "Search family law basis"
+      description: "Search for applicable family law and inheritance provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate family assessment"
+      description: "Generate an initial family law case assessment"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为婚姻家事律师，对以下案件进行初步评估：
+
+          【案件概述】：【当事人姓名】与【对方姓名】的婚姻/继承/家事纠纷
+          【纠纷类型】：【离婚/继承/抚养权/财产分割/家暴等】
+          【婚姻状况】：【结婚年限/是否有婚内协议/是否有子女/子女年龄】
+          【财产概况】：【房产数量及位置/车辆/存款/股权/保险/债务】
+          【对方态度】：【同意离婚/不同意/有调解意愿/态度强硬】
+          【特殊因素】：【涉外因素/军人身份/一方失踪/家暴史/出轨证据】
+
+          请输出：
+          1. **案件定性**——纠纷的法律性质与适用的主要法律法规
+          2. **诉求可行性分析**——各诉求（离婚/财产分割/抚养权/损害赔偿）的胜诉概率评估
+          3. **关键争议点预判**——最可能成为庭审焦点的3-5个问题
+          4. **调解vs诉讼路径建议**——基于案件情况推荐最优解决路径
+          5. **风险提示**——当事人需特别注意的法律风险（如举证难度、时效、财产隐匿）
+          6. **预估周期与成本**——各路径的预估时间与费用
+
+- id: "00000000-0000-0000-0000-000000000b1d"
+  name: "离婚协议/调解方案起草"
+  description: "Draft a complete divorce agreement or mediation plan covering custody, property division, and debts"
+  category: "family_law"
+  steps:
+    - name: "Search family law basis"
+      description: "Search for applicable divorce and property division provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate divorce agreement"
+      description: "Generate a complete divorce agreement"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为婚姻家事律师，起草以下离婚协议/调解方案：
+
+          【当事人信息】：甲方【姓名/年龄/职业】，乙方【姓名/年龄/职业】
+          【子女情况】：【子女姓名/年龄/数量/当前抚养安排】
+          【财产清单】：
+            - 房产：【地址/购买时间/当前市值/产权登记情况/有无贷款】
+            - 车辆：【品牌/购买时间/市值/登记方】
+            - 银行存款：【各方账户及金额】
+            - 股权/投资：【公司名称/持股比例/估值】
+            - 保险：【类型/投保人/被保人/现金价值】
+            - 其他财产：【珠宝/收藏品/公积金/养老金等】
+          【债务清单】：【房贷/车贷/信用卡/民间借贷/担保债务等及金额】
+          【特殊诉求】：【抚养权归属/探望安排/子女抚养费标准/一方损害赔偿/婚前财产界定】
+
+          请输出一份完整的离婚协议，包含以下条款：
+          1. **自愿离婚声明**
+          2. **子女抚养与探望**（抚养权归属、探望时间频率、抚养费金额及支付方式、教育医疗费用分担）
+          3. **夫妻共同财产分割**（逐项列明分割方案、过户/交付时间节点）
+          4. **夫妻共同债务处理**（债务归属、偿还安排）
+          5. **婚前/个人财产确认**（明确不属于共同财产的范围）
+          6. **损害赔偿/经济帮助**（如有）
+          7. **违约条款与争议解决**（违约责任、后续争议处理方式）
+          8. **其他约定**（户口迁移、姓氏变更、保险受益人变更等）
+
+          注意：
+          - 各条款需明确、可执行，避免模糊表述导致后续争议
+          - 抚养费标准参考当地生活水平和子女实际需要
+          - 财产分割需考虑过户税费和时间成本
+          - 如有涉外因素，注明适用法律
+
+- id: "00000000-0000-0000-0000-000000000b1e"
+  name: "夫妻共同财产分割方案"
+  description: "Design a marital property division plan with characterization, options, tax impact, and execution path"
+  category: "family_law"
+  steps:
+    - name: "Search property division rules"
+      description: "Search for applicable marital property division provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate division plan"
+      description: "Generate a marital property division plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为婚姻家事律师，针对以下夫妻财产情况设计财产分割方案：
+
+          【财产总览】：
+          | 财产类型 | 名称 | 购买时间 | 当前估值 | 产权登记方 | 是否有贷款 | 婚前/婚后取得 |
+          |---------|------|---------|---------|-----------|----------|-------------|
+          | 【填入所有财产】 |
+
+          【债务总览】：
+          | 债务类型 | 金额 | 借款时间 | 借款方 | 用途 | 是否婚内共同债务 |
+          |---------|------|---------|-------|------|---------------|
+          | 【填入所有债务】 |
+
+          【争议点】：【对哪些财产/债务的归属有争议？争议理由是什么？】
+          【分割偏好】：【一方倾向现金补偿/一方倾向保留实物/双方都争取某项财产】
+
+          请输出：
+          1. **财产定性表**——逐项判断：婚前个人财产 / 婚后共同财产 / 混合性质财产（注明定性依据）
+          2. **分割方案选项**——提供2-3套不同分割方案（如：实物分割、折价补偿、变价分割），每套方案附优缺点
+          3. **推荐方案**——综合公平性、可执行性、税费成本、过户难度，推荐最优方案
+          4. **税费影响分析**——各方案涉及的契税、个税、增值税等税费估算
+          5. **执行路径**——推荐方案中各财产过户/交付的具体操作步骤和时间节点
+          6. **隐匿财产排查建议**——对方可能隐匿的财产类型及排查方法（银行流水、股权代持、海外资产等）
+
+- id: "00000000-0000-0000-0000-000000000b1f"
+  name: "遗嘱起草与审查"
+  description: "Draft or review a will with legal-requirement review, challenge-risk analysis, and execution advice"
+  category: "family_law"
+  steps:
+    - name: "Search inheritance rules"
+      description: "Search for applicable will and inheritance provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate will"
+      description: "Generate a will draft and review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为婚姻家事律师，起草/审查以下遗嘱：
+
+          【立遗嘱人信息】：【姓名/年龄/身份证号/住所/健康状况】
+          【家庭情况】：【配偶姓名/子女姓名及年龄/父母是否健在/其他法定继承人】
+          【财产清单】：【所有财产的类型、位置、估值、产权情况】
+          【分配意愿】：【各继承人/受遗赠人应得财产及比例/特殊照顾某位继承人的理由】
+          【特殊安排】：【遗嘱执行人指定/信托安排/条件继承/遗产管理/债务清偿顺序】
+          【遗嘱类型】：【自书遗嘱/代书遗嘱/公证遗嘱/打印遗嘱/录音录像遗嘱】
+
+          请输出：
+          1. **遗嘱正文**——格式规范、表述明确、条款完整
+          2. **法律要件审查**——对照《民法典》第1134-1141条，审查该遗嘱的形式要件是否完备
+          3. **潜在争议风险分析**——可能被挑战的点（如：特留份侵害、意思表示不明确、见证人资格问题）
+          4. **执行建议**——遗嘱执行的操作路径（公证建议、保管方案、告知时机）
+          5. **配套文书建议**——是否需要同时准备遗嘱信托协议、遗产清单附件、律师见证备忘录
+
+          > **注意**：如涉及跨境资产（如海外房产、离岸公司股权），需在遗嘱中注明适用法律，并建议同步起草对应法域的补充遗嘱。
+
+- id: "00000000-0000-0000-0000-000000000b20"
+  name: "继承纠纷诉讼策略"
+  description: "Develop an inheritance dispute litigation strategy covering relationships, will validity, claims, and evidence"
+  category: "family_law"
+  steps:
+    - name: "Search inheritance precedents"
+      description: "Search for applicable inheritance provisions and cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate inheritance strategy"
+      description: "Generate an inheritance dispute litigation strategy"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为婚姻家事律师，对以下继承纠纷案件制定诉讼策略：
+
+          【案件概述】：【被继承人姓名】于【死亡时间】死亡，遗留遗产引发继承纠纷
+          【法定继承人】：【第一顺序：配偶/子女/父母；第二顺序：兄弟姐妹/祖父母外祖父母】
+          【遗嘱情况】：【有无遗嘱/遗嘱类型/遗嘱主要内容/遗嘱争议点】
+          【遗产概况】：【房产/存款/股权/保险/债权/其他财产及估值】
+          【争议焦点】：【遗嘱效力/遗产范围界定/继承份额/遗赠vs继承/代位继承/转继承等】
+          【对方主张】：【各继承人的诉求及理由】
+          【已保全/冻结情况】：【是否有遗产被先行处分/冻结/转移】
+
+          请输出：
+          1. **法律关系梳理**——绘制继承关系图谱，明确各继承人地位（法定/遗嘱/代位/转继承）
+          2. **遗嘱效力审查**——如有遗嘱，逐条审查形式要件和实质要件
+          3. **诉讼请求设计**——我方应提出的具体诉讼请求及法律依据
+          4. **举证方案**——需准备的证据清单（死亡证明、亲属关系证明、遗嘱原件、财产凭证、债务凭证）
+          5. **对方抗辩预判**——对方最可能提出的抗辩及我方应对
+          6. **调解方案**——庭前调解的可接受底线和理想方案
+          7. **遗产保全建议**——是否需要申请遗产冻结/保全，防止遗产被转移
+
+- id: "00000000-0000-0000-0000-000000000b21"
+  name: "家族财富传承规划（含信托架构）"
+  description: "Design a family wealth succession plan including trust architecture, marriage risk isolation, and tax optimization"
+  category: "family_law"
+  steps:
+    - name: "Search succession and trust rules"
+      description: "Search for applicable succession, trust, and tax provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate succession plan"
+      description: "Generate a family wealth succession plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为婚姻家事律师，为以下家庭设计财富传承规划方案：
+
+          【客户信息】：【主客户姓名/年龄/家庭角色/资产规模/健康状况】
+          【家庭成员】：【配偶/子女/孙辈/父母/其他需照顾的人及年龄】
+          【资产概况】：
+            - 国内资产：【房产/股权/金融资产/收藏品等】
+            - 海外资产：【海外房产/离岸公司/海外账户/海外保险等】
+          【传承目标】：【保障子女教育/防止败家/婚姻风险隔离/税务优化/企业控制权传承】
+          【特殊考量】：【涉外因素/二代婚姻风险/企业传承与家族传承衔接/慈善意愿】
+          【风险偏好】：【保守（稳健安全为主）/平衡（兼顾灵活与安全）/进取（追求税务最大化优化）】
+
+          请输出：
+          1. **传承需求分析**——客户5大核心需求的优先级排序
+          2. **工具组合方案**——针对各需求推荐的法律工具组合：
+             - 遗嘱 + 婚内协议 + 家族信托 + 保险 + 意定监护 + 基金会的组合设计
+          3. **家族信托架构设计**——信托类型选择（国内/离岸）、受托人选择、受益人安排、分配机制、保护人条款
+          4. **婚姻风险隔离**——子女婚前协议建议、信托受益权与婚姻财产的隔离设计
+          5. **税务优化分析**——传承路径涉及的继承税/赠与税/所得税/契税等税负分析及优化建议
+          6. **实施路径与时间表**——各法律文件的签署顺序和关键时间节点
+          7. **动态管理建议**——定期检视机制（如每3年检视遗嘱、信托分配条件调整）
+
+- id: "00000000-0000-0000-0000-000000000b22"
+  name: "民间借贷纠纷诉讼全流程"
+  description: "Full-process legal support for private lending disputes across pre-suit, first instance, appeal, and enforcement stages"
+  category: "litigation"
+  steps:
+    - name: "Search lending rules"
+      description: "Search for applicable private lending provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate lending support"
+      description: "Generate full-process legal support for a private lending dispute"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为民事诉讼律师，对以下民间借贷纠纷提供全流程法律支持：
+
+          【案件概述】：【出借人姓名】诉【借款人姓名】民间借贷纠纷
+          【借贷事实】：【借款时间/金额/利率/期限/交付方式（现金/转账/汇款）】
+          【书面证据】：【借条/借款合同/微信聊天记录/转账凭证/还款承诺等】
+          【利息约定】：【有无约定/约定利率/是否超过法定上限】
+          【还款情况】：【已还金额/还款时间/剩余本金/利息拖欠情况】
+          【对方抗辩】：【否认借款/主张已还/主张利息过高/主张借款系赠与/其他】
+          【诉讼阶段】：【诉前准备/已起诉/一审进行中/二审/执行阶段】
+
+          请根据当前诉讼阶段输出：
+          **诉前阶段**→案件评估、证据整理、起诉状要点、管辖选择
+          **一审阶段**→举证方案、庭审焦点预判、调解策略
+          **二审阶段**→上诉理由设计、新证据补充
+          **执行阶段**→财产线索排查、执行方案
+
+          特别关注：
+          1. **借贷关系成立要件**——借贷合意+款项交付的双重证明
+          2. **利息合法性审查**——对照LPR4倍上限，超出部分无效
+          3. **诉讼时效**——最后还款日/催款日起算3年，中断情形认定
+          4. **夫妻共同债务认定**——是否构成共同债务，配偶是否需承担
+          5. **涉嫌非法经营罪风险**——职业放贷人/高利贷入罪门槛排查
+
+- id: "00000000-0000-0000-0000-000000000b23"
+  name: "房屋买卖与租赁纠纷"
+  description: "Provide legal support for real estate sale and lease disputes covering claims, evidence, and defenses"
+  category: "litigation"
+  steps:
+    - name: "Search real estate rules"
+      description: "Search for applicable real estate sale and lease provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate real estate support"
+      description: "Generate legal support for a real estate dispute"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为民事诉讼律师，对以下房屋买卖/租赁纠纷提供法律支持：
+
+          【纠纷类型】：【买卖合同纠纷/租赁合同纠纷/中介纠纷/物业纠纷】
+          【房屋信息】：【地址/面积/产权性质（住宅/商业/商住）/市场价格】
+          【合同情况】：【签约时间/合同主要条款/违约条款/约定管辖】
+          【争议焦点】：【交房迟延/质量缺陷/一房二卖/过户障碍/租期争议/租金拖欠/押金退还/解约违约金】
+          【对方立场】：【对方主张及理由】
+          【已采取措施】：【是否发函/是否申请保全/是否已起诉】
+
+          请输出：
+          1. **法律关系梳理**——合同效力审查、各方权利义务对照
+          2. **诉求设计**——我方可主张的具体请求（继续履行/解除合同/违约金/损害赔偿/恢复原状）
+          3. **举证方案**——需准备的关键证据（合同、付款凭证、交房记录、质量鉴定、通知函件）
+          4. **对方抗辩预判**——对方可能的抗辩（不可抗力/情势变更/合同条款抗辩/质量异议）及应对
+          5. **调解/和解方案**——可接受的调解底线
+          6. **特别风险提示**：
+             - 一房二卖的处理优先权规则（已办理过户登记>合法占有交付>已付款>合同成立在先）
+             - 违约金过高/过低的法院调整规则
+             - 租赁合同解除的法定条件与通知要求
+             - 房屋质量问题的鉴定程序与费用承担
+
+- id: "00000000-0000-0000-0000-000000000b24"
+  name: "人身损害赔偿诉讼"
+  description: "Provide legal support for personal injury claims with itemized damages, fault apportionment, and appraisal guidance"
+  category: "litigation"
+  steps:
+    - name: "Search tort rules"
+      description: "Search for applicable tort and personal injury provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate personal injury support"
+      description: "Generate legal support for a personal injury claim"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为民事诉讼律师，对以下人身损害赔偿案件提供法律支持：
+
+          【案件概述】：【受害人姓名】因【事故类型（交通事故/工伤/医疗事故/校园伤害/公共场所伤害等）】遭受人身损害
+          【损害情况】：【伤情描述/伤残等级/治疗费用/住院天数/后续治疗需求/误工时间】
+          【责任方】：【侵权人姓名/单位名称/保险情况】
+          【过错情况】：【我方过错比例/对方过错比例/第三方过错】
+          【已获赔偿】：【保险理赔/对方已付医疗费/其他已获补偿】
+          【特殊损失】：【护理费/营养费/交通费/残疾辅助器具费/精神损害抚慰金】
+
+          请输出：
+          1. **赔偿项目明细表**——逐项计算：
+             - 医疗费（已发生+后续预估）
+             - 误工费（收入证明+误工天数）
+             - 护理费（护理人员收入或当地护工标准）
+             - 交通费/住宿费
+             - 营养费/住院伙食补助费
+             - 残疾赔偿金（伤残等级×赔偿年限×标准）
+             - 残疾辅助器具费
+             - 被扶养人生活费
+             - 精神损害抚慰金
+             - 后续治疗费
+          2. **责任比例建议**——各方过错分析及建议的责任分担比例
+          3. **伤残鉴定指导**——鉴定时机、鉴定机构选择、鉴定项目
+          4. **保险理赔衔接**——交强险/商业险/意外险的理赔优先顺序与诉讼的关系
+          5. **调解vs诉讼建议**——赔偿金额预估及最优解决路径
+          6. **特别提示**——诉讼时效（民法典施行后统一为3年，自知道或应当知道权利受损及义务人之日起算）、多个侵权人的连带责任、工伤保险与侵权赔偿的关系
+
+- id: "00000000-0000-0000-0000-000000000b25"
+  name: "劳动争议仲裁与诉讼"
+  description: "Provide legal support for labor disputes covering claims, evidence, defenses, and compensation calculation"
+  category: "litigation"
+  steps:
+    - name: "Search labor law basis"
+      description: "Search for applicable labor law provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate labor dispute support"
+      description: "Generate legal support for a labor dispute"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为民事诉讼律师，对以下劳动争议案件提供法律支持：
+
+          【案件概述】：【劳动者姓名】与【用人单位名称】的劳动争议
+          【争议类型】：【违法解除/未签劳动合同/拖欠工资/加班费/经济补偿金/社保缴纳/工伤认定/竞业限制】
+          【劳动关系事实】：【入职时间/离职时间/合同期限/岗位/月工资/工资构成】
+          【用人单位行为】：【解除理由/解除时间/是否提前通知/是否支付补偿/拖欠金额】
+          【劳动者诉求】：【确认劳动关系/继续履行/支付补偿金/支付拖欠工资/支付加班费/赔偿金】
+          【证据情况】：【劳动合同/工资条/考勤记录/解除通知/聊天记录/录音】
+          【仲裁阶段】：【尚未仲裁/仲裁进行中/仲裁裁决已出/一审进行中】
+
+          请输出：
+          1. **仲裁/诉讼请求设计**——逐项列明请求金额及法律依据
+          2. **举证方案**——各请求项对应的举证责任分配及证据清单
+          3. **用人单位常见抗辩预判**——经济性裁员/试用期不合格/严重违纪/客观情况变化等抗辩及应对
+          4. **赔偿金vs补偿金计算**——2N赔偿金与N补偿金的适用条件区分与精确计算
+          5. **时效审查**——劳动仲裁1年时效/拖欠工资的特殊时效规则
+          6. **程序路径**——劳动仲裁前置→法院一审→二审的流程及时间节点
+          7. **调解策略**——各阶段可接受的调解底线
+
+- id: "00000000-0000-0000-0000-000000000b26"
+  name: "消费者维权诉讼"
+  description: "Provide legal support for consumer rights claims including fraud, punitive damages, and jurisdiction strategy"
+  category: "litigation"
+  steps:
+    - name: "Search consumer law basis"
+      description: "Search for applicable consumer protection provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate consumer claim support"
+      description: "Generate legal support for a consumer rights claim"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为民事诉讼律师，对以下消费者维权案件提供法律支持：
+
+          【案件概述】：【消费者姓名】购买【商品/服务】后的消费纠纷
+          【消费类型】：【网购/实体店/教育培训/美容整形/旅游/食品/医疗美容/金融产品等】
+          【争议内容】：【商品质量缺陷/虚假宣传/欺诈/售后服务拒保/退费难/霸王条款/个人信息泄露】
+          【损失情况】：【购买金额/实际损失/精神损害/时间成本】
+          【商家信息】：【商家名称/平台名称/注册地/经营地】
+          【已尝试途径】：【协商/投诉12315/平台投诉/媒体曝光等】
+          【诉求方向】：【退货退款/换货/赔偿/惩罚性赔偿/公益诉讼】
+
+          请输出：
+          1. **法律依据梳理**——适用的法律法规（《消费者权益保护法》《食品安全法》《电子商务法》《广告法》《产品质量法》等）及核心条款
+          2. **欺诈认定分析**——是否构成欺诈→3倍惩罚性赔偿的适用条件
+          3. **食品安全特殊赔偿**——如涉及食品，10倍赔偿或3倍损失的适用条件
+          4. **诉讼请求设计**——具体请求项及金额（退款+赔偿+惩罚性赔偿+精神损害+诉讼费用）
+          5. **管辖选择策略**——网购合同纠纷的特殊管辖规则（收货地法院）
+          6. **举证方案**——消费者举证要点（购买凭证、商品实物/照片、聊天记录、广告截图、鉴定报告）
+          7. **小额诉讼程序建议**——是否符合小额诉讼条件（金额≤当地上年度就业人员年平均工资30%）
+          8. **投诉+诉讼双轨策略**——12315投诉与民事诉讼的配合使用
+
+- id: "00000000-0000-0000-0000-000000000b27"
+  name: "物业与相邻关系纠纷"
+  description: "Provide legal support for property management and neighbor disputes covering claims, defenses, and evidence"
+  category: "litigation"
+  steps:
+    - name: "Search property and neighbor rules"
+      description: "Search for applicable property management and neighbor relations provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate property dispute support"
+      description: "Generate legal support for a property or neighbor dispute"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请作为民事诉讼律师，对以下物业/相邻关系纠纷提供法律支持：
+
+          【纠纷类型】：【物业费纠纷/物业服务纠纷/相邻关系纠纷/业主委员会纠纷】
+          【具体争议】：【物业费拖欠/物业服务质量/漏水侵扰/噪音扰民/采光通风遮挡/停车位争议/装修扰民/违章搭建】
+          【当事人信息】：【业主姓名/单元房号/入住时间/物业公司名称/相邻方信息】
+          【物业合同】：【物业费标准/服务内容约定/合同期限/违约条款】
+          【已采取措施】：【是否投诉/是否发函/是否申请调解/是否有行政处罚】
+
+          请输出：
+          1. **法律关系梳理**——物业合同关系/相邻权关系/业主共同体关系的法律定性
+          2. **权利义务对照**——各方在物业合同/相邻关系中的权利义务
+          3. **诉讼请求设计**——具体请求项（支付物业费/赔偿损失/排除妨害/恢复原状/确认合同条款无效）
+          4. **对方抗辩预判**——物业服务质量抗辩/历史惯例抗辩/合理使用抗辩及应对
+          5. **举证要点**——物业服务质量证据/损害照片视频/噪音测量/鉴定报告/业主公约
+          6. **调解与社区治理建议**——通过业主委员会/社区调解/行政调解等途径解决的可能性
+          7. **特别风险提示**：
+             - 物业费不能以服务质量问题为由直接拒付（需另诉物业服务违约）
+             - 相邻关系的"容忍义务"限度判断
+             - 业主委员会的法律地位与诉讼主体资格
+
+- id: "00000000-0000-0000-0000-000000000b28"
+  name: "刑事案件评估与辩护策略"
+  description: "Assess a criminal case and develop a defense strategy across elements, defense direction, and sentencing prediction"
+  category: "criminal_defense"
+  steps:
+    - name: "Search criminal law basis"
+      description: "Search for applicable criminal law provisions and sentencing guidelines"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate criminal assessment"
+      description: "Generate a criminal case assessment and defense strategy memo"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下刑事案件进行初步评估并制定辩护策略：
+
+          案件信息：
+          - 涉嫌罪名：【XX罪，涉嫌《刑法》第XX条】
+          - 案件阶段：【立案侦查/逮捕后/审查起诉/一审/二审】
+          - 当事人情况：【身份/职业/羁押状态（拘留/逮捕/取保）/前科情况】
+          - 案件事实概述：【简述指控事实与当事人陈述的版本差异】
+          - 涉案金额/后果：【XX万元/伤害后果等】
+          - 已知证据情况：【口供/书证/证人/鉴定等，如已阅卷可上传摘要】
+
+          评估框架：
+
+          1. 构成要件对照分析：
+             - 逐要件分析（主体/主观方面/客体/客观方面）指控罪名是否成立
+             - 此罪与彼罪的辨析（如：诈骗 vs. 民事合同纠纷、职务侵占 vs. 挪用资金、非法吸收公众存款 vs. 合法民间借贷）
+             - 罪与非罪的核心争议点
+
+          2. 辩护方向选择（评估各方向的空间与依据）：
+             - 无罪辩护：事实不清/证据不足/行为不构成犯罪/正当事由
+             - 罪轻辩护：定性之争（更轻罪名）/数额认定/地位作用（主从犯）/未遂中止
+             - 量刑辩护：法定与酌定从宽情节盘点（自首/坦白/立功/退赃退赔/初犯/认罪认罚）
+             - 程序辩护：管辖/超期羁押/非法证据线索
+
+          3. 量刑预测：对照量刑指导意见和本地量刑细则，给出量刑区间预测（含缓刑可能性评估）
+
+          4. 阶段性行动计划：当前阶段最紧迫的3件事（会见/取保申请/证据保全/退赃安排）
+
+          5. 风险告知要点：向家属/当事人说明的预期管理与执业边界
+
+          输出案件评估备忘录（注意措辞：基于现有材料的初步分析）。
+
+- id: "00000000-0000-0000-0000-000000000b29"
+  name: "侦查阶段辩护（会见/取保/羁押必要性审查）"
+  description: "Support defense work during investigation including meeting outline, bail application, and detention necessity review"
+  category: "criminal_defense"
+  steps:
+    - name: "Search criminal procedure basis"
+      description: "Search for applicable criminal procedure provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate investigation-stage defense"
+      description: "Generate investigation-stage defense documents and meeting outline"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为侦查阶段的辩护工作提供支持：
+
+          案件信息：
+          - 涉嫌罪名与办案机关：【XX罪，XX公安分局/监委】
+          - 强制措施与期限：【拘留第X日/已逮捕/指定居所监视居住】
+          - 需要的工作：【首次会见准备/取保候审申请/羁押必要性审查/侦查阶段律师意见】
+
+          一、首次会见提纲：
+          1. 权利告知清单（如实供述与认罪认罚制度、辩护人权利、对讯问程序的注意事项）
+          2. 事实核实问题清单（按涉嫌罪名的构成要件设计，开放式提问）
+          3. 程序信息收集（讯问次数与方式、是否存在刑讯逼供/疲劳审讯线索、已签署文件）
+          4. 执业红线提醒（不得传递案情给同案人员、不得教唆翻供、通讯工具管理）
+
+          二、取保候审申请书起草：
+          1. 社会危险性逐项反驳（《刑事诉讼法》第81条情形逐一论证不具备）
+          2. 从宽情节与人身危险性论证（初犯/固定住所职业/家庭羁绊/自愿退赃）
+          3. 保证方式（保证人/保证金）与配套承诺
+          4. 企业经营者的特殊论证（羁押对企业经营的影响——少捕慎诉慎押政策）
+
+          三、羁押必要性审查申请（逮捕后）：
+          - 申请时机与受理机关、新情况新证据的组织（赔偿谅解/退赃/疾病证明）
+
+          四、侦查阶段律师意见书：
+          - 向办案机关提交不构成犯罪/不应逮捕法律意见的时机与结构
+
+          输出所需文书 + 会见提纲 + 风险提示。
+
+- id: "00000000-0000-0000-0000-000000000b2a"
+  name: "审查起诉阶段与认罪认罚"
+  description: "Support defense during review-for-prosecution including file review, non-prosecution, and plea leniency negotiation"
+  category: "criminal_defense"
+  steps:
+    - name: "Search criminal procedure basis"
+      description: "Search for applicable criminal procedure and plea leniency provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate prosecution-stage defense"
+      description: "Generate evidence review opinion and plea leniency analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为审查起诉阶段的辩护工作提供支持：
+
+          案件信息：
+          - 罪名与移送情况：【XX罪，已移送XX检察院审查起诉】
+          - 阅卷情况：【已阅卷（可上传卷宗摘要）/待阅卷】
+          - 当事人态度：【认罪/不认罪/部分认罪】
+
+          一、阅卷与证据审查：
+          1. 阅卷清单与卷宗结构梳理（诉讼文书卷/证据卷）
+          2. 证据审查框架：
+             - 逐份证据三性审查，重点：口供取证合法性（与讯问录音录像比对）、鉴定意见的资质与程序、电子数据完整性
+             - 证据链分析：指控事实的每个构成要件是否有证据支撑、证据间矛盾点
+             - 非法证据排除线索的固定
+          3. 有利证据挖掘与补充侦查建议
+
+          二、不起诉争取（如有空间）：
+          - 法定不起诉/酌定不起诉（情节轻微）/存疑不起诉的论证路径
+          - 检察听证的申请与准备
+          - 刑事和解（适用范围）与赔偿谅解的落地
+
+          三、认罪认罚从宽（如选择）：
+          1. 量刑协商策略：量刑建议的谈判空间（幅度刑 vs. 确定刑）、与自首坦白退赃的叠加计算
+          2. 具结书签署注意事项（辩护人在场、当事人反悔的后果）
+          3. 认罪认罚后的上诉问题（检察院抗诉风险）
+          4. 利弊分析框架：帮当事人对比认罪认罚 vs. 无罪辩护的预期结果
+
+          输出证据审查意见 + 检察阶段法律意见书 + 认罪认罚利弊分析。
+
+- id: "00000000-0000-0000-0000-000000000b2b"
+  name: "庭审辩护（质证/辩护词/非法证据排除）"
+  description: "Prepare criminal trial defense including cross-examination, examination outline, illegal evidence exclusion, and defense speech"
+  category: "criminal_defense"
+  steps:
+    - name: "Read case materials"
+      description: "Read indictment, evidence list, and file summary"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate trial defense"
+      description: "Generate cross-examination opinions, examination outline, and defense speech"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为刑事庭审辩护准备以下工作：
+
+          案件信息：
+          - 案号与罪名：【XX】
+          - 辩护方向：【无罪/罪轻/量刑辩护】
+          - 【上传起诉书、证据清单、阅卷摘要】
+
+          一、质证意见（逐组证据）：
+          - 每组证据的质证维度：真实性/合法性/关联性 + 证明力
+          - 重点攻击点：取证程序瑕疵、鉴定意见的方法与资质、言词证据的前后矛盾、间接证据链的断点
+          - 质证语言规范（简明、直指争议焦点）
+
+          二、发问提纲：
+          - 对被告人的发问（引出有利事实、澄清口供语境）
+          - 对证人/鉴定人/侦查人员的发问设计（出庭申请与发问策略）
+
+          三、非法证据排除申请（如有线索）：
+          1. 启动条件与申请时机（庭前会议优先）
+          2. 线索与材料的提供要求（时间/地点/方式/人员）
+          3. 排除范围主张（重复性供述的排除规则）
+          4. 对检方证明取证合法性的应对（申请当庭播放讯问录像）
+
+          四、辩护词起草：
+          1. 结构：辩护意见总述 → 事实与证据之辩（对应质证成果）→ 法律适用之辩（构成要件/此罪彼罪）→ 量刑之辩（情节逐项论证）→ 结论
+          2. 无罪辩护版与罪轻辩护版的不同写法（主张无罪时量刑意见的表述技巧与骑墙风险提示）
+          3. 两个版本：口头辩护提纲（庭上用）+ 书面辩护词（庭后提交）
+
+          输出质证意见 + 发问提纲 + 辩护词（指明版本）。
+
+- id: "00000000-0000-0000-0000-000000000b2c"
+  name: "涉案企业刑事风险与合规整改专项"
+  description: "Develop a criminal risk response plan for implicated enterprises including unit crime, asset handling, and compliance rectification"
+  category: "criminal_defense"
+  steps:
+    - name: "Search compliance and criminal rules"
+      description: "Search for applicable criminal and compliance rectification provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate enterprise risk plan"
+      description: "Generate a criminal risk response and compliance rectification plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为涉刑企业/企业家提供刑事风险处置方案：
+
+          案件信息：
+          - 涉案主体：【企业单位犯罪/企业家个人/两者均涉】
+          - 涉嫌罪名：【如：虚开增值税专用发票/单位行贿/串通投标/非法吸收公众存款/污染环境/侵犯商业秘密】
+          - 企业现状：【正常经营/账户被冻结/核心人员被羁押】
+
+          处置方案：
+
+          1. 单位犯罪与个人犯罪的界分：
+             - 单位意志的认定（决策程序/利益归属）
+             - 直接负责的主管人员与其他直接责任人员的范围切割
+             - 辩护利益冲突审查（企业与个人是否需分别委托律师）
+
+          2. 涉案财物处置应对：
+             - 查封扣押冻结的合法性审查（超范围查扣的异议路径）
+             - 合法财产与涉案财产的甄别申请（经营账户解冻的争取）
+             - 案外人（股东/合作方）财产权利的救济
+
+          3. 追赃挽损与退赃退赔策略：
+             - 退赃时机与量刑影响的测算
+             - 退赔资金来源的合规安排
+             - 与被害人和解/谅解的谈判
+
+          4. 企业合规整改衔接（涉案企业合规改革）：
+             - 合规不起诉/合规从宽的适用条件评估
+             - 专项合规整改方案框架（针对涉嫌罪名的制度重建）
+             - 第三方监督评估机制的配合要点
+
+          5. 经营连续性保障：
+             - 关键人员羁押期间的公司治理安排（授权/代行机制）
+             - 上下游与金融机构的沟通口径
+             - 资质/招投标资格受影响的评估（行贿犯罪档案查询的影响）
+
+          输出刑事风险处置方案 + 涉案财物异议文书 + 合规整改方案框架。
+
+- id: "00000000-0000-0000-0000-000000000b2d"
+  name: "案件大事记"
+  description: "Compile a case chronology with key events, types, and a visual timeline"
+  category: "litigation"
+  steps:
+    - name: "Read case materials"
+      description: "Read contracts, correspondence, payment records, and litigation documents"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate case chronology"
+      description: "Generate a case chronology table and visual timeline"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件全部材料，编制一份案件大事记（Case Chronology）：
+
+          【上传/粘贴：合同、往来函件、邮件、付款凭证、诉讼文书等】
+
+          大事记要求：
+          1. 按时间顺序（正序/倒序均可）排列所有关键事件
+          2. 每条包含：
+             | 日期 | 事件 | 事件类型 | 关联文件/证据编号 | 涉及当事人 | 对案件的影响 | 备注 |
+
+          3. 事件类型分类：
+             - 📜 合同/协议签署
+             - 💬 沟通/函件往来
+             - 💰 付款/收款
+             - ⚠️ 违约/争议事件
+             - ⚖️ 诉讼/程序事件
+             - 📋 其他
+
+          4. 识别关键事件：
+             - 合同成立时间
+             - 履行开始/完成时间
+             - 违约行为发生时间
+             - 损失产生时间
+             - 权利主张时间（催告/发函/起诉）
+             - 诉讼时效起算/中断/届满时间
+
+          5. 生成可视化时间线
+
+          输出：Excel/docx表格 + 可视化时间线图
+
+- id: "00000000-0000-0000-0000-000000000b2e"
+  name: "当事人/关系图谱"
+  description: "Map the parties and their relationships with a visual graph and legal significance analysis"
+  category: "litigation"
+  steps:
+    - name: "Read case materials"
+      description: "Read case materials to identify parties and relationships"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate relationship graph"
+      description: "Generate a party relationship graph and analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件材料，梳理当事人关系图谱：
+
+          【上传/粘贴案件材料】
+
+          梳理要求：
+          1. 列出所有相关主体（自然人/法人/其他组织）：
+             | 主体名称 | 主体类型 | 在案件中的角色 | 与其他主体的关系 | 关键事实 |
+
+          2. 主体间关系类型：
+             - 股权关系（控股/参股/母子公司）
+             - 合同关系（买卖/借贷/担保/委托等）
+             - 人员关系（法定代表人/董事/高管/实际控制人）
+             - 资金往来关系
+             - 诉讼关系（共同原告/被告/第三人）
+
+          3. 生成可视化关系图谱：
+             - 节点：各主体
+             - 连线：关系类型（不同颜色/线型区分）
+             - 标注：关键关系信息
+
+          4. 关系图谱的法律意义分析：
+             - 是否构成关联关系
+             - 是否存在人格混同/一人公司
+             - 是否需要追加当事人
+             - 责任传导路径分析
+
+          输出：关系图谱表格 + 可视化图表
+
+- id: "00000000-0000-0000-0000-000000000b2f"
+  name: "损失计算模型"
+  description: "Build a loss calculation model covering direct, indirect, penalty adjustment, and interest computation"
+  category: "litigation"
+  steps:
+    - name: "Search loss calculation rules"
+      description: "Search for applicable loss and damages calculation provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate loss calculation"
+      description: "Generate a loss calculation model and memo"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件情况，建立损失计算模型：
+
+          案件信息：
+          - 损失类型：【合同违约损失/侵权损失/股权投资损失等】
+          - 计算基准：【合同约定/法定标准/实际损失】
+
+          计算模型：
+
+          1. 直接损失：
+             - 已付未得部分：【金额 + 计算依据】
+             - 财产毁损/灭失：【金额 + 评估依据】
+             - 必要费用支出：【如：公证费、鉴定费、差旅费】
+
+          2. 间接损失（可得利益损失）：
+             - 计算方法：
+               a. 对比法（合同履行后的预期利润 vs. 合同未履行的实际状态）
+               b. 行业利润率法（参照同行业平均利润率）
+               c. 约定计算法（合同约定的违约金/损失计算方式）
+             - 可预见性规则的适用（《民法典》第584条）
+             - 减损义务的审查（《民法典》第591条）
+             - 损益相抵规则（《民法典》第592条）
+
+          3. 违约金调整分析（如适用）：
+             - 约定违约金是否过高（超过实际损失30%）
+             - 约定违约金是否过低
+             - 调整请求的策略
+
+          4. 利息计算：
+             - 法定利息：LPR的倍数（如1倍LPR/4倍LPR）
+             - 约定利息/违约金
+             - 计算起止日期
+             - 复利计算（如约定）
+
+          5. 损失汇总表：
+             | 损失项目 | 金额（元） | 计算依据 | 证据支撑 | 备注 |
+
+          6. 诉讼请求金额确定：
+             - 本金/直接损失
+             - 间接损失
+             - 利息/违约金（计算至某一日 + 继续计算至付清之日）
+             - 诉讼费/保全费/担保费
+             - 律师费（如合同约定由败诉方承担）
+
+          输出：损失计算明细表（Excel）+ 计算说明备忘录
+
+- id: "00000000-0000-0000-0000-000000000b30"
+  name: "庭审模拟"
+  description: "Run a moot court simulation predicting judge and opposing counsel perspectives with simulated dialogue"
+  category: "litigation"
+  steps:
+    - name: "Read case materials"
+      description: "Read pleadings, evidence lists, and advocacy opinions"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate moot court simulation"
+      description: "Generate a moot court simulation report and dialogue script"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件材料，进行庭审模拟（Moot Court）：
+
+          【上传/粘贴：起诉状、答辩状、证据清单、双方代理意见、相关法条】
+
+          模拟庭审要求：
+
+          1. 法官视角预判：
+             - 法官可能归纳的争议焦点（2-5个）
+             - 法官对每个争议焦点的倾向性预判
+             - 法官可能提出的追问
+             - 法官关注的程序问题
+
+          2. 对方律师视角预判：
+             - 对方可能的核心论点
+             - 对方对我方弱点的攻击点
+             - 对方可能提交的新证据
+             - 对方的庭审策略（进攻型/防守型）
+
+          3. 我方应对策略：
+             - 每个争议焦点的我方最佳论述路径
+             - 对对方攻击点的预先防御
+             - 我方对对方弱点的攻击策略
+             - 庭审节奏控制建议
+
+          4. 庭审模拟对话：
+             请模拟以下环节的对话：
+             - 法庭调查阶段：法官发问 + 双方回答
+             - 举证质证阶段：双方对关键证据的质证
+             - 法庭辩论阶段：双方第一轮和第二轮辩论
+
+          5. 结果预判：
+             - 各争议焦点的胜诉概率
+             - 总体胜诉概率
+             - 可能的判决结果（金额范围）
+             - 是否建议上诉
+
+          输出：庭审模拟报告 + 模拟对话脚本
+
+- id: "00000000-0000-0000-0000-000000000b31"
+  name: "案件管理台账"
+  description: "Build a case management ledger template with deadlines, statistics, and monthly progress reporting"
+  category: "litigation"
+  steps:
+    - name: "Generate case ledger"
+      description: "Generate a case management ledger template"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请帮我建立一份案件管理台账模板，用于管理当前在手的多起案件：
+
+          台账字段要求：
+
+          | 案件编号 | 案件名称 | 案由 | 审理法院 | 案号 | 审理程序 | 我方当事人 | 对方当事人 | 诉讼标的额 | 案件阶段 | 立案日期 | 下次开庭日期 | 举证期限截止日 | 上诉期限截止日 | 执行期限截止日 | 承办律师 | 协办律师 | 客户名称 | 收费标准 | 已收费用 | 未收费用 | 案件风险评估 | 关键节点提醒 | 备注 |
+
+          案件阶段选项：
+          - 诉前准备 → 已立案 → 一审审理中 → 一审已判决 → 上诉中 → 二审审理中 → 二审已判决 → 再审申请中 → 执行中 → 执行终结 → 已结案
+
+          风险评估：🔴高风险 / 🟡中风险 / 🟢低风险
+
+          同时请设置：
+          1. 关键期限自动提醒功能（举证期限/上诉期限/执行期限到期前7天、3天、1天提醒）
+          2. 按案件阶段分类统计
+          3. 按承办律师分类统计
+          4. 月度案件进展报表模板
+
+          输出为docx表格文档，便于团队协作管理。

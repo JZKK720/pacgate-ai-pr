@@ -79,7 +79,7 @@ pacgate-ai-pr/
 - LLM router: 7 providers, 3-tier routing
 - RAG: pgvector + tsvector hybrid retrieval + Ollama embeddings + chunk ingestor + **jurisdiction filtering + source level tagging + T1-T4 data level filtering** (SearchFilter struct, migrations 003+004)
 - 20 legal personas (practice-area personas) + **10 SOUL personas** (Justin, Sylvie, A1-A8 complete BigLaw roster)
-- **51 YAML workflow templates** loaded from `pacgate-ai/workflows/*.yaml` (9 files). Categories: investment_financing, contract_review, ma_due_diligence, litigation, compliance_corporate, fund_lawyer, capital_markets, compliance_specialized, banking_general. YAML loader: `load_from_yaml_dir()`, `merge_workflows()`, `list_all_workflows()`
+- **210 YAML workflow templates** loaded from `pacgate-ai/workflows/*.yaml` (14 files). Categories: investment_financing, contract_review, ma_due_diligence, litigation, compliance_corporate, fund_lawyer, capital_markets, compliance_specialized, banking_general, plus litigation_extra, nonlitigation_extra, compliance_extra, fund_extra, daily_general. YAML loader: `load_from_yaml_dir()`, `merge_workflows()`, `list_all_workflows()`
 - **WorkflowExecutor** — drives AgentLoop step-by-step through workflow templates, chains outputs as context. Re-exported from `pacgate_agent::WorkflowExecutor`
 - **Workflow execution API** — `POST /api/workflows/:id/execute` endpoint runs workflows end-to-end. `GET /api/workflows?category=X&search=Y` filters by category and searches by keyword. `GET /api/workflows/categories` returns distinct categories with counts.
 - **Legal search agent tool** — `legal_search` tool in pacgate-agent with `SearchRouter` integration. A4 Research Agent can query external legal databases (CourtListener, SEC EDGAR, GLEIF, Chinese DBs) with jurisdiction/doc_type/connector filtering. Tool description instructs agent to never fabricate citations.
@@ -101,7 +101,7 @@ pacgate-ai-pr/
 ### Next steps (resume from here on other machine)
 
 1. ~~Push pending commits~~ — DONE (all pushed)
-2. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done). See `pacgate-ai/workflows/*.yaml` for format. Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks). Remaining: 诉讼律师(~57), 非诉律师(~52), 合规律师(~28 remaining), 基金律师(~26 remaining), 律师日常(~23 remaining)
+2. ~~Convert remaining ~173 prompt templates~~ — DONE. All 5 source guides converted. Added 5 new YAML files (litigation_extra, nonlitigation_extra, compliance_extra, fund_extra, daily_general) with 153 new workflows. Total YAML workflows now 210 across 14 files. Verified: `cargo test -p pacgate-workflow --test yaml_loader` passes (210 loaded, no duplicate IDs).
 3. ~~Add jurisdiction filtering + source level tagging to pacgate-rag~~ — DONE
 4. ~~Add data source connectors~~ — DONE (7 connectors: 4 Chinese active + 3 international active)
 5. ~~Add remaining BigLaw agents~~ — DONE (A1-A8 complete)
@@ -110,7 +110,7 @@ pacgate-ai-pr/
 8. ~~Integration test scaffold~~ — DONE (compiles, requires Postgres at `localhost:5433/pacgate_test`)
 9. **qm TypeScript adapter** — Phase 2 collaboration runtime
 10. ~~Wire SOUL persona into chat handler~~ — DONE
-11. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable
+11. ~~Run integration test~~ — DONE. Fixed `AppState` initializers in `integration.rs` (added missing `rag: None` field at lines 226, 1171). Created `pacgate_test` DB in `hermes-postgres` container (port 5433). Both tests pass: `full_api_flow` + `unauthenticated_request_returns_401`. Run with `PACGATE_TEST_DATABASE_URL=postgres://hermes:changeme@localhost:5433/pacgate_test cargo test -p pacgate-api --test integration -- --ignored`.
 12. ~~Wire workflow YAML loading into API~~ — DONE
 13. ~~Wire workflow steps to agent tools~~ — DONE (WorkflowExecutor)
 14. ~~Wire WorkflowExecutor into API~~ — DONE (`POST /api/workflows/:id/execute`)
@@ -126,12 +126,12 @@ pacgate-ai-pr/
 24. ~~Add 9-directory archive taxonomy~~ — DONE (ArchiveDirectory enum, ProjectOverview, FileDirectoryEntry, ProjectBusinessModule)
 25. ~~Expose ConnectorRegistry via API~~ — DONE (`GET /api/search/registry`)
 26. ~~Expose DD configs via API~~ — DONE (`GET /api/dd-configs`)
-27. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done). Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks). Remaining: 诉讼律师(~57), 非诉律师(~52), 合规律师(~28 remaining), 基金律师(~26 remaining), 律师日常(~23 remaining)
+27. ~~Convert remaining ~173 prompt templates~~ — DONE. All 5 source guides converted (see task 2). 210 YAML workflows total.
 28. **Add archive collection workflow templates** — the 3-phase project archive workflow from 项目档案目录及说明
 29. ~~Add international connectors~~ — DONE. 4 new connectors: Vaquill (US legal, API key), EUR-Lex (EU law, public REST), Ansvar (EU compliance MCP, API key), OpenCorporates (offshore corporate registry, API key). Total connectors now: 11 (4 Chinese + 7 international). Env vars: `VAQUILL_API_KEY`, `ANSVAR_API_KEY`, `OPENCORPORATES_API_KEY`. EUR-Lex is free (no key). ConnectorRegistry updated: 4 entries marked `implemented: true`.
 30. ~~Wire DD configs into WorkflowExecutor~~ — DONE. `ExecuteWorkflowRequest` now accepts optional `dd_domain`, `WorkflowExecutor::execute()` accepts optional `DdAgentConfig`, and DD workflows inject a third system-prompt layer: `persona_prompt + dd_config_prompt + step_prompt`. Added helpers: `DdAgentConfig::compose_system_prompt()`, `dd_domain_from_str()`, `dd_config_for_domain()`. Validated with 23 API smoke tests + 5 pacgate-agent tests.
 31. **qm TypeScript adapter** — Phase 2 collaboration runtime
-32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable at `localhost:5433/pacgate_test`
+32. ~~Run integration test~~ — DONE. Both integration tests pass against real Postgres (see task 11).
 33. ~~Wire DataLevel into API~~ — DONE. `GET /api/kb/search?q=...&matter_id=...&max_data_level=T3` (internal RAG with T1-T4 filtering, default T3). `GET /api/search?data_level=T2` (external search tagging). Document upload accepts `data_level` multipart field (T1-T4, default T2). `RagStore` added to `AppState` (optional, requires Postgres). 20 smoke tests pass (5 new: DataLevel parsing, ArchiveDirectory 9-dirs, SearchFilter data_level, ConnectorRegistry 27 entries, DD configs 9 domains).
 
 ### Important reminders
@@ -141,7 +141,7 @@ pacgate-ai-pr/
 - **sqlx uses postgres** (not sqlite) — workspace Cargo.toml has `features = ["postgres", ...]`
 - **All commits pushed** — repo is in sync with origin (session 12)
 - **Client assets in pacgate-ai-assets/** — 150+ prompt templates, SOUL definitions, BigLaw architecture, data source configs, project archive taxonomy. See deploy/PLANS.md for the enrichment plan.
-- **YAML workflows** — `pacgate-ai/workflows/*.yaml` (9 files, 51 templates). Load with `pacgate_workflow::load_from_yaml_dir()`. Test: `cargo test -p pacgate-workflow --test yaml_loader`. API: `GET /api/workflows?category=X&search=Y`, `GET /api/workflows/categories`, `GET /api/workflows/:id`, `POST /api/workflows/:id/execute`
+- **YAML workflows** — `pacgate-ai/workflows/*.yaml` (14 files, 210 templates). Load with `pacgate_workflow::load_from_yaml_dir()`. Test: `cargo test -p pacgate-workflow --test yaml_loader`. API: `GET /api/workflows?category=X&search=Y`, `GET /api/workflows/categories`, `GET /api/workflows/:id`, `POST /api/workflows/:id/execute`
 - **Data source connectors** — `pacgate-search` crate with `DataSourceConnector` trait, `SearchRouter`, 11 connectors (4 Chinese: YuanDian, PkuLaw, Qcc, FYOpen + 7 international: CourtListener, SEC EDGAR, GLEIF, Vaquill, EUR-Lex, Ansvar, OpenCorporates). `default_router()` factory. Env vars: `YUANDIAN_API_KEY`, `PKULAW_API_KEY`, `QCC_API_KEY`, `FYOPEN_API_KEY`, `COURTLISTENER_API_KEY`, `VAQUILL_API_KEY`, `ANSVAR_API_KEY`, `OPENCORPORATES_API_KEY`
 - **Integration test** — run with `cargo test -p pacgate-api --test integration -- --ignored` (requires Postgres at `localhost:5433/pacgate_test`, user=hermes, password=changeme)
 - **RAG migrations** — 003: adds `jurisdiction` + `source_level` columns; 004: adds `data_level` column (T1-T4). Run automatically by `RagStore::run_migrations()`

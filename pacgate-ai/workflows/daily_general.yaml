@@ -1,0 +1,1375 @@
+# Daily general practice workflows
+# Derived from: 律师日常通用Prompts指南.md
+# Covers templates NOT already present in contract_review.yaml
+# (existing: 日常商业合同审阅, 合同关键条款谈判备忘录, 劳动法咨询,
+#  争议预防与商业谈判支持, 合同快速扫描（10分钟版）)
+
+- id: "00000000-0000-0000-0000-000000000f01"
+  name: "合同风险红黑榜（批量审阅）"
+  description: "Batch review multiple contracts and produce a risk red/black ranking summary for management"
+  category: "contract_review"
+  steps:
+    - name: "Generate batch review ranking"
+      description: "Generate a batch contract risk ranking with red/yellow/green tiers and template suggestions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请帮我批量审阅以下【5/10/20】份合同，生成一份合同风险红黑榜汇总：
+
+          【逐份上传或粘贴合同文本，每份标注合同名称和类型】
+
+          审阅要求：
+          1. 对每份合同进行快速扫描（不需要逐字逐句，重点看关键条款）
+          2. 为每份合同标注：
+             | 合同名称 | 合同类型 | 风险等级（🔴高/🟡中/🟢低） | 关键风险点（最多3条） | 建议处理优先级 | 需修改条款摘要 |
+
+          3. 生成红黑榜排名：
+             🔴 红榜（高风险，必须优先处理）：
+             - 【合同名称】：【关键风险】
+
+             🟡 黄榜（中风险，建议处理）：
+             - 【合同名称】：【关键风险】
+
+             🟢 绿榜（低风险，基本可签）：
+             - 【合同名称】：【需微调之处】
+
+          4. 通用风险提示：
+             - 这批合同中普遍存在的风险模式
+             - 建议制定的标准条款模板（避免重复问题）
+
+          5. 合同模板建议：
+             - 哪类合同需要制定我方标准模板
+             - 模板中应包含的关键保护条款清单
+
+          输出为汇总表格（docx文档），便于管理层决策。
+
+- id: "00000000-0000-0000-0000-000000000f02"
+  name: "合同起草（从零开始）"
+  description: "Draft a contract from scratch with a defined structure, drafting stance, and legal citations"
+  category: "contract_review"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for contract law authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate contract draft"
+      description: "Generate a full contract draft with drafting notes and clean versions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份【合同类型：如技术服务合同/特许经营合同/委托开发合同/战略合作协议】：
+
+          合同基本信息：
+          - 甲方：【名称、地址、法定代表人】
+          - 乙方：【名称、地址、法定代表人】
+          - 合同标的：【简述】
+          - 合同金额/计价方式：【如：固定总价XX万元/按工时计费/按里程碑付款】
+          - 合同期限：【如：1年/3年/项目制】
+          - 我方身份：【甲方/乙方】
+
+          起草要求：
+
+          1. 合同结构（按以下顺序编排）：
+             - 鉴于条款（背景说明）
+             - 定义与解释
+             - 标的/服务范围
+             - 甲方权利义务
+             - 乙方权利义务
+             - 价格与支付
+             - 交付/验收
+             - 知识产权
+             - 保密
+             - 违约责任
+             - 合同解除
+             - 不可抗力
+             - 争议解决
+             - 通知
+             - 合同期限与续签
+             - 一般条款（可分割性/完整协议/不可弃权/转让限制等）
+             - 签署页
+
+          2. 起草立场：
+             - 从【我方】立场起草，确保权利义务对等但对我方适当有利
+             - 关键条款提供"我方版"和"均衡版"两个选项
+             - 每个条款标注起草思路说明（注释形式，不在正式文本中）
+
+          3. 特别注意：
+             - 【如：付款节点应与服务交付里程碑挂钩】
+             - 【如：知识产权归属应明确约定】
+             - 【如：保密范围应覆盖双方】
+
+          请引用相关法律法规（《民法典》合同编及相关司法解释）。
+          输出为Word文档，含起草说明注释版本和清洁版本两份。
+
+- id: "00000000-0000-0000-0000-000000000f03"
+  name: "劳动合同起草与审阅"
+  description: "Draft or review an employment contract with mandatory clauses, special clauses for executives, and risk review"
+  category: "employment_law"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for labor contract law authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate employment contract"
+      description: "Generate or review an employment contract with supporting document templates"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草/审阅一份劳动合同：
+
+          员工信息：
+          - 员工姓名：【XX】
+          - 岗位：【如：高级工程师/销售总监/CEO】
+          - 工作地点：【XX城市】
+          - 合同期限：【固定期限3年/无固定期限/以完成一定任务为期限】
+          - 薪酬：【月薪XX元 + 年度绩效奖金】
+          - 是否为高管/核心员工：【是/否】
+
+          起草/审阅要点：
+
+          1. 必备条款合规性审查（《劳动合同法》第17条）：
+             - 合同期限
+             - 工作内容和工作地点
+             - 工作时间和休息休假
+             - 劳动报酬
+             - 社会保险
+             - 劳动保护、劳动条件和职业危害防护
+
+          2. 特别条款（针对【高管/核心员工】）：
+             - 竞业限制条款：
+               * 竞业限制范围（行业/地域/具体竞争对手名单）
+               * 竞业限制期限（最长2年）
+               * 竞业限制补偿金标准（不低于离职前12个月平均工资的30%）
+               * 违约金条款
+             - 保密条款
+             - 知识产权归属条款
+             - 服务期条款（如提供了专项培训费用）
+             - 股权/期权条款衔接
+
+          3. 风险条款审查：
+             - 试用期条款：
+               * 试用期长度是否合规（3个月以上不满1年→不超过1个月；1年以上不满3年→不超过2个月；3年以上及无固定期限→不超过6个月；不满3个月或以完成一定任务为期限→不得约定试用期）
+               * 试用期工资不低于正式工资80%
+             - 调岗调薪条款：
+               * 是否有合理调整机制
+               * 单方调整的条件和限制
+             - 解除条件：
+               * 用人单位解除条件是否合法
+               * 员工解除条件是否便利
+
+          4. 配套文件清单：
+             - 保密协议
+             - 竞业限制协议（建议单独签署）
+             - 知识产权归属确认书
+             - 岗位说明书
+             - 员工手册/规章制度确认签收单
+
+          输出为Word文档，附配套文件模板。
+          引用《劳动合同法》《劳动合同法实施条例》及最新司法解释。
+
+- id: "00000000-0000-0000-0000-000000000f04"
+  name: "员工离职与裁员方案"
+  description: "Design a lawful employee termination or layoff plan with legality review, compensation design, and risk control"
+  category: "employment_law"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for labor law and layoff authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate layoff plan"
+      description: "Generate a termination/layoff legal plan with agreement template and compensation table"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业制定员工离职/裁员法律方案：
+
+          企业信息：
+          - 企业名称：【XX】
+          - 裁员原因：【业务调整/并购后整合/经济性裁员/违法解除的补救】
+          - 涉及员工数量：【XX人】
+          - 员工类型：【普通员工/高管/孕期产期哺乳期员工/工伤员工/接近退休员工/外籍员工】
+          - 企业规模：【XX人（判断是否适用经济性裁员程序）】
+
+          方案框架：
+
+          1. 裁员合法性审查：
+             - 是否符合《劳动合同法》第41条经济性裁员条件（企业转产/经营调整/客观经济情况重大变化）
+             - 是否需要向工会/全体职工说明情况并听取意见
+             - 是否需要向劳动行政部门报告
+             - 优先留用人员审查（劳动合同较长/家庭无其他就业收入/有需要扶养的老人或未成年人）
+
+          2. 不得裁减人员审查：
+             - 孕期/产期/哺乳期女职工（《劳动合同法》第42条）
+             - 患病或非因工负伤在规定医疗期内的
+             - 在本单位连续工作满15年且距法定退休年龄不足5年的
+             - 正在担任集体协商代表的
+             - 尚未完成工伤认定的
+
+          3. 离职方式选择矩阵：
+             | 离职方式 | 适用条件 | 法律风险 | 成本 | 员工接受度 | 推荐指数 |
+             | 协商解除 | 双方同意 | 低 | 协商补偿（通常N+1或更高） | 中-高 | ★★★★★ |
+             | 经济性裁员 | 符合第41条 | 中 | N补偿 | 低 | ★★★ |
+             | 客观情况重大变化（第40条第3项） | 须先协商变更 | 中-高 | N+1补偿 | 低 | ★★ |
+             | 单方解除（第39条过错解除） | 需有充分证据 | 高 | 无补偿 | 极低 | ★ |
+
+          4. 补偿方案设计：
+             - 经济补偿金计算（N或N+1）
+             - N的确定：每满1年支付1个月工资，6个月以上不满1年按1年算，不满6个月支付半个月工资
+             - 月工资标准：离职前12个月的平均工资（含奖金、津贴等）
+             - 高工资员工的补偿上限（当地上年度职工月平均工资3倍，最长12年）
+             - 代通知金（+1）的适用条件
+             - 额外协商补偿的建议范围
+             - 社保/公积金转移安排
+             - 年度奖金/未休假期的处理
+
+          5. 离职流程时间线：
+             - 内部决策 → 工会/职工说明 → 劳动部门报告（如适用） → 通知员工 → 协商 → 签署协议 → 办理离职 → 补偿支付
+             - 每步的法律要求和时间节点
+
+          6. 风险防控：
+             - 劳动仲裁/诉讼的风险评估
+             - 群体性事件的预防措施
+             - 离职协议的关键条款（一次性解决/无后续争议/保密/竞业衔接）
+             - 证据保留要求
+
+          7. 涉外员工特殊处理（如适用）：
+             - 外籍员工的就业证注销
+             - 外籍员工的出境安排
+
+          输出为裁员法律方案（Word文档），含离职协议模板和补偿计算表。
+
+- id: "00000000-0000-0000-0000-000000000f05"
+  name: "劳动争议应对"
+  description: "Formulate a response plan for a labor dispute with evidence, mediation, and arbitration strategy"
+  category: "employment_law"
+  steps:
+    - name: "Search precedent"
+      description: "Search knowledge base for similar labor dispute cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate dispute response"
+      description: "Generate a labor dispute response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下劳动争议情况，制定应对方案：
+
+          争议信息：
+          - 争议类型：【违法解除赔偿金/拖欠工资/工伤待遇/竞业限制违约/未签劳动合同双倍工资/社保补缴/加班费等】
+          - 员工信息：【姓名、岗位、入职时间、离职时间、月薪】
+          - 我方身份：【用人单位/员工】
+          - 员工诉求：【简述】
+          - 已有程序：【是否已申请劳动仲裁/已收到仲裁通知】
+
+          应对方案框架：
+
+          1. 争议焦点分析：
+             - 员工主张的法律依据和构成要件
+             - 我方抗辩的法律依据
+             - 举证责任分配
+
+          2. 证据梳理：
+             - 我方已有证据清单及证明力评估
+             - 需要补充收集的证据
+             - 对方可能提交的证据及质证要点
+
+          3. 调解策略：
+             - 调解可行性评估
+             - 调解金额范围建议（最低/中间/最高）
+             - 调解协议的关键条款
+
+          4. 仲裁/诉讼策略：
+             - 管辖与程序（劳动仲裁前置 → 法院诉讼）
+             - 仲裁时效审查（1年）
+             - 请求/反请求设计
+             - 关键法律问题分析
+
+          5. 风险评估：
+             - 败诉概率及后果
+             - 判决金额预估范围
+             - 对其他员工的示范效应
+             - 声誉影响
+
+          请使用华宇元典数据库检索同类劳动争议案例。
+          输出劳动争议应对方案。
+
+- id: "00000000-0000-0000-0000-000000000f06"
+  name: "员工手册与规章制度合规审查"
+  description: "Review an employee handbook and internal rules for legal compliance with procedure and content checks"
+  category: "employment_law"
+  steps:
+    - name: "Read handbook"
+      description: "Read the employee handbook document"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate compliance review"
+      description: "Generate a compliance review report with modified handbook"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审阅以下员工手册/规章制度，进行合法性审查：
+
+          【上传或粘贴员工手册全文】
+
+          审查依据：
+          - 《劳动合同法》第4条（民主程序+公示告知）
+          - 《劳动法》相关条款
+          - 最高人民法院劳动争议司法解释
+          - 当地劳动法规和裁审指导意见
+
+          逐项审查清单：
+
+          1. 制定程序合法性：
+             - 是否经过民主程序（职工代表大会/全体职工讨论→提出方案和意见→平等协商确定）
+             - 是否向员工公示或告知（签收确认/邮件通知/内部公示）
+             - 证据留存是否充分
+
+          2. 内容合法性（逐条审查）：
+             - 纪律处分条款：
+               * 处分类型和条件是否明确
+               * 是否有"一次迟到即开除"等不合理条款
+               * 严重违反规章制度的认定标准是否合理
+             - 考勤与工时：
+               * 工时制度是否合规（标准工时/综合计算工时/不定时工时需审批）
+               * 加班管理规定是否合法
+               * 请假审批流程是否合理
+             - 薪酬与福利：
+               * 薪酬结构是否合法
+               * 绩效考核与扣减工资的合法性
+               * 罚款条款的合法性（注意：企业无罚款权）
+             - 保密与竞业：
+               * 竞业限制范围是否过宽
+               * 竞业补偿金标准是否达标
+             - 调岗调薪：
+               * 单方调整的条件是否合理
+               * 是否赋予员工异议权
+             - 解除条款：
+               * 哪些行为构成"严重违反规章制度"
+               * 是否与《劳动合同法》第39条衔接
+
+          3. 🔴违法条款 / 🟡风险条款 / 🟢建议改进标注
+
+          4. 修改建议（逐条给出修改后文本）
+
+          输出：审查报告 + 修改版员工手册
+
+- id: "00000000-0000-0000-0000-000000000f07"
+  name: "法律服务报价与收费方案"
+  description: "Draft a legal service fee quotation with service scope, fee model comparison, and team configuration"
+  category: "practice_management"
+  steps:
+    - name: "Generate fee quotation"
+      description: "Generate a formal fee quotation letter"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请帮我起草一份法律服务报价方案/律师费预估：
+
+          项目信息：
+          - 客户：【XX公司/个人】
+          - 项目类型：【如：股权收购尽调+协议起草/劳动争议仲裁/常年法律顾问/合同纠纷诉讼】
+          - 项目复杂程度：【简述】
+          - 预计工作量：【如：需3名律师，预计2个月】
+          - 客户预算约束：【如有，如：不超过XX万元】
+
+          报价方案结构：
+
+          1. 服务范围界定：
+             - 明确包含的服务内容
+             - 明确不包含的服务内容（排除项）
+             - 服务边界说明
+
+          2. 收费模式比较：
+             | 模式 | 说明 | 预估费用 | 优劣 | 适用性 |
+             | 固定收费 | 按项目整体报价 | XX万元 | 费用可控/工作量不确定时有风险 | ★★★★ |
+             | 计时收费 | 按小时计费 | XX万元（按XX小时预估） | 灵活/客户费用不确定 | ★★★ |
+             | 阶段收费 | 按项目阶段分批报价 | 分3-4期共XX万元 | 风险共担/客户逐步确认 | ★★★★ |
+             | 风险代理 | 按结果比例收费 | 基础费+XX% | 激励/风险大 | ★★（部分案件禁用） |
+             | 混合模式 | 基础费+浮动 | XX万+浮动部分 | 平衡 | ★★★★★ |
+
+          3. 推荐方案详情：
+             - 收费金额/比例
+             - 付款节点和时间安排
+             - 退款/调整机制
+             - 差旅费、鉴定费、公证费等代垫费用的处理
+
+          4. 团队配置与分工：
+             - 主办律师：【姓名、级别、小时费率】
+             - 协办律师：【姓名、级别、小时费率】
+             - 律师助理：【姓名、级别、小时费率】
+
+          5. 时间预估：
+             - 各阶段预计时间
+             - 关键里程碑
+             - 总预计工期
+
+          6. 附加条款：
+             - 费用上限（如有）
+             - 超出服务范围的追加费用机制
+             - 付款逾期处理
+             - 客户配合义务
+
+          输出为Word文档，格式为正式报价函，可直接发给客户。
+
+- id: "00000000-0000-0000-0000-000000000f08"
+  name: "委托代理协议起草"
+  description: "Draft a lawyer engagement agreement with scope, obligations, fees, termination, and liability limits"
+  category: "practice_management"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for lawyer fee regulation authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate engagement agreement"
+      description: "Generate a lawyer engagement agreement"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份律师委托代理协议：
+
+          委托信息：
+          - 委托人：【XX】
+          - 委托事项：【如：XX合同纠纷一审诉讼代理/XX公司常年法律顾问/XX项目专项法律服务】
+          - 委托范围：【一般授权/特别授权（列出特别授权事项）】
+          - 收费方式：【固定收费XX万元/计时收费XX元/小时/风险代理XX%】
+
+          协议结构：
+
+          1. 委托事项与范围
+          2. 律师义务
+             - 勤勉尽责义务
+             - 保密义务
+             - 利益冲突回避义务
+             - 及时报告义务
+          3. 委托人义务
+             - 真实陈述义务
+             - 配合义务（提供材料、签署文件、出席庭审等）
+             - 及时付费义务
+          4. 律师费
+             - 收费标准
+             - 付款时间与方式
+             - 差旅费及其他费用
+             - 费用调整机制
+          5. 解除与终止
+             - 委托人单方解除（已开展工作部分的费用结算）
+             - 律师单方解除（委托人拒绝配合/付费等情形）
+             - 事务完成后的终止
+          6. 责任限制
+             - 律师责任范围（限于执业过失，不对案件结果作保证）
+             - 委托人因自身原因的损失
+          7. 争议解决
+          8. 其他条款
+
+          特别注意：
+          - 风险代理收费的案件类型限制（婚姻继承/社会保障/劳动报酬/工伤赔偿等不得风险代理）
+          - 风险代理收费比例上限（分段累进：标的额100万元以下部分≤18%；100万-500万元部分≤15%；500万-1000万元部分≤12%；1000万-5000万元部分≤9%；5000万元以上部分≤6%）
+          - 依据司法部等三部门《关于进一步规范律师服务收费的意见》（司发通〔2021〕87号）及《律师服务收费管理办法》
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000f09"
+  name: "利益冲突审查"
+  description: "Perform a conflict-of-interest check before accepting a new engagement"
+  category: "practice_management"
+  steps:
+    - name: "Generate conflict check"
+      description: "Generate a conflict-of-interest review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下案件/项目信息，进行利益冲突审查：
+
+          拟接受委托信息：
+          - 委托人：【XX公司/个人】
+          - 对方当事人：【XX公司/个人】
+          - 委托事项：【简述】
+          - 关联方：【列出可能涉及的关联方】
+
+          本所/本团队已有案件/客户清单：
+          【列出当前在手的案件和已有客户关系】
+
+          审查维度：
+
+          1. 直接利益冲突：
+             - 本所是否已在为对方当事人提供法律服务
+             - 本所律师是否与对方当事人有近亲属关系
+             - 本所律师是否与本案有直接经济利益关系
+
+          2. 间接利益冲突：
+             - 本所是否在为与对方当事人有密切关联的第三方提供服务
+             - 本所是否曾为对方当事人提供过法律服务（已结束的）
+             - 是否存在其他可能影响独立判断的情形
+
+          3. 需进一步核查的情形：
+             - 对方当事人是否为本所其他客户的关联方
+             - 本所其他团队是否与对方有业务往来
+
+          4. 审查结论：
+             ✅ 无冲突，可以接受委托
+             ⚠️ 存在潜在冲突，需取得相关方书面同意后方可接受
+             ❌ 存在直接冲突，不得接受委托
+
+          5. 如存在潜在冲突的处理建议：
+             - 需要取得哪些方的豁免同意
+             - 信息隔离措施（建立"信息屏障"）
+             - 是否需要退出已有委托
+
+          输出利益冲突审查报告。
+
+- id: "00000000-0000-0000-0000-000000000f0a"
+  name: "商业交易法律风险预警"
+  description: "Issue a legal risk early-warning report for a proposed commercial transaction"
+  category: "dispute_prevention"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for relevant regulatory and compliance authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate risk warning"
+      description: "Generate a legal risk early-warning report with risk matrix and prevention measures"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下商业交易场景，进行法律风险预警：
+
+          交易场景：【简述，如：公司拟与XX供应商签订3年期独家供应协议/拟收购某小型竞争对手/拟与境外合作伙伴成立合资公司/拟推出新的会员订阅服务】
+
+          预警框架：
+
+          1. 合同法律风险：
+             - 独家/排他性条款的竞争法风险
+             - 长期合同的锁定风险和解除难度
+             - 合同条款中的隐性陷阱
+
+          2. 监管合规风险：
+             - 是否需要行业审批/备案
+             - 是否涉及反垄断申报
+             - 是否涉及数据合规/消费者保护问题
+
+          3. 知识产权风险：
+             - 合作中IP归属不明
+             - 技术依赖导致的IP锁定
+             - 开源代码使用的合规风险
+
+          4. 劳动法风险：
+             - 关键人员流失风险
+             - 竞业限制与商业秘密保护
+             - 团队整合的法律障碍
+
+          5. 税务风险：
+             - 交易结构的税务效率
+             - 隐性税负（如增值税/印花税/预提税）
+             - 转移定价风险
+
+          6. 争议预防建议：
+             - 合同条款设计建议（预防未来争议的关键条款）
+             - 争议解决机制预设
+             - 退出机制设计
+             - 保险安排建议
+
+          输出法律风险预警报告，含风险矩阵和预防措施清单。
+
+- id: "00000000-0000-0000-0000-000000000f0b"
+  name: "商务谈判法律支持"
+  description: "Provide legal support for commercial negotiations with bottom lines, clause options, and talking points"
+  category: "dispute_prevention"
+  steps:
+    - name: "Generate negotiation support"
+      description: "Generate a negotiation legal support memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下商务谈判提供法律支持：
+
+          谈判场景：
+          - 谈判议题：【如：合资公司股权比例与治理结构/技术许可费率与范围/供应商合同关键条款】
+          - 我方当事人：【XX公司】
+          - 对方当事人：【XX公司】
+          - 我方核心诉求：【简述】
+          - 对方已知立场：【简述】
+          - 谈判进展：【初步接触/已交换方案/即将正式谈判】
+
+          法律支持内容：
+
+          1. 法律底线分析：
+             - 我方不可退让的法律底线（哪些条款法律上不能妥协）
+             - 对方可能的法律底线
+             - 法律底线与商业底线的区分
+
+          2. 关键条款的法律博弈空间：
+             对每个谈判中的关键条款：
+             a. 法律允许的最大范围（我方最有利版本）
+             b. 法律允许的最小范围（对方最有利版本）
+             c. 法律中间立场（市场惯例）
+             d. 我方建议立场及法律理由
+
+          3. 谈判话术：
+             - 用法律语言包装商业诉求的话术
+             - "法律要求"vs"商业惯例"的区分利用
+             - 引用法规/行业惯例增强说服力的话术
+
+          4. 合同条款预案：
+             - 为每个争议条款准备3个版本（最优/中间/底线）
+             - 每个版本的具体措辞文本
+             - 标注哪些条款可以让步换取其他条款对我方有利
+
+          5. 谈判风险预警：
+             - 对方可能提出的法律观点及应对
+             - 谈判中可能出现的法律陷阱
+             - 如何识别对方利用法律术语掩盖不利商业条款
+
+          6. 谈判后行动：
+             - 谈判成果的合同化建议
+             - 未谈妥事项的处理方案
+             - 下一轮谈判的法律准备清单
+
+          输出谈判法律支持备忘录。
+
+- id: "00000000-0000-0000-0000-000000000f0c"
+  name: "商业函件起草（非诉讼函件）"
+  description: "Draft a non-litigation commercial letter with tone control and legal effect assessment"
+  category: "dispute_prevention"
+  steps:
+    - name: "Generate commercial letter"
+      description: "Generate a commercial letter with strong and moderate versions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份商业函件（非诉讼性质）：
+
+          函件类型：
+          - 📋 催告函/催款函
+          - 📋 解约通知函
+          - 📋 权利主张函（如：主张违约赔偿但未正式起诉）
+          - 📋 谈判要约函/反要约函
+          - 📋 法律风险警示函（提醒对方法律后果）
+          - 📋 声明函/澄清函
+          - 📋 知识产权侵权通知函
+          - 📋 数据保护要求函
+
+          函件背景：
+          - 收件人：【XX】
+          - 函件目的：【简述】
+          - 法律依据：【简述相关法规/合同条款】
+          - 期望对方行动：【如：XX日内付款/停止侵权行为/签署XX协议】
+          - 我方立场强弱：【强势/适中/弱势，需注意措辞力度】
+
+          起草要求：
+
+          1. 函件结构：
+             a. 标题（明确函件性质）
+             b. 收件人信息
+             c. 开头段落（简述背景和事由）
+             d. 事实陈述（按时间线，客观、准确、有证据支撑）
+             e. 法律分析（引用法条/合同条款，论证我方权利）
+             f. 我方诉求（明确、具体、有时间要求）
+             g. 法律后果警示（如对方不行动的后果）
+             h. 保留权利声明（"本函不构成权利放弃"）
+             i. 联系方式与回复要求
+             j. 落款
+
+          2. 措辞力度控制：
+             - 强势版：强硬措辞，明确法律后果，限定期限
+             - 适中版：专业措辞，既有压力又留谈判空间
+             - 温和版：友好措辞，侧重合作解决问题
+
+          3. 法律效果评估：
+             - 函件的法律效力（是否构成催告/通知/权利主张）
+             - 函件对诉讼时效的影响（是否构成时效中断）
+             - 函件对合同解除的影响（是否构成解除通知）
+             - 函件可能引发的对方反应及应对预案
+
+          输出为Word文档，提供强势版和适中版两个版本。
+
+- id: "00000000-0000-0000-0000-000000000f0d"
+  name: "知识产权许可协议起草"
+  description: "Draft an intellectual property license agreement with scope, royalties, and infringement handling"
+  category: "intellectual_property"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for IP law authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate license agreement"
+      description: "Generate an IP license agreement with drafting notes"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份知识产权许可协议：
+
+          许可信息：
+          - 许可方：【XX公司】
+          - 被许可方：【XX公司】
+          - 许可IP类型：【专利/商标/著作权/软件/商业秘密/混合】
+          - 许可模式：【独占许可/排他许可/普通许可】
+          - 许可地域：【全球/中国/特定区域】
+          - 许可领域：【所有用途/特定行业/特定产品】
+          - 许可期限：【5年/永久】
+          - 许可费：【一次性XX万元/年度XX万元/按销售额XX%提成/混合】
+
+          协议结构及关键条款：
+
+          1. 许可标的界定：
+             - 许可IP的详细描述（专利号/商标注册号/软件名称版本等）
+             - 许可范围（制造/使用/销售/改进/再许可）
+             - 是否包含改进IP（后续改进的许可/归属）
+
+          2. 许可费条款：
+             - 计算方式和支付时间
+             - 最低许可费（Minimum Royalty）
+             - 销售报告与审计权
+             - 迟付利息
+
+          3. 被许可方义务：
+             - 使用范围限制
+             - 质量标准（商标许可的品质控制要求）
+             - 不得再许可（或再许可条件）
+             - IP标识使用规范
+
+          4. 许可方义务：
+             - 维持IP有效性（续展/缴费）
+             - 不侵权保证
+             - 技术支持（如适用）
+
+          5. 侵权应对：
+             - 第三方侵权的发现与通知
+             - 诉讼主导权（许可方/被许可方谁有权起诉）
+             - 诉讼费用和赔偿分配
+
+          6. 竞业限制/排他性条款（如适用）
+
+          7. 知识产权归属：
+             - 被许可方改进IP的归属
+             - 联合开发IP的归属
+
+          8. 保密条款
+
+          9. 许可终止：
+             - 终止条件（到期/违约/IP失效等）
+             - 终止后处理（库存处理/改进IP/保密义务延续）
+
+          10. 争议解决
+
+          输出为Word文档，含起草说明。
+          引用《专利法》《商标法》《著作权法》及相关司法解释。
+
+- id: "00000000-0000-0000-0000-000000000f0e"
+  name: "知识产权侵权分析"
+  description: "Analyze an IP infringement claim with validity, comparison, defenses, and strategy"
+  category: "intellectual_property"
+  steps:
+    - name: "Search precedent"
+      description: "Search knowledge base for similar IP infringement cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate infringement analysis"
+      description: "Generate an IP infringement analysis report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下情况，进行知识产权侵权分析：
+
+          侵权指控信息：
+          - 权利方：【XX】
+          - 权利类型：【专利/商标/著作权/商业秘密】
+          - 权利基础：【专利号XX/商标注册号XX/作品名称XX】
+          - 指控侵权方：【XX（我方当事人）】
+          - 指控侵权行为：【如：制造销售某产品/使用某标识/复制某作品】
+          - 我方身份：【被指控侵权方/权利方】
+
+          分析框架：
+
+          1. 权利有效性审查：
+             - 专利：是否有效/保护范围/是否即将到期
+             - 商标：是否有效/注册类别/是否驰名商标
+             - 著作权：是否受保护/保护期限/独创性程度
+
+          2. 侵权比对分析：
+             - 专利侵权：全面覆盖原则/等同原则
+             - 商标侵权：混淆可能性分析（音形义/商品类似性/知名度）
+             - 著作权侵权：接触+实质性相似分析
+             - 商业秘密侵权：秘密性+价值性+保密措施+同一性比对
+
+          3. 抗辩分析：
+             - 专利：现有技术抗辩/先用权抗辩/权利用尽/临时过境/科研实验例外/Bolar例外
+             - 商标：在先使用/描述性使用/指示性使用/合理使用/不混淆抗辩
+             - 著作权：合理使用/独立创作/思想表达二分法
+             - 商业秘密：独立研发/反向工程/合法获取
+
+          4. 不侵权声明/确认之诉评估（如我方为被指控方）
+
+          5. 损失/赔偿评估：
+             - 权利人实际损失
+             - 侵权人违法所得
+             - 法定赔偿范围
+             - 惩罚性赔偿适用条件（《专利法》第71条故意侵权）
+
+          6. 诉讼/非诉讼策略建议：
+             - 是否发函/回应函
+             - 是否申请宣告权利无效（专利无效宣告/商标撤销）
+             - 和解谈判策略
+             - 诉讼风险评估
+
+          请使用华宇元典数据库检索同类IP侵权案例。
+          输出IP侵权分析报告。
+
+- id: "00000000-0000-0000-0000-000000000f0f"
+  name: "交易税务结构优化分析"
+  description: "Analyze and optimize the tax structure of a transaction with alternative structures and compliance risk"
+  category: "tax_law"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for tax law and restructuring authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate tax analysis"
+      description: "Generate a tax structure optimization analysis report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下交易进行税务结构优化分析：
+
+          交易信息：
+          - 交易类型：【如：股权转让/资产转让/企业重组/跨境收购/知识产权转让】
+          - 交易方：【卖方XX/买方XX】
+          - 交易金额：【约XX万元/美元】
+          - 现有交易结构：【简述】
+          - 优化目标：【如：降低整体税负/递延纳税/避免双重征税】
+
+          税务分析框架：
+
+          1. 现有结构的税负分析：
+             - 所得税（企业所得税/个人所得税）
+             - 增值税/营业税
+             - 印花税
+             - 预提税（如涉及跨境）
+             - 土地增值税/契税（如涉及不动产）
+             - 总税负率估算
+
+          2. 替代结构的税负比较：
+             结构A：【现有结构】总税负约XX%
+             结构B：【如：先分红再转让/先增资再转让/通过SPV间接转让】总税负约XX%
+             结构C：【如：特殊性税务处理（递延纳税）/资产划转】总税负约XX%
+
+             每种结构详细分析：
+             | 结构 | 税种 | 税率 | 计税基础 | 税额估算 | 合规风险 | 实施难度 |
+
+          3. 特殊性税务处理（递延纳税）评估：
+             - 是否符合条件（《财税[2009]59号》/《财税[2014]109号》）：
+               * 具有合理商业目的
+               * 股权/资产比例≥50%
+               * 12个月内不改变实质性经营活动
+               * 12个月内不转让所取得股权
+             - 申报备案流程
+
+          4. 跨境税务问题（如适用）：
+             - 税收协定适用（避免双重征税）
+             - 预提税税率（协定优惠税率vs.法定税率）
+             - 常设机构风险
+             - 受控外国公司规则（CFC）
+             - 转移定价合规
+
+          5. 合规风险预警：
+             - 反避税风险（一般反避税条款/特别纳税调整）
+             - 虚假交易的税务风险
+             - 税务机关质疑的商业目的
+
+          6. 推荐方案及实施步骤
+
+          注意：税务分析仅供参考，具体税务筹划应由税务师/会计师配合完成。
+          输出税务结构分析报告。
+
+- id: "00000000-0000-0000-0000-000000000f10"
+  name: "税务争议应对"
+  description: "Formulate a response plan for a tax dispute with procedure, evidence, and risk assessment"
+  category: "tax_law"
+  steps:
+    - name: "Search precedent"
+      description: "Search knowledge base for similar tax dispute cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate tax dispute response"
+      description: "Generate a tax dispute response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下税务争议情况，制定应对方案：
+
+          争议信息：
+          - 争议类型：【税务稽查/税务处罚/税务行政复议/税务行政诉讼/税收协定争议】
+          - 税种：【增值税/企业所得税/个人所得税/关税/其他】
+          - 争议金额：【XX万元】
+          - 税务机关：【XX税务局/稽查局】
+          - 我方身份：【纳税人/扣缴义务人】
+          - 争议焦点：【如：转移定价调整/虚开发票认定/偷税定性/税收优惠资格争议】
+
+          应对方案框架：
+
+          1. 程序路径分析：
+             - 税务行政复议（前置程序？是否必须先缴清税款/提供担保）
+             - 税务行政诉讼
+             - 时间节点和期限
+
+          2. 争议焦点法律分析：
+             - 税务机关的法律依据和认定逻辑
+             - 我方的法律依据和抗辩逻辑
+             - 关键法律问题的裁判倾向（类案参考）
+
+          3. 证据准备：
+             - 我方证据清单
+             - 需要补充的证据
+             - 专家意见/鉴定报告（如涉及转移定价）
+
+          4. 和解/调解可能性：
+             - 与税务机关协商的空间
+             - 金额减免的可能性
+
+          5. 风险评估：
+             - 败诉概率及后果
+             - 补缴税款+滞纳金+罚款的金额预估
+             - 是否可能涉及刑事责任（逃税罪）
+
+          6. 税务合规改进建议（预防未来争议）
+
+          请使用华宇元典数据库检索税务争议案例。
+          输出税务争议应对方案。
+
+- id: "00000000-0000-0000-0000-000000000f11"
+  name: "股东会/董事会决议起草"
+  description: "Draft a shareholders' or board resolution with procedure compliance and voting records"
+  category: "corporate_governance"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for company law authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate resolution"
+      description: "Generate a resolution text with meeting minutes template"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份【股东会/董事会】决议：
+
+          会议信息：
+          - 公司名称：【XX】
+          - 会议类型：【股东会定期会议/股东会临时会议/董事会会议】
+          - 会议日期：【XX】
+          - 召集人：【XX】
+          - 通知日期：【XX（需符合章程规定的提前通知天数）】
+          - 出席情况：【出席股东/董事及比例】
+
+          决议事项：
+          【列出需决议的事项，如：1) 审议年度财务报告；2) 批准XX收购项目；3) 修改章程XX条款；4) 增选XX为董事；5) 批准利润分配方案】
+
+          起草要求：
+
+          1. 会议程序合规性审查：
+             - 召集程序是否符合《公司法》和章程规定
+             - 通知时限是否符合章程
+             - 出席/表决比例是否达到法定/章程要求
+             - 是否需要特别决议（2/3表决权）
+
+          2. 决议文本结构：
+             a. 会议基本信息（时间、地点、召集人、出席情况）
+             b. 决议事项逐项表述
+             c. 每项的表决结果（赞成XX票/反对XX票/弃权XX票）
+             d. 决议结论（通过/不通过）
+             e. 签署页
+
+          3. 特别注意：
+             - 关联股东/董事是否需要回避表决
+             - 不同决议事项的表决权计算基数（按出资比例/按章程约定）
+             - 是否需要反对股东的异议记录
+
+          4. 配套文件：
+             - 会议通知（如需补发）
+             - 会议记录/纪要
+             - 决议签署确认书
+
+          引用《公司法》（2024年修订版）相关条款。
+          输出决议文本 + 会议纪要模板。
+
+- id: "00000000-0000-0000-0000-000000000f12"
+  name: "公司章程修改审阅"
+  description: "Review a proposed amendment to the articles of association for legality, completeness, and governance effect"
+  category: "corporate_governance"
+  steps:
+    - name: "Read articles"
+      description: "Read the current articles of association"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate amendment review"
+      description: "Generate a review with amended full text and comparison table"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审阅以下公司章程修改方案：
+
+          公司信息：
+          - 公司名称：【XX】
+          - 公司类型：【有限责任公司/股份有限公司】
+          - 当前章程版本：【上传或粘贴】
+          - 拟修改条款：【列出拟修改的条款及修改原因】
+
+          审阅维度：
+
+          1. 合法性审查：
+             - 每项修改是否符合《公司法》（2024年修订版）强制性规定
+             - 是否有违反法定最低标准的修改（如：
+               * 有限责任公司：股东会表决权不得低于出资比例（章程另行约定除外）
+               * 股份有限公司：同股同权原则的遵守
+               * 董事/监事人数法定最低要求
+               * 法定代表人选任范围）
+
+          2. 完整性审查：
+             - 是否遗漏《公司法》要求章程载明的事项
+             - 修改后条款与其他条款是否矛盾
+             - 交叉引用是否需要同步更新
+
+          3. 治理效果审查：
+             - 修改后的治理结构是否合理
+             - 控制权分配是否发生变化
+             - 小股东保护是否受到影响
+             - 管理层灵活性与监督平衡
+
+          4. 程序合规性：
+             - 章程修改需经代表2/3以上表决权的股东通过
+             - 是否需要工商变更登记
+             - 修改生效时间
+
+          5. 🔴必须修改/🟡建议修改/🟢可接受标注
+
+          输出修改后章程全文 + 修改对照表。
+
+- id: "00000000-0000-0000-0000-000000000f13"
+  name: "商业地产租赁合同审阅"
+  description: "Review a commercial real estate lease from landlord or tenant perspective"
+  category: "real_estate"
+  steps:
+    - name: "Read lease"
+      description: "Read the commercial lease contract"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate lease review"
+      description: "Generate a lease review opinion with revised clause text"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审阅以下商业地产租赁合同，从【出租方/承租方】角度：
+
+          【上传或粘贴合同文本】
+
+          审阅要点：
+
+          1. 租赁标的：
+             - 面积与范围是否明确（含公摊面积/共用部位）
+             - 用途限制是否合理
+             - 适租性保证条款
+
+          2. 租金与费用：
+             - 租金标准与调整机制
+             - 物业费/水电费/其他费用的承担
+             - 免租期的约定
+             - 押金/保证金的金额与退还条件
+
+          3. 装修与改造：
+             - 装修审批流程
+             - 装修费用承担
+             - 退租时装修的处理（恢复原状/折价补偿/留置）
+
+          4. 维修与维护：
+             - 主体结构维修责任
+             - 日常维护责任
+             - 设备设施更换责任
+
+          5. 经营条款（商业租赁特有）：
+             - 营业时间要求
+             - 品牌限制/排他性条款
+             - 促销活动限制
+             - 转租/分租限制
+
+          6. 违约与解除：
+             - 欠租解除条件（欠租XX日/XX期）
+             - 单方解除权是否合理
+             - 解除后的清退安排
+             - 违约金是否合理
+
+          7. 续租与退租：
+             - 续租条件与优先续租权
+             - 退租通知期限
+             - 退租验收标准
+
+          8. 争议解决
+
+          输出审阅意见表 + 修改建议条款文本。
+
+- id: "00000000-0000-0000-0000-000000000f14"
+  name: "土地使用权/房地产交易法律审查"
+  description: "Conduct a legal review of a land use right or real estate transaction"
+  category: "real_estate"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for real estate and land law authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate legal review"
+      description: "Generate a real estate transaction legal review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下房地产交易进行法律审查：
+
+          交易信息：
+          - 交易类型：【土地使用权出让/转让/房地产买卖/合作开发/物业收购】
+          - 标的物业：【XX地块/XX楼宇】
+          - 交易金额：【约XX万元】
+          - 我方身份：【买方/卖方/开发商/投资人】
+
+          法律审查清单：
+
+          1. 权属审查：
+             - 土地使用权类型（出让/划拨/转让）
+             - 土地用途与容积率
+             - 是否有抵押/查封/预告登记
+             - 是否有共有人/优先购买权人
+             - 是否有土地出让金欠缴
+             - 不动产登记簿与权证的一致性
+
+          2. 规划与建设合规：
+             - 是否符合城市规划
+             - 是否取得建设用地规划许可证/建设工程规划许可证
+             - 是否竣工验收备案
+             - 是否有违法建筑
+
+          3. 交易限制审查：
+             - 是否属于限制交易类型（经济适用房/限价房/小产权等）
+             - 是否需要政府审批/备案
+             - 税费承担（契税/增值税/土地增值税/印花税/所得税）
+
+          4. 合同关键条款审查：
+             - 产权过户条件与时间
+             - 风险转移时间点
+             - 交付标准
+             - 违约责任
+             - 附件清单（含所有证照复印件）
+
+          5. 税务结构分析：
+             - 不同交易结构的税负对比（资产转让vs.股权转让）
+             - 税务优化建议
+
+          6. 风险矩阵与建议
+
+          输出法律审查报告。
+
+- id: "00000000-0000-0000-0000-000000000f15"
+  name: "法律培训课件制作"
+  description: "Create a legal training courseware with outline, script, and case discussion"
+  category: "legal_training"
+  steps:
+    - name: "Generate training courseware"
+      description: "Generate a training courseware outline and script"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请帮我制作一份法律培训课件：
+
+          培训信息：
+          - 培训主题：【如：企业反商业贿赂合规/数据合规实务/劳动法常见问题/合同法律风险防控/新法规解读】
+          - 受训对象：【企业高管/中层管理者/全体员工/HR团队/销售团队/法务团队】
+          - 培训时长：【30分钟/1小时/2小时】
+          - 培训形式：【线上/线下/混合】
+          - 受训对象法律知识水平：【初学/有一定基础/较专业】
+
+          课件结构：
+
+          1. 开场引入（5分钟）：
+             - 为什么这个主题重要（最新处罚案例/数据/典型事件）
+             - 受训对象可能遇到的实际场景
+
+          2. 核心内容（按培训时长调整深度）：
+             模块一：法律基础
+             - 关键法律法规梳理（不超过5条核心法条）
+             - 法律红线清单（绝对不能做的行为）
+
+             模块二：实务场景
+             - 按受训对象日常工作场景，列举5-10个常见风险场景
+             - 每个场景："这样做"→"法律风险"→"正确做法"
+
+             模块三：合规工具
+             - 日常工作中可用的合规检查清单
+             - 需要法务审批的事项清单
+             - 发现问题时的报告路径
+
+          3. 案例讨论（10-15分钟）：
+             - 2-3个真实案例（匿名化处理）
+             - 每个案例：情境描述→讨论问题→法律分析→教训总结
+
+          4. 互动问答（5-10分钟）：
+             - 5-8个常见问题及标准答案
+             - 误区纠正
+
+          5. 总结与行动清单：
+             - 3-5条核心takeaway
+             - 每人可立即执行的行动清单
+             - 合规资源/联系方式
+
+          请生成PPT课件大纲 + 讲稿文字版。
+          输出为PPT文件。
+
+- id: "00000000-0000-0000-0000-000000000f16"
+  name: "法律知识库建设"
+  description: "Design a legal knowledge base framework with directory hierarchy and maintenance mechanism"
+  category: "legal_training"
+  steps:
+    - name: "Generate knowledge base framework"
+      description: "Generate a legal knowledge base structure design"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请帮我为以下法律领域建设知识库框架：
+
+          知识库领域：【如：数据合规/投融资/劳动法/反垄断/合同审阅】
+          知识库用途：【团队内部参考/客户知识服务/个人知识积累】
+          现有资料：【简述已有的文档/模板/案例等】
+
+          知识库结构设计：
+
+          1. 知识库目录层级：
+             L1 领域总览
+             L2 子领域分类
+               L3 具体知识点
+                 L4 实务工具
+
+          2. 每个知识点的标准内容模板：
+             - 知识点名称
+             - 法律依据（法条+司法解释+规章）
+             - 核心要点（不超过5条）
+             - 实务场景（3-5个典型场景）
+             - 风险提示
+             - 操作指引/检查清单
+             - 相关案例（2-3个典型案例）
+             - 常见问题Q&A（3-5个）
+             - 最新动态（法规更新/执法趋势）
+             - 关联知识点链接
+
+          3. 实务工具清单：
+             - 合同模板
+             - 审查清单
+             - 流程图
+             - 计算表格
+             - 培训课件
+
+          4. 维护机制：
+             - 更新频率建议（每月/每季度）
+             - 更新触发条件（新法规/新案例/新监管动态）
+             - 版本管理方式
+
+          请将知识库框架存入Notion或飞书知识库。
+          同时请设置自动化任务，每月检索该领域法规更新并推送通知。
+
+- id: "00000000-0000-0000-0000-000000000f17"
+  name: "常年法律顾问年度服务方案"
+  description: "Design an annual general counsel service plan with scope, team, pricing tiers, and work rhythm"
+  category: "general_counsel"
+  steps:
+    - name: "Generate service plan"
+      description: "Generate an annual general counsel service plan document"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下客户设计常年法律顾问年度服务方案：
+
+          客户信息：
+          - 客户名称：【XX公司】，行业：【XX】，规模：【XX人/年营收XX】
+          - 客户法务配置：【无法务/1-2人法务/成熟法务团队】
+          - 上一年度服务情况：【新客户/续约客户（简述上年服务量与痛点）】
+          - 预算区间：【XX万元/年】
+
+          方案内容：
+
+          1. 服务范围清单（区分包含/不包含）：
+             - 日常咨询：口头/书面咨询的响应时限承诺（如口头24小时、书面3个工作日）
+             - 合同审查：年度数量额度（如XX份以内）、单份复杂度界定、加急规则
+             - 制度文件：员工手册/规章制度年度体检
+             - 法律培训：年度次数与主题菜单
+             - 函件出具：律师函/法律意见的额度
+             - 争议初期处理：范围界定（如立案前的谈判支持，诉讼仲裁另行委托）
+             - 明确排除项：专项交易/诉讼代理/IPO等（另行报价的衔接机制）
+
+          2. 服务团队与响应机制：主办律师+对接律师配置、紧急事项通道
+
+          3. 分级报价方案：基础版/标准版/全面版三档的服务差异与定价
+
+          4. 年度工作节奏表：按月列出主动服务事项（如3月员工手册体检、6月合同模板更新、12月年度法律风险报告）
+
+          5. 服务质量指标与年度述职：响应及时率、客户满意度、年度服务报告框架
+
+          输出为可直接发给客户的服务方案书（docx文档）。
+
+- id: "00000000-0000-0000-0000-000000000f18"
+  name: "法律动态简报与日常咨询答复"
+  description: "Compile a legal update briefing and draft a plain-language written response to a client consultation"
+  category: "general_counsel"
+  steps:
+    - name: "Search legal updates"
+      description: "Search knowledge base for recent legal and regulatory updates"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate briefing and reply"
+      description: "Generate a legal update briefing and a written consultation reply"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          【场景A：客户法律动态简报（月度/季度）】
+          请为【XX行业】的顾问单位客户编制本期法律动态简报：
+
+          1. 检索本期（【XX年XX月】）与该行业相关的：新颁布/修订法律法规、征求意见稿、监管处罚动态、典型案例
+          2. 每条动态按以下结构编写：
+             - 【变化】一句话说清楚变了什么（新规名称+文号+施行日期）
+             - 【影响】对客户业务的具体影响（结合客户业务场景）
+             - 【行动建议】需要客户做什么、时限
+          3. 篇幅：每条不超过200字，全文不超过2页
+          4. 结尾附"本期建议关注优先级"排序
+
+          【场景B：日常咨询书面答复】
+          客户问题：【粘贴客户咨询原文】
+          客户背景：【行业/相关业务情况】
+
+          答复要求：
+          1. 结论先行：第一段直接给出"可以/不可以/有条件可以"的明确结论
+          2. 依据简明：引用关键法条（名称+条文号），不超过3条
+          3. 风险提示：如客户坚持原方案的风险后果
+          4. 可操作建议：具体到步骤的行动方案
+          5. 篇幅控制在1页以内，语言让非法律人士能看懂
+          6. 结尾附标准免责表述（基于现有信息的初步意见，正式操作前建议进一步确认）
+
+          输出为可直接发送的答复邮件/简报（docx文档）。

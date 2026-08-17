@@ -1,0 +1,1434 @@
+# Non-litigation extra workflows
+# Derived from: 非诉律师实用Prompts指南.md
+# Covers cross-border M&A, domestic M&A, arbitration, Web3, corporate governance,
+# capital markets, equity incentive, banking/finance, shipping/maritime, PPP/energy,
+# and general legal templates NOT already covered by existing workflow files.
+# IDs use the 00000000-0000-0000-0000-000000000cXX range (c01..c19).
+
+- id: "00000000-0000-0000-0000-000000000c01"
+  name: "监管审批路径分析"
+  description: "Analyze regulatory approval path for a Chinese company acquiring a foreign target (FDI, antitrust, ODI)"
+  category: "cross_border_ma"
+  steps:
+    - name: "Search regulatory requirements"
+      description: "Search for FDI, national security, and antitrust approval requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate approval analysis"
+      description: "Generate regulatory approval path analysis with timeline"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析【中国企业】收购【美国/欧盟/英国】某【半导体/AI/国防相关】企业涉及的监管审批：
+
+          一、目标国审查
+          1. FDI/国家安全审查：
+             - 【美国CFIUS / 欧盟FDI Screening Regulation / 英国NSI Act】适用性分析
+             - 是否属于"敏感行业"
+             - 申报是否为强制申报还是自愿申报
+             - 审查时间线与关键里程碑
+             - 可能的缓解措施（Mitigation Measures）类型
+             - 所需材料清单
+
+          2. 反垄断申报：
+             - 营业额测试（各法域 thresholds）
+             - 是否触发合并控制申报
+             - 申报时间线（Phase I / Phase II）
+             - 救济措施可能性（资产剥离等）
+
+          3. 行业特定审批：
+             - 【FDA/EDA/民航局等】行业监管审批要求
+
+          二、中国侧审批
+          1. ODI备案/核准流程
+          2. 外汇登记
+          3. 反垄断申报（如达到中国申报标准）
+
+          三、时间线总览
+          请输出甘特图式的审批时间线，标注各审批之间的并行/串行关系和关键路径。
+
+- id: "00000000-0000-0000-0000-000000000c02"
+  name: "交割后整合法律风险评估"
+  description: "Assess post-merger integration legal risks for cross-border M&A"
+  category: "cross_border_ma"
+  steps:
+    - name: "Search integration legal basis"
+      description: "Search for labor, IP, data transfer, and tax integration rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate risk assessment"
+      description: "Generate post-merger integration legal risk matrix"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对本次跨境并购的投后整合（Post-merger Integration）阶段进行法律风险评估：
+
+          收购方：【中国企业】，目标公司：【德国/日本企业】，行业：【制造业/科技】
+
+          评估维度：
+          1. 劳动法整合风险：
+             - 目标国裁员/调岗/降薪的法律限制
+             - 工会/员工代表的信息与咨询权（如德国Co-determination）
+             - 留用奖金（Retention Bonus）的税务处理
+             - 养老金负债转移问题
+
+          2. 知识产权整合：
+             - IP权属变更与许可协议承继
+             - 联合开发IP的权属安排
+             - 开源代码合规风险传导
+
+          3. 数据跨境传输合规：
+             - 收购后数据整合涉及的跨境数据传输
+             - 目标国数据保护法限制（GDPR第6章合法性基础）
+             - 数据本地化要求
+
+          4. 关联交易与转移定价：
+             - 采购/销售集中化的转移定价风险
+             - 关联交易披露义务
+             - 事先裁定（APA）申请的必要性
+
+          5. 反商业贿赂合规整合：
+             - FCPA/UKBA对收购方的继承责任（successor liability）
+             - 目标公司历史合规问题尽职调查（pre-acquisition compliance review）
+
+          6. 税务整合：
+             - 税务居民身份变更
+             - 常设机构（PE）风险
+             - 税收协定适用
+
+          输出：风险矩阵表（风险 × 可能性 × 影响 × 应对措施），标注"交易前必须解决"vs"交割后12个月内解决"vs"长期监控"。
+
+- id: "00000000-0000-0000-0000-000000000c03"
+  name: "境内并购交易结构设计"
+  description: "Design optimal transaction structure for domestic M&A (equity vs asset vs capital increase vs merger)"
+  category: "domestic_ma"
+  steps:
+    - name: "Search domestic M&A rules"
+      description: "Search for Company Law, SOE transaction, and antitrust rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate structure design"
+      description: "Generate domestic M&A transaction structure comparison matrix"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下境内并购交易设计最优交易结构方案：
+
+          交易背景：
+          - 收购方：【中国民企 / 国有企业 / 上市公司 / PE基金】
+          - 目标公司：【中国境内企业】，行业：【XX行业】，注册地：【XX省/市】
+          - 目标估值：【约XX亿元人民币】
+          - 收购比例：【100%全资收购 / 51%控股 / 30%参股】
+          - 目标公司性质：【民营企业 / 国有企业 / 外商投资企业 / VIE架构企业】
+
+          请从以下维度分析"股权收购 vs. 资产收购 vs. 增资入股 vs. 合并"四种方案的利弊：
+
+          1. 税务效率：
+             - 股权收购：目标公司历史税务风险承继、股权转让所得税（个人20% / 企业一般25%但有特殊递延）
+             - 资产收购：增值税、土地增值税、契税的叠加成本（资产收购税负通常远高于股权收购）
+             - 特殊税务筹划：是否适用特殊性税务处理递延纳税（59号文条件）
+             - 印花税差异
+
+          2. 法律风险承继：
+             - 股权收购：隐性债务、历史违规、劳动争议、税务风险的承继
+             - 资产收购：风险隔离效果，但需逐一确认每项资产的权属和可转让性
+             - 合同变更与承继（需目标公司每份重大合同的对方同意）
+
+          3. 审批与合规：
+             - 国资交易：是否触发32号令/36号令的进场交易要求？评估与审计的前置程序
+             - 外资并购：是否涉及《外商投资准入负面清单》限制类/禁止类？
+             - 反垄断：是否触发经营者集中申报（营业额/市场份额测试）
+             - 上市公司：是否触发重大资产重组/要约收购/信息披露义务
+             - 行业审批：【金融/电信/军工/教育/医疗】等行业准入审批
+
+          4. 交割便利性：
+             - 工商变更登记的流程与时间
+             - 资产过户登记（房产/土地/知识产权/车辆）的逐一流程
+             - 员工安置方案的差异
+
+          5. 后续整合：
+             - 品牌商誉的保留 vs. 更替
+             - 业务资质的延续性
+             - 银行贷款/担保的承继与变更
+
+          请输出对比矩阵表，标注每种方案在各维度的优/劣/中评级，给出推荐方案及理由。
+          引用《公司法》2024修订版、《企业国有资产交易监督管理办法》（32号令）、经营者集中申报标准等最新法规。
+          使用华宇元典数据库检索。
+
+- id: "00000000-0000-0000-0000-000000000c04"
+  name: "上市公司并购与重大资产重组"
+  description: "Legal compliance analysis for listed company M&A and major asset restructuring"
+  category: "domestic_ma"
+  steps:
+    - name: "Search listed company M&A rules"
+      description: "Search for major asset restructuring and takeover rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance report"
+      description: "Generate compliance review report framework for listed company M&A"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下上市公司并购/重大资产重组项目进行法律合规分析：
+
+          项目信息：
+          - 上市公司：【XX股份】，板块：【主板/科创板/创业板/北交所】
+          - 交易类型：【重大资产购买 / 重大资产出售 / 重大资产置换 / 吸收合并 / 要约收购 / 协议收购】
+          - 标的资产/公司：【XX公司/XX资产包】，估值：【XX亿元】
+          - 交易后是否构成借壳/重组上市：【是/否/待确认】
+          - 支付方式：【现金 / 发行股份 / 现金+股份 / 可转债】
+
+          合规分析维度（依据《上市公司重大资产重组管理办法》《上市公司收购管理办法》及最新修订）：
+
+          1. 重大资产重组认定标准：
+             - 资产总额/营业收入/资产净额的50%测试（是否构成重大资产重组）
+             - 借壳/重组上市的认定标准（100%测试 + 实际控制人变更）
+             - 判断结果对审核程序的影响（证监会注册 vs. 交易所审核 vs. 仅披露）
+
+          2. 信息披露合规：
+             - 停牌/提示性公告→董事会预案→股东大会→证监会/交易所审核→实施→实施报告的完整披露时间线
+             - 每阶段的披露内容要求
+             - 内幕信息管理与知情人登记
+             - 停牌安排与时间限制
+
+          3. 审核注册程序：
+             - 交易所审核流程（受理→审核问询→审核中心意见→联席会议→上市委审议→向证监会注册）
+             - 证监会注册程序与时间线
+             - 问询函常见问题清单及预答策略
+             - 分道制审核的分类与影响
+
+          4. 中介机构职责：
+             - 独立财务顾问的核查意见
+             - 法律意见书的要求
+             - 审计报告的要求
+             - 评估报告的要求
+             - 各中介机构的分工与责任边界
+
+          5. 股份发行与定价：
+             - 发行股份购买资产的定价基准日选择（董事会决议公告日/股东大会决议公告日/董事会再次决议公告日）
+             - 定价底线（20日/60日/120日均价的90%）
+             - 价格调整机制的条件与限制
+             - 锁定期安排（12个月/36个月/60个月的分层适用）
+
+          6. 要约收购专项（如适用）：
+             - 触发全面要约/部分要约的条件（30%红线）
+             - 要约价格底线
+             - 免除要约义务的申请条件与程序
+             - 预受要约与竞争要约的程序
+
+          7. 投资者保护：
+             - 异议股东的利益保护机制
+             - 中小股东表决权保护（网络投票、单独计票）
+             - 利润承诺与补偿安排
+
+          8. 反垄断与经营者集中申报（如触发）
+
+          请输出合规审查报告框架，标注各环节的时间节点和合规要求。
+          引用《重组管理办法》2024修订版、《收购管理办法》及最新交易所审核规则。
+          使用华宇元典和联网搜索检索最新监管案例和审核动态。
+
+- id: "00000000-0000-0000-0000-000000000c05"
+  name: "外商投资并购专项合规"
+  description: "Analyze China compliance path for foreign-invested M&A transactions"
+  category: "domestic_ma"
+  steps:
+    - name: "Search foreign investment rules"
+      description: "Search for Foreign Investment Law and negative list rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance analysis"
+      description: "Generate foreign investment M&A compliance decision tree"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下外商投资并购交易的中国合规路径：
+
+          交易信息：
+          - 外资方：【XX外国公司/基金】，国家/地区：【XX】
+          - 目标公司：【XX中国公司】，行业：【XX行业】
+          - 收购比例：【XX%】
+          - 交易金额：【XX亿元人民币】
+
+          合规分析维度（依据《外商投资法》及最新负面清单）：
+
+          1. 准入限制判断：
+             - 目标行业是否列入《外商投资准入特别管理措施（负面清单）》：
+               * 禁止类：完全禁止外商投资（如新闻机构、武器弹药等）
+               * 限制类：有股比/高管/许可等限制（如金融、电信、教育等）
+               * 鼓励类：列入《鼓励外商投资产业目录》的优惠待遇
+             - 是否涉及国家安全审查（《外商投资安全审查办法》适用条件）
+             - VIE架构的合规性评估（负面清单行业使用VIE的法律风险）
+
+          2. 审批与备案程序：
+             - 商务部/地方商务部门备案 vs. 审批（负面清单内行业需审批）
+             - 工商变更登记（外商投资企业设立/变更登记）
+             - 外汇登记（FDI外汇登记与资金汇入）
+             - 行业主管部门审批（如适用）
+
+          3. 反垄断申报（如触发）
+
+          4. 国资进场交易（如目标为国资）
+
+          5. 上市公司外资并购特别规则（如目标为上市公司）：
+             - 外资战略投资上市公司的审批与锁定期
+             - QFII/RQFII渠道并购的路径与限制
+             - 外资持股比例限制的行业汇总
+
+          6. 外资并购特别审查：
+             - 军工/国防相关行业的投资限制
+             * 重要农产品/重要能源/重要文化等行业的安全审查
+             * 拥有实际控制权的外资并购安全审查触发条件
+
+          7. 外资并购后的合规义务：
+             - 外商投资信息报告制度
+             - 外商投资企业年度报告
+             - 税务合规（居民企业认定、税收协定适用）
+
+          请输出合规决策树，标注各环节的审批机关、时限和所需材料。
+          引用《外商投资法》《外商投资准入负面清单》最新版、《外商投资安全审查办法》等。
+
+- id: "00000000-0000-0000-0000-000000000c06"
+  name: "仲裁条款审阅与起草"
+  description: "Review and draft arbitration clauses with institution, seat, and governing law analysis"
+  category: "arbitration"
+  steps:
+    - name: "Search arbitration rules"
+      description: "Search for ICC/SIAC/HKIAC/LCIA/CIETAC rules and New York Convention"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate clause review"
+      description: "Generate arbitration clause review and drafting suggestions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审阅以下合同中的仲裁条款，并给出修改建议：
+
+          【粘贴仲裁条款文本】
+
+          审阅维度：
+          1. 仲裁机构选择：
+             - ICC vs. SIAC vs. HKIAC vs. LCIA vs. CIETAC 的优劣比较
+             - 机构规则版本的适用
+
+          2. 仲裁地（Seat of Arbitration）：
+             - 仲裁地的法律意义（法院监督、裁决国籍、执行依据）
+             - 是否为《纽约公约》缔约国
+
+          3. 仲裁员人数与指定方式：
+             - 独任仲裁员 vs. 三人仲裁庭的成本与效率权衡
+             - 指定机制（机构指定 vs. 当事人指定）
+
+          4. 仲裁语言：
+             - 中英双语 vs. 单语的选择考量
+
+          5. 实体法适用：
+             - 准据法选择条款的有效性
+             - 最密切联系原则的适用风险
+
+          6. 仲裁条款的可分割性（Severability/Competence-Competence）
+
+          7. 临时措施与紧急仲裁员条款
+
+          8. 多方/多合同仲裁条款的前瞻性安排（合并仲裁、追加当事人）
+
+          请提供"投资人/中方友好版"和"均衡版"两种修改建议文本，中英对照。
+
+- id: "00000000-0000-0000-0000-000000000c07"
+  name: "跨境裁决/判决执行分析"
+  description: "Analyze path for recognizing and enforcing foreign arbitral awards or judgments in mainland China"
+  category: "arbitration"
+  steps:
+    - name: "Search enforcement rules"
+      description: "Search for New York Convention and judicial interpretation on enforcement"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate enforcement analysis"
+      description: "Generate cross-border award/judgment enforcement analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析一份【新加坡/香港/英国/美国】法院判决或仲裁裁决在中国大陆申请承认与执行的路径：
+
+          案件信息：
+          - 裁决/判决来源：【SIAC仲裁裁决 / 香港法院判决 / 美国法院判决】
+          - 被执行人：在【中国大陆】有资产
+          - 争议金额：【约XX万美元】
+
+          分析框架：
+          1. 法律依据：
+             - 仲裁裁决：《纽约公约》+ 中国《民事诉讼法》第281条（2023年修订）
+             - 外国法院判决：双边司法协助条约 / 互惠原则
+             - 【如适用】内地-香港《关于内地与香港特别行政区法院相互认可和执行民商事案件判决的安排》
+
+          2. 申请程序：
+             - 管辖法院（被申请人住所地/财产所在地的中级法院）
+             - 申请材料清单（裁决书原件+认证翻译件、仲裁协议证明等）
+             - 申请期限
+
+          3. 审查标准：
+             - 形式审查 vs. 实质审查
+             - 公共政策例外（如何界定"公共政策"）
+             - 程序正当性审查（正当程序抗辩）
+             - 超裁抗辩
+
+          4. 可能的抗辩理由及应对：
+             - 被申请人可能提出的抗辩
+             - 我方应对策略
+
+          5. 时间与费用预估：
+             - 审查程序时间线
+             - 法院费用、翻译费、律师费预估
+
+          6. 资产调查与保全：
+             - 执行前资产调查路径
+             - 申请财产保全的可能性
+
+          请引用最新司法解释和典型案例（使用华宇元典数据库检索）。
+
+- id: "00000000-0000-0000-0000-000000000c08"
+  name: "争议解决方式比较分析"
+  description: "Compare international arbitration vs cross-border litigation to select optimal dispute resolution path"
+  category: "arbitration"
+  steps:
+    - name: "Search dispute resolution options"
+      description: "Search for arbitration and litigation comparison data"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate comparison analysis"
+      description: "Generate dispute resolution comparison matrix and recommendation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下跨境商事争议提供争议解决方式比较分析，帮助客户选择最优路径：
+
+          争议概况：【简述交易背景和争议焦点】
+          当事人：【中方 vs. 外方，各自所在地】
+          争议金额：【约XX万美元】
+          合同约定：【现有争议解决条款内容，如有】
+
+          请从以下维度比较：
+
+          | 维度 | 国际仲裁 | 跨境诉讼 |
+          |------|---------|---------|
+          | | ICC/SIAC/HKIAC/LCIA | 中国法院 vs. 外国法院 |
+
+          1. 保密性：仲裁的保密性 vs. 诉讼的公开性
+          2. 执行力：仲裁裁决（纽约公约）vs. 外国判决（互惠/条约）
+          3. 成本：仲裁费 vs. 法院费用 + 各自律师费
+          4. 速度：仲裁 vs. 诉讼的平均时间
+          5. 专业性：仲裁员选择 vs. 法官专业度
+          6. 上诉与纠错：仲裁一裁终局 vs. 诉讼上诉机制
+          7. 临时措施：仲裁庭/紧急仲裁员 vs. 法院保全
+          8. 文件披露：仲裁灵活披露 vs. 诉讼证据规则
+          9. 跨境执行便利度
+          10. 和解可能性
+
+          请输出对比矩阵，并基于案件具体情况给出推荐方案及理由。
+
+- id: "00000000-0000-0000-0000-000000000c09"
+  name: "智能合约法律审阅"
+  description: "Legal review of smart contract code and business logic"
+  category: "web3"
+  steps:
+    - name: "Search smart contract legal basis"
+      description: "Search for smart contract enforceability and securities law rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate legal review"
+      description: "Generate smart contract legal analysis and modification suggestions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审阅以下智能合约代码及其对应的业务逻辑，从法律角度进行分析：
+
+          【粘贴Solidity代码或上传源文件】
+          业务场景描述：【如：去中心化借贷协议的清算逻辑 / NFT版税分配机制 / DAO投票治理合约】
+
+          法律分析维度：
+          1. 合同成立要件：
+             - 要约与承诺的认定（智能合约自动执行是否构成有效承诺）
+             - 对价/原因（Consideration/Causa）的存在性
+             - 当事人意思表示真实性的保障
+
+          2. 管辖权与准据法：
+             - 链上交易如何确定管辖权
+             - 准据法选择（是否在代码注释或配套法律协议中约定）
+             - 去中心化特征对传统管辖权理论的挑战
+
+          3. 争议解决机制：
+             - 链上仲裁（如Kleros）vs. 传统仲裁的衔接
+             - 如何在代码中嵌入争议解决触发机制
+             - 链下法律协议与链上代码的优先级安排
+
+          4. 合规风险：
+             - 是否涉及证券法风险（如代币分发逻辑）
+             - 反洗钱/KYC的链上实现
+             - 制裁筛查（地址黑名单机制）
+
+          5. 与链下法律协议的衔接：
+             - 推荐的"链上+链下"双层法律架构
+             - 法律协议中引用智能合约地址和ABI的规范方式
+             - 代码升级/迁移时的法律连续性保障
+
+          请给出法律意见摘要和修改建议。
+
+- id: "00000000-0000-0000-0000-000000000c0a"
+  name: "DAO 法律架构设计"
+  description: "Design legal wrapper architecture for a DAO (foundation, LLC, UNA, or no-entity)"
+  category: "web3"
+  steps:
+    - name: "Search DAO legal structures"
+      description: "Search for DAO legal wrapper options across jurisdictions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate architecture design"
+      description: "Generate DAO legal architecture comparison matrix and recommendation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请设计一个DAO（去中心化自治组织）的法律架构方案：
+
+          DAO基本信息：
+          - 名称：【XXX DAO】
+          - 治理代币：【XXX Token】
+          - 业务目标：【如：管理DeFi协议 / 投资Web3项目 / 社区内容创作】
+          - 成员规模：【预计5000+代币持有者】
+          - 运营地倾向：【偏好亚洲/离岸】
+
+          请分析以下法律包装方案的利弊：
+
+          1. 基金会模式：
+             - 瑞士基金会（Zug, Crypto Valley）
+             - 开曼基金会（Cayman Foundation）
+             - 新加坡担保有限公司（CLG）
+             - 各方案的设立流程、成本、治理灵活性
+
+          2. LLC模式：
+             - 怀俄明州DAO LLC
+             - 田纳西州DAO LLC
+             - 马绍尔群岛DAO
+             - 成员有限责任保护范围
+
+          3. UNA模式：
+             - 美国非营利协会（UNA）
+             - 适用场景与限制
+
+          4. 无法律实体模式：
+             - 纯链上DAO的法律风险
+             - 普通法下的合伙/非法人协会认定风险
+
+          每个方案需分析：
+          - 成员有限责任保护
+          - 税务处理（穿透 vs. 实体层面）
+          - 治理权（代币投票）与法律权（实体决策权）的分离与衔接
+          - 监管合规要求
+          - 与DeFi协议的交互方式
+          - 退出/解散机制
+
+          请输出方案对比矩阵，给出推荐方案及理由。
+
+- id: "00000000-0000-0000-0000-000000000c0b"
+  name: "Web3 项目投资尽调清单"
+  description: "Generate investment due diligence checklist for Web3 projects covering tokenomics, security, and compliance"
+  category: "web3"
+  steps:
+    - name: "Generate Web3 DD checklist"
+      description: "Generate Web3 investment due diligence checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请生成一份针对Web3项目的投资尽职调查清单，要求覆盖Web3行业特有风险：
+
+          项目信息：
+          - 项目名称：【XXX】
+          - 类型：【DeFi协议 / NFT平台 / Layer2 / GameFi / 钱包】
+          - 代币状态：【已发行 / 未发行】
+          - 目标融资金额：【XX万美元】
+
+          尽调模块：
+
+          1. 代币经济模型（Tokenomics）：
+             - 代币分配方案（团队/投资人/社区/生态基金的比例）
+             - 解锁时间表与通胀率
+             - 代币效用与价值捕获机制
+             - 是否存在"庞氏"特征（高APY来源分析）
+
+          2. 技术安全：
+             - 智能合约审计报告（CertiK / Trail of Bits / Quantstamp等）
+             - 审计发现与修复状态
+             - 多签钱包配置
+             - 升级权限管理（admin key / timelock）
+
+          3. 团队背景：
+             - 核心团队身份验证（KYC）
+             - 历史项目经验
+             - 匿名团队的风险评估
+
+          4. 监管合规状态：
+             - 代币法律意见书（Legal Opinion on Token Classification）
+             - 适用的牌照/注册
+             - 制裁合规（OFAC/SDN名单筛查）
+
+          5. 链上资产托管：
+             - 金库（Treasury）管理方案
+             - 冷热钱包配置
+             - 保险覆盖
+
+          6. 用户数据合规：
+             - 用户数据收集范围（钱包地址 vs. KYC数据）
+             - 隐私政策合规性
+             - 链上数据的隐私保护
+
+          7. 社区与治理：
+             - 治理参与度分析
+             - 提案与投票记录
+             - 社区争议历史
+
+          输出为表格，标注每项的风险权重和必查/选查等级。
+
+- id: "00000000-0000-0000-0000-000000000c0c"
+  name: "RWA 项目法律架构设计"
+  description: "Design legal architecture for Real World Asset tokenization projects"
+  category: "web3"
+  steps:
+    - name: "Search RWA regulatory developments"
+      description: "Search for RWA regulatory frameworks (Ensemble, Project Guardian, DTA, EU DLT pilot)"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate architecture design"
+      description: "Generate RWA legal architecture comparison matrix and recommendation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下RWA（Real World Asset Tokenization，现实世界资产代币化）项目设计法律架构方案：
+
+          RWA项目基本信息：
+          - 底层资产类型：【不动产（房产/商业地产）/ 债券（国债/企业债）/ 私募股权基金份额 / 艺术品/收藏品 / 碳信用/绿色资产 / 应收账款/供应链金融 / 其他】
+          - 底层资产所在地：【中国大陆 / 中国香港 / 美国 / 欧盟 / 新加坡 / 开曼】
+          - 资产规模：【XX亿元人民币/美元】
+          - 代币化比例：【100%完全代币化 / 部分代币化（如5%作为流动性层）】
+          - 目标投资者：【中国大陆投资者 / 海外合格投资者 / 全球散户 / 机构投资者】
+          - 发行平台：【公链（以太坊/Solana）/ 联盟链（蚂蚁链/BSN）/ 许可链】
+          - 是否涉及二级市场交易：【是（流动性市场）/ 否（仅持有到期）】
+
+          请分析以下法律架构方案的利弊及合规路径：
+
+          1. 直接代币化模式（Direct Tokenization）：
+             - SPV设立（底层资产→SPV持有→代币对应SPV股权/份额）
+             - SPV注册地选择矩阵：
+               * 开曼群岛：成本、速度、税收中性、投资者接受度
+               * BVI：类似开曼但设立更快
+               * 中国香港：透明度高、亚洲投资者信任、但合规成本较高
+               * 新加坡：MAS监管框架明确、但需VASP牌照
+               * 瑞士：DTA框架完善、欧洲投资者友好
+               * 卢森堡：欧盟基金代币化立法先行
+             - 代币与SPV权益的法律映射机制（代币=SPV股权？还是债权？还是收益权凭证？）
+             - 代币持有者对底层资产的间接权利链条（代币→SPV→底层资产，每层法律关系的明确性）
+
+          2. 基金/信托持有模式（Fund/Trust Model）：
+             - 信托架构：底层资产装入信托→受托人管理→代币代表信托受益权
+             - 基金架构：底层资产由基金持有→代币代表基金份额
+             - 各法域信托/基金法律对代币化的适配度
+
+          3. 抵押/担保模式（Collateral/Security Model）：
+             - 底层资产作为抵押物→链上智能合约管理还款/清算→代币代表对抵押品的债权
+             - 适用于供应链金融、应收账款类RWA
+
+          4. 双层架构（On-chain + Off-chain Hybrid）：
+             - 链上：代币发行、交易、结算
+             - 链下：SPV/信托持有底层资产、法律协议约定代币持有者权利
+             - 链上与链下的权利衔接机制（智能合约条款↔法律协议条款的一致性保障）
+
+          每个方案需分析：
+          - 投资者权利保护链条的完整性（从代币→法律实体→底层资产）
+          - 代币法律性质认定（证券型/商品型/虚拟资产型）
+          - 税务处理（代币分红/转让/赎回的税务影响）
+          - 监管合规路径（各法域对RWA的监管态度和牌照要求）
+          - 底层资产处置的法律程序（代币持有者如何行使权利影响底层资产处置）
+          - 清算/退出机制
+
+          请输出方案对比矩阵和推荐方案，重点标注各法域RWA的最新监管动态和试点案例。
+          联网搜索香港Ensemble项目、新加坡MAS Project Guardian、瑞士DTA框架、欧盟DLT试点等最新RWA监管动态。
+
+- id: "00000000-0000-0000-0000-000000000c0d"
+  name: "三会召开全套流程与文件"
+  description: "Draft full process and documents for shareholders/board/supervisory board meetings"
+  category: "corporate_governance"
+  steps:
+    - name: "Search corporate meeting rules"
+      description: "Search for Company Law 2024 meeting and voting rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate meeting documents"
+      description: "Generate full meeting process guide and document templates"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下公司三会会议起草全套流程文件：
+
+          会议信息：
+          - 公司名称：【XX有限公司/股份有限公司】
+          - 会议类型：【股东会/董事会/监事会】，性质：【定期/临时】
+          - 召开原因：【年度会议 / 审议XX事项 / 紧急事项】
+          - 审议事项：【如：审议年度财务报告、选举董事、修改章程、增资、分红等】
+          - 公司性质：【普通有限公司 / 国有企业 / 上市公司 / 外商投资企业】
+
+          请提供以下全套文件与流程指引：
+
+          一、会议召开程序合规指引（依据新《公司法》2024修订版）：
+
+          1. 召集程序：
+             - 股东会召集人：董事会/执行董事/监事/代表10%以上表决权股东（不同召集权限的适用条件）
+             - 董事会召集人：董事长/半数以上董事推举的董事
+             - 通知时限：股东会提前15日（有限公司）/20日（股份公司）/章程另有规定
+             - 通知方式与送达确认
+             - 通知内容要求（审议事项必须列明，不得临时增加重大事项）
+
+          2. 表决规则：
+             - 股东会普通决议：过半数表决权 / 特别决议：三分之二以上表决权（修改章程/增减资本/合并分立/解散/变更形式）
+             - 董事会决议：过半数董事出席+过半数出席董事同意
+             - 关联股东/关联董事回避表决规则
+             - 累积投票制（如适用——股份公司选举董事/监事时可采用）
+             - 一人有限公司的特别规定（书面决定+签名+存档）
+
+          3. 线上/电子会议合规（新《公司法》允许电子方式参会）：
+             - 电子会议的合法性确认条件
+             - 身份验证与签到机制
+             - 表决方式（电子投票系统的合规要求）
+             - 会议记录与签名的电子化方案
+
+          二、全套法律文件模板：
+
+          1. 会议通知书：
+             - 会议时间、地点、方式（现场/线上/混合）
+             - 审议事项清单（逐项列明）
+             - 出席/列席人员清单
+             - 表决权确认要求（股东需携带的身份证明/持股证明）
+             - 授权委托书模板（如股东委托他人出席）
+
+          2. 授权委托书：
+             - 委托人/受托人信息
+             - 委托权限范围（一般授权/特别授权+逐项表态指引）
+             - 委托期限
+
+          3. 会议议程：
+             - 时间分配、发言顺序、表决安排
+
+          4. 会议决议草案（每项审议事项的决议草案文本）
+
+          5. 会议记录模板：
+             - 出席/缺席/委托情况记录
+             - 每项议题的讨论要点记录
+             - 表决情况记录（赞成/反对/弃权票数，赞成比例）
+             - 异议记录（反对/弃权股东/董事的具体意见）
+             - 签名页（主持人+记录人+出席股东/董事签名）
+
+          6. 会议决议正式文本（每项通过的决议单独成文）
+
+          7. 决议备案/报送要求（如适用——上市公司/国有企业/外商投资企业的特殊备案要求）
+
+          请确保所有文件和程序符合新《公司法》2024修订版，特别注意电子参会的新规定和董事责任加重的新变化。
+
+- id: "00000000-0000-0000-0000-000000000c0e"
+  name: "公司减资、解散与注销全流程"
+  description: "Full-process legal guidance and documents for capital reduction, dissolution, and deregistration"
+  category: "corporate_governance"
+  steps:
+    - name: "Search capital reduction rules"
+      description: "Search for Company Law 2024 capital reduction and liquidation rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate full-process guidance"
+      description: "Generate capital reduction/dissolution/deregistration full-process guidance and documents"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下公司减资/解散/注销项目提供全流程法律指引和全套文件：
+
+          项目信息：
+          - 公司名称：【XX有限公司】
+          - 注册资本：【XX万元】，实缴出资：【XX万元】
+          - 当前经营状态：【正常经营拟减资 / 亏损严重拟解散 / 已停止经营拟注销 / 被吊销拟注销】
+          - 股东情况：【XX股东XX% / XX股东XX%】
+          - 债权债务情况：【有已知债权人XX个 / 债务约XX万元 / 或有债务待确认】
+          - 员工情况：【XX名员工，需安置/已安置】
+          - 操作类型：【减资 / 解散清算 / 简易注销 / 强制注销】
+
+          请提供以下全流程指引与文件：
+
+          一、减资流程（依据新《公司法》2024修订版）：
+
+          1. 减资类型判断：
+             - 同比减资（所有股东按比例减少）vs. 定向减资（个别股东退出）
+             - 免除出资义务减资（未实缴部分减资）vs. 返还出资减资（已实缴部分返还）
+             - 新《公司法》第224条：减资必须编制资产负债表和财产清单
+
+          2. 新法核心变化——减资必须通知债权人并公告：
+             - 通知已知债权人（10日内）+ 公告（30日内，在报纸或国家企业信用信息公示系统公告）
+             - 债权人45日内有权要求清偿债务或提供担保
+             - 违反通知义务的法律后果（减资对债权人不发生效力，股东仍按原出资额承担责任）
+
+          3. 简易减资程序（新法第225条新增）：
+             - 适用条件：公司亏损严重，减资用于弥补亏损，且不减资返还股东、不免除股东出资义务
+             - 简化公告程序（仅需在国家企业信用信息公示系统公告）
+             - 注意：简易减资后2年内不得向股东分配利润或免除出资义务
+
+          4. 全套文件：
+             - 股东会决议（特别决议：三分之二以上表决权）
+             - 董事会/执行董事提议方案
+             - 资产负债表和财产清单
+             - 债权人通知书模板
+             - 债权人公告文本
+             - 债权人清偿/担保方案
+             - 章程修正案（注册资本变更）
+             - 工商变更登记材料
+
+          二、解散与清算流程：
+
+          1. 解散事由判断：
+             - 自愿解散：股东会决议（三分之二以上）
+             - 章程规定解散事由出现
+             - 合并/分立解散
+             - 行政解散：吊销营业执照/责令关闭
+             - 司法解散：公司僵局下的法院判决解散（新法第231条）
+
+          2. 清算程序（新法第232-242条）：
+             - 清算组组成（董事为法定清算义务人，新法重要变化！）
+             - 清算组职权与义务
+             - 清算公告与债权人申报（60日公告期）
+             - 清算方案制定与确认
+             - 清偿顺序（清算费用→职工工资/社保→税款→普通债务）
+             - 剩余财产分配（按股东出资比例/章程约定）
+             - 清算报告与确认
+             - 注销登记
+
+          3. 清算义务人责任（新法加重）：
+             - 董事为法定清算义务人（新法第232条，原为股东）
+             - 未及时清算的责任：对公司债务承担连带赔偿责任
+             - 怠于清算导致无法清算：对公司全部债务承担连带责任
+             - 欺诈清算的刑事责任风险
+
+          4. 全套文件：股东会解散决议 + 清算组成立决议 + 清算公告 + 债权人申报登记表 + 清算方案 + 清算报告 + 注销登记申请书
+
+          三、简易注销（新法第240条新增）：
+
+          1. 适用条件：
+             - 公司存续期间未产生债务或已清偿全部债务
+             - 全体股东书面承诺对公司债务承担连带责任（如承诺不实）
+             - 不适用简易注销的情形：有未清偿债务/有正在诉讼/有行政处罚未执行/曾被吊销
+
+          2. 简易注销程序：
+             - 全体股东承诺书
+             - 在国家企业信用信息公示系统公告（20日公告期，无需债权人45日等待）
+             - 公告期满无异议→向登记机关申请注销
+             - 20日内完成注销
+
+          3. 简易注销的风险：
+             - 承诺不实的后果：股东对公司债务承担连带责任，不受出资比例限制
+             - 不得再次申请简易注销的条件
+
+          四、强制注销（新法第241条新增——行政机关依职权注销）：
+
+          1. 适用条件：公司被吊销营业执照/责令关闭/撤销满3年且未申请注销登记
+          2. 登记机关公告程序
+          3. 强制注销的后果与股东责任
+
+          请输出全流程时间线图、全套法律文件模板（每个文件标注法律依据条文号），以及新旧《公司法》清算制度变化对照表。
+
+- id: "00000000-0000-0000-0000-000000000c0f"
+  name: "高频公司法违规与争议风险排查"
+  description: "Screen a company for high-frequency Company Law violations and dispute risks"
+  category: "corporate_governance"
+  steps:
+    - name: "Search Company Law risk rules"
+      description: "Search for Company Law 2024 compliance and liability rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate risk screening report"
+      description: "Generate high-frequency Company Law violation and dispute risk screening report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下公司进行高频公司法违规和争议风险排查：
+
+          公司信息：
+          - 公司名称：【XX有限公司/股份有限公司】
+          - 成立时间：【XX年XX月】
+          - 注册资本：【XX万元】，实缴比例：【XX%】
+          - 股东人数：【XX人】
+          - 是否设董事会/监事会：【是/否/仅设执行董事/仅设1名监事】
+          - 行业：【XX行业】
+          - 经营状态：【正常经营/停业/亏损/被吊销】
+          - 特殊情况：【有国资成分/有外资成分/VIE架构/上市公司/一人公司】
+
+          请依据新《公司法》2024修订版，从以下维度排查高频违规和争议风险：
+
+          一、出资合规风险（新法重点变化区域）：
+
+          1. 认缴出资5年限制（新法第47条）：
+             - 2024年7月1日前设立的存量公司：过渡期安排（国务院规定3年过渡期+5年缴足期=最长8年）
+             - 当前认缴期限是否超过2032年7月1日？如超过，需修改章程缩短出资期限
+             - 未在规定期限内缴足的法律后果：董事催缴义务（第51条）、股东失权风险（第52条）、对公司债务的补充赔偿责任
+
+          2. 出资形式合规：
+             - 现金出资是否到位
+             - 非货币出资（实物/知识产权/股权）的评估程序是否合规
+             - 是否存在虚假出资/抽逃出资
+             - 新法变化：股权和债权可作出资（新法第48条新增），但需满足条件
+
+          3. 股东出资瑕疵的法律后果：
+             - 未按期出资：公司可发催缴书→60日未缴→失权通知→丧失未缴出资部分的股权
+             - 抽逃出资：返还+赔偿+对公司债务连带责任（新法第53条）
+             - 股东名册记载与工商登记不一致的风险
+
+          二、公司治理合规风险：
+
+          1. 三会运行合规：
+             - 股东会/董事会/监事会是否按章程规定定期召开
+             - 会议通知程序是否合规（时限、方式、内容）
+             - 表决比例是否达到法定最低要求
+             - 决议是否存在可撤销/无效/不成立情形（新法第25-28条）
+             - 决议不成立的新增情形（新法第27条：未开会/未表决/未达法定出席/未达法定表决比例）
+
+          2. 董事/高管责任风险（新法大幅加重）：
+             - 董事催缴出资义务（第51条）——违反的个人赔偿
+             - 董事清算义务（第232条）——未及时清算的连带赔偿责任
+             - 董事/高管忠实义务清单（新法第181-191条详细列举）：
+               * 禁止挪用资金/禁止违规担保/禁止利益冲突交易/禁止谋取商业机会/禁止同业竞争
+               * 关联交易报告义务
+               * 新增：董事/高管对第三人受害的赔偿责任（新法第191条重大变化）
+             - 双重股东代表诉讼（新法第189条）：母公司股东可穿透起诉子公司董事/高管
+
+          3. 法定代表人合规：
+             - 新法第10条：法定代表人范围扩大（董事或经理均可）
+             - 法定代表人变更程序：谁有权决定？变更登记时限？
+             - 法定代表人越权代表的责任与限制
+
+          三、股东权利与争议风险：
+
+          1. 股东知情权争议（新法变化）：
+             - 新法第57条扩大股东查阅权：可查阅会计凭证（原法无此规定）
+             - 可委托会计师/律师查阅（新法明确允许）
+             - 股东查阅权被拒绝的救济路径
+
+          2. 股权转让争议高频类型：
+             - 优先购买权争议（通知方式、同等条件认定、30日答复期）
+             - 股权代持纠纷（显名股东与隐名股东的权利冲突、代持协议效力）
+             - 股权继承争议（新法第90条：自然人股东死亡后，继承人可继承股东资格，章程另有规定除外）
+             - 离婚分割股权争议（是否需其他股东同意/优先购买权冲突）
+
+          3. 公司僵局与解散请求权：
+             - 公司经营严重困难认定标准
+             - 股东请求解散公司的条件（持股10%以上）
+             - 替代方案：强制股权收购/减资退出
+
+          4. 股东滥用权利风险：
+             - 滥用法人独立地位和股东有限责任逃避债务（新法第23条，人格否认制度）
+             - 一人公司股东自证财产独立的义务（举证责任倒置）
+             - 横向人格否认：关联公司间的人格否认（新法第23条第2款新增）
+
+          四、公司变更合规风险：
+
+          1. 减资程序合规（新法必须通知债权人+45日等待期）
+          2. 合并/分立程序合规（债权人保护程序）
+          3. 注册资本/经营范围变更的合规审查
+
+          五、其他高频风险：
+
+          1. 公司印章管理风险（公章私刻、公章失控、电子印章合规）
+          2. 营业执照管理风险（吊销后继续经营的法律后果）
+          3. 信息公示合规（国家企业信用信息公示系统年报/即时信息公示义务）
+          4. 税务合规交叉风险（出资/转让/注销环节的税务风险）
+
+          请输出风险排查报告，每项标注风险等级（🔴高风险/🟡中风险/🟢低风险）和整改建议。
+          引用新《公司法》2024修订版具体条文号。
+          使用华宇元典数据库检索相关司法解释和典型案例。
+
+- id: "00000000-0000-0000-0000-000000000c10"
+  name: "外商投资企业设立"
+  description: "Full-process legal plan for establishing a foreign-invested enterprise (WFOE/JV/representative office)"
+  category: "corporate_governance"
+  steps:
+    - name: "Search foreign investment setup rules"
+      description: "Search for negative list and foreign investment establishment rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate establishment plan"
+      description: "Generate foreign-invested enterprise establishment plan and document list"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下外商投资企业设立项目提供全流程法律方案：
+
+          设立信息：
+          - 境外投资方：【国别/地区、主体类型（公司/基金/个人）】
+          - 拟设立形式：【外商独资企业（WFOE）/ 中外合资（JV）/ 外国企业代表处】
+          - 拟经营业务：【简述】，行业：【XX行业】
+          - 注册资本：【XX万元/万美元】，出资方式：【现金/实物/知识产权】
+          - 注册地：【XX市】，是否入驻自贸区/特殊经济区域：【是/否】
+
+          方案内容：
+
+          1. 准入合规核查：
+             - 目标行业是否列入《外商投资准入负面清单》（禁止/限制/股比要求）
+             - 是否列入《鼓励外商投资产业目录》（优惠政策适用）
+             - 是否涉及行业前置审批（金融/电信/医疗/教育等）
+             - 是否触发外商投资安全审查
+
+          2. 设立流程与时间线：
+             - 名称登记 → 市场监管设立登记 → 刻章 → 外汇FDI登记 → 银行开户与资本金入账 → 税务登记与票种核定 → 社保/公积金开户 → 海关登记（如涉进出口）
+             - 每步的办理机关、材料、时限
+
+          3. 设立文件清单：
+             - 章程（治理结构选择：董事会 vs. 执行董事；是否设监事——注意新《公司法》单层治理选项）
+             - 投资方主体资格文件的公证认证/海牙认证（Apostille，中国2023年加入公约后的简化路径）
+             - 法定代表人/董事/监事任命文件
+             - 注册地址证明与租赁合同
+             - 外商投资信息报告（初始报告）
+
+          4. 合资项目补充（如适用）：
+             - 合资合同核心条款（股权比例/董事会席位/否决权/僵局解决/退出机制）
+             - 技术出资/许可安排
+
+          5. 设立后持续合规义务清单：
+             - 外商投资信息年度报告、工商年报、外汇存量权益登记、税务合规
+
+          输出设立方案 + 流程时间线 + 文件清单表格。
+
+- id: "00000000-0000-0000-0000-000000000c11"
+  name: "外商投资企业变更与注销"
+  description: "Legal guidance for foreign-invested enterprise changes and deregistration"
+  category: "corporate_governance"
+  steps:
+    - name: "Search FIE change rules"
+      description: "Search for foreign-invested enterprise change and deregistration rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate change/deregistration guidance"
+      description: "Generate FIE change/deregistration flow chart and document list"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下外商投资企业的变更/注销事项提供法律指引：
+
+          企业信息：
+          - 企业名称：【XX（中国）有限公司】
+          - 事项类型：【股权转让 / 增资减资 / 经营范围变更 / 董事与法定代表人变更 / 清算注销】
+          - 背景：【简述，如：集团重组/中国业务收缩/合资方退出】
+
+          一、变更类事项（按适用勾选）：
+          1. 股权转让：
+             - 是否涉及负面清单行业的外资比例限制
+             - 转让定价与税务（非居民企业股权转让所得预提税10%/税收协定优惠、7号公告间接转让审查）
+             - 流程：内部决议 → 转让协议 → 市场监管变更 → 外汇变更登记 → 税务申报
+          2. 增资/减资：
+             - 减资的债权人通知与公告程序（新《公司法》第224条）
+             - 外汇资金流出入路径
+          3. 信息报告义务：变更后20个工作日内的外商投资信息变更报告
+
+          二、清算注销全流程：
+          1. 解散决议与清算组备案（董事为清算义务人）
+          2. 债权人通知（10日）与公告（45日申报期）
+          3. 员工安置方案（经济补偿金N计算、社保停缴）
+          4. 税务注销（清税证明——通常为耗时最长环节，含税务清算审计）
+          5. 外汇注销登记与剩余财产汇出（完税凭证要求）
+          6. 海关/社保/银行账户注销
+          7. 市场监管注销登记
+          8. 时间预估与常见卡点（税务遗留问题/账册不全/员工争议）
+
+          输出变更/注销流程图 + 文件清单 + 风险提示。
+
+- id: "00000000-0000-0000-0000-000000000c12"
+  name: "发行上市法律意见书与律师工作报告"
+  description: "Draft legal opinion and lawyer's work report framework for IPO"
+  category: "capital_markets"
+  steps:
+    - name: "Search IPO legal opinion rules"
+      description: "Search for securities practice rules and listing requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate legal opinion framework"
+      description: "Generate IPO legal opinion and lawyer's work report framework"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草【A股IPO法律意见书/律师工作报告】框架：
+
+          项目信息：
+          - 发行人：【XX股份有限公司】，板块：【XX】
+          - 【上传尽调底稿或关键事实摘要】
+
+          按证券法律业务执业规则和板块审核要求，逐项展开以下意见点（每项含：核查程序→核查依据→事实描述→意见结论的标准措辞）：
+
+          1. 发行人本次发行上市的批准与授权
+          2. 发行人本次发行上市的主体资格
+          3. 本次发行上市的实质条件（逐条对照《证券法》《注册管理办法》及板块上市规则）
+          4. 发行人的设立与历史沿革
+          5. 发起人/股东（实际控制人认定及36个月稳定性、股东穿透核查）
+          6. 发行人的股本及演变
+          7. 发行人的业务（业务资质、境外经营、主营业务变更）
+          8. 关联交易及同业竞争（关联方认定、必要性与公允性、解决措施承诺）
+          9. 发行人的主要财产
+          10. 发行人的重大债权债务
+          11. 发行人重大资产变化及收购兼并
+          12. 公司章程的制定与修改
+          13. 股东大会、董事会议事规则及规范运作
+          14. 董事、监事、高级管理人员及其变化（任职资格、重大违法核查）
+          15. 税务（依法纳税、税收优惠合法性）
+          16. 环境保护、产品质量、技术等标准
+          17. 诉讼、仲裁或行政处罚（重大性认定）
+          18. 结论性意见
+
+          要求：区分"法律意见书"（结论）与"律师工作报告"（核查过程详述）的写法差异；对存在瑕疵的事项给出保留意见的措辞方案。
+
+- id: "00000000-0000-0000-0000-000000000c13"
+  name: "股权激励方案设计"
+  description: "Design an equity incentive plan with tool selection, holding structure, and tax optimization"
+  category: "equity_incentive"
+  steps:
+    - name: "Search equity incentive rules"
+      description: "Search for equity incentive and deferred tax rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate incentive plan design"
+      description: "Generate equity incentive plan design proposal"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业设计股权激励方案：
+
+          企业信息：
+          - 公司阶段：【初创/成长期（X轮融资后）/ Pre-IPO / 已上市】
+          - 激励对象：【核心高管XX人/骨干员工XX人/外部顾问】
+          - 可用激励股权池：【XX%，来源：创始人转让/增发】
+          - 商业目标：【绑定核心团队/上市前规范/替代部分现金薪酬】
+
+          方案设计内容：
+
+          1. 激励工具选择（对比分析）：
+             | 工具 | 期权 | 限制性股权 | 直接持股 | 虚拟股/分红权 |
+             - 激励效果、出资要求、税务时点、退出灵活性、上市衔接
+
+          2. 持股架构：
+             - 有限合伙持股平台（GP由创始人控制）vs. 直接持股 vs. 代持（风险提示）
+             - 平台注册地选择与税务（经营所得 vs. 财产转让所得的适用争议）
+             - 多平台分层设计（高管平台/员工平台）
+
+          3. 核心机制设计：
+             - 授予定价（公允价值折扣、增资 vs. 转让来源的税务差异）
+             - 成熟（Vesting）安排：期限/里程碑/业绩条件，加速成熟触发事件
+             - 行权与出资安排
+             - 退出与回购：善意离职/恶意离职/退休/身故的差异化回购定价，回购主体与资金来源
+             - 调整机制：融资稀释、股份变动时的调整公式
+
+          4. 税务优化：
+             - 非上市公司递延纳税备案（财税〔2016〕101号）适用条件
+             - 行权/转让环节的个税测算
+             - 股份支付对报表的影响提示
+
+          5. 上市衔接：
+             - 闭环原则与股东穿透核查要求
+             - 上市前员工持股计划的锁定期
+             - 期权在申报前的处理（行权/终止）
+
+          输出方案建议书 + 工具对比矩阵 + 关键条款参数表。
+
+- id: "00000000-0000-0000-0000-000000000c14"
+  name: "股权激励文件包起草与行权/退出处理"
+  description: "Draft equity incentive document package or handle exercise/exit matters"
+  category: "equity_incentive"
+  steps:
+    - name: "Search incentive document rules"
+      description: "Search for equity incentive plan and exercise rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate documents or exit handling"
+      description: "Generate equity incentive document package or exercise/exit handling"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草股权激励全套文件，或处理行权/退出的具体事项：
+
+          【场景A：起草文件包】
+          基于已确定的方案参数【粘贴方案要点】，起草：
+          1. 《股权激励计划》（总纲：定义、池规模、管理机构与授权、授予/成熟/行权/回购规则、调整与终止）
+          2. 《授予协议》（个人化条款：数量、价格、成熟表、税务责任、保密与竞业衔接）
+          3. 持股平台《有限合伙协议》（GP控制权、LP权利限制、入伙退伙机制、表决权归集）
+          4. 《行权通知书》《回购通知书》模板
+          5. 股东会/董事会决议
+          6. 员工沟通FAQ（通俗解释：值多少钱/什么时候能变现/离职怎么办/要交多少税）
+
+          【场景B：行权/退出处理】
+          员工情况：【姓名/激励工具/已成熟比例/离职原因（主动辞职/被辞退/协商/退休）】
+          请分析：
+          1. 按计划文件的处理路径（已成熟/未成熟部分的处置）
+          2. 回购价格计算（成本价/净资产/约定公式）与支付安排
+          3. 个税代扣代缴义务
+          4. 争议风险：激励纠纷的定性（劳动争议 vs. 合同纠纷——影响管辖与仲裁前置）、常见裁判倾向
+          5. 文件签署清单（回购协议、退伙协议、工商变更）
+
+          输出所需文件 + 操作步骤 + 风险提示。
+
+- id: "00000000-0000-0000-0000-000000000c15"
+  name: "资产证券化（ABS/REITs）法律架构"
+  description: "Design legal architecture for asset securitization (ABS/REITs) projects"
+  category: "banking_finance"
+  steps:
+    - name: "Search securitization rules"
+      description: "Search for ABS/REITs regulatory and true-sale rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate securitization architecture"
+      description: "Generate ABS/REITs legal architecture and document list"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下资产证券化项目设计法律架构：
+
+          项目信息：
+          - 基础资产类型：【应收账款/租赁债权/收费收益权/CMBS（不动产抵押贷款）/基础设施（公募REITs）】
+          - 原始权益人：【XX公司】
+          - 拟发行规模：【XX亿元】
+          - 发行场所：【交易所（企业ABS）/银行间（ABN/信贷ABS）/公募REITs】
+
+          架构设计：
+
+          1. 基础资产合格性审查：
+             - 负面清单核查、权属清晰性、可特定化、现金流独立稳定
+             - 未来债权/收益权的特殊问题（特许经营权质押限制等）
+
+          2. 真实出售与破产隔离：
+             - 转让的法律效力（通知债务人的安排、应收账款转让登记）
+             - "真实出售"要件 vs. 担保融资的再定性风险
+             - 原始权益人破产时的隔离效果论证
+
+          3. SPV与交易结构：
+             - 专项计划/信托/私募基金+专项计划（REITs的"公募基金+ABS+项目公司"三层架构）
+             - 增信措施：优先/次级分层、差额支付、担保、保证金
+             - 现金流归集路径与账户监管（混同风险防控）
+
+          4. 公募REITs特有问题（如适用）：
+             - 项目公司股权重组与税务（划转/增资的特殊性税务处理）
+             - 特许经营权/产权类项目的转让审批
+             - 原始权益人战略配售与扩募安排
+
+          5. 法律意见书要点与各方文件清单
+
+          输出交易结构图 + 法律要点清单 + 文件清单。
+
+- id: "00000000-0000-0000-0000-000000000c16"
+  name: "船舶建造/买卖与融资法律审查"
+  description: "Legal review and document drafting for shipbuilding, sale/purchase, and financing"
+  category: "shipping_maritime"
+  steps:
+    - name: "Search maritime rules"
+      description: "Search for shipbuilding, sale, and mortgage rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate review and documents"
+      description: "Generate ship transaction legal review and document list"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下船舶交易提供法律审查/文件起草支持：
+
+          交易信息：
+          - 交易类型：【新造船建造合同/二手船买卖/船舶融资租赁/船舶抵押融资】
+          - 船舶信息：【船型、吨位、船级社、拟挂旗（中国/香港/巴拿马/马绍尔等）】
+          - 我方身份：【船东/船厂/买方/卖方/融资租赁公司/银行】
+          - 合同范本基础：【SAJ/NEWBUILDCON/挪威格式SALEFORM/自拟】
+
+          审查/起草要点：
+
+          1. 新造船建造合同（如适用）：
+             - 付款节点与还款保函（Refund Guarantee）的银行开立与索赔条件
+             - 建造监理与检验权、变更（Modification）定价机制
+             - 交船条件与试航验收标准
+             - 延误交船的赔偿与解约权（弃船权触发天数）
+             - 保证期（Warranty）与缺陷修复
+             - 适用法与仲裁（伦敦仲裁惯例 vs. 中国仲裁的选择）
+
+          2. 二手船买卖（如适用）：
+             - MOA核心条款：定金与付款、检验（潜水检验/坞检）、交接文件清单
+             - 交船条件（free from encumbrances——抵押/优先权/留置的清洁保证）
+             - 物理交接与文件交接的衔接（Notice of Readiness）
+
+          3. 船舶融资（如适用）：
+             - 融资租赁架构：SPV持船、光船租赁注册、售后回租的合规
+             - 船舶抵押登记（登记机关与效力）与受偿顺位提示：船舶优先权＞船舶留置权＞船舶抵押权
+             - 保险利益安排（船壳险/保赔险的第一受益人、保险转让）
+             - 挂旗选择的法律影响（登记地法对抵押执行的影响）
+
+          4. 税务与合规：进口环节税务（如入中国籍）、制裁筛查（船舶/船东/贸易航线）
+
+          输出审查意见（🔴🟡🟢标注）+ 关键条款修改建议 + 交易文件清单。
+
+- id: "00000000-0000-0000-0000-000000000c17"
+  name: "租船与运输合同审阅"
+  description: "Review charterparty and carriage contracts from various party perspectives"
+  category: "shipping_maritime"
+  steps:
+    - name: "Search charterparty rules"
+      description: "Search for charterparty and bill of lading rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate charterparty review"
+      description: "Generate charterparty/carriage contract review with modification suggestions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请从【出租人/承租人/托运人/承运人】角度审阅以下租船/运输合同：
+
+          【粘贴或上传合同文本】
+
+          合同类型：【定期租船（NYPE/BALTIME）/航次租船（GENCON）/包运合同COA/光船租赁（BARECON）/多式联运】
+
+          审阅要点：
+
+          1. 期租合同（如适用）：
+             - 交还船条件（时间窗口、燃油交接计价、还船通知）
+             - 租金支付与撤船权（技术性撤船的宽限条款、反技术性撤船条款）
+             - 停租（Off-hire）事由清单与举证
+             - 安全港口/安全泊位保证的责任边界
+             - 转租权与责任承担
+
+          2. 程租合同（如适用）：
+             - 受载期（Laycan）与解约权
+             - 装卸时间（Laytime）起算、滞期费/速遣费的计算条款
+             - 运费支付节点（预付运费的不可退还条款）
+             - 绕航与合理绕航的边界
+
+          3. 提单相关：
+             - 租约条款并入提单的效力（仲裁条款并入的明示要求）
+             - 承运人识别条款（Identity of Carrier）
+             - 电放/无单放货的风险控制条款
+
+          4. 通用风险条款：
+             - 互有责任碰撞条款、新杰森条款、共同海损理算条款
+             - 战争/冰冻/疫情条款（航线风险分配）
+             - 制裁条款（航线/货物/交易对手的制裁合规）
+             - 留置权条款（对货物/转租运费的留置）
+
+          输出逐条审阅意见（🔴🟡🟢）+ 修改建议文本（中英对照）。
+
+- id: "00000000-0000-0000-0000-000000000c18"
+  name: "能源项目开发与并购"
+  description: "Legal support for energy project development and M&A (solar, wind, storage)"
+  category: "ppp_energy"
+  steps:
+    - name: "Search energy project rules"
+      description: "Search for energy project development and M&A rules"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance and structure"
+      description: "Generate energy project compliance checklist and transaction structure"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下能源项目的开发/并购提供法律支持：
+
+          项目信息：
+          - 项目类型：【集中式光伏/风电（陆上/海上）/储能/分布式光伏/传统电力/氢能/充换电】
+          - 事项类型：【新项目开发/项目公司股权并购/EPC与运维合同/电力交易】
+          - 项目规模：【装机XX MW，投资额XX亿元】
+          - 我方身份：【开发商/投资方/收购方/EPC承包商/融资方】
+
+          法律支持内容：
+
+          1. 开发阶段合规清单（如适用）：
+             - 项目指标与备案：竞争性配置指标的取得与转让限制、备案/核准
+             - 用地合规：用地性质（戈壁/农光互补/林光互补的限制）、耕地与生态红线核查、租赁 vs. 出让的选择与农村土地流转程序
+             - 电网接入：接入系统批复、消纳能力
+             - 环评/水保/军事/文物/矿压等专项批复
+             - 电价机制：平价上网/市场化交易/绿电绿证的收益结构
+
+          2. 项目公司并购尽调重点（如适用）：
+             - 指标合规性：指标取得程序、"倒卖路条"风险（未开工先转让的限制）
+             - 补贴合规：存量项目的可再生能源补贴核查结论、欠补的应收账款处理
+             - 土地瑕疵：未办证先建设、租赁期限与项目周期错配、地上附着物补偿纠纷
+             - 电站质量：EPC质保责任的承继、组件衰减担保
+             - 股权交割安排：分期付款与并网/指标条件挂钩的对赌设计
+
+          3. 核心合同审查（如适用）：
+             - EPC合同：固定总价的调价例外、进度与并网节点、性能担保（PR值）与违约金
+             - 运维合同：可用率承诺与考核
+             - 购售电协议（PPA）/绿电交易协议：电量电价、偏差考核、期限与终止
+
+          4. 融资与退出：项目融资担保包（股权质押/电费收益权质押）、公募REITs退出的合规预留
+
+          输出合规清单/尽调报告框架 + 交易结构建议 + 风险矩阵。
+
+- id: "00000000-0000-0000-0000-000000000c19"
+  name: "客户沟通文件"
+  description: "Draft client communication documents (risk alert letter, legal briefing, service proposal)"
+  category: "general_legal"
+  steps:
+    - name: "Generate client communication"
+      description: "Generate client communication document with email template"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下内容，起草一份致客户的【法律风险提示函 / 法律简报 / 法律服务建议书】：
+
+          内容要点：
+          【粘贴要点或描述场景】
+
+          文件类型选择：
+          - 法律风险提示函：针对新法规出台/监管动态，提示客户潜在影响
+          - 法律简报：定期或不定期法律动态通报
+          - 法律服务建议书：针对客户具体需求，提出法律服务方案
+
+          格式要求：
+          1. 开头：客户称谓 + 简短背景说明
+          2. 正文：分点列出要点，每点包含"事实/变化"→"法律分析"→"对您的影响"→"建议行动"
+          3. 结尾：联系方式 + 免责声明
+          4. 语言风格：专业但不过度学术化，客户高管可读
+          5. 篇幅控制在【1-2页A4】
+
+          输出为Word文档，附邮件正文模板。
