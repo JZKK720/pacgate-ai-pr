@@ -14,11 +14,22 @@ class PacgateApiClient:
         base_url: str | None = None,
         jwt_token: str | None = None,
         tenant_id: str | None = None,
+        email: str | None = None,
+        password: str | None = None,
     ):
-        self.base_url = (base_url or os.environ.get("PACGATE_API_URL", "http://pacgate-api:8080")).rstrip("/")
+        self.base_url = (
+            base_url or os.environ.get("PACGATE_API_URL", "http://pacgate-api:8080")
+        ).rstrip("/")
         self.jwt_token = jwt_token or os.environ.get("PACGATE_JWT_TOKEN", "")
-        self.tenant_id = tenant_id or os.environ.get("PACGATE_TENANT_ID", "default-firm")
+        self.tenant_id = tenant_id or os.environ.get(
+            "PACGATE_TENANT_ID", "default-firm"
+        )
+        self.email = email or os.environ.get("PACGATE_API_EMAIL", "")
+        self.password = password or os.environ.get("PACGATE_API_PASSWORD", "")
         self._client = httpx.Client(timeout=30.0)
+
+        if not self.jwt_token and self.email and self.password:
+            self.jwt_token = self.login(self.email, self.password)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -29,11 +40,27 @@ class PacgateApiClient:
     def get(self, path: str) -> httpx.Response:
         return self._client.get(f"{self.base_url}{path}", headers=self._headers())
 
+    def login(self, email: str, password: str) -> str:
+        resp = self._client.post(
+            f"{self.base_url}/api/auth/login",
+            json={"email": email, "password": password},
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        token = resp.json().get("token", "")
+        if not token:
+            raise ValueError("pacgate-api login did not return a token")
+        return token
+
     def post(self, path: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        return self._client.post(f"{self.base_url}{path}", json=json, headers=self._headers())
+        return self._client.post(
+            f"{self.base_url}{path}", json=json, headers=self._headers()
+        )
 
     def put(self, path: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        return self._client.put(f"{self.base_url}{path}", json=json, headers=self._headers())
+        return self._client.put(
+            f"{self.base_url}{path}", json=json, headers=self._headers()
+        )
 
     def delete(self, path: str) -> httpx.Response:
         return self._client.delete(f"{self.base_url}{path}", headers=self._headers())
@@ -42,7 +69,9 @@ class PacgateApiClient:
         """Upload a file to pacgate-api."""
         with open(file_path, "rb") as f:
             files = {"file": (file_path, f)}
-            headers = {"Authorization": f"Bearer {self.jwt_token}"} if self.jwt_token else {}
+            headers = (
+                {"Authorization": f"Bearer {self.jwt_token}"} if self.jwt_token else {}
+            )
             return self._client.post(
                 f"{self.base_url}{path}",
                 files=files,

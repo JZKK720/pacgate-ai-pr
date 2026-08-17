@@ -3,16 +3,17 @@
 
 [build-system]
 requires = ["setuptools>=61.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "pacgate-deerflow-adapter"
 version = "0.1.0"
 description = "Thin adapter that routes deer-flow storage to pacgate-api"
 requires-python = ">=3.10"
-dependencies = [
-    "httpx>=0.24",
-]
+dependencies = ["httpx>=0.24"]
 
-[tool.setuptools.packages.find]
-where = ["."]
+[tool.setuptools]
+packages = ["pacgate_deerflow_adapter"]
+
+[tool.setuptools.package-dir]
+pacgate_deerflow_adapter = "."

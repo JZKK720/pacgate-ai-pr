@@ -1,50 +1,49 @@
-"""PacgateMemoryStorage — implements deer-flow's MemoryStorage interface.
+"""PacgateMemoryStorage — implements DeerFlow's current MemoryStorage interface.
 
-deer-flow's config.yaml points at this class:
-    memory:
-      storage_class: pacgate_deerflow_adapter.storage:PacgateMemoryStorage
+DeerFlow 2.x loads custom memory backends from `memory.storage_class`, for
+example:
 
-This adapter translates deer-flow's memory load/save/reload calls into
-HTTP calls to pacgate-api's matter-scoped memory endpoints.
+        memory:
+            storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
+
+This adapter translates DeerFlow memory load/save/reload calls into HTTP calls
+to Pacgate's matter-scoped memory endpoints.
 """
 
+import os
 from typing import Any
+
+from deerflow.agents.memory.storage import MemoryStorage
 
 from .client import PacgateApiClient
 
 
-class PacgateMemoryStorage:
+class PacgateMemoryStorage(MemoryStorage):
     """Memory storage backed by pacgate-api (per-matter knowledge base)."""
 
-    def __init__(self, **kwargs: Any):
+    def __init__(self):
         self.client = PacgateApiClient(
-            base_url=kwargs.get("api_url"),
-            jwt_token=kwargs.get("jwt_token"),
-            tenant_id=kwargs.get("tenant_id"),
+            base_url=os.environ.get("PACGATE_API_URL"),
+            jwt_token=os.environ.get("PACGATE_JWT_TOKEN"),
+            tenant_id=os.environ.get("PACGATE_TENANT_ID"),
+            email=os.environ.get("PACGATE_API_EMAIL"),
+            password=os.environ.get("PACGATE_API_PASSWORD"),
         )
-        # The matter_id is passed at runtime via deer-flow's thread context.
-        # For now, use a default matter or read from env.
-        self.matter_id = kwargs.get("matter_id", "default")
+        self.matter_id = os.environ.get("PACGATE_MATTER_ID")
+        if not self.matter_id:
+            raise ValueError("PacgateMemoryStorage requires PACGATE_MATTER_ID")
 
-    def load(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
+    def load(
+        self, agent_name: str | None = None, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         """Load memory from pacgate-api."""
-        try:
-            resp = self.client.get(f"/api/matters/{self.matter_id}/memory")
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception:
-            pass
-        # Return empty memory structure if API is unavailable
-        return {
-            "version": "2.0",
-            "revision": 0,
-            "lastUpdated": "",
-            "user": {},
-            "history": {},
-            "facts": [],
-        }
+        resp = self.client.get(f"/api/matters/{self.matter_id}/memory")
+        resp.raise_for_status()
+        return resp.json()
 
-    def reload(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
+    def reload(
+        self, agent_name: str | None = None, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         """Reload memory from pacgate-api (same as load)."""
         return self.load(agent_name, user_id=user_id)
 
@@ -56,14 +55,12 @@ class PacgateMemoryStorage:
         user_id: str | None = None,
     ) -> bool:
         """Save memory to pacgate-api."""
-        try:
-            resp = self.client.post(
-                f"/api/matters/{self.matter_id}/memory",
-                json=memory_data,
-            )
-            return resp.status_code in (200, 201)
-        except Exception:
-            return False
+        resp = self.client.post(
+            f"/api/matters/{self.matter_id}/memory",
+            json=memory_data,
+        )
+        resp.raise_for_status()
+        return True
 
 
 class PacgateArtifactStore:
@@ -79,10 +76,16 @@ class PacgateArtifactStore:
             base_url=kwargs.get("api_url"),
             jwt_token=kwargs.get("jwt_token"),
             tenant_id=kwargs.get("tenant_id"),
+            email=kwargs.get("email"),
+            password=kwargs.get("password"),
         )
-        self.matter_id = kwargs.get("matter_id", "default")
+        self.matter_id = kwargs.get("matter_id")
+        if not self.matter_id:
+            raise ValueError("PacgateArtifactStore requires a real matter_id")
 
-    def write_artifact(self, filename: str, content: bytes, doc_format: str = "docx") -> dict[str, Any]:
+    def write_artifact(
+        self, filename: str, content: bytes, doc_format: str = "docx"
+    ) -> dict[str, Any]:
         """Write a document to pacgate-api (creates a new version)."""
         import tempfile
 
