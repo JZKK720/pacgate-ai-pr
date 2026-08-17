@@ -525,18 +525,32 @@ fn oai_tool(name: &str, description: &str, parameters: serde_json::Value) -> Oai
     }
 }
 
+fn matter_context_prompt(matter_id: &MatterId) -> String {
+    format!(
+        "## CURRENT MATTER CONTEXT\n\n- matter_id: {}\n- For matter-scoped tool calls (`list_documents`, `generate_docx`, `read_table_cells`, and `kb_search`), use this matter_id unless the user explicitly switches matters.\n- Never invent or substitute a different matter_id.\n",
+        matter_id.as_str()
+    )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // System prompt builder
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Builds the Pacgate agent system prompt. Inspired by Mike's ~3,000 token prompt
 /// with the four core modules: CITATIONS, DOCX generation rules, edit rules, context management.
-pub fn build_system_prompt(persona_prompt: Option<&str>) -> String {
+pub fn build_system_prompt(persona_prompt: Option<&str>, matter_id: Option<&MatterId>) -> String {
     let base = include_str!("system_prompt_base.txt");
-    match persona_prompt {
-        Some(persona) => format!("{base}\n\n## PRACTICE AREA INSTRUCTIONS\n\n{persona}"),
-        None => base.to_string(),
+    let mut sections = vec![base.to_string()];
+
+    if let Some(matter_id) = matter_id {
+        sections.push(matter_context_prompt(matter_id));
     }
+
+    if let Some(persona) = persona_prompt {
+        sections.push(format!("## PRACTICE AREA INSTRUCTIONS\n\n{persona}"));
+    }
+
+    sections.join("\n\n")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -576,6 +590,7 @@ impl AgentLoop {
         history: Vec<AgentMessage>,
         user_message: &str,
         persona_prompt: Option<&str>,
+        matter_id: Option<&MatterId>,
     ) -> Result<AgentTurnResult> {
         let llm = self.router.get(self.tier)?;
         let tools = tool_definitions();
@@ -583,7 +598,7 @@ impl AgentLoop {
         let mut messages = self.convert_history(&history);
 
         // Inject system prompt at the beginning
-        let system_prompt = build_system_prompt(persona_prompt);
+        let system_prompt = build_system_prompt(persona_prompt, matter_id);
         messages.insert(
             0,
             ChatMessage {
@@ -720,6 +735,22 @@ impl AgentLoop {
                 }),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_prompt_includes_matter_context() {
+        let matter_id =
+            MatterId(uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap());
+
+        let prompt = build_system_prompt(None, Some(&matter_id));
+
+        assert!(prompt.contains("CURRENT MATTER CONTEXT"));
+        assert!(prompt.contains(&matter_id.as_str()));
     }
 }
 

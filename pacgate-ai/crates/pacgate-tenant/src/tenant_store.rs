@@ -64,6 +64,25 @@ impl TenantStore {
         })
     }
 
+    #[instrument(skip(self), fields(slug = %slug))]
+    pub async fn get_by_slug(&self, slug: &str) -> Result<pacgate_core::Tenant, TenantError> {
+        let row = sqlx::query(
+            "SELECT id, name, slug, config_json, created_at, updated_at FROM tenants WHERE slug = $1",
+        )
+        .bind(slug)
+        .fetch_one(&self.db)
+        .await?;
+
+        Ok(pacgate_core::Tenant {
+            id: TenantId(row.get::<Uuid, _>("id")),
+            name: row.get("name"),
+            slug: row.get("slug"),
+            config: serde_json::from_value(row.get("config_json")).unwrap_or_default(),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+    }
+
     pub async fn list(&self) -> Result<Vec<pacgate_core::Tenant>, TenantError> {
         let rows = sqlx::query(
             "SELECT id, name, slug, config_json, created_at, updated_at FROM tenants ORDER BY created_at DESC",
@@ -104,6 +123,7 @@ impl MatterStore {
         tenant_id: &TenantId,
         name: &str,
         description: Option<&str>,
+        external_key: Option<&str>,
         persona_id: Option<&pacgate_core::PersonaId>,
         created_by: &UserId,
     ) -> Result<Matter, TenantError> {
@@ -114,13 +134,14 @@ impl MatterStore {
         }
 
         let row = sqlx::query(
-            "INSERT INTO matters (tenant_id, name, description, persona_id, created_by)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, tenant_id, name, description, persona_id, created_by, created_at, updated_at",
+              "INSERT INTO matters (tenant_id, name, description, external_key, persona_id, created_by)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               RETURNING id, tenant_id, name, description, external_key, persona_id, created_by, created_at, updated_at",
         )
         .bind(tenant_id.0)
         .bind(name)
         .bind(description)
+           .bind(external_key)
         .bind(persona_id.map(|p| p.0))
         .bind(created_by.0)
         .fetch_one(&self.db)
@@ -132,7 +153,7 @@ impl MatterStore {
     #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str()))]
     pub async fn list(&self, tenant_id: &TenantId) -> Result<Vec<Matter>, TenantError> {
         let rows = sqlx::query(
-            "SELECT id, tenant_id, name, description, persona_id, created_by, created_at, updated_at
+            "SELECT id, tenant_id, name, description, external_key, persona_id, created_by, created_at, updated_at
              FROM matters WHERE tenant_id = $1 ORDER BY created_at DESC",
         )
         .bind(tenant_id.0)
@@ -149,7 +170,7 @@ impl MatterStore {
         matter_id: &MatterId,
     ) -> Result<Matter, TenantError> {
         let row = sqlx::query(
-            "SELECT id, tenant_id, name, description, persona_id, created_by, created_at, updated_at
+            "SELECT id, tenant_id, name, description, external_key, persona_id, created_by, created_at, updated_at
              FROM matters WHERE id = $1 AND tenant_id = $2",
         )
         .bind(matter_id.0)

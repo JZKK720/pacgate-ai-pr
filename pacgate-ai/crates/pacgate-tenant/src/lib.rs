@@ -60,11 +60,43 @@ pub fn doc_path(
 /// This is a convenience for dev/test setups.
 #[instrument(skip(pool))]
 pub async fn run_migrations(pool: &PgPool) -> Result<(), TenantError> {
-    let migration_sql = include_str!("../../../migrations/001_initial_schema.sql");
-    sqlx::query(migration_sql)
-        .execute(pool)
+    const MIGRATION_LOCK_KEY: i64 = 4_243_001;
+
+    let mut conn = pool
+        .acquire()
         .await
         .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+    let result = async {
+        let initial_schema = include_str!("../../../migrations/001_initial_schema.sql");
+        sqlx::raw_sql(initial_schema)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+        let matter_external_keys = include_str!("../../../migrations/004_matter_external_keys.sql");
+        sqlx::raw_sql(matter_external_keys)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| TenantError::Migration(e.to_string()))
+    }
+    .await;
+
+    let unlock_result = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| TenantError::Migration(e.to_string()));
+
+    result?;
+    unlock_result?;
+
     tracing::info!("database migrations applied");
     Ok(())
 }
@@ -76,8 +108,7 @@ pub fn ensure_dirs(
     matter_id: &MatterId,
 ) -> Result<(), TenantError> {
     let docs = docs_dir(data_dir, tenant_id, matter_id);
-    std::fs::create_dir_all(&docs)
-        .map_err(|e| TenantError::Io(e.to_string()))?;
+    std::fs::create_dir_all(&docs).map_err(|e| TenantError::Io(e.to_string()))?;
     Ok(())
 }
 
@@ -91,7 +122,10 @@ fn row_to_matter(row: &sqlx::postgres::PgRow) -> Matter {
         tenant_id: TenantId(row.get::<Uuid, _>("tenant_id")),
         name: row.get("name"),
         description: row.get("description"),
-        persona_id: row.get::<Option<Uuid>, _>("persona_id").map(|u| pacgate_core::PersonaId(u)),
+        external_key: row.get("external_key"),
+        persona_id: row
+            .get::<Option<Uuid>, _>("persona_id")
+            .map(|u| pacgate_core::PersonaId(u)),
         created_by: UserId(row.get::<Uuid, _>("created_by")),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),

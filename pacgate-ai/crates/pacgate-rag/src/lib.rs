@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use pacgate_core::{DataLevel, Jurisdiction, MatterId, SourceLevel, TenantId};
+use pacgate_core::{Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 
@@ -25,10 +25,10 @@ pub use ingest::ChunkIngestor;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KbSearchResult {
-    pub content:    String,
-    pub score:      f32,
+    pub content: String,
+    pub score: f32,
     pub source_doc: String,
-    pub page:       Option<u32>,
+    pub page: Option<u32>,
 }
 
 /// Optional filters for RAG search.
@@ -38,13 +38,9 @@ pub struct KbSearchResult {
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilter {
     /// Filter by jurisdiction (e.g., ChinaMainland, UnitedStates)
-    pub jurisdiction:  Option<Jurisdiction>,
+    pub jurisdiction: Option<Jurisdiction>,
     /// Filter by source level (e.g., AuthorityVerified, AuxiliaryDB)
-    pub source_level:  Option<SourceLevel>,
-    /// Filter by data classification level T1-T4.
-    /// When set, only chunks at or below this level are returned
-    /// (e.g., T1 filter returns only T1 chunks; T3 returns T1+T2+T3).
-    pub max_data_level: Option<DataLevel>,
+    pub source_level: Option<SourceLevel>,
 }
 
 impl SearchFilter {
@@ -59,13 +55,6 @@ impl SearchFilter {
 
     pub fn with_source_level(mut self, s: SourceLevel) -> Self {
         self.source_level = Some(s);
-        self
-    }
-
-    /// Set the maximum data classification level for results.
-    /// T1 = shared templates only; T3 = templates + seeds + project files (excludes T4).
-    pub fn with_max_data_level(mut self, level: DataLevel) -> Self {
-        self.max_data_level = Some(level);
         self
     }
 }
@@ -105,22 +94,16 @@ impl RagStore {
         let query_embedding = self.embedding.embed(query).await?;
 
         // Semantic search via pgvector cosine similarity
-        let semantic_results = self.semantic_search(
-            tenant_id,
-            matter_id,
-            &query_embedding,
-            top_k,
-            filter,
-        ).await.unwrap_or_default();
+        let semantic_results = self
+            .semantic_search(tenant_id, matter_id, &query_embedding, top_k, filter)
+            .await
+            .unwrap_or_default();
 
         // Keyword search via tsvector
-        let keyword_results = self.keyword_search(
-            tenant_id,
-            matter_id,
-            query,
-            top_k,
-            filter,
-        ).await.unwrap_or_default();
+        let keyword_results = self
+            .keyword_search(tenant_id, matter_id, query, top_k, filter)
+            .await
+            .unwrap_or_default();
 
         // Merge and rank by combined score
         let merged = self.merge_results(semantic_results, keyword_results, top_k);
@@ -232,12 +215,12 @@ impl RagStore {
             .collect())
     }
 
-    /// Build SQL with optional jurisdiction, source_level, and data_level filter clauses.
+    /// Build SQL with optional jurisdiction and source_level filter clauses.
     ///
-    /// Returns `(sql_with_order_by_and_limit, jurisdiction_param, source_level_param, data_levels)`.
-    /// The params are `Some(String)` / `Vec<String>` when the filter is active, `None`/empty otherwise.
+    /// Returns `(sql_with_order_by_and_limit, jurisdiction_param, source_level_param)`.
+    /// The params are `Some(String)` when the filter is active, `None` otherwise.
     /// When active, the SQL appends `AND c.jurisdiction = $N` / `AND c.source_level = $N`
-    /// / `AND c.data_level IN (...)` and the caller must bind the params in the correct position.
+    /// and the caller must bind the param in the correct position.
     fn build_filtered_sql(
         base_sql: &str,
         filter: &SearchFilter,
@@ -264,23 +247,6 @@ impl RagStore {
                 .unwrap_or_default();
             sql.push_str(&format!(" AND c.source_level = {}", sl_param_num));
             sl_param = Some(s_str);
-        }
-
-        // Data level filter: include chunks at or below the max level.
-        // T1 < T2 < T3 < T4. E.g., max_data_level=T3 returns T1, T2, T3 (excludes T4).
-        if let Some(max_level) = filter.max_data_level {
-            let allowed: Vec<&str> = match max_level {
-                DataLevel::T1SharedTemplate => vec!["T1"],
-                DataLevel::T2RestrictedSeed => vec!["T1", "T2"],
-                DataLevel::T3ProjectSpecific => vec!["T1", "T2", "T3"],
-                DataLevel::T4SpecialSensitive => vec!["T1", "T2", "T3", "T4"],
-            };
-            let in_list = allowed
-                .iter()
-                .map(|s| format!("'{}'", s))
-                .collect::<Vec<_>>()
-                .join(", ");
-            sql.push_str(&format!(" AND c.data_level IN ({})", in_list));
         }
 
         sql.push_str(" ORDER BY ");
@@ -337,24 +303,54 @@ impl RagStore {
 
         // Sort by combined score, take top_k
         let mut results: Vec<KbSearchResult> = merged.into_values().collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k as usize);
         results
     }
 
     /// Run RAG migrations.
     pub async fn run_migrations(pool: &PgPool) -> Result<(), RagError> {
-        let migration_sql = include_str!("../../../migrations/002_rag_schema.sql");
-        sqlx::query(migration_sql)
-            .execute(pool)
+        const MIGRATION_LOCK_KEY: i64 = 4_243_001;
+
+        let mut conn = pool
+            .acquire()
             .await
             .map_err(|e| RagError::Migration(e.to_string()))?;
 
-        let enrichment_sql = include_str!("../../../migrations/003_rag_enrichment.sql");
-        sqlx::query(enrichment_sql)
-            .execute(pool)
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .fetch_optional(&mut *conn)
             .await
             .map_err(|e| RagError::Migration(e.to_string()))?;
+
+        let migration_sql = include_str!("../../../migrations/002_rag_schema.sql");
+        let result = async {
+            sqlx::raw_sql(migration_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
+            let enrichment_sql = include_str!("../../../migrations/003_rag_enrichment.sql");
+            sqlx::raw_sql(enrichment_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
+            Ok::<(), RagError>(())
+        }
+        .await;
+
+        let _unlock_result = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| RagError::Migration(e.to_string()))?;
+
+        result?;
 
         tracing::info!("RAG migrations applied (002_schema + 003_enrichment)");
         Ok(())

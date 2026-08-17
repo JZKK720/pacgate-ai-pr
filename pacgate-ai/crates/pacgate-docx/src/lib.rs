@@ -14,7 +14,7 @@ mod styles;
 mod templates;
 
 pub use builder::{DocxBuilder, DocxSection};
-pub use diff::{apply_tracked_edit, TrackedEdit};
+pub use diff::{accept_tracked_changes, apply_tracked_edit, TrackedEdit};
 pub use parser::extract_text;
 pub use store::FsDocumentStore;
 pub use templates::LegalDocumentTemplate;

@@ -263,6 +263,7 @@ pub struct Matter {
     pub tenant_id:   TenantId,
     pub name:        String,
     pub description: Option<String>,
+    pub external_key: Option<String>,
     pub persona_id:  Option<PersonaId>,
     pub created_by:  UserId,
     pub created_at:  DateTime<Utc>,

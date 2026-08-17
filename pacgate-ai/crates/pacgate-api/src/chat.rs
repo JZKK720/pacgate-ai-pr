@@ -2,16 +2,35 @@ use axum::{
     extract::{Extension, State},
     response::{
         sse::{Event, Sse},
-        IntoResponse,
+        IntoResponse, Response,
     },
     Json,
 };
 use futures::stream;
-use pacgate_core::{AgentMessage, SoulPersona};
+use pacgate_auth::Claims;
+use pacgate_core::{AgentMessage, MatterId, SoulPersona, TenantId};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 
 use crate::{error::ApiError, state::AppState};
+
+fn claims_to_tenant_id(claims: &Claims) -> Result<TenantId, ApiError> {
+    claims
+        .tenant_id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid tenant_id in token: {e}")))
+}
+
+fn sse_error_response(message: impl Into<String>) -> Response {
+    let payload = SsePayload::Error {
+        message: message.into(),
+    };
+    let event: Result<Event, Infallible> = serde_json::to_string(&payload)
+        .map(|json| Ok(Event::default().data(json)))
+        .unwrap_or_else(|_| Ok(Event::default().data("internal error")));
+    let stream = Box::pin(stream::iter(vec![event]));
+    Sse::new(stream).into_response()
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Request / response
@@ -121,14 +140,32 @@ fn compose_persona_prompt(soul: Option<&SoulPersona>, persona_id: Option<&str>) 
 
 pub async fn chat_handler(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Extension(soul): Extension<Option<SoulPersona>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, ApiError> {
+    let tenant_id = claims_to_tenant_id(&claims)?;
+    let matter_id: MatterId = req
+        .matter_id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid matter id: {e}")))?;
+
+    state
+        .matter_store
+        .get(&tenant_id, &matter_id)
+        .await
+        .map_err(|_| ApiError::not_found("matter not found"))?;
+
     let persona_prompt = compose_persona_prompt(soul.as_ref(), req.persona_id.as_deref());
 
     let result = state
         .agent_loop
-        .run(req.history, &req.message, persona_prompt.as_deref())
+        .run(
+            req.history,
+            &req.message,
+            persona_prompt.as_deref(),
+            Some(&matter_id),
+        )
         .await
         .map_err(ApiError::from)?;
 
@@ -171,9 +208,29 @@ pub enum SsePayload {
 
 pub async fn chat_stream_handler(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Extension(soul): Extension<Option<SoulPersona>>,
     Json(req): Json<ChatRequest>,
 ) -> impl IntoResponse {
+    let tenant_id = match claims_to_tenant_id(&claims) {
+        Ok(value) => value,
+        Err(error) => return sse_error_response(error.message),
+    };
+
+    let matter_id: MatterId = match req.matter_id.parse() {
+        Ok(value) => value,
+        Err(error) => return sse_error_response(format!("invalid matter id: {error}")),
+    };
+
+    if state
+        .matter_store
+        .get(&tenant_id, &matter_id)
+        .await
+        .is_err()
+    {
+        return sse_error_response("matter not found");
+    }
+
     // For now, delegate to non-streaming and emit the full response as a single SSE event.
     // Phase 4 will wire up proper streaming via LlmRouter::stream().
     let persona_prompt = compose_persona_prompt(soul.as_ref(), req.persona_id.as_deref());
@@ -183,7 +240,12 @@ pub async fn chat_stream_handler(
     > = {
         match state
             .agent_loop
-            .run(req.history, &req.message, persona_prompt.as_deref())
+            .run(
+                req.history,
+                &req.message,
+                persona_prompt.as_deref(),
+                Some(&matter_id),
+            )
             .await
         {
             Ok(result) => {
@@ -229,5 +291,5 @@ pub async fn chat_stream_handler(
         }
     };
 
-    Sse::new(event_stream)
+    Sse::new(event_stream).into_response()
 }

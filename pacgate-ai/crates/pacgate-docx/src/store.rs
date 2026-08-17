@@ -11,7 +11,9 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use pacgate_core::{Document, DocumentFormat, DocumentId, DocumentStore, FindResult, MatterId, TenantId, UserId};
+use pacgate_core::{
+    Document, DocumentFormat, DocumentId, DocumentStore, FindResult, MatterId, TenantId, UserId,
+};
 use sqlx::{PgPool, Row};
 use tracing::{debug, instrument};
 use uuid::Uuid;
@@ -23,7 +25,7 @@ use crate::error::StoreError;
 /// Content lives on disk; metadata lives in Postgres. The `storage_path` column
 /// in the `documents` table holds the path relative to `data_dir`.
 pub struct FsDocumentStore {
-    db:       PgPool,
+    db: PgPool,
     data_dir: PathBuf,
 }
 
@@ -33,6 +35,282 @@ impl FsDocumentStore {
             db,
             data_dir: data_dir.into(),
         }
+    }
+
+    pub async fn upload_bytes(
+        &self,
+        matter_id: &MatterId,
+        filename: &str,
+        bytes: &[u8],
+        owner_id: &UserId,
+    ) -> pacgate_core::Result<Document> {
+        let matter_row = sqlx::query("SELECT tenant_id FROM matters WHERE id = $1")
+            .bind(matter_id.0)
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+
+        let tenant_id = TenantId(matter_row.get::<Uuid, _>("tenant_id"));
+        self.ensure_docs_dir(&tenant_id, matter_id)
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+
+        let file_path = std::path::Path::new(filename);
+        let stem = file_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                pacgate_core::PacgateError::ValidationError(
+                    "filename must include a non-empty stem".into(),
+                )
+            })?;
+
+        let format = match file_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("docx") => "docx",
+            Some("pdf") => "pdf",
+            Some("txt") => "txt",
+            Some("md") | Some("markdown") => "markdown",
+            _ => {
+                return Err(pacgate_core::PacgateError::ValidationError(
+                    "unsupported file type; expected .docx, .pdf, .txt, or .md".into(),
+                ))
+            }
+        };
+
+        let version = self
+            .latest_version(matter_id, stem)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?
+            + 1;
+
+        let rel_path = Self::rel_path(&tenant_id, matter_id, stem, version, format);
+        let abs_path = self.abs_path(&rel_path);
+
+        std::fs::write(&abs_path, bytes).map_err(|e| {
+            pacgate_core::PacgateError::StorageError(format!(
+                "failed to write {}: {}",
+                abs_path.display(),
+                e
+            ))
+        })?;
+
+        self.insert_doc_row(
+            matter_id, &tenant_id, stem, format, version, &rel_path, owner_id,
+        )
+        .await
+        .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))
+    }
+
+    pub async fn download_bytes(
+        &self,
+        id: &DocumentId,
+        version: Option<u32>,
+    ) -> pacgate_core::Result<(Document, Vec<u8>)> {
+        let doc = if let Some(requested_version) = version {
+            let base_doc = self.fetch_doc(id, None).await.map_err(|e| match e {
+                StoreError::DocumentNotFound(_) => {
+                    pacgate_core::PacgateError::DocumentNotFound { id: id.as_str() }
+                }
+                other => pacgate_core::PacgateError::StorageError(other.to_string()),
+            })?;
+
+            let row = sqlx::query(
+                "SELECT id, matter_id, tenant_id, name, format, version, storage_path, owner_id, created_at, updated_at
+                 FROM documents WHERE matter_id = $1 AND name = $2 AND version = $3 LIMIT 1",
+            )
+            .bind(base_doc.matter_id.0)
+            .bind(&base_doc.name)
+            .bind(requested_version as i32)
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => pacgate_core::PacgateError::DocumentNotFound {
+                    id: format!("{}@v{}", id.as_str(), requested_version),
+                },
+                other => pacgate_core::PacgateError::StorageError(other.to_string()),
+            })?;
+            row_to_document(&row)
+        } else {
+            self.latest_doc_in_family(id).await?
+        };
+
+        let path = self.abs_path(&doc.storage_path);
+        let bytes = std::fs::read(&path).map_err(|e| {
+            pacgate_core::PacgateError::StorageError(format!(
+                "failed to read {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        Ok((doc, bytes))
+    }
+
+    pub async fn list_versions_for_document(
+        &self,
+        id: &DocumentId,
+    ) -> pacgate_core::Result<Vec<Document>> {
+        let base_doc = self.fetch_doc(id, None).await.map_err(|e| match e {
+            StoreError::DocumentNotFound(_) => {
+                pacgate_core::PacgateError::DocumentNotFound { id: id.as_str() }
+            }
+            other => pacgate_core::PacgateError::StorageError(other.to_string()),
+        })?;
+
+        let rows = sqlx::query(
+            "SELECT id, matter_id, tenant_id, name, format, version, storage_path, owner_id, created_at, updated_at
+             FROM documents WHERE matter_id = $1 AND name = $2 ORDER BY version DESC",
+        )
+        .bind(base_doc.matter_id.0)
+        .bind(&base_doc.name)
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+
+        Ok(rows.iter().map(row_to_document).collect())
+    }
+
+    async fn latest_doc_in_family(&self, id: &DocumentId) -> pacgate_core::Result<Document> {
+        let base_doc = self.fetch_doc(id, None).await.map_err(|e| match e {
+            StoreError::DocumentNotFound(_) => {
+                pacgate_core::PacgateError::DocumentNotFound { id: id.as_str() }
+            }
+            other => pacgate_core::PacgateError::StorageError(other.to_string()),
+        })?;
+
+        let row = sqlx::query(
+            "SELECT id, matter_id, tenant_id, name, format, version, storage_path, owner_id, created_at, updated_at
+             FROM documents WHERE matter_id = $1 AND name = $2 ORDER BY version DESC LIMIT 1",
+        )
+        .bind(base_doc.matter_id.0)
+        .bind(&base_doc.name)
+        .fetch_one(&self.db)
+        .await
+        .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+
+        Ok(row_to_document(&row))
+    }
+
+    pub async fn apply_edit_to_family(
+        &self,
+        id: &DocumentId,
+        find: &str,
+        replace: &str,
+        ctx_before: Option<&str>,
+        ctx_after: Option<&str>,
+    ) -> pacgate_core::Result<Document> {
+        let doc = self.latest_doc_in_family(id).await?;
+        if doc.format != DocumentFormat::Docx {
+            return Err(pacgate_core::PacgateError::ValidationError(
+                "tracked edits are currently only supported for .docx documents".into(),
+            ));
+        }
+
+        let abs_path = self.abs_path(&doc.storage_path);
+        let content = std::fs::read(&abs_path)
+            .map_err(|e| pacgate_core::PacgateError::StorageError(format!("read failed: {}", e)))?;
+
+        let edit = crate::diff::TrackedEdit::new(find, replace, ctx_before, ctx_after);
+        let edited = crate::diff::apply_tracked_edit(&content, &edit)
+            .map_err(|e| pacgate_core::PacgateError::DocxError(e.to_string()))?;
+
+        let version = self
+            .latest_version(&doc.matter_id, &doc.name)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?
+            + 1;
+        let rel_path = Self::rel_path(&doc.tenant_id, &doc.matter_id, &doc.name, version, "docx");
+        let new_abs = self.abs_path(&rel_path);
+
+        std::fs::write(&new_abs, &edited).map_err(|e| {
+            pacgate_core::PacgateError::StorageError(format!("write failed: {}", e))
+        })?;
+
+        self.insert_doc_row(
+            &doc.matter_id,
+            &doc.tenant_id,
+            &doc.name,
+            "docx",
+            version,
+            &rel_path,
+            &doc.owner_id,
+        )
+        .await
+        .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))
+    }
+
+    pub async fn accept_latest_changes(&self, id: &DocumentId) -> pacgate_core::Result<Document> {
+        let doc = self.latest_doc_in_family(id).await?;
+        if doc.format != DocumentFormat::Docx {
+            return Err(pacgate_core::PacgateError::ValidationError(
+                "accept_changes is currently only supported for .docx documents".into(),
+            ));
+        }
+
+        let abs_path = self.abs_path(&doc.storage_path);
+        let content = std::fs::read(&abs_path)
+            .map_err(|e| pacgate_core::PacgateError::StorageError(format!("read failed: {}", e)))?;
+        let accepted = crate::diff::accept_tracked_changes(&content)
+            .map_err(|e| pacgate_core::PacgateError::DocxError(e.to_string()))?;
+
+        let version = self
+            .latest_version(&doc.matter_id, &doc.name)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?
+            + 1;
+        let rel_path = Self::rel_path(&doc.tenant_id, &doc.matter_id, &doc.name, version, "docx");
+        let new_abs = self.abs_path(&rel_path);
+
+        std::fs::write(&new_abs, &accepted).map_err(|e| {
+            pacgate_core::PacgateError::StorageError(format!("write failed: {}", e))
+        })?;
+
+        self.insert_doc_row(
+            &doc.matter_id,
+            &doc.tenant_id,
+            &doc.name,
+            "docx",
+            version,
+            &rel_path,
+            &doc.owner_id,
+        )
+        .await
+        .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))
+    }
+
+    pub async fn delete_document_family(&self, id: &DocumentId) -> pacgate_core::Result<()> {
+        let documents = self.list_versions_for_document(id).await?;
+        let Some(latest_doc) = documents.first() else {
+            return Err(pacgate_core::PacgateError::DocumentNotFound { id: id.as_str() });
+        };
+
+        for document in &documents {
+            let path = self.abs_path(&document.storage_path);
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| {
+                    pacgate_core::PacgateError::StorageError(format!(
+                        "delete failed for {}: {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+            }
+        }
+
+        sqlx::query("DELETE FROM documents WHERE matter_id = $1 AND name = $2")
+            .bind(latest_doc.matter_id.0)
+            .bind(&latest_doc.name)
+            .execute(&self.db)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Resolve the absolute filesystem path for a document.
@@ -83,11 +361,7 @@ impl FsDocumentStore {
     }
 
     /// Get the latest version number for a (matter_id, name) pair.
-    async fn latest_version(
-        &self,
-        matter_id: &MatterId,
-        name: &str,
-    ) -> Result<u32, StoreError> {
+    async fn latest_version(&self, matter_id: &MatterId, name: &str) -> Result<u32, StoreError> {
         let row = sqlx::query(
             "SELECT COALESCE(MAX(version), 0) as max_ver FROM documents WHERE matter_id = $1 AND name = $2",
         )
@@ -129,7 +403,11 @@ impl FsDocumentStore {
     }
 
     /// Fetch a document metadata row by id (latest version or specific version).
-    async fn fetch_doc(&self, id: &DocumentId, version: Option<u32>) -> Result<Document, StoreError> {
+    async fn fetch_doc(
+        &self,
+        id: &DocumentId,
+        version: Option<u32>,
+    ) -> Result<Document, StoreError> {
         let row = if let Some(ver) = version {
             sqlx::query(
                 "SELECT id, matter_id, tenant_id, name, format, version, storage_path, owner_id, created_at, updated_at
@@ -180,24 +458,34 @@ fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
 impl DocumentStore for FsDocumentStore {
     #[instrument(skip(self))]
     async fn read(&self, id: &DocumentId) -> pacgate_core::Result<String> {
-        let doc = self.fetch_doc(id, None).await.map_err(|e| {
-            pacgate_core::PacgateError::StorageError(e.to_string())
-        })?;
+        let doc = self
+            .fetch_doc(id, None)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
         let path = self.abs_path(&doc.storage_path);
         debug!(path = %path.display(), "reading document");
         std::fs::read_to_string(&path).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!("failed to read {}: {}", path.display(), e))
+            pacgate_core::PacgateError::StorageError(format!(
+                "failed to read {}: {}",
+                path.display(),
+                e
+            ))
         })
     }
 
     #[instrument(skip(self))]
     async fn read_version(&self, id: &DocumentId, version: u32) -> pacgate_core::Result<String> {
-        let doc = self.fetch_doc(id, Some(version)).await.map_err(|e| {
-            pacgate_core::PacgateError::StorageError(e.to_string())
-        })?;
+        let doc = self
+            .fetch_doc(id, Some(version))
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
         let path = self.abs_path(&doc.storage_path);
         std::fs::read_to_string(&path).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!("failed to read {}: {}", path.display(), e))
+            pacgate_core::PacgateError::StorageError(format!(
+                "failed to read {}: {}",
+                path.display(),
+                e
+            ))
         })
     }
 
@@ -227,7 +515,7 @@ impl DocumentStore for FsDocumentStore {
         let lines: Vec<&str> = content.lines().collect();
         let lines_per_page = 40;
 
-        for (i, chunk) in lines.chunks(lines_per_page).enumerate() {
+        for (i, _chunk) in lines.chunks(lines_per_page).enumerate() {
             let page = (i + 1) as u32;
             if let Some(pos) = content_lower.find(&query_lower) {
                 let match_start = pos;
@@ -280,16 +568,22 @@ impl DocumentStore for FsDocumentStore {
             .map_err(|e| pacgate_core::PacgateError::DocxError(e.to_string()))?;
 
         std::fs::write(&abs_path, &docx_bytes).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!("failed to write {}: {}", abs_path.display(), e))
+            pacgate_core::PacgateError::StorageError(format!(
+                "failed to write {}: {}",
+                abs_path.display(),
+                e
+            ))
         })?;
 
         debug!(path = %abs_path.display(), version, "document created");
 
         // Insert metadata row — owner_id is a placeholder until auth is wired
         let owner_id = UserId::new();
-        self.insert_doc_row(matter_id, &tenant_id, filename, format, version, &rel_path, &owner_id)
-            .await
-            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))
+        self.insert_doc_row(
+            matter_id, &tenant_id, filename, format, version, &rel_path, &owner_id,
+        )
+        .await
+        .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))
     }
 
     #[instrument(skip(self))]
@@ -301,34 +595,23 @@ impl DocumentStore for FsDocumentStore {
         ctx_before: Option<&str>,
         ctx_after: Option<&str>,
     ) -> pacgate_core::Result<Document> {
-        let doc = self.fetch_doc(id, None).await.map_err(|e| {
-            pacgate_core::PacgateError::StorageError(e.to_string())
-        })?;
+        let doc = self
+            .fetch_doc(id, None)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
 
         let abs_path = self.abs_path(&doc.storage_path);
-        let content = std::fs::read(&abs_path).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!("read failed: {}", e))
-        })?;
+        let content = std::fs::read(&abs_path)
+            .map_err(|e| pacgate_core::PacgateError::StorageError(format!("read failed: {}", e)))?;
 
         // Apply the edit using the DOCX diff engine
-        let edit = crate::diff::TrackedEdit::new(
-            find,
-            replace,
-            ctx_before,
-            ctx_after,
-        );
+        let edit = crate::diff::TrackedEdit::new(find, replace, ctx_before, ctx_after);
         let edited = crate::diff::apply_tracked_edit(&content, &edit)
             .map_err(|e| pacgate_core::PacgateError::DocxError(e.to_string()))?;
 
         // Write as a new version
         let version = doc.version + 1;
-        let rel_path = Self::rel_path(
-            &doc.tenant_id,
-            &doc.matter_id,
-            &doc.name,
-            version,
-            "docx",
-        );
+        let rel_path = Self::rel_path(&doc.tenant_id, &doc.matter_id, &doc.name, version, "docx");
         let new_abs = self.abs_path(&rel_path);
 
         std::fs::write(&new_abs, &edited).map_err(|e| {
@@ -349,25 +632,21 @@ impl DocumentStore for FsDocumentStore {
     }
 
     #[instrument(skip(self))]
-    async fn replicate(
-        &self,
-        id: &DocumentId,
-        count: u32,
-    ) -> pacgate_core::Result<Vec<Document>> {
+    async fn replicate(&self, id: &DocumentId, count: u32) -> pacgate_core::Result<Vec<Document>> {
         if count == 0 || count > 20 {
             return Err(pacgate_core::PacgateError::ValidationError(
                 "replicate count must be 1-20".into(),
             ));
         }
 
-        let doc = self.fetch_doc(id, None).await.map_err(|e| {
-            pacgate_core::PacgateError::StorageError(e.to_string())
-        })?;
+        let doc = self
+            .fetch_doc(id, None)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
 
         let abs_path = self.abs_path(&doc.storage_path);
-        let content = std::fs::read(&abs_path).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!("read failed: {}", e))
-        })?;
+        let content = std::fs::read(&abs_path)
+            .map_err(|e| pacgate_core::PacgateError::StorageError(format!("read failed: {}", e)))?;
 
         let mut docs = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -378,13 +657,8 @@ impl DocumentStore for FsDocumentStore {
                 + 1;
 
             let copy_name = format!("{}_copy_{}", doc.name, i + 1);
-            let rel_path = Self::rel_path(
-                &doc.tenant_id,
-                &doc.matter_id,
-                &copy_name,
-                version,
-                "docx",
-            );
+            let rel_path =
+                Self::rel_path(&doc.tenant_id, &doc.matter_id, &copy_name, version, "docx");
             let new_abs = self.abs_path(&rel_path);
 
             std::fs::write(&new_abs, &content).map_err(|e| {

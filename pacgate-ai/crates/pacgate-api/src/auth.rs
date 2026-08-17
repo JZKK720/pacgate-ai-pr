@@ -27,10 +27,12 @@ pub struct LoginResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    pub tenant_id:   String,
+    #[serde(rename = "tenant_id")]
+    pub _tenant_id:  Option<String>,
     pub email:       String,
     pub password:    String,
-    pub role:        String,
+    #[serde(rename = "role")]
+    pub _role:       Option<String>,
     pub display_name: Option<String>,
 }
 
@@ -51,7 +53,7 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req):    Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
-    let (token, user_id, tenant_id, soul_id) = state
+    let (token, user_id, tenant_id, role, soul_id) = state
         .auth
         .login(&req.email, &req.password)
         .await
@@ -61,29 +63,30 @@ pub async fn login(
         token,
         user_id: user_id.as_str(),
         tenant_id: tenant_id.as_str(),
-        role: "attorney".to_string(),
+        role,
         soul_id,
         expires_in: 86400,
     }))
 }
 
-/// POST /api/auth/register — create a new user within a tenant
+/// POST /api/auth/register — create a new user within the configured default tenant
 pub async fn register(
     State(state): State<AppState>,
     Json(req):    Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, ApiError> {
-    let tenant_id: pacgate_core::TenantId = req
-        .tenant_id
-        .parse()
-        .map_err(|e| ApiError::bad_request(format!("invalid tenant id: {e}")))?;
+    let tenant = state
+        .tenant_store
+        .get_by_slug(&state.config.default_tenant)
+        .await
+        .map_err(|e| ApiError::internal(format!("default tenant not found: {e}")))?;
 
     let user_id = state
         .auth
         .register(
-            &tenant_id,
+            &tenant.id,
             &req.email,
             &req.password,
-            &req.role,
+            "attorney",
             req.display_name.as_deref(),
         )
         .await

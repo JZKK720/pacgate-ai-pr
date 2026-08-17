@@ -2,10 +2,18 @@ use axum::{
     extract::{Extension, Path, Query, State},
     Json,
 };
-use pacgate_core::SoulPersona;
+use pacgate_auth::Claims;
+use pacgate_core::{MatterId, SoulPersona, TenantId};
 use serde::{Deserialize, Serialize};
 
 use crate::{error::ApiError, state::AppState};
+
+fn claims_to_tenant_id(claims: &Claims) -> Result<TenantId, ApiError> {
+    claims
+        .tenant_id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid tenant_id in token: {e}")))
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkflowSummary {
@@ -193,6 +201,7 @@ pub struct ExecuteStepResult {
 /// Body: { "matter_id": "...", "persona_id": "optional-uuid" }
 pub async fn execute_workflow(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Extension(soul): Extension<Option<SoulPersona>>,
     Path(id): Path<String>,
     Json(req): Json<ExecuteWorkflowRequest>,
@@ -204,6 +213,17 @@ pub async fn execute_workflow(
     let workflow_id: pacgate_core::WorkflowId = id
         .parse()
         .map_err(|e| ApiError::bad_request(&format!("invalid workflow id: {e}")))?;
+    let tenant_id = claims_to_tenant_id(&claims)?;
+    let matter_id: MatterId = req
+        .matter_id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid matter id: {e}")))?;
+
+    state
+        .matter_store
+        .get(&tenant_id, &matter_id)
+        .await
+        .map_err(|_| ApiError::not_found("matter not found"))?;
 
     // Load the workflow (YAML first, then built-in fallback)
     let workflow = state
@@ -221,7 +241,7 @@ pub async fn execute_workflow(
     // Execute the workflow via WorkflowExecutor
     let executor = pacgate_agent::WorkflowExecutor::new(state.agent_loop.as_ref());
     let result = executor
-        .execute(&workflow, persona_prompt.as_deref())
+        .execute(&workflow, persona_prompt.as_deref(), Some(&matter_id))
         .await
         .map_err(ApiError::from)?;
 

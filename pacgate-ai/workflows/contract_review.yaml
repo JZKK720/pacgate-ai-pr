@@ -168,3 +168,54 @@
           - 建议谈判方案（理想/中间/底线）
           五、和解建议
           六、诉讼/仲裁准备清单
+
+- id: "00000000-0000-0000-0000-000000000305"
+  name: "合同快速扫描（10分钟版）"
+  description: "Perform a one-page rapid contract risk scan and return signability verdict with top risks"
+  category: "contract_review"
+  steps:
+    - name: "Read contract"
+      description: "Read the contract document for rapid triage"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Find top risk markers"
+      description: "Find high-risk markers for price, liability, termination, guarantees, IP, and dispute resolution"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "价款"
+          - "支付"
+          - "违约责任"
+          - "解除"
+          - "担保"
+          - "连带责任"
+          - "知识产权"
+          - "保密"
+          - "争议解决"
+          - "自动续约"
+
+    - name: "Generate quick scan"
+      description: "Generate a one-page quick scan verdict with top five issues and fix directions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下合同做快速风险扫描（非逐条审阅），10分钟内给出可签/需谈判/不可签结论：
+          我方身份：【买方/卖方/服务方/委托方等】
+
+          仅审查以下8类高风险点：
+          1. 主体与签署：对方主体适格性、签署人权限、是否需要盖章/骑缝章
+          2. 价款与支付：金额、支付节点是否与我方义务匹配、发票与税负
+          3. 违约责任：违约金水平、赔偿是否设上限、是否单向加重我方
+          4. 解除权：对方单方解除是否过宽、我方退出是否受限
+          5. 担保与连带：是否让我方承担保证/连带/兜底责任
+          6. 知识产权与保密：成果归属、保密义务是否对等
+          7. 争议解决：管辖/仲裁约定对我方是否不利
+          8. 生效与期限：生效条件、自动续约陷阱
+
+          输出严格一页以内：
+          - 总体风险评级：🔴不可签 / 🟡需谈判修改 / 🟢基本可签
+          - Top 5问题（每条一句话：问题 + 改法）
+          - 一句话结论建议
+
+          不要输出逐条分析，不要复述合同内容。

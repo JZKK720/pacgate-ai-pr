@@ -12,6 +12,7 @@
 //! `pacgate-ai/workflows/*.yaml`, where each step's `parameters.system_prompt`
 //! contains the full prompt template from the client's prompt guides.
 
+use pacgate_core::MatterId;
 use pacgate_workflow::{Workflow, WorkflowStep};
 use tracing::{info, instrument};
 
@@ -57,8 +58,20 @@ fn extract_system_prompt(parameters: &serde_json::Value) -> Option<String> {
 /// - The step name and description
 /// - Any accumulated context from prior steps
 /// - A request to execute the step's tool with its parameters
-fn build_step_message(step: &WorkflowStep, prior_context: &[String]) -> String {
+fn build_step_message(
+    step: &WorkflowStep,
+    prior_context: &[String],
+    matter_id: Option<&MatterId>,
+) -> String {
     let mut msg = format!("## Task: {}\n\n{}\n\n", step.name, step.description);
+
+    if let Some(matter_id) = matter_id {
+        msg.push_str("## Matter context\n\n");
+        msg.push_str(&format!(
+            "- matter_id: {}\n- Use this matter_id for all matter-scoped tool calls in this workflow unless the user explicitly switches matters.\n\n",
+            matter_id.as_str()
+        ));
+    }
 
     if !prior_context.is_empty() {
         msg.push_str("## Context from prior steps\n\n");
@@ -101,6 +114,7 @@ impl<'a> WorkflowExecutor<'a> {
         &self,
         workflow: &Workflow,
         persona_prompt: Option<&str>,
+        matter_id: Option<&MatterId>,
     ) -> Result<WorkflowResult, pacgate_core::PacgateError> {
         let mut results = Vec::with_capacity(workflow.steps.len());
         let mut prior_context: Vec<String> = Vec::new();
@@ -118,12 +132,12 @@ impl<'a> WorkflowExecutor<'a> {
             };
 
             // Build the user message for this step
-            let user_message = build_step_message(step, &prior_context);
+            let user_message = build_step_message(step, &prior_context, matter_id);
 
             // Run the agent loop for this step
             let turn_result = self
                 .agent
-                .run(vec![], &user_message, combined_prompt.as_deref())
+                .run(vec![], &user_message, combined_prompt.as_deref(), matter_id)
                 .await?;
 
             // Record the result
@@ -157,5 +171,26 @@ impl<'a> WorkflowExecutor<'a> {
             steps: results,
             final_content,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_message_includes_matter_context() {
+        let step = WorkflowStep {
+            name: "List documents".to_string(),
+            description: "List all documents for the matter".to_string(),
+            tool: "list_documents".to_string(),
+            parameters: serde_json::json!({}),
+        };
+        let matter_id = MatterId(uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap());
+
+        let message = build_step_message(&step, &[], Some(&matter_id));
+
+        assert!(message.contains("Matter context"));
+        assert!(message.contains(&matter_id.as_str()));
     }
 }

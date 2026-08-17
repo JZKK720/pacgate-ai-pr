@@ -51,6 +51,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/matters", get(matters::list_matters))
         .route("/api/matters/:id", get(matters::get_matter))
         .route("/api/matters/:id", delete(matters::delete_matter))
+        .route("/api/matters/:id/memory", get(matters::get_matter_memory))
+        .route("/api/matters/:id/memory", post(matters::save_matter_memory))
         .route(
             "/api/matters/:id/documents",
             get(matters::list_matter_documents),

@@ -118,7 +118,7 @@ impl AuthService {
         &self,
         email: &str,
         password: &str,
-    ) -> Result<(String, UserId, TenantId, Option<String>), AuthError> {
+    ) -> Result<(String, UserId, TenantId, String, Option<String>), AuthError> {
         let row = sqlx::query(
             "SELECT id, tenant_id, password_hash, role, system_role, soul_id FROM users WHERE email = $1",
         )
@@ -141,7 +141,7 @@ impl AuthService {
         Self::verify_password(password, &stored_hash)?;
 
         let token = self.create_token(&user_id, &tenant_id, &role, &system_role, soul_id.as_deref())?;
-        Ok((token, user_id, tenant_id, soul_id))
+        Ok((token, user_id, tenant_id, role, soul_id))
     }
 
     /// Register a new user within a tenant.

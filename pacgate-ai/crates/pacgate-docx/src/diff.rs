@@ -71,6 +71,50 @@ pub fn apply_tracked_edit(docx_bytes: &[u8], edit: &TrackedEdit) -> Result<Vec<u
     Ok(out_buf)
 }
 
+/// Accept tracked changes in a DOCX produced by `apply_tracked_edit`.
+///
+/// This keeps inserted runs and removes deleted runs for the controlled
+/// `<w:ins>` / `<w:del>` shapes emitted by this crate.
+pub fn accept_tracked_changes(docx_bytes: &[u8]) -> Result<Vec<u8>> {
+    use std::io::{Read, Write};
+    use zip::{write::FileOptions, ZipArchive, ZipWriter};
+
+    let cursor = std::io::Cursor::new(docx_bytes);
+    let mut archive = ZipArchive::new(cursor).context("open docx zip")?;
+
+    let document_xml = {
+        let mut entry = archive
+            .by_name("word/document.xml")
+            .context("word/document.xml not found")?;
+        let mut s = String::new();
+        entry.read_to_string(&mut s)?;
+        s
+    };
+
+    let accepted = accept_document_xml(&document_xml);
+
+    let mut out_buf = Vec::new();
+    let mut writer = ZipWriter::new(std::io::Cursor::new(&mut out_buf));
+    let opts: FileOptions<()> = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let name = file.name().to_string();
+        writer.start_file(&name, opts)?;
+        if name == "word/document.xml" {
+            writer.write_all(accepted.as_bytes())?;
+        } else {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)?;
+            writer.write_all(&buf)?;
+        }
+    }
+
+    writer.finish()?;
+    Ok(out_buf)
+}
+
 /// Locate `edit.find` in the raw XML text content and produce revision-marked XML.
 fn patch_document_xml(xml: &str, edit: &TrackedEdit) -> Result<String> {
     // Find the plain text within <w:t> elements
@@ -145,4 +189,53 @@ fn wrap_ins(text: &str) -> String {
     format!(
         r#"<w:ins w:id="2" w:author="Pacgate AI" w:date="2025-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>"#
     )
+}
+
+fn accept_document_xml(xml: &str) -> String {
+    let without_deletions = remove_tag_blocks(xml, "w:del");
+    strip_tag_wrappers(&without_deletions, "w:ins")
+}
+
+fn remove_tag_blocks(xml: &str, tag_name: &str) -> String {
+    let open_tag = format!("<{tag_name}");
+    let close_tag = format!("</{tag_name}>");
+    let mut output = String::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = xml[cursor..].find(&open_tag) {
+        let start = cursor + relative_start;
+        output.push_str(&xml[cursor..start]);
+
+        if let Some(relative_end) = xml[start..].find(&close_tag) {
+            cursor = start + relative_end + close_tag.len();
+        } else {
+            cursor = start;
+            break;
+        }
+    }
+
+    output.push_str(&xml[cursor..]);
+    output
+}
+
+fn strip_tag_wrappers(xml: &str, tag_name: &str) -> String {
+    let open_tag = format!("<{tag_name}");
+    let close_tag = format!("</{tag_name}>");
+    let mut output = String::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = xml[cursor..].find(&open_tag) {
+        let start = cursor + relative_start;
+        output.push_str(&xml[cursor..start]);
+
+        if let Some(relative_end) = xml[start..].find('>') {
+            cursor = start + relative_end + 1;
+        } else {
+            cursor = start;
+            break;
+        }
+    }
+
+    output.push_str(&xml[cursor..]);
+    output.replace(&close_tag, "")
 }
