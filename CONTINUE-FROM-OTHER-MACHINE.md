@@ -96,7 +96,7 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings: 25 → 32 (new dead-code scaffolding from archive taxonomy + connectors, will be wired up)
-- Git: 39 commits on main (session 12), all pushed to origin
+- Git: 40 commits on main (session 12), all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -126,12 +126,12 @@ pacgate-ai-pr/
 24. ~~Add 9-directory archive taxonomy~~ — DONE (ArchiveDirectory enum, ProjectOverview, FileDirectoryEntry, ProjectBusinessModule)
 25. ~~Expose ConnectorRegistry via API~~ — DONE (`GET /api/search/registry`)
 26. ~~Expose DD configs via API~~ — DONE (`GET /api/dd-configs`)
-27. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done)
+27. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done). Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks). Remaining: 诉讼律师(~57), 非诉律师(~52), 合规律师(~28 remaining), 基金律师(~26 remaining), 律师日常(~23 remaining)
 28. **Add archive collection workflow templates** — the 3-phase project archive workflow from 项目档案目录及说明
-29. **Add international connectors** — Vaquill (US), Ansvar (EU), OpenCorporates (offshore) from client asset credentials
+29. **Add international connectors** — Vaquill (US), Ansvar (EU), OpenCorporates (offshore), EUR-Lex from client asset credentials
 30. **Wire DD configs into WorkflowExecutor** — Phase 2: inject DdAgentConfig as system prompt layer when running DD workflows
 31. **qm TypeScript adapter** — Phase 2 collaboration runtime
-32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable
+32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable at `localhost:5433/pacgate_test`
 33. **Wire DataLevel into API** — expose data_level filtering in `GET /api/search` and document upload endpoints
 
 ### Important reminders
