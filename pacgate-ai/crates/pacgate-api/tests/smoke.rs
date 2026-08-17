@@ -246,4 +246,102 @@ mod tests {
 
         assert!(dockerfile.exists(), "pacgate-ai Dockerfile should exist at {}", dockerfile.display());
     }
+
+    /// Verify DataLevel T1-T4 classification parsing and access rules.
+    #[test]
+    fn data_level_parsing_and_access_rules() {
+        use pacgate_core::DataLevel;
+
+        // Code round-trip
+        assert_eq!(DataLevel::T1SharedTemplate.code(), "T1");
+        assert_eq!(DataLevel::T2RestrictedSeed.code(), "T2");
+        assert_eq!(DataLevel::T3ProjectSpecific.code(), "T3");
+        assert_eq!(DataLevel::T4SpecialSensitive.code(), "T4");
+
+        // from_code parsing
+        assert_eq!(DataLevel::from_code("T1"), Some(DataLevel::T1SharedTemplate));
+        assert_eq!(DataLevel::from_code("t2"), Some(DataLevel::T2RestrictedSeed));
+        assert_eq!(DataLevel::from_code("T3"), Some(DataLevel::T3ProjectSpecific));
+        assert_eq!(DataLevel::from_code("T4"), Some(DataLevel::T4SpecialSensitive));
+        assert_eq!(DataLevel::from_code("T5"), None);
+        assert_eq!(DataLevel::from_code(""), None);
+
+        // Cross-project search rules
+        assert!(DataLevel::T1SharedTemplate.allows_cross_project_search());
+        assert!(!DataLevel::T2RestrictedSeed.allows_cross_project_search());
+        assert!(!DataLevel::T3ProjectSpecific.allows_cross_project_search());
+        assert!(!DataLevel::T4SpecialSensitive.allows_cross_project_search());
+
+        // Matter scoping rules
+        assert!(!DataLevel::T1SharedTemplate.requires_matter_scoping());
+        assert!(DataLevel::T2RestrictedSeed.requires_matter_scoping());
+        assert!(DataLevel::T3ProjectSpecific.requires_matter_scoping());
+        assert!(DataLevel::T4SpecialSensitive.requires_matter_scoping());
+    }
+
+    /// Verify ArchiveDirectory has all 9 directories (00-08).
+    #[test]
+    fn archive_directory_9_dirs() {
+        use pacgate_core::ArchiveDirectory;
+
+        let dirs: Vec<ArchiveDirectory> = vec![
+            ArchiveDirectory::Directory00Overview,
+            ArchiveDirectory::Directory01CoreWork,
+            ArchiveDirectory::Directory02Agreements,
+            ArchiveDirectory::Directory03DraftsTools,
+            ArchiveDirectory::Directory04Approvals,
+            ArchiveDirectory::Directory05Closing,
+            ArchiveDirectory::Directory06FinalDelivery,
+            ArchiveDirectory::Directory07Evidence,
+            ArchiveDirectory::Directory08CoverageReview,
+        ];
+        assert_eq!(dirs.len(), 9);
+
+        // Verify numbers and names
+        assert_eq!(ArchiveDirectory::Directory00Overview.number(), "00");
+        assert_eq!(ArchiveDirectory::Directory08CoverageReview.number(), "08");
+
+        // Mandatory check (00-02 are 必交)
+        assert!(ArchiveDirectory::Directory00Overview.is_mandatory());
+        assert!(ArchiveDirectory::Directory01CoreWork.is_mandatory());
+        assert!(ArchiveDirectory::Directory02Agreements.is_mandatory());
+        assert!(!ArchiveDirectory::Directory03DraftsTools.is_mandatory());
+        assert!(!ArchiveDirectory::Directory08CoverageReview.is_mandatory());
+
+        // Chinese name sanity
+        assert!(!ArchiveDirectory::Directory00Overview.name_zh().is_empty());
+    }
+
+    /// Verify SearchFilter supports data_level filtering.
+    #[test]
+    fn search_filter_data_level() {
+        use pacgate_core::DataLevel;
+        use pacgate_rag::SearchFilter;
+
+        // Default filter has no data_level restriction
+        let default_filter = SearchFilter::default();
+        assert!(default_filter.max_data_level.is_none());
+
+        // with_max_data_level sets the filter
+        let t3_filter = SearchFilter::new().with_max_data_level(DataLevel::T3ProjectSpecific);
+        assert_eq!(t3_filter.max_data_level, Some(DataLevel::T3ProjectSpecific));
+
+        // T1 filter (most restrictive)
+        let t1_filter = SearchFilter::new().with_max_data_level(DataLevel::T1SharedTemplate);
+        assert_eq!(t1_filter.max_data_level, Some(DataLevel::T1SharedTemplate));
+    }
+
+    /// Verify ConnectorRegistry has 27 entries from client assets.
+    #[test]
+    fn connector_registry_has_27_entries() {
+        let registry = pacgate_search::ConnectorRegistry::from_client_assets();
+        assert_eq!(registry.entries().len(), 27, "ConnectorRegistry should have 27 entries from client assets");
+    }
+
+    /// Verify DD agent configs has 9 domains.
+    #[test]
+    fn dd_agent_configs_has_9_domains() {
+        let configs = pacgate_core::dd_agent_configs();
+        assert_eq!(configs.len(), 9, "Should have 9 DD agent configs from dd-agents 中国法智能体改写清单");
+    }
 }

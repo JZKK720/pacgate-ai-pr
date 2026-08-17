@@ -154,6 +154,22 @@ async fn main() -> anyhow::Result<()> {
     // Create search router with all data source connectors
     let search = Arc::new(pacgate_search::default_router());
 
+    // Create RAG store (optional — requires Ollama embedding service)
+    let ollama_url = std::env::var("OLLAMA_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let embedding_model = std::env::var("OLLAMA_EMBED_MODEL")
+        .unwrap_or_else(|_| "nomic-embed-text".to_string());
+    let rag = match pacgate_rag::EmbeddingService::new(&ollama_url, &embedding_model) {
+        embed_svc => {
+            tracing::info!(
+                "RAG store initialized (ollama={}, model={})",
+                ollama_url,
+                embedding_model
+            );
+            Some(Arc::new(pacgate_rag::RagStore::new(pool.clone(), embed_svc)))
+        }
+    };
+
     let dispatcher = Arc::new(
         ToolDispatcher::new(
             Arc::new(StubDocStore),
@@ -175,6 +191,7 @@ async fn main() -> anyhow::Result<()> {
         tenant_store,
         auth,
         search,
+        rag,
         db: pool,
     };
 

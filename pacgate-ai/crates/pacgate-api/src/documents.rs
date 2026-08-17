@@ -2,7 +2,7 @@ use axum::{
     extract::{Multipart, Path, State},
     Json,
 };
-use pacgate_core::{Document, DocumentId};
+use pacgate_core::{DataLevel, Document, DocumentId};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -12,27 +12,71 @@ use crate::{error::ApiError, state::AppState};
 // Upload
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Upload a document with optional T1-T4 data classification.
+///
+/// Multipart form fields:
+/// - `file` (required): the document file
+/// - `data_level` (optional): T1-T4 classification level. Default: T2.
+///   T1 = shared template, T2 = restricted seed, T3 = project-specific,
+///   T4 = special sensitive. This controls cross-project search visibility
+///   and access scoping in the RAG store.
 pub async fn upload_document(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<Json<Document>, ApiError> {
-    while let Some(field) = multipart.next_field().await.map_err(|e| ApiError::bad_request(e.to_string()))? {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "file" {
-            let _filename = field.file_name().unwrap_or("upload").to_string();
-            let bytes = field.bytes().await.map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let mut data_level: DataLevel = DataLevel::T2RestrictedSeed;
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut filename: String = "upload".to_string();
 
-            let max_bytes = state.config.max_upload_mb * 1024 * 1024;
-            if bytes.len() as u64 > max_bytes {
-                return Err(ApiError::bad_request(format!(
-                    "file exceeds {} MB limit", state.config.max_upload_mb
-                )));
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "file" => {
+                filename = field.file_name().unwrap_or("upload").to_string();
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                file_bytes = Some(bytes.to_vec());
             }
-            // TODO: delegate to document storage layer
-            return Err(ApiError::internal("storage layer not yet wired"));
+            "data_level" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                data_level = DataLevel::from_code(text.trim())
+                    .ok_or_else(|| {
+                        ApiError::bad_request(
+                            "data_level must be one of: T1, T2, T3, T4",
+                        )
+                    })?;
+            }
+            _ => {}
         }
     }
-    Err(ApiError::bad_request("no file field in multipart upload"))
+
+    let bytes = file_bytes.ok_or_else(|| ApiError::bad_request("no file field in multipart upload"))?;
+
+    let max_bytes = state.config.max_upload_mb * 1024 * 1024;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ApiError::bad_request(format!(
+            "file exceeds {} MB limit",
+            state.config.max_upload_mb
+        )));
+    }
+
+    tracing::info!(
+        "upload_document: filename={}, data_level={}",
+        filename,
+        data_level.code()
+    );
+
+    // TODO: delegate to document storage layer + ChunkIngestor with data_level
+    Err(ApiError::internal("storage layer not yet wired"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

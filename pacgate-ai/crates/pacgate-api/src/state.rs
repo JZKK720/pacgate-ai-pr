@@ -4,6 +4,7 @@ use pacgate_agent::{AgentLoop, ToolDispatcher};
 use pacgate_auth::AuthService;
 use pacgate_docx::FsDocumentStore;
 use pacgate_llm::LlmRouter;
+use pacgate_rag::RagStore;
 use pacgate_search::SearchRouter;
 use pacgate_tenant::{MatterStore, TenantStore};
 
@@ -19,6 +20,9 @@ pub struct AppState {
     pub tenant_store: Arc<TenantStore>,
     pub auth: Arc<AuthService>,
     pub search: Arc<SearchRouter>,
+    /// Optional RAG store — only available when Postgres is connected.
+    /// When None, the `/api/kb/search` endpoint returns 503.
+    pub rag: Option<Arc<RagStore>>,
     pub db: sqlx::PgPool,
 }
 

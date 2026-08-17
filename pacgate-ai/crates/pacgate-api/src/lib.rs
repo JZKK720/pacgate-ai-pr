@@ -74,6 +74,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/search/connectors", get(search::list_connectors))
         .route("/api/search/health", get(search::search_health))
         .route("/api/search/registry", get(search::list_registry))
+        // Knowledge base search — query internal RAG store with T1-T4 data level filtering
+        .route("/api/kb/search", get(search::kb_search))
         // DD agent configs — 9 Chinese-law due diligence agent personas
         .route("/api/dd-configs", get(search::list_dd_configs))
         // Auth-protected user info
