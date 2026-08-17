@@ -944,6 +944,93 @@ impl DdAgentConfig {
     pub fn retained_areas(&self) -> Vec<&DdFocusArea> {
         self.focus_areas.iter().filter(|f| f.action == FocusAreaAction::Keep).collect()
     }
+
+    /// Compose a system prompt string from this DD agent config.
+    ///
+    /// The prompt is structured as:
+    /// 1. Domain identity (which DD expert this agent represents)
+    /// 2. Focus areas with severity classification and legal basis
+    /// 3. Citation format instruction
+    /// 4. P0 veto warning (if applicable)
+    /// 5. Output requirements
+    ///
+    /// This prompt is injected as an additional system prompt layer when
+    /// running DD workflows through the WorkflowExecutor.
+    pub fn compose_system_prompt(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        // Layer 1: Domain identity
+        parts.push(format!(
+            "## DD DOMAIN EXPERT: {} ({})\n\n你是一名中国法律尽调专家，专注于{}领域的尽职调查。",
+            self.display_name,
+            self.domain.name_zh(),
+            self.domain.name_zh()
+        ));
+
+        // Layer 2: Focus areas
+        if !self.focus_areas.is_empty() {
+            parts.push("## 尽调关注领域 (Focus Areas)\n".to_string());
+            for area in &self.focus_areas {
+                let action_label = match area.action {
+                    FocusAreaAction::Keep => "保留",
+                    FocusAreaAction::Delete => "弱化",
+                    FocusAreaAction::Add => "新增",
+                };
+                let severity_label = match area.default_severity {
+                    DdSeverity::P0Veto => "P0-一票否决",
+                    DdSeverity::P1Major => "P1-重大风险",
+                    DdSeverity::P2Moderate => "P2-中等风险",
+                    DdSeverity::P3Advisory => "P3-提示",
+                };
+                let legal_refs = if area.legal_basis.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | 依据: {}", area.legal_basis.join(", "))
+                };
+                parts.push(format!(
+                    "- **{}** [{}] [{}{}]",
+                    area.name, action_label, severity_label, legal_refs
+                ));
+            }
+        }
+
+        // Layer 3: Primary legal basis
+        if !self.primary_legal_basis.is_empty() {
+            parts.push(format!(
+                "## 主要法律依据\n\n{}",
+                self.primary_legal_basis.join(", ")
+            ));
+        }
+
+        // Layer 4: Citation format
+        if !self.citation_format.is_empty() {
+            parts.push(format!(
+                "## 引用格式\n\n引用法律条文时使用: {}",
+                self.citation_format
+            ));
+        }
+
+        // Layer 5: P0 veto warning
+        if self.has_p0_veto {
+            parts.push(
+                "## P0 一票否决事项\n\n本领域存在P0级别风险项(一票否决)。\
+发现P0风险时必须立即标记，不得在报告中遗漏或弱化。"
+                    .to_string(),
+            );
+        }
+
+        // Layer 6: Output instructions
+        parts.push(
+            "## 输出要求\n\n\
+- 按关注领域逐项核查，标注严重级别(P0-P3)\n\
+- 引用中国法律条文时使用规范引用格式\n\
+- 发现问题必须明确标注，不得遗漏\n\
+- 资料不足时标注\"资料不足\"而非跳过"
+                .to_string(),
+        );
+
+        parts.join("\n\n")
+    }
 }
 
 /// Build the 9 DD agent configs from the dd-agents 中国法智能体改写清单.
@@ -1090,6 +1177,29 @@ pub fn dd_agent_configs() -> Vec<DdAgentConfig> {
             has_p0_veto: true,
         },
     ]
+}
+
+/// Find a DD agent config by domain.
+/// Returns None if no config exists for the given domain.
+pub fn dd_config_for_domain(domain: DdAgentDomain) -> Option<DdAgentConfig> {
+    dd_agent_configs().into_iter().find(|c| c.domain == domain)
+}
+
+/// Parse a DD domain from a string (e.g., "legal", "finance", "regulatory").
+/// Case-insensitive. Returns None if the string doesn't match a known domain.
+pub fn dd_domain_from_str(s: &str) -> Option<DdAgentDomain> {
+    match s.to_lowercase().as_str() {
+        "legal" | "法律" => Some(DdAgentDomain::Legal),
+        "finance" | "财务" => Some(DdAgentDomain::Finance),
+        "commercial" | "商业" => Some(DdAgentDomain::Commercial),
+        "product_tech" | "producttech" | "产品技术" => Some(DdAgentDomain::ProductTech),
+        "cybersecurity" | "网络安全" => Some(DdAgentDomain::Cybersecurity),
+        "hr" | "人力" => Some(DdAgentDomain::Hr),
+        "tax" | "税务" => Some(DdAgentDomain::Tax),
+        "regulatory" | "监管合规" => Some(DdAgentDomain::Regulatory),
+        "esg" => Some(DdAgentDomain::Esg),
+        _ => None,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

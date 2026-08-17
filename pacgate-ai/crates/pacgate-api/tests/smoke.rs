@@ -188,7 +188,7 @@ mod tests {
     /// Verify Tenant struct has expected fields.
     #[test]
     fn tenant_struct_fields() {
-        use pacgate_core::{Tenant, TenantConfig};
+        use pacgate_core::TenantConfig;
 
         let config = TenantConfig::default();
         assert!(config.model_overrides.is_empty());
@@ -343,5 +343,56 @@ mod tests {
     fn dd_agent_configs_has_9_domains() {
         let configs = pacgate_core::dd_agent_configs();
         assert_eq!(configs.len(), 9, "Should have 9 DD agent configs from dd-agents 中国法智能体改写清单");
+    }
+
+    /// Verify DD config system prompt composition produces structured Chinese-law guidance.
+    #[test]
+    fn dd_config_system_prompt_composition() {
+        let configs = pacgate_core::dd_agent_configs();
+        let legal = configs.iter().find(|c| c.domain == pacgate_core::DdAgentDomain::Legal)
+            .expect("Legal DD config should exist");
+
+        let prompt = legal.compose_system_prompt();
+        assert!(prompt.contains("法律"), "prompt should mention the legal domain");
+        assert!(prompt.contains("尽调关注领域"), "prompt should list focus areas");
+        assert!(prompt.contains("输出要求"), "prompt should contain output requirements");
+        assert!(prompt.contains("一票否决"), "prompt should warn about P0 veto items");
+        assert!(prompt.len() > 200, "system prompt should be substantial");
+    }
+
+    /// Verify DD domain lookup by string works for all 9 domains.
+    #[test]
+    fn dd_domain_from_str_all_9() {
+        use pacgate_core::{dd_domain_from_str, DdAgentDomain};
+
+        assert_eq!(dd_domain_from_str("legal"), Some(DdAgentDomain::Legal));
+        assert_eq!(dd_domain_from_str("finance"), Some(DdAgentDomain::Finance));
+        assert_eq!(dd_domain_from_str("regulatory"), Some(DdAgentDomain::Regulatory));
+        assert_eq!(dd_domain_from_str("esg"), Some(DdAgentDomain::Esg));
+        assert_eq!(dd_domain_from_str("法律"), Some(DdAgentDomain::Legal));
+        assert_eq!(dd_domain_from_str("LEGAL"), Some(DdAgentDomain::Legal));
+        assert_eq!(dd_domain_from_str("unknown"), None);
+        assert_eq!(dd_domain_from_str(""), None);
+    }
+
+    /// Verify dd_config_for_domain returns the right config.
+    #[test]
+    fn dd_config_for_domain_lookup() {
+        use pacgate_core::{dd_config_for_domain, DdAgentDomain};
+
+        let legal = dd_config_for_domain(DdAgentDomain::Legal);
+        assert!(legal.is_some());
+        assert_eq!(legal.unwrap().domain, DdAgentDomain::Legal);
+
+        // All 9 domains should have configs
+        for domain in [
+            DdAgentDomain::Legal, DdAgentDomain::Finance, DdAgentDomain::Commercial,
+            DdAgentDomain::ProductTech, DdAgentDomain::Cybersecurity, DdAgentDomain::Hr,
+            DdAgentDomain::Tax, DdAgentDomain::Regulatory, DdAgentDomain::Esg,
+        ] {
+            let config = dd_config_for_domain(domain);
+            assert!(config.is_some(), "{:?} config should exist", domain);
+            assert!(!config.unwrap().focus_areas.is_empty(), "{:?} should have focus areas", domain);
+        }
     }
 }

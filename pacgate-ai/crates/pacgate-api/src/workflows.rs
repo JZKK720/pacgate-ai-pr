@@ -177,6 +177,12 @@ pub struct ExecuteWorkflowRequest {
     pub matter_id: String,
     /// Optional explicit persona ID override (otherwise uses SOUL from request extensions)
     pub persona_id: Option<String>,
+    /// Optional DD domain for injecting DD agent config as system prompt.
+    /// When set, the WorkflowExecutor injects the matching DdAgentConfig's
+    /// system prompt (focus areas, severity rules, Chinese-law citations).
+    /// Valid values: "legal", "finance", "commercial", "product_tech",
+    /// "cybersecurity", "hr", "tax", "regulatory", "esg".
+    pub dd_domain: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,7 +204,7 @@ pub struct ExecuteStepResult {
 /// Execute a workflow: load the template, run each step through AgentLoop.
 ///
 /// POST /api/workflows/:id/execute
-/// Body: { "matter_id": "...", "persona_id": "optional-uuid" }
+/// Body: { "matter_id": "...", "persona_id": "optional-uuid", "dd_domain": "optional-domain" }
 pub async fn execute_workflow(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -238,10 +244,35 @@ pub async fn execute_workflow(
     let persona_prompt =
         compose_persona_prompt_for_workflow(soul.as_ref(), req.persona_id.as_deref());
 
+    let dd_config = match req.dd_domain.as_deref() {
+        Some(raw_domain) => {
+            let domain = pacgate_core::dd_domain_from_str(raw_domain).ok_or_else(|| {
+                ApiError::bad_request(
+                    "invalid dd_domain; expected one of: legal, finance, commercial, product_tech, cybersecurity, hr, tax, regulatory, esg",
+                )
+            })?;
+
+            Some(
+                pacgate_core::dd_config_for_domain(domain).ok_or_else(|| {
+                    ApiError::bad_request("dd_domain is recognized but has no configured DD agent")
+                })?,
+            )
+        }
+        None => None,
+    };
+
+    if dd_config.is_some() {
+        tracing::info!(
+            workflow_id = %workflow_id.as_str(),
+            dd_domain = ?req.dd_domain,
+            "injecting DD agent config into workflow execution"
+        );
+    }
+
     // Execute the workflow via WorkflowExecutor
     let executor = pacgate_agent::WorkflowExecutor::new(state.agent_loop.as_ref());
     let result = executor
-        .execute(&workflow, persona_prompt.as_deref(), Some(&matter_id))
+        .execute(&workflow, persona_prompt.as_deref(), Some(&matter_id), dd_config.as_ref())
         .await
         .map_err(ApiError::from)?;
 

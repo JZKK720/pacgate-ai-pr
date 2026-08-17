@@ -96,7 +96,7 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings: 25 → 32 (new dead-code scaffolding from archive taxonomy + connectors, will be wired up)
-- Git: 44 commits on main (session 12), all pushed to origin
+- Git: 51 commits on main (session 12+), all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -129,7 +129,7 @@ pacgate-ai-pr/
 27. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done). Source: `pacgate-ai-assets/.../律师角色提示指南/*.md` (5 files, ~206 code blocks). Remaining: 诉讼律师(~57), 非诉律师(~52), 合规律师(~28 remaining), 基金律师(~26 remaining), 律师日常(~23 remaining)
 28. **Add archive collection workflow templates** — the 3-phase project archive workflow from 项目档案目录及说明
 29. ~~Add international connectors~~ — DONE. 4 new connectors: Vaquill (US legal, API key), EUR-Lex (EU law, public REST), Ansvar (EU compliance MCP, API key), OpenCorporates (offshore corporate registry, API key). Total connectors now: 11 (4 Chinese + 7 international). Env vars: `VAQUILL_API_KEY`, `ANSVAR_API_KEY`, `OPENCORPORATES_API_KEY`. EUR-Lex is free (no key). ConnectorRegistry updated: 4 entries marked `implemented: true`.
-30. **Wire DD configs into WorkflowExecutor** — Phase 2: inject DdAgentConfig as system prompt layer when running DD workflows
+30. ~~Wire DD configs into WorkflowExecutor~~ — DONE. `ExecuteWorkflowRequest` now accepts optional `dd_domain`, `WorkflowExecutor::execute()` accepts optional `DdAgentConfig`, and DD workflows inject a third system-prompt layer: `persona_prompt + dd_config_prompt + step_prompt`. Added helpers: `DdAgentConfig::compose_system_prompt()`, `dd_domain_from_str()`, `dd_config_for_domain()`. Validated with 23 API smoke tests + 5 pacgate-agent tests.
 31. **qm TypeScript adapter** — Phase 2 collaboration runtime
 32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable at `localhost:5433/pacgate_test`
 33. ~~Wire DataLevel into API~~ — DONE. `GET /api/kb/search?q=...&matter_id=...&max_data_level=T3` (internal RAG with T1-T4 filtering, default T3). `GET /api/search?data_level=T2` (external search tagging). Document upload accepts `data_level` multipart field (T1-T4, default T2). `RagStore` added to `AppState` (optional, requires Postgres). 20 smoke tests pass (5 new: DataLevel parsing, ArchiveDirectory 9-dirs, SearchFilter data_level, ConnectorRegistry 27 entries, DD configs 9 domains).

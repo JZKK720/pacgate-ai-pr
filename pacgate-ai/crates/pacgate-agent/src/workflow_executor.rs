@@ -12,7 +12,7 @@
 //! `pacgate-ai/workflows/*.yaml`, where each step's `parameters.system_prompt`
 //! contains the full prompt template from the client's prompt guides.
 
-use pacgate_core::MatterId;
+use pacgate_core::{DdAgentConfig, MatterId};
 use pacgate_workflow::{Workflow, WorkflowStep};
 use tracing::{info, instrument};
 
@@ -109,27 +109,33 @@ impl<'a> WorkflowExecutor<'a> {
     /// Each step's output is accumulated and passed as context to subsequent steps.
     /// The `persona_prompt` (if any) is applied to all steps — typically the SOUL
     /// persona's system preamble.
-    #[instrument(skip(self, workflow, persona_prompt), fields(workflow = %workflow.name, steps = workflow.steps.len()))]
+    ///
+    /// When `dd_config` is provided, the DD agent's system prompt is composed and
+    /// injected as an additional system prompt layer for DD workflows.
+    #[instrument(skip(self, workflow, persona_prompt, dd_config), fields(workflow = %workflow.name, steps = workflow.steps.len()))]
     pub async fn execute(
         &self,
         workflow: &Workflow,
         persona_prompt: Option<&str>,
         matter_id: Option<&MatterId>,
+        dd_config: Option<&DdAgentConfig>,
     ) -> Result<WorkflowResult, pacgate_core::PacgateError> {
+        // Pre-compose the DD system prompt if a DD config is provided
+        let dd_prompt = dd_config.map(|c| c.compose_system_prompt());
+
         let mut results = Vec::with_capacity(workflow.steps.len());
         let mut prior_context: Vec<String> = Vec::new();
 
         for (i, step) in workflow.steps.iter().enumerate() {
             info!(step = i, name = %step.name, tool = %step.tool, "executing workflow step");
 
-            // Compose the step's system_prompt with the persona_prompt
+            // Compose the step's system_prompt with the persona_prompt and DD prompt
             let step_prompt = extract_system_prompt(&step.parameters);
-            let combined_prompt = match (&step_prompt, persona_prompt) {
-                (Some(sp), Some(pp)) => Some(format!("{pp}\n\n{sp}")),
-                (Some(sp), None) => Some(sp.clone()),
-                (None, Some(pp)) => Some(pp.to_string()),
-                (None, None) => None,
-            };
+            let combined_prompt = compose_combined_prompt(
+                persona_prompt,
+                step_prompt.as_deref(),
+                dd_prompt.as_deref(),
+            );
 
             // Build the user message for this step
             let user_message = build_step_message(step, &prior_context, matter_id);
@@ -174,6 +180,36 @@ impl<'a> WorkflowExecutor<'a> {
     }
 }
 
+/// Compose the full system prompt from three optional layers:
+/// 1. SOUL persona prompt (identity overlay + boundary rules)
+/// 2. DD agent config prompt (domain expertise + focus areas + severity rules)
+/// 3. Step-specific system prompt (from workflow template parameters)
+///
+/// Layers are joined with double newlines. None layers are skipped.
+fn compose_combined_prompt(
+    persona: Option<&str>,
+    step_prompt: Option<&str>,
+    dd_prompt: Option<&str>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(p) = persona {
+        parts.push(p.to_string());
+    }
+    if let Some(dd) = dd_prompt {
+        parts.push(dd.to_string());
+    }
+    if let Some(sp) = step_prompt {
+        parts.push(sp.to_string());
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +228,24 @@ mod tests {
 
         assert!(message.contains("Matter context"));
         assert!(message.contains(&matter_id.as_str()));
+    }
+
+    #[test]
+    fn compose_combined_prompt_joins_layers() {
+        let result = compose_combined_prompt(Some("persona"), Some("step"), Some("dd")).unwrap();
+        assert!(result.contains("persona"));
+        assert!(result.contains("step"));
+        assert!(result.contains("dd"));
+    }
+
+    #[test]
+    fn compose_combined_prompt_skips_none_layers() {
+        let result = compose_combined_prompt(None, Some("only step"), None).unwrap();
+        assert_eq!(result, "only step");
+    }
+
+    #[test]
+    fn compose_combined_prompt_all_none_returns_none() {
+        assert!(compose_combined_prompt(None, None, None).is_none());
     }
 }

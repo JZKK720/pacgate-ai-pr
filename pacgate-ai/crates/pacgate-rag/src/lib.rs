@@ -3,13 +3,14 @@
 //! Dual-path retrieval:
 //! 1. Semantic search via pgvector (cosine similarity on embeddings)
 //! 2. Keyword search via tsvector (Postgres full-text search)
+//!
 //! Results are merged and ranked by combined score.
 //!
 //! Embeddings are generated via Ollama's `nomic-embed-text` model (768-dim).
 
 use std::collections::HashMap;
 
-use pacgate_core::{Jurisdiction, MatterId, SourceLevel, TenantId};
+use pacgate_core::{DataLevel, Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 
@@ -41,6 +42,9 @@ pub struct SearchFilter {
     pub jurisdiction: Option<Jurisdiction>,
     /// Filter by source level (e.g., AuthorityVerified, AuxiliaryDB)
     pub source_level: Option<SourceLevel>,
+    /// Filter by data classification level T1-T4.
+    /// When set, only chunks at or below this level are returned.
+    pub max_data_level: Option<DataLevel>,
 }
 
 impl SearchFilter {
@@ -55,6 +59,13 @@ impl SearchFilter {
 
     pub fn with_source_level(mut self, s: SourceLevel) -> Self {
         self.source_level = Some(s);
+        self
+    }
+
+    /// Set the maximum data classification level for results.
+    /// T1 = shared templates only; T3 = templates + seeds + project files (excludes T4).
+    pub fn with_max_data_level(mut self, level: DataLevel) -> Self {
+        self.max_data_level = Some(level);
         self
     }
 }
@@ -215,12 +226,12 @@ impl RagStore {
             .collect())
     }
 
-    /// Build SQL with optional jurisdiction and source_level filter clauses.
+    /// Build SQL with optional jurisdiction, source_level, and data_level filter clauses.
     ///
     /// Returns `(sql_with_order_by_and_limit, jurisdiction_param, source_level_param)`.
     /// The params are `Some(String)` when the filter is active, `None` otherwise.
     /// When active, the SQL appends `AND c.jurisdiction = $N` / `AND c.source_level = $N`
-    /// and the caller must bind the param in the correct position.
+    /// and inlines `AND c.data_level IN (...)` for max_data_level.
     fn build_filtered_sql(
         base_sql: &str,
         filter: &SearchFilter,
@@ -247,6 +258,21 @@ impl RagStore {
                 .unwrap_or_default();
             sql.push_str(&format!(" AND c.source_level = {}", sl_param_num));
             sl_param = Some(s_str);
+        }
+
+        if let Some(max_level) = filter.max_data_level {
+            let allowed: Vec<&str> = match max_level {
+                DataLevel::T1SharedTemplate => vec!["T1"],
+                DataLevel::T2RestrictedSeed => vec!["T1", "T2"],
+                DataLevel::T3ProjectSpecific => vec!["T1", "T2", "T3"],
+                DataLevel::T4SpecialSensitive => vec!["T1", "T2", "T3", "T4"],
+            };
+            let in_list = allowed
+                .iter()
+                .map(|code| format!("'{}'", code))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql.push_str(&format!(" AND c.data_level IN ({})", in_list));
         }
 
         sql.push_str(" ORDER BY ");
