@@ -8,10 +8,11 @@
 //!
 //! | Connector | Type | Access | Status |
 //! |-----------|------|--------|--------|
-//! | `YuanDianConnector` | Chinese legal database | MCP endpoint | Stub |
-//! | `PkuLawConnector` | Chinese legal database (北大法宝) | MCP endpoint | Stub |
-//! | `QccConnector` | Corporate registry (企查查) | MCP endpoint | Stub |
-//! | `CourtListenerConnector` | US case law | REST API | Active |
+//! | `YuanDianConnector` | Chinese legal database (元典) | MCP endpoint | Active (needs API key) |
+//! | `PkuLawConnector` | Chinese legal database (北大法宝) | MCP endpoint | Active (needs API key) |
+//! | `QccConnector` | Corporate registry (企查查) | MCP endpoint | Active (needs API key) |
+//! | `FyOpenConnector` | Chinese legal database (法源开) | REST API | Active (needs API key) |
+//! | `CourtListenerConnector` | US case law | REST API | Active (free) |
 //! | `SecEdgarConnector` | US SEC filings | REST API (free) | Active |
 //! | `GleifConnector` | Global LEI registry | REST API (free) | Active |
 //!
@@ -248,20 +249,32 @@ fn source_level_priority(level: &str) -> u8 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Stub connectors — Chinese MCP endpoints (need API keys to activate)
+// Chinese connectors — MCP endpoints
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// YuanDian (元典) — Chinese legal database via MCP endpoint.
 /// URL: https://open.chineselaw.com
+/// Auth: API key (env: YUANDIAN_API_KEY)
+///
+/// The endpoint exposes an MCP-style search API. We send a JSON-RPC style
+/// request with the search keywords and jurisdiction filter, then parse
+/// the response into SearchResult items.
 pub struct YuanDianConnector {
-    #[allow(dead_code)]
     endpoint: String,
     api_key:  Option<String>,
+    client:   reqwest::Client,
 }
 
 impl YuanDianConnector {
     pub fn new(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
-        Self { endpoint: endpoint.into(), api_key }
+        Self {
+            endpoint: endpoint.into(),
+            api_key,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -271,30 +284,112 @@ impl DataSourceConnector for YuanDianConnector {
     fn display_name(&self) -> &str { "元典法律数据库" }
     fn is_available(&self) -> bool { self.api_key.is_some() }
 
-    async fn search(&self, _query: &SearchQuery) -> Vec<SearchResult> {
-        tracing::debug!(connector = self.name(), "yuandian connector not yet implemented");
-        Vec::new()
+    async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
+        let api_key = match &self.api_key {
+            Some(k) => k.clone(),
+            None => {
+                tracing::debug!(connector = self.name(), "no API key configured");
+                return Vec::new();
+            }
+        };
+
+        // MCP-style JSON-RPC request
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "search",
+            "params": {
+                "query": &query.keywords,
+                "jurisdiction": query.jurisdiction.as_deref().unwrap_or("CN"),
+                "doc_type": query.doc_type.as_deref().unwrap_or("all"),
+                "limit": query.limit,
+            },
+            "id": 1
+        });
+
+        let url = format!("{}/api/search", self.endpoint.trim_end_matches('/'));
+        let req = self.client
+            .post(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .json(&body);
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.json::<serde_json::Value>().await
+                    .ok()
+                    .and_then(|json| {
+                        json.get("result")?.as_array().map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                Some(SearchResult {
+                                    title:       item.get("title")?.as_str()?.to_string(),
+                                    citation:    item.get("citation")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    summary:     item.get("summary")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    url:         item.get("url")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    source_name: "yuandian".to_string(),
+                                    source_level: "auxiliary_db".to_string(),
+                                    jurisdiction: Some("ChinaMainland".to_string()),
+                                    date:        item.get("date")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    metadata:    Some(item.clone()),
+                                })
+                            }).collect()
+                        })
+                    })
+                    .unwrap_or_default()
+            }
+            Ok(resp) => {
+                tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "yuandian request failed");
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "yuandian connection error");
+                Vec::new()
+            }
+        }
     }
 
     async fn health_check(&self) -> Result<(), SearchError> {
-        if self.api_key.is_none() {
-            return Err(SearchError::Auth("no API key configured".into()));
+        let api_key = self.api_key.as_ref()
+            .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
+        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
+        match self.client.get(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .send().await
+        {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
+            Err(e) => Err(SearchError::Connection(e.to_string())),
         }
-        Ok(())
     }
 }
 
 /// PkuLaw (北大法宝) — Chinese legal database via MCP endpoint.
 /// URL: https://mcp.pkulaw.com
+/// Auth: API key (env: PKULAW_API_KEY)
 pub struct PkuLawConnector {
-    #[allow(dead_code)]
     endpoint: String,
     api_key:  Option<String>,
+    client:   reqwest::Client,
 }
 
 impl PkuLawConnector {
     pub fn new(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
-        Self { endpoint: endpoint.into(), api_key }
+        Self {
+            endpoint: endpoint.into(),
+            api_key,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -304,30 +399,115 @@ impl DataSourceConnector for PkuLawConnector {
     fn display_name(&self) -> &str { "北大法宝" }
     fn is_available(&self) -> bool { self.api_key.is_some() }
 
-    async fn search(&self, _query: &SearchQuery) -> Vec<SearchResult> {
-        tracing::debug!(connector = self.name(), "pkulaw connector not yet implemented");
-        Vec::new()
+    async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
+        let api_key = match &self.api_key {
+            Some(k) => k.clone(),
+            None => {
+                tracing::debug!(connector = self.name(), "no API key configured");
+                return Vec::new();
+            }
+        };
+
+        // MCP-style JSON-RPC request
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "search",
+            "params": {
+                "query": &query.keywords,
+                "jurisdiction": query.jurisdiction.as_deref().unwrap_or("CN"),
+                "doc_type": query.doc_type.as_deref().unwrap_or("all"),
+                "limit": query.limit,
+            },
+            "id": 1
+        });
+
+        let url = format!("{}/api/search", self.endpoint.trim_end_matches('/'));
+        let req = self.client
+            .post(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .json(&body);
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.json::<serde_json::Value>().await
+                    .ok()
+                    .and_then(|json| {
+                        json.get("result")?.as_array().map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                Some(SearchResult {
+                                    title:       item.get("title")?.as_str()?.to_string(),
+                                    citation:    item.get("citation")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    summary:     item.get("summary")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    url:         item.get("url")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    source_name: "pkulaw".to_string(),
+                                    source_level: "auxiliary_db".to_string(),
+                                    jurisdiction: Some("ChinaMainland".to_string()),
+                                    date:        item.get("date")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    metadata:    Some(item.clone()),
+                                })
+                            }).collect()
+                        })
+                    })
+                    .unwrap_or_default()
+            }
+            Ok(resp) => {
+                tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "pkulaw request failed");
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "pkulaw connection error");
+                Vec::new()
+            }
+        }
     }
 
     async fn health_check(&self) -> Result<(), SearchError> {
-        if self.api_key.is_none() {
-            return Err(SearchError::Auth("no API key configured".into()));
+        let api_key = self.api_key.as_ref()
+            .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
+        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
+        match self.client.get(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .send().await
+        {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
+            Err(e) => Err(SearchError::Connection(e.to_string())),
         }
-        Ok(())
     }
 }
 
 /// Qcc (企查查) — Chinese corporate registry via MCP endpoint.
 /// URL: https://agent.qcc.com
+/// Auth: API key (env: QCC_API_KEY)
+///
+/// Provides company information, shareholder structures, legal proceedings,
+/// and corporate registration data.
 pub struct QccConnector {
-    #[allow(dead_code)]
     endpoint: String,
     api_key:  Option<String>,
+    client:   reqwest::Client,
 }
 
 impl QccConnector {
     pub fn new(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
-        Self { endpoint: endpoint.into(), api_key }
+        Self {
+            endpoint: endpoint.into(),
+            api_key,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -337,16 +517,193 @@ impl DataSourceConnector for QccConnector {
     fn display_name(&self) -> &str { "企查查" }
     fn is_available(&self) -> bool { self.api_key.is_some() }
 
-    async fn search(&self, _query: &SearchQuery) -> Vec<SearchResult> {
-        tracing::debug!(connector = self.name(), "qcc connector not yet implemented");
-        Vec::new()
+    async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
+        let api_key = match &self.api_key {
+            Some(k) => k.clone(),
+            None => {
+                tracing::debug!(connector = self.name(), "no API key configured");
+                return Vec::new();
+            }
+        };
+
+        // Agent-style API request — search companies by keyword
+        let url = format!(
+            "{}/api/search?keyword={}&limit={}",
+            self.endpoint.trim_end_matches('/'),
+            urlencoding::encode(&query.keywords),
+            query.limit
+        );
+        let req = self.client
+            .get(&url)
+            .header("Authorization", format!("Bearer {api_key}"));
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.json::<serde_json::Value>().await
+                    .ok()
+                    .and_then(|json| {
+                        json.get("data")?.as_array().map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                Some(SearchResult {
+                                    title:       item.get("name")?.as_str()?.to_string(),
+                                    citation:    item.get("creditNo")
+                                        .or_else(|| item.get("uscc"))
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    summary:     item.get("operatingScope")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    url:         item.get("detailUrl")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    source_name: "qcc".to_string(),
+                                    source_level: "auxiliary_db".to_string(),
+                                    jurisdiction: Some("ChinaMainland".to_string()),
+                                    date:        item.get("establishDate")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    metadata:    Some(item.clone()),
+                                })
+                            }).collect()
+                        })
+                    })
+                    .unwrap_or_default()
+            }
+            Ok(resp) => {
+                tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "qcc request failed");
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "qcc connection error");
+                Vec::new()
+            }
+        }
     }
 
     async fn health_check(&self) -> Result<(), SearchError> {
-        if self.api_key.is_none() {
-            return Err(SearchError::Auth("no API key configured".into()));
+        let api_key = self.api_key.as_ref()
+            .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
+        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
+        match self.client.get(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .send().await
+        {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
+            Err(e) => Err(SearchError::Connection(e.to_string())),
         }
-        Ok(())
+    }
+}
+
+/// FYOpen (法源开) — Chinese legal database.
+/// URL: https://www.fyopen.com/index
+/// Auth: Account-based login (env: FYOPEN_API_KEY)
+///
+/// Additional Chinese database found in client assets (境外法律数据库和网站.md).
+pub struct FyOpenConnector {
+    endpoint: String,
+    api_key:  Option<String>,
+    client:   reqwest::Client,
+}
+
+impl FyOpenConnector {
+    pub fn new(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            api_key,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn with_default_endpoint(api_key: Option<String>) -> Self {
+        Self::new("https://www.fyopen.com", api_key)
+    }
+}
+
+#[async_trait]
+impl DataSourceConnector for FyOpenConnector {
+    fn name(&self) -> &str { "fyopen" }
+    fn display_name(&self) -> &str { "法源开" }
+    fn is_available(&self) -> bool { self.api_key.is_some() }
+
+    async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
+        let api_key = match &self.api_key {
+            Some(k) => k.clone(),
+            None => {
+                tracing::debug!(connector = self.name(), "no API key configured");
+                return Vec::new();
+            }
+        };
+
+        let url = format!(
+            "{}/api/search?q={}&limit={}",
+            self.endpoint.trim_end_matches('/'),
+            urlencoding::encode(&query.keywords),
+            query.limit
+        );
+        let req = self.client
+            .get(&url)
+            .header("Authorization", format!("Bearer {api_key}"));
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.json::<serde_json::Value>().await
+                    .ok()
+                    .and_then(|json| {
+                        json.get("results")?.as_array().map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                Some(SearchResult {
+                                    title:       item.get("title")?.as_str()?.to_string(),
+                                    citation:    item.get("citation")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    summary:     item.get("summary")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    url:         item.get("url")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    source_name: "fyopen".to_string(),
+                                    source_level: "auxiliary_db".to_string(),
+                                    jurisdiction: Some("ChinaMainland".to_string()),
+                                    date:        item.get("date")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    metadata:    Some(item.clone()),
+                                })
+                            }).collect()
+                        })
+                    })
+                    .unwrap_or_default()
+            }
+            Ok(resp) => {
+                tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "fyopen request failed");
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "fyopen connection error");
+                Vec::new()
+            }
+        }
+    }
+
+    async fn health_check(&self) -> Result<(), SearchError> {
+        let api_key = self.api_key.as_ref()
+            .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
+        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
+        match self.client.get(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .send().await
+        {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
+            Err(e) => Err(SearchError::Connection(e.to_string())),
+        }
     }
 }
 
@@ -604,7 +961,7 @@ impl DataSourceConnector for GleifConnector {
 }
 
 /// Create a default SearchRouter with all connectors.
-/// Chinese connectors need API keys (env vars: YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY).
+/// Chinese connectors need API keys (env vars: YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY, FYOPEN_API_KEY).
 /// Free international connectors (CourtListener, SEC EDGAR, GLEIF) are always active.
 pub fn default_router() -> SearchRouter {
     SearchRouter::new()
@@ -619,6 +976,9 @@ pub fn default_router() -> SearchRouter {
         .with_connector(Arc::new(QccConnector::new(
             "https://agent.qcc.com",
             std::env::var("QCC_API_KEY").ok(),
+        )))
+        .with_connector(Arc::new(FyOpenConnector::with_default_endpoint(
+            std::env::var("FYOPEN_API_KEY").ok(),
         )))
         .with_connector(Arc::new(CourtListenerConnector::new(
             std::env::var("COURTLISTENER_API_KEY").ok(),

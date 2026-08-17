@@ -588,6 +588,238 @@ pub enum RiskGrade {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Project archive taxonomy (from 百宸完整项目及事项档案提交目录与整理说明 v1.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Data classification tier — the T1-T4 system from the client's archive standard.
+///
+/// Controls access scope and sharing rules for all documents and RAG chunks.
+/// Maps directly to the firm's local-deployment security model.
+///
+/// | Tier | Name | Scope |
+/// |------|------|-------|
+/// | T1 | 全所共享模板 | Blank templates, standard texts — shared template zone |
+/// | T2 | 所内受限种子 | Completed project deliverables — restricted, no cross-project search by default |
+/// | T3 | 项目专属资料 | Active project files, client data — project space only (MatterId-scoped) |
+/// | T4 | 特别敏感资料 | Major dispute strategy, internal investigations — special approval, strict isolation |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DataLevel {
+    /// T1 — 全所共享模板: blank templates, standard texts, methodology.
+    /// No client/project identity. Can enter shared template zone.
+    T1SharedTemplate,
+    /// T2 — 所内受限种子: completed project deliverables (reports, agreements, filings).
+    /// Retains client context. Restricted seed zone, no default cross-project search.
+    #[default]
+    T2RestrictedSeed,
+    /// T3 — 项目专属资料: active project files, client data, evidence, communications.
+    /// Project space only (MatterId-scoped). Never enters template zone or training set.
+    T3ProjectSpecific,
+    /// T4 — 特别敏感资料: major dispute strategy, internal investigations, bulk PII.
+    /// Special approval required. Strict isolation. National secrets excluded entirely.
+    T4SpecialSensitive,
+}
+
+impl DataLevel {
+    /// Returns true if this data level allows cross-project search.
+    /// Only T1 is freely searchable across projects.
+    pub fn allows_cross_project_search(&self) -> bool {
+        matches!(self, DataLevel::T1SharedTemplate)
+    }
+
+    /// Returns true if this data level requires matter-scoped access control.
+    /// T2 and above require matter-level isolation.
+    pub fn requires_matter_scoping(&self) -> bool {
+        !matches!(self, DataLevel::T1SharedTemplate)
+    }
+
+    /// Returns the string code (e.g., "T1", "T2") for DB storage.
+    pub fn code(&self) -> &'static str {
+        match self {
+            DataLevel::T1SharedTemplate => "T1",
+            DataLevel::T2RestrictedSeed => "T2",
+            DataLevel::T3ProjectSpecific => "T3",
+            DataLevel::T4SpecialSensitive => "T4",
+        }
+    }
+
+    /// Parse a T-code string into a DataLevel.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.trim() {
+            "T1" | "t1" => Some(DataLevel::T1SharedTemplate),
+            "T2" | "t2" => Some(DataLevel::T2RestrictedSeed),
+            "T3" | "t3" => Some(DataLevel::T3ProjectSpecific),
+            "T4" | "t4" => Some(DataLevel::T4SpecialSensitive),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for DataLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.code())
+    }
+}
+
+/// Archive directory — the 9-directory submission taxonomy (目录编号 00-08).
+///
+/// Each project/case archive is organized into these directories.
+/// From 百宸完整项目及事项档案提交目录与整理说明 v1.0 §二.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveDirectory {
+    /// 00 — 项目说明及文件目录: project overview, file index, language/jurisdiction/role.
+    /// 必交 (mandatory for all projects).
+    Directory00Overview,
+    /// 01 — 核心律师工作成果: DD reports, legal opinions, memos, litigation strategy.
+    /// 必交 — the main deliverables.
+    Directory01CoreWork,
+    /// 02 — 主要协议及程序文书: transaction agreements, corporate docs, litigation filings.
+    /// 必交 — core legal instruments.
+    Directory02Agreements,
+    /// 03 — 关键修改稿及工作工具: red-line drafts, issue lists, negotiation points, evidence matrices.
+    /// 有则提交 — representative versions only.
+    Directory03DraftsTools,
+    /// 04 — 决策批准及监管文件: board/shareholder approvals, regulatory filings, hearing materials.
+    /// 有则提交.
+    Directory04Approvals,
+    /// 05 — 签署、交割、庭审或执行文件: signing pages, closing certificates, trial outlines.
+    /// 有则提交.
+    Directory05Closing,
+    /// 06 — 最终交付及Closing Binder: final signed versions, closing binders, judgments.
+    /// 有则提交 — cannot substitute for 01-05.
+    Directory06FinalDelivery,
+    /// 07 — 关键事实和证据附件: supporting facts and evidence — selective, not full data room.
+    Directory07Evidence,
+    /// 08 — 覆盖映射及复核记录: template coverage mapping, quality review records.
+    /// By reviewer/summarizer.
+    Directory08CoverageReview,
+}
+
+impl ArchiveDirectory {
+    /// Returns the directory number as a string (e.g., "00", "01").
+    pub fn number(&self) -> &'static str {
+        match self {
+            ArchiveDirectory::Directory00Overview => "00",
+            ArchiveDirectory::Directory01CoreWork => "01",
+            ArchiveDirectory::Directory02Agreements => "02",
+            ArchiveDirectory::Directory03DraftsTools => "03",
+            ArchiveDirectory::Directory04Approvals => "04",
+            ArchiveDirectory::Directory05Closing => "05",
+            ArchiveDirectory::Directory06FinalDelivery => "06",
+            ArchiveDirectory::Directory07Evidence => "07",
+            ArchiveDirectory::Directory08CoverageReview => "08",
+        }
+    }
+
+    /// Returns the Chinese name of this directory.
+    pub fn name_zh(&self) -> &'static str {
+        match self {
+            ArchiveDirectory::Directory00Overview => "项目说明及文件目录",
+            ArchiveDirectory::Directory01CoreWork => "核心律师工作成果",
+            ArchiveDirectory::Directory02Agreements => "主要协议及程序文书",
+            ArchiveDirectory::Directory03DraftsTools => "关键修改稿及工作工具",
+            ArchiveDirectory::Directory04Approvals => "决策批准及监管文件",
+            ArchiveDirectory::Directory05Closing => "签署、交割、庭审或执行文件",
+            ArchiveDirectory::Directory06FinalDelivery => "最终交付及Closing Binder/结案卷",
+            ArchiveDirectory::Directory07Evidence => "关键事实和证据附件",
+            ArchiveDirectory::Directory08CoverageReview => "覆盖映射及复核记录",
+        }
+    }
+
+    /// Returns whether this directory is mandatory (必交) for all projects.
+    pub fn is_mandatory(&self) -> bool {
+        matches!(
+            self,
+            ArchiveDirectory::Directory00Overview
+                | ArchiveDirectory::Directory01CoreWork
+                | ArchiveDirectory::Directory02Agreements
+        )
+    }
+}
+
+impl std::fmt::Display for ArchiveDirectory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}_{}", self.number(), self.name_zh())
+    }
+}
+
+/// Project business module — the 5 practice areas from the archive standard.
+///
+/// From 百宸五大业务代表性项目及事项档案第一阶段认领清单 v1.0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectBusinessModule {
+    /// 非诉交易 — non-litigation transactions, VIE/red-chip, investment agreements.
+    #[default]
+    NonLitigation,
+    /// 基金 — fund formation, fundraising, filing, investment, operations, dissolution.
+    Fund,
+    /// 律师日常通用 — daily general legal matters, client advisory.
+    DailyGeneral,
+    /// 合规 — compliance projects (risk identification → analysis → policy → implementation → review).
+    Compliance,
+    /// 诉讼/仲裁/执行 — litigation, arbitration, enforcement.
+    Litigation,
+}
+
+/// Project overview metadata — the 项目概况表 from the archive standard §三.
+///
+/// Every project archive package must include this in directory 00.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectOverview {
+    /// Project package number (PN编号 from the 认领清单).
+    pub package_number: String,
+    /// Short name or internal code (项目简称/内部编号).
+    pub short_name: String,
+    /// Business module and project type (业务模块及项目类型).
+    pub business_module: ProjectBusinessModule,
+    /// Primary stage: closed, completed, filed, adjudicated, liquidated, etc. (项目主要阶段).
+    pub primary_stage: String,
+    /// Time range of the project's main work (时间范围).
+    pub time_range: String,
+    /// Client and the firm's role (客户及本所角色).
+    pub client_and_role: String,
+    /// Jurisdiction and industry (法域和行业).
+    pub jurisdiction_and_industry: String,
+    /// Language(s) and which version is controlling (语言).
+    pub language: String,
+    /// Lead lawyer and reviewer (项目主办及复核人).
+    pub lead_and_reviewer: String,
+    /// Data classification level T1-T4 (资料使用等级).
+    pub data_level: DataLevel,
+    /// File source and usage permissions (文件来源和权限).
+    pub source_and_permissions: String,
+    /// Project highlights and limitations (项目亮点和限制).
+    pub highlights_and_limitations: String,
+}
+
+/// File directory entry — the 文件目录表 from the archive standard §四.
+///
+/// Each project archive must include a file directory with these fields.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileDirectoryEntry {
+    /// Sequence number (序号).
+    pub seq: u32,
+    /// Relative path / filename (相对路径/文件名).
+    pub relative_path: String,
+    /// File category (文件类别).
+    pub category: String,
+    /// Version and date (版本和日期).
+    pub version_and_date: String,
+    /// Language / jurisdiction / position (语言/法域/立场).
+    pub language_jurisdiction_position: String,
+    /// File source (文件来源).
+    pub source: String,
+    /// Data classification level (资料等级).
+    pub data_level: DataLevel,
+    /// Corresponding template number (对应模板编号).
+    pub template_number: String,
+    /// Notes (备注).
+    pub notes: String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Store traits (shared between pacgate-agent and pacgate-docx)
 // ─────────────────────────────────────────────────────────────────────────────
 
