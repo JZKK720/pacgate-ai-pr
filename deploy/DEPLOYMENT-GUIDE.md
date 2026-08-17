@@ -3,6 +3,8 @@
 > For Cubecloud engineers deploying to client AI PCs
 > Phase 1 — two-machine pilot
 
+This document describes the target client runtime bundle. It does not reflect the workspace root `compose.yaml` and `nginx/default.conf`, which currently only run the static docs surface plus `pacgate-auth`.
+
 ## Prerequisites
 
 ### On your dev machine (build side)
@@ -57,7 +59,11 @@ CMD ["pacgate-api"]
 #   FROM ghcr.io/bytedance/deer-flow-backend:2.1.0
 #   COPY pacgate-adapters/python /app/adapters
 #   RUN pip install --no-cache-dir /app/adapters
-#   ENV DEERFLOW_CONFIG_MEMORY_STORAGE=pacgate_deerflow_adapter.storage:PacgateMemoryStorage
+#   # Install the Pacgate adapter package, then opt in from DeerFlow config.yaml:
+#   # memory:
+#   #   manager_class: deermem
+#   #   backend_config:
+#   #     storage_class: pacgate_deerflow_adapter.storage:PacgateMemoryStorage
 #   ENV PACGATE_API_URL=http://pacgate-api:8080
 #   CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
 
@@ -67,6 +73,8 @@ docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 `
 ```
 
 ### 1.3 Build qm wrapper
+
+Status: `deploy/qm-pacgate/` is now checked in as a pinned QM deployment directory. It contains a validated `pacgate-qm` sandbox bridge tool plus a `pacgate-workflow` skill, and `npm.cmd run check` / `npm exec qm -- sandbox build` pass there. The Dockerfile block below is still only an optional future shape if you later choose to publish a dedicated one-container QM image instead of using the checked-in QM deployment directory.
 
 ```powershell
 # deploy/qm-pacgate/Dockerfile:
@@ -178,6 +186,8 @@ volumes:
 ```
 
 ### 2.3 nginx/default.conf
+
+This is the target client-bundle ingress layout. It is separate from the workspace root `nginx/default.conf`, which currently protects only the static docs site behind `pacgate-auth`.
 
 ```nginx
 server {
@@ -474,6 +484,7 @@ docker exec pacgate-api ls /data/tenants/
 ### Schema migration on update
 
 If a new `pacgate-api` version includes a schema migration:
+
 - `pacgate-api` runs the migration automatically on startup
 - The migration reads `./data/tenants/` and upgrades in place
 - Document this in release notes: "0.2.0 includes an automatic schema migration. No action needed; data is upgraded on first boot."
