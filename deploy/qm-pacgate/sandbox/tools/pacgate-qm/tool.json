@@ -1,0 +1,8 @@
+{
+  "id": "pacgate-qm",
+  "label": "Pacgate QM bridge",
+  "advertise": "pacgate-qm",
+  "install": {
+    "binary": "pacgate-qm"
+  }
+}

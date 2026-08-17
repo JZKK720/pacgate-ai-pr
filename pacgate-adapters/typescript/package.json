@@ -1,0 +1,13 @@
+{
+  "name": "pacgate-qm-adapter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build --silent && node --test dist/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}

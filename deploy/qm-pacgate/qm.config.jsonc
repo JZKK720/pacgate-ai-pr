@@ -1,0 +1,57 @@
+{
+  // The deployment contract major this directory conforms to.
+  "contract": 1,
+
+  // Short identifier for your organization; app and container names derive from it.
+  "orgId": "pacgate",
+
+  // The one public address of the deployment; the service URLs derive from it.
+  // Keep QM off Pacgate's host 8080 by using the 8180/8182 range locally.
+  "publicUrl": "http://localhost:8182",
+
+  // Base host port for the docker target. Core binds to this port and the
+  // web UI takes the next exposed slot used by the pinned QM package.
+  "basePort": 8180,
+
+  // Where to deploy: "docker" runs local containers, "fly" deploys Fly apps,
+  // and "aws" runs the control plane on ECS and agent computers on Lambda MicroVMs.
+  "target": "docker",
+
+  // Leave the base model unset for the checked-in docker target so local smoke
+  // runs can use HARNESS=mock without requiring a vendor API key.
+
+  // Optional base model id, passed to the harness (e.g. "claude-opus-4-6").
+  // Omit it and the deployment uses the default model for the provider above.
+  // It must be a model that provider can bill.
+  // "model": "",
+
+  // First-party services to run. The full set: "core" (the agent runtime and API,
+  // always required), "slack" (the Slack surface, runs inside the core process),
+  // "web-ui" (a browser chat UI), "admin" (the operator dashboard), "portal"
+  // (the public sign-in front door), and "auth" (the built-in sign-in broker that
+  // emails one-time links; drop it to sign in through an external OIDC provider).
+  "services": ["core", "web-ui"],
+
+  // Extra plugins to run alongside the services. A prebuilt image runs with
+  // { "name": "linear", "image": "ghcr.io/you/qm-linear:1.0" }. A plugin with a
+  // Dockerfile at plugins/<name>/ in this directory needs no entry here at all.
+  "plugins": [],
+
+  // Extra directories of SKILL.md files, mounted into the agent.
+  "skills": [],
+
+  // Non-secret env overrides, per service. Keep the checked-in docker target in
+  // local smoke mode; switch HARNESS back to "pi" only when real model secrets
+  // and a public core URL are available.
+  "env": { "core": { "HARNESS": "mock", "SANDBOX_BACKEND": "local" } },
+
+  // The Fly app agents execute in. The core boots the immutable sandbox image
+  // recorded by `qm sandbox publish`.
+  "sandbox": { "image": "localhost:5000/pacgate-sandboxes@sha256:207a779d0d40ba0bc46c18a4139b936a5ce00dd825f0d8f389e547d1a9991ffc", "baseImage": "ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873",
+    "app": "pacgate-sandboxes",
+    "env": {
+      "PACGATE_API_URL": "http://host.docker.internal:8080"
+    },
+    "secretEnv": ["PACGATE_API_EMAIL", "PACGATE_API_PASSWORD"]
+  }
+}
