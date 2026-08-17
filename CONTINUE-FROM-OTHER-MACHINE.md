@@ -88,12 +88,15 @@ pacgate-ai-pr/
 - **T1-T4 data classification** (DataLevel enum) — 4-tier system from client archive standard. Controls access scope: T1 shared templates, T2 restricted seeds, T3 project-specific, T4 special sensitive. Wired into RAG SearchFilter and chunk ingestor.
 - **9-directory archive taxonomy** (ArchiveDirectory enum) — the 百宸 project archive submission standard (目录编号 00-08). Includes ProjectOverview, FileDirectoryEntry, ProjectBusinessModule types.
 - **Chinese MCP connectors implemented** — YuanDian (元典), PkuLaw (北大法宝), Qcc (企查查) `search()` methods now make real HTTP calls to MCP endpoints. Plus new **FYOpen (法源开)** connector added. 4 Chinese connectors + 3 international = 7 total.
+- **ConnectorRegistry** — 27 connector entries from 百宸AI系统资源接入清单 v1/v2. ConnectorMetadata struct with name, display_name, description, type, url, usage, auth_method, env_var, priority, region, implemented. Exposed via `GET /api/search/registry`.
+- **9 DD agent configs** — DdAgentDomain (9 domains), DdSeverity (P0-P3), FocusAreaAction (Keep/Delete/Add), DdFocusArea, DdAgentConfig with dd_agent_configs() factory. From dd-agents 中国法智能体改写清单. Exposed via `GET /api/dd-configs`.
+- **Phase 1 API endpoints** — `GET /api/search/registry` (27 connector metadata entries) + `GET /api/dd-configs` (9 DD agent configs). Both static, no DB needed. Available for deer-flow and qm adapters to discover via HTTP.
 - deer-flow Python adapter (~150 lines)
 - deer-flow wrapper Dockerfile
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings: 25 → 32 (new dead-code scaffolding from archive taxonomy + connectors, will be wired up)
-- Git: 36 commits on main (session 12), all pushed to origin
+- Git: 39 commits on main (session 12), all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -121,12 +124,15 @@ pacgate-ai-pr/
 22. ~~Implement Chinese MCP connectors~~ — DONE (YuanDian/PkuLaw/Qcc/FYOpen `search()` methods implemented with real HTTP calls)
 23. ~~Add T1-T4 data classification~~ — DONE (DataLevel enum in pacgate-core, migration 004, RAG SearchFilter)
 24. ~~Add 9-directory archive taxonomy~~ — DONE (ArchiveDirectory enum, ProjectOverview, FileDirectoryEntry, ProjectBusinessModule)
-25. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done)
-26. **Add archive collection workflow templates** — the 3-phase project archive workflow from 项目档案目录及说明
-27. **Add international connectors** — Vaquill (US), Ansvar (EU), OpenCorporates (offshore) from client asset credentials
-28. **qm TypeScript adapter** — Phase 2 collaboration runtime
-29. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable
-30. **Wire DataLevel into API** — expose data_level filtering in `GET /api/search` and document upload endpoints
+25. ~~Expose ConnectorRegistry via API~~ — DONE (`GET /api/search/registry`)
+26. ~~Expose DD configs via API~~ — DONE (`GET /api/dd-configs`)
+27. **Convert remaining ~173 prompt templates** from client assets into YAML workflows (51/~206 done)
+28. **Add archive collection workflow templates** — the 3-phase project archive workflow from 项目档案目录及说明
+29. **Add international connectors** — Vaquill (US), Ansvar (EU), OpenCorporates (offshore) from client asset credentials
+30. **Wire DD configs into WorkflowExecutor** — Phase 2: inject DdAgentConfig as system prompt layer when running DD workflows
+31. **qm TypeScript adapter** — Phase 2 collaboration runtime
+32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable
+33. **Wire DataLevel into API** — expose data_level filtering in `GET /api/search` and document upload endpoints
 
 ### Important reminders
 
