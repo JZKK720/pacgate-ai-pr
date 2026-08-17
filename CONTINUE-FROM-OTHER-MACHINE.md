@@ -96,7 +96,7 @@ pacgate-ai-pr/
 - Deployment docs (PLANS, DEPLOYMENT-GUIDE, USER-MANUAL, ARCHITECTURE-DIAGRAMS)
 - Graphify knowledge graph: 595 nodes, 1221 edges, 30 communities
 - Clippy warnings: 25 → 32 (new dead-code scaffolding from archive taxonomy + connectors, will be wired up)
-- Git: 40 commits on main (session 12), all pushed to origin
+- Git: 42 commits on main (session 12), all pushed to origin
 
 ### Next steps (resume from here on other machine)
 
@@ -132,7 +132,7 @@ pacgate-ai-pr/
 30. **Wire DD configs into WorkflowExecutor** — Phase 2: inject DdAgentConfig as system prompt layer when running DD workflows
 31. **qm TypeScript adapter** — Phase 2 collaboration runtime
 32. **Run integration test** against real Postgres — test compiles, ready to run when Postgres is reachable at `localhost:5433/pacgate_test`
-33. **Wire DataLevel into API** — expose data_level filtering in `GET /api/search` and document upload endpoints
+33. ~~Wire DataLevel into API~~ — DONE. `GET /api/kb/search?q=...&matter_id=...&max_data_level=T3` (internal RAG with T1-T4 filtering, default T3). `GET /api/search?data_level=T2` (external search tagging). Document upload accepts `data_level` multipart field (T1-T4, default T2). `RagStore` added to `AppState` (optional, requires Postgres). 20 smoke tests pass (5 new: DataLevel parsing, ArchiveDirectory 9-dirs, SearchFilter data_level, ConnectorRegistry 27 entries, DD configs 9 domains).
 
 ### Important reminders
 
