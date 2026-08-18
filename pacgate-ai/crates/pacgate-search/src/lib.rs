@@ -406,7 +406,7 @@ impl ConnectorRegistry {
                 display_name: "北大法宝".into(),
                 description: "国内权威法律法规、司法案例、专题/期刊数据库，MCP 法规语义检索".into(),
                 connector_type: "MCP / API".into(),
-                url: "mcp.pkulaw.com".into(),
+                url: "apim-gateway.pkulaw.com".into(),
                 usage: "采购机构授权→获取 Bearer Token→MCP 网关接入".into(),
                 auth_method: "bearer_token".into(),
                 env_var: Some("PKULAW_API_KEY".into()),
@@ -806,24 +806,21 @@ impl DataSourceConnector for YuanDianConnector {
             }
         };
 
-        // MCP-style JSON-RPC request
+        // YuanDian REST API: POST /open/rh_ft_search with X-API-Key header
+        // Body: {"keyword":"...", "top_k": N}
+        // Response: {"code":200, "data":[{title, content, url, fgmc, ...}], ...}
+        let top_k = if query.limit > 0 && query.limit <= 50 { query.limit } else { 10 };
         let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "search",
-            "params": {
-                "query": &query.keywords,
-                "jurisdiction": query.jurisdiction.as_deref().unwrap_or("CN"),
-                "doc_type": query.doc_type.as_deref().unwrap_or("all"),
-                "limit": query.limit,
-            },
-            "id": 1
+            "keyword": &query.keywords,
+            "top_k": top_k,
         });
 
-        let url = format!("{}/api/search", self.endpoint.trim_end_matches('/'));
+        let url = format!("{}/open/rh_ft_search", self.endpoint.trim_end_matches('/'));
         let req = self.client
             .post(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
+            .header("X-API-Key", &api_key)
             .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
             .json(&body);
 
         match req.send().await {
@@ -831,14 +828,20 @@ impl DataSourceConnector for YuanDianConnector {
                 resp.json::<serde_json::Value>().await
                     .ok()
                     .and_then(|json| {
-                        json.get("result")?.as_array().map(|arr| {
+                        // Response shape: {"code":200, "data":[{title, content, url, ...}]}
+                        json.get("data")?.as_array().map(|arr| {
                             arr.iter().filter_map(|item| {
                                 Some(SearchResult {
-                                    title:       item.get("title")?.as_str()?.to_string(),
-                                    citation:    item.get("citation")
+                                    title:       item.get("title")
+                                        .or_else(|| item.get("ftmc"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    citation:    item.get("fgmc")
                                         .and_then(|v| v.as_str())
                                         .map(String::from),
-                                    summary:     item.get("summary")
+                                    summary:     item.get("content")
+                                        .or_else(|| item.get("llm_content"))
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string(),
@@ -848,7 +851,7 @@ impl DataSourceConnector for YuanDianConnector {
                                     source_name: "yuandian".to_string(),
                                     source_level: "auxiliary_db".to_string(),
                                     jurisdiction: Some("ChinaMainland".to_string()),
-                                    date:        item.get("date")
+                                    date:        item.get("fbrq")
                                         .and_then(|v| v.as_str())
                                         .map(String::from),
                                     metadata:    Some(item.clone()),
@@ -872,9 +875,13 @@ impl DataSourceConnector for YuanDianConnector {
     async fn health_check(&self) -> Result<(), SearchError> {
         let api_key = self.api_key.as_ref()
             .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
-        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
-        match self.client.get(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
+        // YuanDian health: use /open/rh_ft_search with a minimal keyword
+        let url = format!("{}/open/rh_ft_search", self.endpoint.trim_end_matches('/'));
+        let body = serde_json::json!({"keyword": "test", "top_k": 1});
+        match self.client.post(&url)
+            .header("X-API-Key", api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
             .send().await
         {
             Ok(resp) if resp.status().is_success() => Ok(()),
@@ -885,8 +892,9 @@ impl DataSourceConnector for YuanDianConnector {
 }
 
 /// PkuLaw (北大法宝) — Chinese legal database via MCP endpoint.
-/// URL: https://mcp.pkulaw.com
-/// Auth: API key (env: PKULAW_API_KEY)
+/// Gateway: https://apim-gateway.pkulaw.com/mcp-law-search-service
+/// Auth: Bearer token (env: PKULAW_API_KEY)
+/// Transport: MCP Streamable HTTP (JSON-RPC over SSE)
 pub struct PkuLawConnector {
     endpoint: String,
     api_key:  Option<String>,
@@ -918,24 +926,28 @@ impl DataSourceConnector for PkuLawConnector {
             }
         };
 
-        // MCP-style JSON-RPC request
+        // PkuLaw MCP Streamable HTTP: POST JSON-RPC to the gateway endpoint
+        // The MCP protocol sends initialize → tools/list → tools/call,
+        // but for a simple search we send a direct tool-call request.
         let body = serde_json::json!({
             "jsonrpc": "2.0",
-            "method": "search",
+            "method": "tools/call",
             "params": {
-                "query": &query.keywords,
-                "jurisdiction": query.jurisdiction.as_deref().unwrap_or("CN"),
-                "doc_type": query.doc_type.as_deref().unwrap_or("all"),
-                "limit": query.limit,
+                "name": "search_law",
+                "arguments": {
+                    "query": &query.keywords,
+                    "limit": query.limit,
+                }
             },
             "id": 1
         });
 
-        let url = format!("{}/api/search", self.endpoint.trim_end_matches('/'));
+        let url = self.endpoint.trim_end_matches('/').to_string();
         let req = self.client
             .post(&url)
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
             .json(&body);
 
         match req.send().await {
@@ -943,10 +955,20 @@ impl DataSourceConnector for PkuLawConnector {
                 resp.json::<serde_json::Value>().await
                     .ok()
                     .and_then(|json| {
-                        json.get("result")?.as_array().map(|arr| {
+                        // MCP tools/call response: {"result":{"content":[...]}}
+                        // or direct array in "result"
+                        let result = json.get("result")?;
+                        // Try content array first (MCP format), then direct array
+                        let items = result.get("content")
+                            .and_then(|c| c.as_array())
+                            .or_else(|| result.as_array());
+                        items.map(|arr| {
                             arr.iter().filter_map(|item| {
                                 Some(SearchResult {
-                                    title:       item.get("title")?.as_str()?.to_string(),
+                                    title:       item.get("title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
                                     citation:    item.get("citation")
                                         .and_then(|v| v.as_str())
                                         .map(String::from),
@@ -984,9 +1006,18 @@ impl DataSourceConnector for PkuLawConnector {
     async fn health_check(&self) -> Result<(), SearchError> {
         let api_key = self.api_key.as_ref()
             .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
-        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
-        match self.client.get(&url)
+        // PkuLaw MCP gateway: send a tools/list request as health check
+        let url = self.endpoint.trim_end_matches('/').to_string();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "id": 1
+        });
+        match self.client.post(&url)
             .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .json(&body)
             .send().await
         {
             Ok(resp) if resp.status().is_success() => Ok(()),
@@ -1467,7 +1498,7 @@ pub fn default_router() -> SearchRouter {
             std::env::var("YUANDIAN_API_KEY").ok(),
         )))
         .with_connector(Arc::new(PkuLawConnector::new(
-            "https://mcp.pkulaw.com",
+            "https://apim-gateway.pkulaw.com/mcp-law-search-service",
             std::env::var("PKULAW_API_KEY").ok(),
         )))
         .with_connector(Arc::new(QccConnector::new(
