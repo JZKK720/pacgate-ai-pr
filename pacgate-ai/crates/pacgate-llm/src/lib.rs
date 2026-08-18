@@ -194,7 +194,7 @@ impl LlmClient for OpenAiCompatClient {
 
         let resp = self
             .http
-            .post(&self.chat_url())
+            .post(self.chat_url())
             .bearer_auth(&self.api_key)
             .json(&req)
             .send()
@@ -250,7 +250,7 @@ impl LlmClient for OpenAiCompatClient {
 
         let response = self
             .http
-            .post(&self.chat_url())
+            .post(self.chat_url())
             .bearer_auth(&self.api_key)
             .json(&req)
             .send()

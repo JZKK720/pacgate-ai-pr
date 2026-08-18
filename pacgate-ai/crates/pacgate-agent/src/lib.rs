@@ -680,26 +680,26 @@ impl AgentLoop {
     fn convert_history(&self, history: &[AgentMessage]) -> Vec<ChatMessage> {
         history
             .iter()
-            .filter_map(|msg| match msg {
-                AgentMessage::System { content } => Some(ChatMessage {
+            .map(|msg| match msg {
+                AgentMessage::System { content } => ChatMessage {
                     role: "system".into(),
                     content: Some(serde_json::Value::String(content.clone())),
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
-                }),
-                AgentMessage::User { content, .. } => Some(ChatMessage {
+                },
+                AgentMessage::User { content, .. } => ChatMessage {
                     role: "user".into(),
                     content: Some(serde_json::Value::String(content.clone())),
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
-                }),
+                },
                 AgentMessage::Assistant {
                     content,
                     tool_calls,
                     ..
-                } => Some(ChatMessage {
+                } => ChatMessage {
                     role: "assistant".into(),
                     content: content.clone().map(serde_json::Value::String),
                     tool_calls: if tool_calls.is_empty() {
@@ -721,18 +721,18 @@ impl AgentLoop {
                     },
                     tool_call_id: None,
                     name: None,
-                }),
+                },
                 AgentMessage::Tool {
                     tool_call_id,
                     content,
                     ..
-                } => Some(ChatMessage {
+                } => ChatMessage {
                     role: "tool".into(),
                     content: Some(content.clone()),
                     tool_calls: None,
                     tool_call_id: Some(tool_call_id.clone()),
                     name: None,
-                }),
+                },
             })
             .collect()
     }

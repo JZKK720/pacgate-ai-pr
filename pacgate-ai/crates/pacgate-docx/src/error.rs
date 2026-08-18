@@ -11,6 +11,8 @@ pub enum StoreError {
     #[error("IO error: {0}")]
     Io(String),
 
+    /// Reserved for DOCX/zip generation failures (not yet constructed).
+    #[allow(dead_code)]
     #[error("DOCX error: {0}")]
     Docx(String),
 }

@@ -188,9 +188,13 @@ pub enum SsePayload {
     TextDelta {
         text: String,
     },
+    /// Tool execution start/end events — part of the SSE protocol,
+    /// emitted once tool streaming lands in chat_stream_handler.
+    #[allow(dead_code)]
     ToolStart {
         name: String,
     },
+    #[allow(dead_code)]
     ToolEnd {
         name: String,
         is_error: bool,

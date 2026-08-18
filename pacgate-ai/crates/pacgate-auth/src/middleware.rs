@@ -78,7 +78,7 @@ pub async fn soul_resolver_middleware(
     let soul = request
         .extensions()
         .get::<Claims>()
-        .and_then(|claims| resolve_soul(claims));
+        .and_then(resolve_soul);
 
     if let Some(ref s) = soul {
         debug!(

@@ -103,6 +103,11 @@ impl DocxBuilder {
     fn render_document_xml(&self) -> Result<String> {
         let mut body = String::new();
 
+        // Emit the document title (if set) as a top-level heading.
+        if !self.title.is_empty() && self.title != "Untitled" {
+            body.push_str(&para_with_style("Heading1", &xml_escape(&self.title)));
+        }
+
         for section in &self.sections {
             match section {
                 DocxSection::Heading { level, text } => {

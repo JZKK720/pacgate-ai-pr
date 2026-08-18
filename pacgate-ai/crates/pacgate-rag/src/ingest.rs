@@ -54,6 +54,7 @@ impl ChunkIngestor {
     /// - T2: completed project deliverables (retains client context)
     /// - T3: active project files (MatterId-scoped)
     /// - T4: special sensitive (strict isolation)
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_with_data_level(
         &self,
         tenant_id: &TenantId,

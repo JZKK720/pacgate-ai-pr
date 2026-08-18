@@ -159,15 +159,14 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
     let embedding_model = std::env::var("OLLAMA_EMBED_MODEL")
         .unwrap_or_else(|_| "nomic-embed-text".to_string());
-    let rag = match pacgate_rag::EmbeddingService::new(&ollama_url, &embedding_model) {
-        embed_svc => {
-            tracing::info!(
-                "RAG store initialized (ollama={}, model={})",
-                ollama_url,
-                embedding_model
-            );
-            Some(Arc::new(pacgate_rag::RagStore::new(pool.clone(), embed_svc)))
-        }
+    let embed_svc = pacgate_rag::EmbeddingService::new(&ollama_url, &embedding_model);
+    let rag = {
+        tracing::info!(
+            "RAG store initialized (ollama={}, model={})",
+            ollama_url,
+            embedding_model
+        );
+        Some(Arc::new(pacgate_rag::RagStore::new(pool.clone(), embed_svc)))
     };
 
     let dispatcher = Arc::new(

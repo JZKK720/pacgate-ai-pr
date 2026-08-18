@@ -6,7 +6,7 @@
 //! File layout convention (managed by the caller, typically `FsDocumentStore`):
 //!   {DATA_DIR}/tenants/{tenant_id}/matters/{matter_id}/docs/{name}_v{n}.docx
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pacgate_core::{Matter, MatterId, TenantId, UserId};
 use sqlx::{PgPool, Row};
@@ -20,25 +20,25 @@ pub use error::TenantError;
 pub use tenant_store::{MatterStore, TenantStore};
 
 /// Helper: compute the on-disk directory for a tenant.
-pub fn tenant_dir(data_dir: &PathBuf, tenant_id: &TenantId) -> PathBuf {
+pub fn tenant_dir(data_dir: &Path, tenant_id: &TenantId) -> PathBuf {
     data_dir.join("tenants").join(tenant_id.as_str())
 }
 
 /// Helper: compute the on-disk directory for a matter within a tenant.
-pub fn matter_dir(data_dir: &PathBuf, tenant_id: &TenantId, matter_id: &MatterId) -> PathBuf {
+pub fn matter_dir(data_dir: &Path, tenant_id: &TenantId, matter_id: &MatterId) -> PathBuf {
     tenant_dir(data_dir, tenant_id)
         .join("matters")
         .join(matter_id.as_str())
 }
 
 /// Helper: compute the docs directory for a matter.
-pub fn docs_dir(data_dir: &PathBuf, tenant_id: &TenantId, matter_id: &MatterId) -> PathBuf {
+pub fn docs_dir(data_dir: &Path, tenant_id: &TenantId, matter_id: &MatterId) -> PathBuf {
     matter_dir(data_dir, tenant_id, matter_id).join("docs")
 }
 
 /// Helper: compute the full path for a versioned document file.
 pub fn doc_path(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     tenant_id: &TenantId,
     matter_id: &MatterId,
     name: &str,
@@ -103,7 +103,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), TenantError> {
 
 /// Ensure the on-disk directory structure exists for a tenant + matter.
 pub fn ensure_dirs(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     tenant_id: &TenantId,
     matter_id: &MatterId,
 ) -> Result<(), TenantError> {
@@ -125,7 +125,7 @@ fn row_to_matter(row: &sqlx::postgres::PgRow) -> Matter {
         external_key: row.get("external_key"),
         persona_id: row
             .get::<Option<Uuid>, _>("persona_id")
-            .map(|u| pacgate_core::PersonaId(u)),
+            .map(pacgate_core::PersonaId),
         created_by: UserId(row.get::<Uuid, _>("created_by")),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),

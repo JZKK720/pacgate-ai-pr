@@ -1,0 +1,370 @@
+# Archive collection workflows
+# Derived from: 百宸完整项目及事项档案提交目录与整理说明_v1.0 + 百宸五大业务代表性项目及事项档案第一阶段认领清单_v1.0
+# Covers the 3-phase project archive collection process and the unified 00-08 directory structure.
+# IDs: 00000000-0000-0000-0000-000000001001 .. 00000000-0000-0000-0000-00000000100a
+
+- id: "00000000-0000-0000-0000-000000001001"
+  name: "项目档案初收（第一阶段）"
+  description: "Phase 1 archive collection - claim representative complete project/case/matter archives across the five business modules"
+  category: "archive_collection"
+  steps:
+    - name: "Search archive standards"
+      description: "Search for the unified archive directory standard and claim list"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate phase 1 collection plan"
+      description: "Generate the phase 1 archive collection plan with claimed projects per business module"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，生成第一阶段代表性项目及事项档案初收计划：
+
+          【业务模块：非诉/基金/律师日常通用/合规/诉讼】
+          【项目类型及建议数量：如非诉10套、基金7套、日常7套、合规8套、诉讼10套】
+
+          第一阶段目标：五大业务板块同时开展，以完整项目、案件或事项为提交单位，优先认领和提交具有代表性、完整性及复用价值的真实项目档案。
+
+          输出格式：
+          一、认领清单
+          | 项目包编号 | 代表性项目类型 | 选择和最低覆盖重点 | 优先级 | 建议数量 | 提供人 | 复核人 | 状态 |
+
+          二、认领和选择标准
+          - 每个项目类型原则上先认领一套质量最高、资料相对完整的项目
+          - 如存在中英文、境内外、交易结构、交易立场、程序阶段或法域上的实质差异，再补充第二套
+          - 各专业组可先提出一套主选项目和一套备选项目，由项目主办律师或专业负责人确认
+          - 优先选择法律关系清楚、文件版本可追溯、律师工作成果完整、已经交割/办结或主要阶段已经完成的项目
+
+          三、执行说明
+          - 同一项目包内的文件必须来自同一项目、案件或事项，不得拼接
+          - 不要求复制整个数据室、全部证据原件、所有邮件或重复过程文件
+          - 项目档案不要求一律脱敏（本地部署，T1-T4分级管理）；国家秘密不得提交
+
+          请使用华宇元典数据库检索相关档案整理规范。
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000001002"
+  name: "项目概况表编制"
+  description: "Generate the project overview table (项目概况表) for the 00_项目说明及文件目录 directory"
+  category: "archive_collection"
+  steps:
+    - name: "Generate project overview"
+      description: "Generate the project overview table with all required fields"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下项目信息，编制一份项目概况表（放置于00_项目说明及文件目录中）：
+
+          【项目包编号：如PN-NS-01】
+          【项目简称/内部编号】
+          【业务模块及项目类型：非诉/基金/日常通用/合规/诉讼】
+          【项目主要阶段：已交割/已办结/已申报/已裁判/已清算等】
+          【时间范围】
+          【客户及本所角色】
+          【法域和行业】
+          【语言】
+          【项目主办及复核人】
+          【资料使用等级：T1/T2/T3/T4】
+          【文件来源和权限】
+          【项目亮点和限制】
+
+          项目概况表字段（至少填写以下信息）：
+          | 项目概况字段 | 填写内容 |
+          | 项目包编号 | 使用认领清单中的PN编号 |
+          | 项目简称/内部编号 | 使用本所内部可识别名称；如需限制显示，可使用项目代号 |
+          | 业务模块及项目类型 | 非诉、基金、日常通用、合规或诉讼，并注明具体项目类型 |
+          | 项目主要阶段 | 已交割、已办结、已申报、已裁判、已清算或其他主要阶段 |
+          | 时间范围 | 项目主要工作起止时间及最终文件日期 |
+          | 客户及本所角色 | 说明本所代表的主体、交易/争议立场及主要职责 |
+          | 法域和行业 | 境内/境外法域、主要监管地区和行业 |
+          | 语言 | 中文、英文、双语或其他语言；说明哪个版本为控制版本 |
+          | 项目主办及复核人 | 主办律师、合伙人或专业复核人 |
+          | 资料使用等级 | T1、T2、T3或T4，并说明项目空间和访问限制 |
+          | 文件来源和权限 | 本所起草、审阅、交易对方/其他律所/中介提供及内部使用权限 |
+          | 项目亮点和限制 | 说明代表性、可复用价值、特殊结构、历史版本或使用限制 |
+
+          输出为Word文档（表格形式）。
+
+- id: "00000000-0000-0000-0000-000000001003"
+  name: "文件目录表编制"
+  description: "Generate the editable file directory table (文件目录表) with relative paths matching the actual submitted files"
+  category: "archive_collection"
+  steps:
+    - name: "Generate file directory"
+      description: "Generate the file directory table for the project archive"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下项目文件清单，编制一份可编辑的文件目录表：
+
+          【项目包编号】
+          【已收集的文件清单：文件名、所在目录、版本、语言等】
+
+          文件目录表字段：
+          | 序号 | 相对路径/文件名 | 文件类别 | 版本和日期 | 语言/法域/立场 | 文件来源 | 资料等级 | 对应模板编号 | 备注 |
+
+          要求：
+          1. 文件目录中的相对路径必须与实际提交文件一致
+          2. 一个文件可以对应多个模板编号
+          3. 不能确定编号时可以暂留空白，由汇总人员补充
+          4. 建议文件名格式为：目录编号_模板编号_文件名称_语言或立场_版本日期
+          5. 签署页、盖章版、监管提交版和裁判文书应保留PDF原件；同时存在可编辑版本时一并提交
+
+          输出为Word文档（表格形式）。
+
+- id: "00000000-0000-0000-0000-000000001004"
+  name: "统一目录结构整理（00-08）"
+  description: "Organize project files into the unified 00-08 archive directory structure"
+  category: "archive_collection"
+  steps:
+    - name: "Generate directory structure"
+      description: "Generate the unified 00-08 directory structure with file placement guidance"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下项目文件，按照统一提交目录（00-08）进行整理：
+
+          【项目包编号】
+          【项目类型：非诉/基金/日常通用/合规/诉讼】
+          【已收集的文件清单】
+
+          统一提交目录：
+          | 目录编号 | 建议目录名称 | 一般包含内容 | 第一阶段要求 |
+          | 00 | 项目说明及文件目录 | 项目概况表、档案目录、文件关系说明、语言/法域/立场、来源和权限说明 | 必交 |
+          | 01 | 核心律师工作成果 | DD报告、法律意见、备忘录、诉讼策略、调查报告、合规评估、风险清单及正式客户交付 | 必交，提交实际产生的主文件 |
+          | 02 | 主要协议及程序文书 | 交易协议、公司文件、基金文件、制度、起诉答辩、仲裁申请、律师函及其他核心文本 | 必交，按项目类型选择 |
+          | 03 | 关键修改稿及工作工具 | 代表性红线稿、问题清单、谈判要点、证据矩阵、时间线、交割清单、审查表和台账 | 有则提交，不要求保存全部过程稿 |
+          | 04 | 决策批准及监管文件 | 董事会/股东会/投委会文件、授权、备案、审批、申报、监管回复和听证材料 | 有则提交 |
+          | 05 | 签署、交割、庭审或执行文件 | 签署页、条件先决、交割证明、庭审提纲、代理词、执行和履行文件 | 有则提交 |
+          | 06 | 最终交付及Closing Binder/结案卷 | 最终签署版、closing binder、裁判/裁决、结案报告、清算报告或最终整改关闭文件 | 有则提交；不能代替01至05目录 |
+          | 07 | 关键事实和证据附件 | 理解律师结论所必要的公司、合同、权利、财务、监管来函或证据附件 | 精选提交，不复制整个数据室或全部案卷 |
+          | 08 | 覆盖映射及复核记录 | 对应模板编号、最佳基准建议、实质变体说明、质量复核、缺口和限制 | 由汇总人和复核人补充 |
+
+          整理规则：
+          1. 项目未产生或不适用的目录保留目录名称，并在项目说明中标注"未产生"或"不适用"
+          2. 不得从其他项目抽取文件补齐
+          3. 每份核心文件优先保留最终可编辑版和最终签署/提交版
+          4. 不要求保留所有v1-v20过程文件；无实质差异的重复版本、自动保存文件和同一内容的多份扫描件应当排除
+          5. 中英文文件应注明翻译关系、控制版本和当地律师复核情况
+
+          输出为Word文档，包含目录结构树和每个目录下的文件放置建议。
+
+- id: "00000000-0000-0000-0000-000000001005"
+  name: "模板覆盖缺口定向补收（第二阶段）"
+  description: "Phase 2 - targeted gap collection after phase 1 coverage check, only for uncovered or low-quality templates"
+  category: "archive_collection"
+  steps:
+    - name: "Search template coverage"
+      description: "Search for the existing legal document template list and coverage status"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate gap collection plan"
+      description: "Generate the phase 2 targeted gap collection plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，生成第二阶段模板覆盖缺口定向补收计划：
+
+          【第一阶段已提交的项目档案清单】
+          【现有十四份法律文件模板清单】
+          【第一阶段覆盖检查结果】
+
+          第二阶段目标：第一阶段覆盖检查完成后，只对未覆盖、质量不足或缺少重要实质变体的文件定向补收。
+
+          输出格式：
+          一、覆盖检查结果
+          | 模板编号 | 模板名称 | 覆盖状态（已覆盖/未覆盖/质量不足/缺少实质变体） | 缺口说明 |
+
+          二、定向补收清单
+          | 模板编号 | 缺口类型 | 建议补收来源（项目类型/业务模块） | 优先级 | 责任人 |
+
+          三、补收执行说明
+          - 只对未覆盖、质量不足或缺少重要实质变体的文件定向补收
+          - 不要求逐项寻找438种文件
+          - 优先从已有项目中提取实质变体（中英文、境内外、交易结构、交易立场、程序阶段或法域差异）
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000001006"
+  name: "最终验收与例外补缺"
+  description: "Final acceptance - determine adopted/alternative/historical/rejected materials and arrange exception collection for missing A-class files"
+  category: "archive_collection"
+  steps:
+    - name: "Generate acceptance report"
+      description: "Generate the final acceptance report with material disposition"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，生成最终验收报告：
+
+          【第一阶段已提交的项目档案】
+          【第二阶段补收结果】
+          【各项目包的文件清单和覆盖情况】
+
+          最终验收流程：
+          1. 确定采用文件、备选文件、历史样本、暂不采用材料和暂无成熟存量项目
+          2. 仅对仍缺少的A类关键文件安排例外补缺
+
+          输出格式：
+          一、验收结论
+          | 项目包编号 | 验收结论（采用/备选/历史样本/暂不采用/暂无成熟存量） | 说明 |
+
+          二、A类关键文件例外补缺清单
+          | 项目包编号 | 缺少的A类关键文件 | 补缺方式 | 责任人 | 期限 |
+
+          三、验收标准
+          - 采用文件：质量高、完整、可复用
+          - 备选文件：质量合格但存在重复或非最优
+          - 历史样本：具有历史参考价值
+          - 暂不采用：质量不足或权限不清
+          - 暂无成熟存量：该类型暂无成熟项目
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000001007"
+  name: "非诉项目档案整理"
+  description: "Organize non-litigation (非诉) project archives with module-specific completeness priorities"
+  category: "archive_collection"
+  steps:
+    - name: "Generate non-litigation archive plan"
+      description: "Generate the non-litigation project archive organization plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，整理非诉业务项目档案：
+
+          【项目包编号：如PN-NS-01至PN-NS-10】
+          【项目类型：境内VC融资/PE投资/股权并购/资产收购/跨境投资/跨境并购/VIE红筹/IPO/合资重组/银行结构化融资】
+          【已收集的文件清单】
+
+          非诉项目完整性重点：
+          除最终签署文件外，优先保留：
+          - 尽调报告/清单
+          - 法律分析
+          - 核心交易文件
+          - 代表性红线稿
+          - 内部及客户批准
+          - 监管申报
+          - 交割清单
+          - 条件先决
+          - 最终binder
+
+          跨境项目应同时说明：
+          - 法域分工
+          - 当地律师文件
+          - 中英文控制关系
+
+          输出格式：
+          一、项目档案清单（按00-08目录组织）
+          二、完整性检查（对照非诉项目完整性重点逐项核查）
+          三、缺口和限制说明
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000001008"
+  name: "基金项目档案整理"
+  description: "Organize fund (基金) project archives covering the full fund lifecycle"
+  category: "archive_collection"
+  steps:
+    - name: "Generate fund archive plan"
+      description: "Generate the fund project archive organization plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，整理基金业务项目档案：
+
+          【项目包编号：如PN-FD-01至PN-FD-07】
+          【项目类型：基金设立募集/管理人登记/项目投资/投后管理/退出/延期重组/清算注销】
+          【已收集的文件清单】
+
+          基金项目完整性重点（覆盖基金全生命周期）：
+          - 设立募集：架构、LPA、认购、适当性、风险揭示、KYC/AML、托管/监督、备案及募集留痕
+          - 管理人登记：登记/变更核查、法律意见、内部制度、人员和股东资料、反馈回复及最终办理文件
+          - 项目投资：基金立场DD、投资决策、交易协议、投委会、利益冲突、交割及投资限制核查
+          - 投后管理：投后报告、重大事项、LP/GP/LPAC会议、关联交易、估值、资本缴款和分配文件
+          - 退出：股权转让、回购、IPO退出方案、审批、交易文件、分配和税务
+          - 延期重组：延期、关键人、GP-led Secondary/Continuation Fund、份额转让、LP同意及利益冲突处理
+          - 清算注销：清算决议、LP通知、资产处置、分配、清算报告、协会注销和工商注销
+
+          输出格式：
+          一、项目档案清单（按00-08目录组织）
+          二、完整性检查（对照基金全生命周期各阶段逐项核查）
+          三、缺口和限制说明
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000001009"
+  name: "合规项目档案整理"
+  description: "Organize compliance (合规) project archives reflecting the risk-identification to closure loop"
+  category: "archive_collection"
+  steps:
+    - name: "Generate compliance archive plan"
+      description: "Generate the compliance project archive organization plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，整理合规业务项目档案：
+
+          【项目包编号：如PN-CP-01至PN-CP-08】
+          【项目类型：数据合规/合规体系/反商业贿赂/内部调查/监管应对/反垄断广告/制裁出口管制/行业Web3 ESG】
+          【已收集的文件清单】
+
+          合规项目完整性重点：
+          应体现"风险识别 - 法律分析 - 制度/文件 - 实施整改 - 复核关闭"的工作闭环。
+          技术报告、审计数据和监管来函可以作为事实附件，但不能替代律师评估、意见、制度和整改交付。
+
+          各类型重点：
+          - 数据合规：数据地图、合法性分析、PIA/出境评估、隐私文本、DPA、整改及必要申报文件
+          - 合规体系：风险评估、合规方案、制度体系、职责权限、审查机制、培训、实施和验收
+          - 反商业贿赂：风险评估、制度、第三方尽调、审批表单、合同条款、培训和监测整改
+          - 内部调查：调查授权、证据保全、访谈、证据索引、调查报告、责任处理、整改及关闭验证
+          - 监管应对：应对方案、现场手册、监管回复、证据提交、自查整改、听证/申辩和结案文件
+
+          输出格式：
+          一、项目档案清单（按00-08目录组织）
+          二、完整性检查（对照"风险识别-法律分析-制度文件-实施整改-复核关闭"闭环逐项核查）
+          三、缺口和限制说明
+
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-00000000100a"
+  name: "诉讼案件档案整理"
+  description: "Organize litigation/arbitration/enforcement (诉讼) case archives reflecting the full case chain"
+  category: "archive_collection"
+  steps:
+    - name: "Generate litigation archive plan"
+      description: "Generate the litigation case archive organization plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下信息，整理诉讼、仲裁和执行案件档案：
+
+          【项目包编号：如PN-LT-01至PN-LT-10】
+          【案件类型：商事合同/公司股权/商事仲裁/保全执行/建设工程/知识产权/劳动/行政/刑民交叉/婚姻家事】
+          【已收集的文件清单】
+
+          诉讼案件完整性重点：
+          应体现"案件评估 - 策略 - 程序文书 - 证据组织 - 庭审/听证 - 裁判/裁决 - 执行/履行 - 结案复盘"的主要链条。
+          判决书、裁决书或证据原件不能单独作为完整案件档案。
+
+          各类型重点：
+          - 商事合同：初步评估、诉讼策略、起诉/答辩、证据、保全、庭审、代理词、裁判和复盘
+          - 公司股权：主体和法律关系图、公司治理证据、股权/决议争议、保全、程序及实体文件
+          - 商事仲裁：仲裁条款分析、仲裁申请/答辩、仲裁员程序、证据、庭审、裁决及执行衔接
+          - 保全执行：财产线索、保全申请、担保、执行申请、查控、异议/复议、分配及终本恢复
+          - 建设工程：合同、签证、结算、工期、质量、鉴定、造价证据、庭审和裁判文件
+          - 知识产权：权利稳定性、侵权比对、证据保全、行为保全、损害计算及专业庭审文件
+          - 劳动：仲裁前核查、仲裁请求/答辩、工资工时和解除证据、庭审及诉讼衔接
+          - 行政：行政程序审查、复议、诉讼、证据、听证/庭审、裁判和后续执行
+          - 刑民交叉：管辖和程序判断、证据衔接、报案/控告、刑民程序协调、风险分析和应对文件
+          - 婚姻家事：财产和家庭关系梳理、诉讼请求、证据、保全、调解、庭审及履行安排
+
+          输出格式：
+          一、案件档案清单（按00-08目录组织）
+          二、完整性检查（对照"案件评估-策略-程序文书-证据组织-庭审-裁判-执行-复盘"链条逐项核查）
+          三、缺口和限制说明
+
+          输出为Word文档。

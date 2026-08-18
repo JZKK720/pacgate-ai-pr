@@ -69,10 +69,10 @@ pub async fn list_workflows(
             let category_match = query
                 .category
                 .as_ref()
-                .map_or(true, |cat| &w.category == cat);
+                .is_none_or(|cat| &w.category == cat);
 
             // Search filter (case-insensitive substring match on name + description)
-            let search_match = search_lower.as_ref().map_or(true, |s| {
+            let search_match = search_lower.as_ref().is_none_or(|s| {
                 w.name.to_lowercase().contains(s) || w.description.to_lowercase().contains(s)
             });
 
@@ -100,7 +100,7 @@ pub async fn get_workflow(
 
     let workflow_id: pacgate_core::WorkflowId = id
         .parse()
-        .map_err(|e| ApiError::bad_request(&format!("invalid workflow id: {e}")))?;
+        .map_err(|e| ApiError::bad_request(format!("invalid workflow id: {e}")))?;
 
     let workflow = state
         .config
@@ -218,7 +218,7 @@ pub async fn execute_workflow(
 
     let workflow_id: pacgate_core::WorkflowId = id
         .parse()
-        .map_err(|e| ApiError::bad_request(&format!("invalid workflow id: {e}")))?;
+        .map_err(|e| ApiError::bad_request(format!("invalid workflow id: {e}")))?;
     let tenant_id = claims_to_tenant_id(&claims)?;
     let matter_id: MatterId = req
         .matter_id

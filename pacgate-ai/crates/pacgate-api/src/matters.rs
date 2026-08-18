@@ -30,7 +30,7 @@ fn claims_to_ids(claims: &Claims) -> Result<(TenantId, UserId), ApiError> {
 }
 
 fn matter_memory_path(
-    data_dir: &std::path::PathBuf,
+    data_dir: &std::path::Path,
     tenant_id: &TenantId,
     matter_id: &MatterId,
 ) -> std::path::PathBuf {
@@ -68,7 +68,7 @@ pub async fn create_matter(
         .persona_id
         .as_deref()
         .and_then(|s| s.parse::<uuid::Uuid>().ok())
-        .map(|u| pacgate_core::PersonaId(u));
+        .map(pacgate_core::PersonaId);
 
     let matter = state
         .matter_store

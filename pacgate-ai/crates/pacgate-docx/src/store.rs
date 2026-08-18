@@ -374,6 +374,7 @@ impl FsDocumentStore {
     }
 
     /// Insert a document metadata row and return the constructed `Document`.
+    #[allow(clippy::too_many_arguments)]
     async fn insert_doc_row(
         &self,
         matter_id: &MatterId,

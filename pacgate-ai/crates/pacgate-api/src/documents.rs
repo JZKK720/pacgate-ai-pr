@@ -297,6 +297,9 @@ pub async fn accept_changes(
 
 #[derive(Debug, Deserialize)]
 pub struct TabularReviewRequest {
+    /// Matter scope for the review — part of the request contract;
+    /// consumed once the tabular review engine is wired.
+    #[allow(dead_code)]
     pub matter_id:    String,
     pub document_ids: Vec<String>,
     pub columns:      Vec<String>,
