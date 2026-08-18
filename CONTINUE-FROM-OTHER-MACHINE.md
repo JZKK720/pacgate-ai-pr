@@ -64,14 +64,16 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-17, session 12)
+## Current status (as of 2026-08-18, session 13)
 
 ### Done — Phase 1 critical path complete + Sessions 5-12 enrichment
 
 - Full Rust workspace compiles cleanly (`cargo check` passes)
-- 15 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
+- 23 smoke tests pass (`cargo test -p pacgate-api --test smoke`)
+- 5 agent tests pass (`cargo test -p pacgate-agent`)
 - 3 YAML loader tests pass (`cargo test -p pacgate-workflow --test yaml_loader`)
-- Integration test scaffold added (`cargo test -p pacgate-api --test integration -- --ignored`, requires Postgres at `localhost:5433/pacgate_test`)
+- 8 TS adapter tests pass (`npm test` in `pacgate-adapters/typescript`)
+- 2 integration tests pass (`cargo test -p pacgate-api --test integration -- --ignored`, requires Postgres at `localhost:5433/pacgate_test`)
 - Storage layer: FsDocumentStore + MatterStore + TenantStore + SQL migrations (**4 migrations**)
 - Auth: JWT + argon2 + login/register + middleware + soul_id in Claims + **SOUL resolver middleware** (resolves soul_id → SoulPersona at request time, injects into request extensions)
 - API routes: matters, documents, chat, workflows, auth — all wired to real stores, **auth middleware now applied to protected routes**
@@ -130,9 +132,15 @@ pacgate-ai-pr/
 28. ~~Add archive collection workflow templates~~ — DONE. Created `pacgate-ai/workflows/archive_collection.yaml` with 10 workflows covering the 3-phase archive collection process (初收/缺口定向补收/最终验收), the unified 00-08 directory structure, project overview + file directory tables, and 4 business-module-specific archive organization (非诉/基金/合规/诉讼). Derived from 百宸完整项目及事项档案提交目录与整理说明_v1.0 + 认领清单_v1.0. Total YAML workflows now 220 across 15 files.
 29. ~~Add international connectors~~ — DONE. 4 new connectors: Vaquill (US legal, API key), EUR-Lex (EU law, public REST), Ansvar (EU compliance MCP, API key), OpenCorporates (offshore corporate registry, API key). Total connectors now: 11 (4 Chinese + 7 international). Env vars: `VAQUILL_API_KEY`, `ANSVAR_API_KEY`, `OPENCORPORATES_API_KEY`. EUR-Lex is free (no key). ConnectorRegistry updated: 4 entries marked `implemented: true`.
 30. ~~Wire DD configs into WorkflowExecutor~~ — DONE. `ExecuteWorkflowRequest` now accepts optional `dd_domain`, `WorkflowExecutor::execute()` accepts optional `DdAgentConfig`, and DD workflows inject a third system-prompt layer: `persona_prompt + dd_config_prompt + step_prompt`. Added helpers: `DdAgentConfig::compose_system_prompt()`, `dd_domain_from_str()`, `dd_config_for_domain()`. Validated with 23 API smoke tests + 5 pacgate-agent tests.
-31. **qm TypeScript adapter** — Phase 2 collaboration runtime
+31. **qm TypeScript adapter** — Phase 2 collaboration runtime (adapter builds + 8 unit tests pass; live qm wiring is Phase 2)
 32. ~~Run integration test~~ — DONE. Both integration tests pass against real Postgres (see task 11).
 33. ~~Wire DataLevel into API~~ — DONE. `GET /api/kb/search?q=...&matter_id=...&max_data_level=T3` (internal RAG with T1-T4 filtering, default T3). `GET /api/search?data_level=T2` (external search tagging). Document upload accepts `data_level` multipart field (T1-T4, default T2). `RagStore` added to `AppState` (optional, requires Postgres). 20 smoke tests pass (5 new: DataLevel parsing, ArchiveDirectory 9-dirs, SearchFilter data_level, ConnectorRegistry 27 entries, DD configs 9 domains).
+34. ~~Build + push GHCR images~~ — DONE. Two images built and pushed to `ghcr.io/jzkk720`:
+    - `pacgate-api:0.1.0` (Rust multi-stage, `pacgate-ai/Dockerfile`, Rust 1.94-bookworm). Digest: `sha256:6505fa78...`
+    - `deer-flow-pacgate:0.1.0` (wrapper on bytedance deer-flow-backend, `deploy/deer-flow-pacgate/Dockerfile`). Digest: `sha256:16b35c06...`
+    - Dockerfile fix: bumped Rust from 1.81 to 1.94 (zeroize_derive 1.5.0 needs edition2024 = Rust 1.85+; time 0.3.55 + idna_adapter 1.2.2 need rustc 1.88+). Removed `PACGATE_JWT_SECRET` default from ENV (Docker SecretsUsedInArgOrEnv warning).
+    - qm-pacgate image NOT built: `deploy/qm-pacgate/` is a checked-in QM deployment directory (not a standalone Dockerfile). The qm image is produced by `qm sandbox publish` / `qm up`, not by `docker build`. See `deploy/DEPLOYMENT-GUIDE.md` §1.3.
+    - Verification: both images pullable from GHCR (`docker pull` confirmed).
 
 ### Important reminders
 
@@ -153,7 +161,7 @@ pacgate-ai-pr/
 ```powershell
 cd pacgate-ai
 cargo check                    # must pass
-cargo test -p pacgate-api --test smoke  # 15 tests must pass
+cargo test -p pacgate-api --test smoke  # 23 tests must pass
 cargo clippy                   # check for new warnings
 git add -A
 git commit -m "feat: <description>"

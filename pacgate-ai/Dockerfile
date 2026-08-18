@@ -2,7 +2,8 @@
 # Produces a slim image with just the pacgate-server binary.
 
 # ── Stage 1: Builder ──────────────────────────────────────────────────────────
-FROM rust:1.81-bookworm AS builder
+# Rust 1.88+ is required: time 0.3.55 + idna_adapter 1.2.2 need rustc 1.88.
+FROM rust:1.94-bookworm AS builder
 
 WORKDIR /build
 
@@ -39,7 +40,6 @@ RUN mkdir -p /data
 ENV DATABASE_URL=postgres://pacgate:pacgate@pacgate-db:5432/pacgate
 ENV DATA_DIR=/data/tenants
 ENV RUST_LOG=info
-ENV PACGATE_JWT_SECRET=change-me-in-production
 ENV PACGATE_DEFAULT_TENANT=default-firm
 
 EXPOSE 8080
