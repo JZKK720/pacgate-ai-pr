@@ -1,0 +1,236 @@
+# M&A and due diligence workflows
+# Derived from: 非诉律师实用Prompts指南.md §二跨境并购 §三境内并购
+# Covers cross-border M&A, domestic M&A, antitrust filing, state-owned asset rules.
+
+- id: "00000000-0000-0000-0000-000000000401"
+  name: "跨境并购交易结构设计"
+  description: "Design cross-border M&A transaction structure with tax, regulatory, and deal protection analysis"
+  category: "cross_border_ma"
+  steps:
+    - name: "Search regulatory requirements"
+      description: "Search for cross-border investment regulations and approval requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate structure memo"
+      description: "Generate transaction structure design memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下跨境并购交易设计交易结构：
+          交易概述：【买方/卖方/标的/金额/行业】
+
+          输出格式：
+          一、交易概述
+          二、交易结构方案（建议提供2-3个方案比较）
+          - 方案A：直接股权收购
+          - 方案B：通过SPV间接收购
+          - 方案C：资产收购
+          每个方案分析：
+          a. 税务影响（买方/卖方）
+          b. 监管审批需求（ODI/FDI/反垄断/国家安全审查）
+          c. 交易时间与复杂度
+          d. 风险分配
+
+          三、推荐方案与理由
+          四、交易保护机制设计
+          -分手费/反向分手费
+          -锁定期/排他期
+          -重大不利变化条款
+          -特定条件先决
+
+          五、监管审批路径
+          六、时间表与里程碑
+          七、风险提示
+
+- id: "00000000-0000-0000-0000-000000000402"
+  name: "SPA核心条款审阅"
+  description: "Review Share Purchase Agreement core clauses from buyer or seller perspective"
+  category: "cross_border_ma"
+  steps:
+    - name: "Read SPA"
+      description: "Read the Share Purchase Agreement"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Find key clauses"
+      description: "Search for critical SPA clauses"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "purchase price"
+          - "closing conditions"
+          - "representations and warranties"
+          - "indemnification"
+          - "non-compete"
+          - "earn-out"
+          - "MAC clause"
+          - "termination"
+
+    - name: "Generate SPA review"
+      description: "Generate SPA clause review with risk levels and negotiation points"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请从【买方/卖方】角度审阅SPA核心条款：
+
+          审阅条款清单：
+          1. 交易对价（固定/调整机制/Earn-out）
+          2. 交割条件（CP清单的合理性）
+          3. 陈述与保证（范围、存续期、知情标准）
+          4. 赔偿条款（上限、篮子、存续期、特别赔偿）
+          5. 非竞争条款（范围、期限、地域）
+          6. 重大不利变化（MAC）条款
+          7. 锁箱机制或交割账目调整机制
+          8. 分手费/反向分手费
+          9. 知情同意与披露程序
+          10. 争议解决
+
+          每条标注：
+          | 条款 | 风险等级 | 买方视角 | 卖方视角 | 谈判建议 |
+
+- id: "00000000-0000-0000-0000-000000000403"
+  name: "经营者集中申报"
+  description: "Antitrust merger filing analysis — thresholds, procedures, and risk assessment"
+  category: "antitrust"
+  steps:
+    - name: "Search antitrust thresholds"
+      description: "Search for current antitrust filing thresholds and procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate filing analysis"
+      description: "Generate antitrust filing analysis with thresholds and procedures"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下交易进行经营者集中申报分析：
+          交易概述：【参与经营者、营业额、交易类型】
+
+          输出格式：
+          一、是否构成经营者集中
+          二、营业额计算（全球/中国境内）
+          - 标注当前有效的申报门槛
+          - 营业额计算口径与排除项
+
+          三、是否需要申报
+          - 中国申报门槛分析
+          - 境外申报义务（如美国HSR/欧盟EUMR/其他法域）
+
+          四、申报程序
+          - 申报材料清单
+          - 简易程序适用性
+          - 预计审查时间
+
+          五、竞争分析
+          - 相关市场界定
+          - 市场集中度分析
+          - 单边效应/协同效应评估
+
+          六、风险评级与建议
+          - 未申报风险（罚款/责令恢复）
+          - 附条件批准可能性
+          - 建议时间表
+
+          注意：申报门槛、期限等数字以检索到的现行有效规定为准，标注来源。
+
+- id: "00000000-0000-0000-0000-000000000404"
+  name: "国资并购专项合规审查"
+  description: "State-owned asset M&A compliance review — approval procedures, valuation, public trading requirements"
+  category: "domestic_ma"
+  steps:
+    - name: "Search SOA regulations"
+      description: "Search for state-owned asset transfer regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance memo"
+      description: "Generate SOA compliance review memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下国资并购交易进行合规审查：
+          交易概述：【转让方/受让方/标的企业/交易方式】
+
+          审查清单：
+          一、审批权限与程序
+          - 国资监管机构审批层级
+          - 内部决策程序（党委会/董事会/股东会）
+          - 审批文件清单
+
+          二、资产评估
+          - 评估机构资质要求
+          - 评估方法选择（收益法/市场法/资产基础法）
+          - 评估结果核准/备案
+
+          三、交易方式
+          - 是否需要进场交易（产权交易所）
+          - 竞价程序合规性
+          - 非公开协议转让条件
+
+          四、职工安置
+          - 职工代表大会程序
+          - 安置方案审批
+
+          五、价款支付与交割
+          - 付款期限与方式
+          - 交割条件
+
+          六、违规风险
+          - 未批先签风险
+          - 评估违规风险
+          - 损失追责
+
+- id: "00000000-0000-0000-0000-000000000405"
+  name: "尽职调查报告摘要"
+  description: "Generate a due diligence report summary from reviewed documents with risk grading"
+  category: "due_diligence"
+  steps:
+    - name: "List matter documents"
+      description: "List all documents in the matter for DD review"
+      tool: "list_documents"
+      parameters: {}
+
+    - name: "Search for issues"
+      description: "Search documents for red flags and issues"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "诉讼"
+          - "行政处罚"
+          - "欠税"
+          - "社保欠缴"
+          - "权属瑕疵"
+          - "未决事项"
+
+    - name: "Generate DD summary"
+      description: "Generate due diligence report summary with risk grading"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据已审阅的文件生成尽职调查报告摘要：
+
+          输出格式（11章结构）：
+          一、交易概述
+          二、公司设立与存续
+          三、股权结构与公司治理
+          四、业务资质与合规
+          五、资产权属
+          六、知识产权
+          七、重大合同
+          八、劳动合规
+          九、税务合规
+          十、诉讼与争议
+          十一、风险提示与建议
+
+          每章包含：
+          - 核心发现（结论先行）
+          - 风险定级：P0(必须解决) / P1(重大风险) / P2(中等风险) / P3(低风险)
+          - 每条发现标注三态：有问题/无问题/资料不足
+          - 资料不足项不得推断补齐
+          - 每条标注来源文件页码/条款号
+
+          免责声明：本报告为供律师复核的草稿，不构成法律结论。

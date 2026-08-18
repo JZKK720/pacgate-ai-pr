@@ -1,0 +1,433 @@
+# Compliance lawyer workflows
+# Derived from: 合规律师实用Prompts指南.md
+# Covers data compliance, AI/LLM compliance, trade compliance, gaming, Web3, antitrust, ESG.
+
+- id: "00000000-0000-0000-0000-000000000901"
+  name: "数据跨境传输评估"
+  description: "Cross-border data transfer compliance assessment — determine exit path (security review/SCC/certification)"
+  category: "data_compliance"
+  steps:
+    - name: "Search data transfer regulations"
+      description: "Search for current cross-border data transfer regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate assessment checklist"
+      description: "Generate cross-border data transfer compliance assessment"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请生成一份个人信息出境合规评估清单，用于判断应采用哪种出境路径。
+
+          评估框架：
+          1. 出境路径选择决策树：
+             - 路径A：国家网信办数据出境安全评估（CIIO/100万人以上/累计10万人以上）
+             - 路径B：订立个人信息出境标准合同（SCC）（非CIIO、未达阈值）
+             - 路径C：个人信息保护认证
+          2. 出境前评估内容：
+             - 合法性、正当性、必要性
+             - 境外接收方数据保护水平评估
+             - 个人信息主体权益保障机制
+          3. 所需文件清单
+
+          引用《数据出境安全评估办法》《个人信息出境标准合同办法》《促进和规范数据跨境流动规定》等最新规定。
+          标注条文号、效力状态。检索不到的明确说明，严禁编造。
+
+- id: "00000000-0000-0000-0000-000000000902"
+  name: "数据合规尽职调查"
+  description: "Data compliance due diligence checklist for M&A and investment scenarios"
+  category: "data_compliance"
+  steps:
+    - name: "Generate DD checklist"
+      description: "Generate data compliance DD checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请编制一份企业数据合规尽职调查清单，适用于投融资/并购场景。
+
+          尽调模块：
+          1. 数据处理合法性基础（同意机制、敏感个人信息、未成年人）
+          2. 隐私政策与告知机制（完整性、可读性、更新告知）
+          3. 数据分类分级（个人信息/重要数据/核心数据）
+          4. 数据安全管理制度（DPO、访问控制、加密、应急预案）
+          5. 数据共享与委托（第三方协议、受托方资质）
+          6. 数据跨境传输（出境场景、合规路径）
+          7. 个人信息保护影响评估（PIA）
+          8. 数据安全事件历史
+
+          每项标注【必须核查】/【建议核查】/【如有则核查】。
+          输出清单表格格式。
+
+- id: "00000000-0000-0000-0000-000000000903"
+  name: "GDPR与PIPL对比分析"
+  description: "Comparative analysis of GDPR and PIPL — scope, lawful basis, rights, cross-border transfer"
+  category: "data_compliance"
+  steps:
+    - name: "Search GDPR and PIPL"
+      description: "Search for GDPR and PIPL provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate comparison"
+      description: "Generate GDPR vs PIPL comparison table"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对GDPR与PIPL进行系统对比分析。
+
+          对比维度（输出对比矩阵）：
+          1. 适用范围与域外效力
+          2. 个人信息/个人数据的定义
+          3. 处理合法性基础（6+1种）
+          4. 同意机制要求
+          5. 敏感数据特殊保护
+          6. 数据主体权利（知情、访问、更正、删除、可携权等）
+          7. 数据控制者/处理者义务
+          8. 数据保护影响评估（DPIA/PIA）
+          9. 数据跨境传输规则
+          10. 监管机构与执法
+          11. 罚款与法律责任
+
+          每个维度标注：
+          - GDPR条文号
+          - PIPL条文号
+          - 主要差异点
+          - 对企业的实务影响
+
+- id: "00000000-0000-0000-0000-000000000904"
+  name: "隐私政策审阅"
+  description: "Review privacy policy for compliance with PIPL, GDPR, and industry-specific requirements"
+  category: "data_compliance"
+  steps:
+    - name: "Read privacy policy"
+      description: "Read the privacy policy document"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate review report"
+      description: "Generate privacy policy compliance review"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请审阅以下隐私政策，对照《个人信息保护法》逐条检查合规性。
+
+          审阅维度：
+          1. 信息收集（收集范围是否最小必要、是否明示目的）
+          2. 使用与共享（是否超范围使用、第三方共享是否告知）
+          3. 存储与保护（存储期限、安全措施）
+          4. 用户权利（查询、更正、删除、撤回同意、投诉渠道）
+          5. 敏感个人信息特殊保护（单独同意、明确告知）
+          6. 未成年人保护（14岁以下需监护人同意）
+          7. 跨境传输（出境路径、用户告知）
+          8. Cookie与自动化决策（告知与拒绝机制）
+          9. 政策更新机制
+          10. 可读性评估
+
+          每项标注：
+          - ✅合规 / ⚠️部分合规 / ❌不合规 / ❓需进一步信息
+          - 问题描述与修改建议
+          - 引用具体PIPL条文号
+
+- id: "00000000-0000-0000-0000-000000000905"
+  name: "算法合规自评估"
+  description: "Algorithm compliance self-assessment — registration, deep synthesis, generative AI requirements"
+  category: "ai_compliance"
+  steps:
+    - name: "Search algorithm regulations"
+      description: "Search for algorithm recommendation and deep synthesis regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate self-assessment"
+      description: "Generate algorithm compliance self-assessment report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下算法应用场景生成合规自评估报告：
+          算法类型：【推荐算法/深度合成/生成式AI/自动化决策】
+
+          自评估维度：
+          1. 算法备案
+          - 是否需要向网信办备案
+          - 备案信息完整性
+          - 算法安全自评估报告
+
+          2. 算法机制机理说明
+          - 算法基本原理
+          - 数据输入与输出
+          - 模型训练数据来源合规性
+
+          3. 用户权益保护
+          - 用户选择权（关闭推荐/退出机制）
+          - 未成年人保护
+          - 老年人保护
+          - 劳动者权益保护
+
+          4. 信息内容安全
+          - 违法不良信息识别与处置
+          - 内容审核机制
+          - 人工干预与监督
+
+          5. 算法透明度与可解释性
+          - 用户告知
+          - 算法决策说明
+
+          6. 数据安全与个人信息保护
+          - 训练数据合法性
+          - 用户画像合规性
+
+          每项标注合规状态与整改建议。引用具体法规条文号。
+
+- id: "00000000-0000-0000-0000-000000000906"
+  name: "AI产品备案与许可路径分析"
+  description: "China AI product compliance — filing and licensing path analysis for generative AI services"
+  category: "ai_compliance"
+  steps:
+    - name: "Search AI regulations"
+      description: "Search for generative AI service regulations and filing requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance path"
+      description: "Generate AI product compliance path analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下AI产品分析中国合规备案与许可路径：
+          产品类型：【生成式AI服务/深度合成服务/算法推荐服务】
+          应用场景：【文本生成/图像生成/代码生成/智能客服/内容推荐】
+
+          合规路径分析：
+          1. 适用法规识别
+          - 《生成式人工智能服务管理暂行办法》
+          - 《互联网信息服务深度合成管理规定》
+          - 《算法推荐管理规定》
+          - 引用具体条文号
+
+          2. 备案/许可义务
+          - 算法备案（网信办）
+          - 深度合成备案
+          - 生成式AI备案
+          - 大模型安全评估
+          - 安全自评估报告
+
+          3. 训练数据合规
+          - 训练数据来源合法性
+          - 个人信息保护
+          - 知识产权合规
+          - 数据标注合规
+
+          4. 内容安全
+          - 违法内容识别与处置
+          - 内容审核机制
+          - 用户反馈处理
+
+          5. 用户保护
+          - 标识要求（AI生成内容标识）
+          - 用户协议与告知
+          - 未成年人保护
+
+          输出合规路径时间表和所需文件清单。标注条文号和效力状态。
+
+- id: "00000000-0000-0000-0000-000000000907"
+  name: "出口管制合规审查"
+  description: "Export control compliance review — EAR/BIS, dual-use items, entity list screening"
+  category: "trade_compliance"
+  steps:
+    - name: "Search export control regulations"
+      description: "Search for export control regulations (EAR, EU, China)"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate export control review"
+      description: "Generate export control compliance review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下出口交易进行出口管制合规审查：
+          交易概述：【产品/技术/目的地/最终用户/最终用途】
+
+          审查维度：
+          1. 产品分类
+          - ECCN编码判定（EAR管制理由：AT/NS/CC/MT等）
+          - 中国出口管制清单对应
+          - 双用途物项 vs 军用物项
+
+          2. 目的地限制
+          - 禁运国家/地区
+          - 许可证要求国家分类
+          - 国别组别分析
+
+          3. 最终用户筛查
+          - Entity List筛查
+          - SDN List筛查
+          - Denied Persons List筛查
+          - Unverified List筛查
+          - 中国反制裁清单
+
+          4. 最终用途审查
+          - 军事用途风险
+          - 大规模杀伤性武器扩散风险
+          - 其他受限用途
+
+          5. 许可证分析
+          - 是否需要许可证
+          - 许可证例外适用性
+          - 申请流程与时间
+
+          6. 内部合规建议
+          - 分级管控措施
+          - 审批流程
+          - 记录保存
+
+          引用EAR Part 730-774、中国《出口管制法》等具体条文。
+
+- id: "00000000-0000-0000-0000-000000000908"
+  name: "反垄断合规审查"
+  description: "Antitrust compliance review — monopoly agreements, abuse of dominance, merger control"
+  category: "antitrust"
+  steps:
+    - name: "Search antitrust law"
+      description: "Search for Anti-Monopoly Law provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate antitrust review"
+      description: "Generate antitrust compliance review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下企业行为进行反垄断合规审查：
+          企业信息：【行业、市场份额、业务模式】
+          审查事项：【垄断协议/滥用市场支配地位/经营者集中】
+
+          审查维度：
+          1. 相关市场界定
+          - 相关商品市场
+          - 相关地域市场
+          - 市场份额计算
+
+          2. 垄断协议风险
+          - 横向垄断协议（价格、产量、分割市场）
+          - 纵向垄断协议（转售价格维持、独占交易）
+          - 安全港规则适用性
+
+          3. 滥用市场支配地位
+          - 市场支配地位认定标准
+          - 不公平定价
+          - 限定交易
+          - 拒绝交易
+          - 搭售/差别待遇
+
+          4. 经营者集中申报
+          - 营业额门槛分析
+          - 申报义务判断
+          - 简易程序适用性
+
+          5. 合规建议
+          - 分级风险提示
+          - 整改建议
+          - 内部合规制度建议
+
+          引用《反垄断法》具体条文号。标注效力状态与检索来源。
+
+- id: "00000000-0000-0000-0000-000000000909"
+  name: "ESG合规报告"
+  description: "ESG compliance report — environmental, social, governance assessment with regulatory citations"
+  category: "esg_compliance"
+  steps:
+    - name: "Search ESG regulations"
+      description: "Search for ESG disclosure and compliance requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate ESG report"
+      description: "Generate ESG compliance assessment report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下企业生成ESG合规评估报告：
+          企业信息：【行业、规模、上市状态】
+          评估范围：【环境/社会/治理 全部或专项】
+
+          评估维度：
+          一、环境（E）
+          1. 环境影响（排污、碳排放、资源消耗）
+          2. 环境合规（环评、排污许可、危险废物）
+          3. 气候变化（碳核查、碳交易、减排目标）
+          4. 绿色经营（绿色采购、清洁生产）
+
+          二、社会（S）
+          1. 劳工权益（劳动合同、社保、安全生产）
+          2. 供应链管理（供应商ESG要求）
+          3. 社区关系
+          4. 消费者保护（产品质量、消费者投诉）
+          5. 数据隐私保护
+
+          三、治理（G）
+          1. 公司治理结构
+          2. 反腐败与合规
+          3. 信息披露（ESG报告/社会责任报告）
+          4. 风险管理
+          5. 股东权益保护
+
+          每项标注：
+          - 适用法规及条文号
+          - 合规状态（✅/⚠️/❌/❓）
+          - 风险等级（🔴/🟡/🟢）
+          - 整改建议
+
+- id: "00000000-0000-0000-0000-000000000910"
+  name: "合规体系搭建"
+  description: "Corporate compliance system design — policies, procedures, training, reporting mechanisms"
+  category: "compliance_system"
+  steps:
+    - name: "Search compliance guidelines"
+      description: "Search for compliance management system standards (ISO 37301 etc.)"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance system"
+      description: "Generate corporate compliance system design"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业设计合规体系搭建方案：
+          企业信息：【行业、规模、业务范围、已有合规基础】
+
+          方案结构：
+          一、合规体系框架
+          1. 合规方针与承诺
+          2. 合规组织架构（合规委员会/合规负责人/合规部门）
+          3. 合规风险识别与评估机制
+
+          二、核心合规制度（不少于以下）
+          1. 反商业贿赂与反腐败制度
+          2. 反垄断合规制度
+          3. 数据合规制度
+          4. 劳动合规制度
+          5. 税务合规制度
+          6. 环保合规制度
+          7. 进出口贸易合规制度
+          8. 信息披露合规制度（上市公司）
+
+          三、合规运行机制
+          1. 合规审查流程（合同/决策/项目审批）
+          2. 合规培训计划
+          3. 合规举报与调查机制
+          4. 合规审计与监督
+          5. 第三方合规管理
+
+          四、合规文化建设
+          五、合规信息化工具
+          六、实施时间表
+
+          每项标注适用法规依据。输出为可直接使用的制度框架文件。

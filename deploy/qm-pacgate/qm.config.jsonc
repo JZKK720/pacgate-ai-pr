@@ -40,10 +40,10 @@
   // Extra directories of SKILL.md files, mounted into the agent.
   "skills": [],
 
-  // Non-secret env overrides, per service. Keep the checked-in docker target in
-  // local smoke mode; switch HARNESS back to "pi" only when real model secrets
-  // and a public core URL are available.
-  "env": { "core": { "HARNESS": "mock", "SANDBOX_BACKEND": "local" } },
+  // Non-secret env overrides, per service. The pi harness connects to
+  // Ollama for local model inference. MODEL_NAME selects which Ollama model
+  // to use. Model credentials (MODEL_API_KEY) go in .env, not here.
+  "env": { "core": { "HARNESS": "pi", "SANDBOX_BACKEND": "local", "MODEL_BASE_URL": "http://host.docker.internal:11434/v1", "MODEL_NAME": "deepseek-v4-flash:0731-cloud" } },
 
   // The Fly app agents execute in. The core boots the immutable sandbox image
   // recorded by `qm sandbox publish`.

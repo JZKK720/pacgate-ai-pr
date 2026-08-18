@@ -1,0 +1,182 @@
+# Compliance and corporate governance workflows
+# Derived from: 合规律师实用Prompts指南.md and 非诉律师实用Prompts指南.md §六 公司法日常
+
+- id: "00000000-0000-0000-0000-000000000601"
+  name: "合规审查报告"
+  description: "Compliance audit report — identify violations, assess risk, recommend remediation"
+  category: "compliance"
+  steps:
+    - name: "Search compliance requirements"
+      description: "Search for applicable compliance regulations and standards"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance report"
+      description: "Generate compliance audit report with findings and remediation"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下事项进行合规审查：
+          审查范围：【如：数据合规/反腐败/反垄断/行业监管】
+          审查对象：【公司/业务线/项目】
+
+          输出格式：
+          一、审查范围与方法
+          二、适用法律法规清单
+          - 法律名称/条文号/效力状态/检索来源
+          - 合规义务清单
+
+          三、合规审查发现
+          | 序号 | 审查项 | 合规状态 | 风险等级 | 问题描述 | 整改建议 |
+          合规状态：✅合规 / ⚠️部分合规 / ❌不合规 / ❓资料不足
+          风险等级：🔴高 / 🟡中 / 🟢低
+
+          四、整改方案
+          - 立即整改项（高风险）
+          - 限期整改项（中风险）
+          - 持续优化项（低风险）
+          - 每项标注负责人建议、整改期限、验收标准
+
+          五、合规风险地图
+          - 法律风险（罚款/吊销/刑事责任）
+          - 声誉风险
+          - 运营风险
+
+          六、合规建议清单
+
+- id: "00000000-0000-0000-0000-000000000602"
+  name: "股权变更与转让全套文件"
+  description: "Generate full set of equity transfer documents — resolution, agreement, updated registry"
+  category: "corporate_governance"
+  steps:
+    - name: "Generate equity transfer docs"
+      description: "Generate equity transfer document package"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请生成股权变更与转让全套文件：
+          转让方：【姓名/名称】
+          受让方：【姓名/名称】
+          标的公司：【公司名称】
+          转让股权比例：【比例】
+          转让价格：【金额】
+
+          文件清单：
+          1. 股权转让协议
+          2. 股东会决议（同意转让、放弃优先购买权）
+          3. 公司章程修正案
+          4. 股东名册更新
+          5. 董事会决议（如需）
+          6. 转让方/受让方身份证明文件清单
+          7. 工商变更登记申请书
+
+          每份文件要求：
+          - 格式规范
+          - 法定要件完整
+          - 引用具体法律条文（《公司法》条文号）
+          - 标注需签字/盖章处
+
+- id: "00000000-0000-0000-0000-000000000603"
+  name: "公司章程起草与修订"
+  description: "Draft or amend company articles of association with compliance and governance provisions"
+  category: "corporate_governance"
+  steps:
+    - name: "Search Company Law requirements"
+      description: "Search for current Company Law provisions on articles of association"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate articles"
+      description: "Generate company articles of association"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草/修订以下公司的公司章程：
+          公司名称：【名称】
+          公司类型：【有限责任公司/股份有限公司】
+          特殊要求：【如：有外资股东/有员工持股平台/有优先股】
+
+          章程结构：
+          第一章 总则
+          第二章 经营宗旨和范围
+          第三章 注册资本与股东
+          - 出资方式与时间
+          - 股东权利义务
+          - 股权转让规则
+          - 优先购买权
+
+          第四章 股东会
+          - 职权
+          - 召集与表决程序
+          - 表决权计算
+          - 特别决议事项
+
+          第五章 董事会
+          - 董事名额与任期
+          - 职权
+          - 召集与表决
+          - 独立董事（如适用）
+
+          第六章 监事会/监事
+          第七章 经理层
+          第八章 财务与利润分配
+          第九章 解散与清算
+          第十章 附则
+
+          要求：
+          - 符合《公司法》现行规定
+          - 引用具体条文号
+          - 特殊条款标注法律依据
+          - 可自定义条款标注"建议条款"供律师确认
+
+- id: "00000000-0000-0000-0000-000000000604"
+  name: "数据合规审查"
+  description: "Data compliance review — PIPL, Data Security Law, cross-border data transfer assessment"
+  category: "data_compliance"
+  steps:
+    - name: "Search data regulations"
+      description: "Search for Personal Information Protection Law and Data Security Law requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate data compliance report"
+      description: "Generate data compliance assessment report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下业务进行数据合规审查：
+          审查对象：【公司/产品/业务线】
+          涉及数据类型：【个人信息/敏感个人信息/重要数据/核心数据】
+
+          审查维度：
+          一、个人信息保护（《个人信息保护法》）
+          - 处理合法性基础
+          - 同意机制（单独同意/重新同意）
+          - 告知义务履行
+          - 个人信息影响评估（PIPIA）需求
+          - 个人信息出境（安全评估/标准合同/认证）
+          - 敏感个人信息特别保护
+          - 儿童个人信息保护
+
+          二、数据安全（《数据安全法》）
+          - 数据分类分级
+          - 重要数据识别与备案
+          - 数据安全风险评估
+          - 数据处理者义务
+
+          三、跨境数据传输
+          - 出境路径选择（安全评估/标准合同/认证）
+          - 申报/备案要求
+          - 境外接收方义务
+
+          四、算法合规（如适用）
+          - 算法备案
+          - 深度合成备案
+          - 生成式AI服务备案
+
+          五、整改建议
+          - 立即整改 / 限期整改 / 持续优化
+          - 每项标注法律依据（条文号/效力状态/来源）

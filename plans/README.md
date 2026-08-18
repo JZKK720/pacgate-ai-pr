@@ -18,12 +18,12 @@ model), and a **comprehensive setup guide** that ties it all together.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001  | Check in client bundle files | P1 | S | — | TODO |
-| 002  | Multi-model deer-flow config with env-var switching | P1 | S | 001 | TODO |
-| 003  | qm first-run bootstrap script + config | P1 | M | 001 | TODO |
-| 004  | Fix stale DEPLOYMENT-GUIDE references | P2 | S | — | TODO |
-| 005  | Package workflow YAMLs for agent workspaces | P2 | M | 001 | TODO |
-| 006  | Comprehensive setup + operational guide | P1 | M | 001-005 | TODO |
+| 001  | Check in client bundle files | P1 | S | — | DONE |
+| 002  | Multi-model deer-flow config with env-var switching | P1 | S | 001 | DONE |
+| 003  | qm first-run bootstrap script + config | P1 | M | 001 | DONE |
+| 004  | Fix stale DEPLOYMENT-GUIDE references | P2 | S | — | DONE |
+| 005  | Package workflow YAMLs for agent workspaces | P2 | M | 001 | DONE |
+| 006  | Comprehensive setup + operational guide | P1 | M | 001-005 | DONE |
 
 ## Dependency notes
 

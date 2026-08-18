@@ -9,7 +9,7 @@ This document describes the target client runtime bundle. It does not reflect th
 
 ### On your dev machine (build side)
 
-- Rust 1.81+ (`rustup default 1.81`)
+- Rust 1.88+ (`rustup default stable` — dependencies require 1.88+)
 - Docker Desktop with Buildx
 - GitHub CLI (`gh`) authenticated to `jzkk720` org
 - This repo cloned: `c:\Users\cubecloud-io\github-pr\pacgate-ai-pr`
@@ -36,20 +36,10 @@ docker build -t ghcr.io/jzkk720/pacgate-api:0.1.0 `
   ./pacgate-ai
 ```
 
-The `pacgate-ai/Dockerfile` (you need to create this):
-
-```dockerfile
-FROM rust:1.81-bookworm AS builder
-WORKDIR /build
-COPY . .
-RUN cargo build --release --bin pacgate-api
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/pacgate-api /usr/local/bin/pacgate-api
-EXPOSE 8080
-CMD ["pacgate-api"]
-```
+The Dockerfile is at `pacgate-ai/Dockerfile`. It uses `rust:1.94-bookworm`
+(Rust 1.88+ required by dependencies: `time` 0.3.55 and `idna_adapter` 1.2.2
+need rustc 1.88+; `zeroize_derive` 1.5.0 uses edition2024 = Rust 1.85+) and
+produces the `pacgate-server` binary.
 
 ### 1.2 Build deer-flow wrapper
 
@@ -72,9 +62,14 @@ docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 `
   .
 ```
 
-### 1.3 Build qm wrapper
+### 1.3 qm — no Docker image to build
 
-Status: `deploy/qm-pacgate/` is now checked in as a pinned QM deployment directory. It contains a validated `pacgate-qm` sandbox bridge tool plus a `pacgate-workflow` skill, and `npm.cmd run check` / `npm exec qm -- sandbox build` pass there. The Dockerfile block below is still only an optional future shape if you later choose to publish a dedicated one-container QM image instead of using the checked-in QM deployment directory.
+qm does NOT run as a Docker Compose service. It runs via `qm up` from the
+`deploy/qm-pacgate/` deployment directory. The sandbox bridge tool
+(`pacgate-qm`) and skill (`pacgate-workflow`) are already checked in and
+validated (`qm check` + `qm sandbox build` pass). Use the `setup-qm.ps1`
+script in the client bundle for first-run bootstrap. There is no
+`ghcr.io/jzkk720/qm-pacgate` Docker image to build or push.
 
 ```powershell
 # deploy/qm-pacgate/Dockerfile:
@@ -83,10 +78,6 @@ Status: `deploy/qm-pacgate/` is now checked in as a pinned QM deployment directo
 #   ENV PACGATE_API_URL=http://pacgate-api:8080
 #   ENV PACGATE_TENANT_ID=default-firm
 #   CMD ["node", "src/index.ts"]
-
-docker build -t ghcr.io/jzkk720/qm-pacgate:0.1.0 `
-  -f deploy/qm-pacgate/Dockerfile `
-  .
 ```
 
 ### 1.4 Push to GHCR
@@ -95,10 +86,9 @@ docker build -t ghcr.io/jzkk720/qm-pacgate:0.1.0 `
 # Login (first time only)
 echo $env:GHCR_TOKEN | docker login ghcr.io -u jzkk720 --password-stdin
 
-# Push all three
+# Push the two images (qm runs via qm up, not as a Docker image)
 docker push ghcr.io/jzkk720/pacgate-api:0.1.0
 docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
-docker push ghcr.io/jzkk720/qm-pacgate:0.1.0
 ```
 
 ## Part 2: Prepare the client bundle

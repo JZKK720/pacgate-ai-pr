@@ -1,0 +1,176 @@
+# Investment & Financing workflows
+# Derived from: 非诉律师实用Prompts指南.md §一 投融资
+# Each workflow maps a legal task to a sequence of agent tool calls.
+# The `parameters.system_prompt` field carries the full prompt template
+# from the client asset, adapted for the agent's system prompt layer.
+
+- id: "00000000-0000-0000-0000-000000000201"
+  name: "Term Sheet 起草"
+  description: "Draft a Term Sheet for investment rounds (A/B/C) with standard clauses and negotiation ranges"
+  category: "investment_financing"
+  steps:
+    - name: "Gather deal terms"
+      description: "Read any existing deal documents for context"
+      tool: "read_document"
+      parameters:
+        system_prompt: |
+          请帮我起草一份【A轮/B轮/C轮】融资的Term Sheet。
+          请包含以下标准条款，并标注每条的市场惯例范围和谈判弹性空间：
+          1. 估值与对赌调整（VAM）机制
+          2. 优先清算权（1x non-participating / participating）
+          3. 反稀释保护（full ratchet / broad-based weighted average）
+          4. 优先购买权与共售权
+          5. 回购权（触发条件、回购价格计算方式）
+          6. 信息权与检查权
+          7. 创始人锁定与服务期要求
+          8. 一票否决权（保护性条款）清单
+          9. 优先认购权
+          10. 陈述与保证及赔偿上限
+
+          输出格式：中英双语对照，每条注明"投资人友好版"/"创始人友好版"/"市场中间版"三种版本的关键差异。
+          所有法规引用须标注名称、条文号、效力状态与检索来源，严禁编造。
+
+    - name: "Generate Term Sheet document"
+      description: "Generate the Term Sheet as a DOCX file"
+      tool: "generate_docx"
+      parameters:
+        template: "term_sheet"
+        format: "bilingual_zh_en"
+
+- id: "00000000-0000-0000-0000-000000000202"
+  name: "投融资尽职调查清单"
+  description: "Generate a legal due diligence checklist for startup investment, organized by module"
+  category: "investment_financing"
+  steps:
+    - name: "Generate DD checklist"
+      description: "Generate due diligence checklist with modules and specific items"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请生成一份针对初创企业的投融资法律尽职调查清单。
+          按以下模块组织，每个模块列出具体核查事项和所需文件：
+          1. 公司设立与治理（营业执照、章程、股东名册、董事会决议）
+          2. 股权结构（代持、期权池、历史融资轮次、ESOP）
+          3. 业务资质与许可
+          4. 知识产权（专利、商标、著作权、域名、开源合规）
+          5. 重大合同与客户/供应商依赖
+          6. 劳动合规（劳动合同、社保、公积金、竞业限制）
+          7. 税务合规（纳税申报、税收优惠、转移定价）
+          8. 诉讼仲裁与行政处罚
+          9. 数据合规与个人信息保护
+          10. 环保与安全（如适用）
+
+          输出格式：清单表格式，每项标注【必须提供】/【建议提供】/【如有则提供】。
+
+- id: "00000000-0000-0000-0000-000000000203"
+  name: "投资协议条款审阅"
+  description: "Review investment agreement clauses from investor or founder perspective"
+  category: "investment_financing"
+  steps:
+    - name: "Read investment agreement"
+      description: "Read the investment agreement document"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Find key clauses"
+      description: "Search for critical clauses: VAM, liquidation preference, anti-dilution, veto rights"
+      tool: "find_in_document"
+      parameters:
+        queries:
+          - "对赌"
+          - "估值调整"
+          - "优先清算"
+          - "反稀释"
+          - "一票否决"
+          - "回购权"
+          - "优先购买"
+          - "共售权"
+
+    - name: "Generate review memo"
+      description: "Generate a clause-by-clause review memo with risk levels and negotiation suggestions"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请从【投资方/创始方】角度审阅以下投资协议，对每个条款标注：
+          | 条款号 | 条款标题 | 风险等级 | 风险描述 | 修改建议 | 修改后文本 |
+
+          审阅维度：
+          1. 对赌/估值调整机制的合理性与触发条件
+          2. 优先清算权的倍数与参与方式
+          3. 反稀释保护的类型与计算方式
+          4. 优先购买权与共售权的范围与例外
+          5. 回购权的触发条件与价格计算
+          6. 信息权与检查权的范围与频率
+          7. 创始人锁定与服务期要求
+          8. 一票否决权清单的合理性
+          9. 陈述与保证的范围与赔偿上限
+          10. 争议解决条款
+
+          风险等级：🔴高风险 / 🟡中风险 / 🟢低风险
+          输出结论先行，先给一段摘要再展开分析。
+
+- id: "00000000-0000-0000-0000-000000000204"
+  name: "法律意见书框架"
+  description: "Generate a legal opinion framework for investment transactions"
+  category: "investment_financing"
+  steps:
+    - name: "Search legal basis"
+      description: "Search knowledge base for relevant legal authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate legal opinion"
+      description: "Generate legal opinion document with conclusions, basis, and open issues"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下投融资交易事项起草法律意见书框架：
+          交易概述：【交易类型、当事方、金额、时间】
+
+          法律意见书结构：
+          一、事实摘要
+          二、法律问题
+          三、法律分析（逐个问题展开，引用具体条文）
+          四、结论与建议
+          五、待确认事项
+          六、免责声明
+
+          要求：
+          - 结论先行
+          - 每个法律问题引用具体法律法规名称、条文号、效力状态
+          - 标注检索来源
+          - 检索不到的明确说明，严禁编造
+
+- id: "00000000-0000-0000-0000-000000000205"
+  name: "交割条件与交付清单"
+  description: "Generate closing conditions checklist and deliverables list for investment transactions"
+  category: "investment_financing"
+  steps:
+    - name: "Generate closing checklist"
+      description: "Generate closing conditions and deliverables checklist"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请生成投融资交易交割条件与交付清单：
+          交易类型：【股权转让/增资扩股/可转债】
+          交割日：【日期】
+
+          清单结构：
+          一、先决条件（Conditions Precedent）
+          1. 投资方先决条件
+          2. 公司先决条件
+          3. 创始人先决条件
+
+          二、交割日交付文件
+          1. 公司交付文件（营业执照、章程、股东名册、董事会决议、银行回单）
+          2. 创始人交付文件（承诺函、确认函）
+          3. 投资方交付文件（打款凭证、投资方决议）
+
+          三、交割后义务（Conditions Subsequent）
+          1. 工商变更登记
+          2. 税务申报
+          3. 外汇登记（如涉外）
+          4. 信息披露义务
+
+          输出格式：清单表格式，每项标注【必须】/【建议】/【如有则需】。

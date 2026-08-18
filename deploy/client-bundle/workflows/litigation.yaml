@@ -1,0 +1,412 @@
+# Litigation workflows
+# Derived from: 诉讼律师实用Prompts指南.md
+# Covers litigation strategy, evidence analysis, court documents, and arbitration.
+
+- id: "00000000-0000-0000-0000-000000000501"
+  name: "诉讼策略备忘录"
+  description: "Generate litigation strategy memorandum with cause of action analysis and evidence assessment"
+  category: "litigation"
+  steps:
+    - name: "Search legal basis"
+      description: "Search for applicable causes of action and legal authority"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate strategy memo"
+      description: "Generate litigation strategy memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下案件起草诉讼策略备忘录：
+          案件概述：【当事人/案由/争议金额/管辖】
+
+          输出格式：
+          一、案件事实摘要
+          二、法律关系分析
+          - 请求权基础（合同/侵权/不当得利/其他）
+          - 诉讼时效分析
+          - 管辖权分析
+
+          三、诉讼请求设计
+          - 主诉讼请求
+          - 备位诉讼请求
+          - 诉讼请求金额计算
+
+          四、证据分析
+          - 证据清单（证据名称/证明对象/证据形式）
+          - 证据效力评估（原件/复印件/证人/鉴定）
+          - 举证责任分配
+          - 证据弱点分析
+
+          五、对方可能抗辩
+          - 主要抗辩理由
+          - 反诉可能性
+
+          六、诉讼风险
+          - 胜诉概率评估
+          - 执行风险
+          - 成本收益分析
+
+          七、和解策略
+          - 和解底线
+          - 谈判筹码
+
+          八、时间表
+
+- id: "00000000-0000-0000-0000-000000000502"
+  name: "证据梳理与时间线"
+  description: "Organize evidence into a timeline with objections and admissibility analysis"
+  category: "litigation"
+  steps:
+    - name: "Read evidence documents"
+      description: "Read evidence materials for the case"
+      tool: "read_document"
+      parameters: {}
+
+    - name: "Generate evidence timeline"
+      description: "Generate evidence timeline and analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请根据以下材料生成证据梳理表与时间线：
+          案件：【案件名称】
+
+          输出格式：
+          一、时间线
+          | 日期 | 事件 | 对应证据 | 证明目的 |
+
+          二、证据清单
+          | 序号 | 证据名称 | 证据形式 | 证明对象 | 举证方 | 效力评估 |
+          每份证据标注：
+          - 原件/复印件
+          - 是否需要公证认证
+          - 证据效力等级（高/中/低）
+
+          三、质证意见预案
+          对对方可能出示的证据：
+          - 真实性异议
+          - 关联性异议
+          - 合法性异议
+          - 证明力异议
+
+          四、举证策略
+          - 举证顺序建议
+          - 关键证据突出
+          - 补强证据需求
+
+- id: "00000000-0000-0000-0000-000000000503"
+  name: "起诉状起草"
+  description: "Draft a civil complaint/complaint petition with claims, facts, and legal basis"
+  category: "litigation"
+  steps:
+    - name: "Generate complaint"
+      description: "Generate civil complaint document"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份民事起诉状：
+          原告：【姓名/名称、住所、法定代表人】
+          被告：【姓名/名称、住所、法定代表人】
+          诉讼请求：【具体请求及金额】
+          事实与理由：【案件事实概要】
+
+          输出格式（标准民事起诉状格式）：
+          民事起诉状
+
+          原告：...
+          被告：...
+
+          诉讼请求：
+          1. ...
+          2. ...
+
+          事实与理由：
+          （分段叙述事实，引用法律条文）
+
+          此致
+          XX人民法院
+
+          具状人：
+          日期：
+
+          要求：
+          - 诉讼请求明确、具体、可执行
+          - 事实叙述按时间顺序
+          - 法律依据引用具体条文号
+          - 金额计算依据清楚
+
+- id: "00000000-0000-0000-0000-000000000504"
+  name: "仲裁策略备忘录"
+  description: "Arbitration strategy memo — tribunal analysis, procedural strategy, and award enforcement"
+  category: "arbitration"
+  steps:
+    - name: "Search arbitration rules"
+      description: "Search for applicable arbitration rules and procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate arbitration memo"
+      description: "Generate arbitration strategy memorandum"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请就以下仲裁案件起草策略备忘录：
+          仲裁机构：【CIETAC/HKIAC/SIAC/ICC/UNCITRAL】
+          仲裁地：【地点】
+          案件概述：【当事人/争议金额/合同类型】
+
+          输出格式：
+          一、仲裁条款效力审查
+          - 仲裁协议是否有效
+          - 仲裁范围（哪些争议可仲裁）
+          - 仲裁机构与仲裁地选择分析
+
+          二、仲裁庭组成策略
+          - 独任仲裁员 vs 三人庭
+          - 仲裁员候选人的专业背景与倾向
+          - 首席仲裁员选定策略
+
+          三、程序策略
+          - 语言选择
+          - 仲裁规则适用
+          - 临时措施申请（财产保全/证据保全）
+          - 文件披露范围
+
+          四、实体分析
+          - 请求权基础
+          - 证据评估
+          - 法律适用
+
+          五、裁决执行
+          - 裁决执行地分析
+          - 《纽约公约》适用性
+          - 拒绝执行的抗辩预案
+
+          六、成本与时间评估
+          - 仲裁费用估算
+          - 预计时间表
+          - 和解可能性评估
+
+- id: "00000000-0000-0000-0000-000000000505"
+  name: "诉讼时效与程序节点审查"
+  description: "Review limitation periods and procedural deadlines, then produce a deadline timeline with urgent flags"
+  category: "litigation"
+  steps:
+    - name: "Search procedural legal basis"
+      description: "Search legal basis for limitation periods, exclusion periods, and procedural deadlines"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate deadline review"
+      description: "Generate a litigation limitation and procedural-node review memo"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下案件进行诉讼时效和程序节点审查：
+          案件信息：【简述合同签订时间、履行情况、违约发生时间、争议产生时间等】
+
+          审查内容：
+          1. 诉讼时效分析：
+          - 诉讼时效起算点认定
+          - 是否存在时效中断/中止事由
+          - 剩余时效期间
+          - 时效届满后的补救策略
+
+          2. 除斥期间审查：
+          - 撤销权/解除权
+          - 保证期间与担保物权行使期限
+          - 其他法定期间
+
+          3. 程序性期限：
+          - 上诉期、再审申请期限、执行申请期限
+          - 案外人异议、第三人撤销之诉期限
+
+          4. 举证期限：
+          - 法定举证期限
+          - 逾期举证后果
+          - 新证据认定标准
+
+          输出要求：
+          - 结论先行
+          - 输出时间线图样式的节点表格
+          - 标红即将到期节点并给出优先行动建议
+          - 法规引用需标注名称、条文号、效力状态和来源
+          - 检索不到的明确说明，严禁编造
+
+- id: "00000000-0000-0000-0000-000000000506"
+  name: "执行可行性与资产调查预判"
+  description: "Assess opponent asset clues and forecast enforcement feasibility with preservation priority"
+  category: "litigation"
+  steps:
+    - name: "Search enforcement legal basis"
+      description: "Search legal basis for property preservation and enforcement procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate enforcement precheck"
+      description: "Generate an asset investigation and enforcement-feasibility precheck report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请协助进行对方当事人资产调查和执行可行性预判：
+          对方信息：【公司/个人信息 + 已知资产线索】
+
+          调查与分析框架：
+          1. 资产线索梳理：
+          - 不动产、股权投资、应收账款、知识产权、其他财产性权益
+
+          2. 资产保全优先级排序：
+          - 易变现程度
+          - 保全难度
+          - 价值与诉讼请求匹配度
+
+          3. 执行障碍预判：
+          - 在先查封/抵押
+          - 多债权人竞争
+          - 破产程序风险
+          - 境外资产因素
+          - 家庭财产/共有财产识别风险
+
+          4. 财产保全建议：
+          - 保全标的清单（按优先级）
+          - 担保方案（保险保函/现金/实物）
+          - 保全申请书要点
+
+          输出要求：
+          - 结论先行
+          - 使用矩阵表输出“可执行性 × 可变现性 × 保全难度”
+          - 形成可直接落地的行动清单（T+1/T+3/T+7）
+          - 引用法律依据并标注来源；检索不到须明确说明
+
+- id: "00000000-0000-0000-0000-000000000507"
+  name: "答辩状起草与抗辩结构化"
+  description: "Draft a structured statement of defense with procedural and substantive defenses mapped to evidence"
+  category: "litigation"
+  steps:
+    - name: "Search defense legal basis"
+      description: "Search legal basis for procedural defenses and substantive defense rights"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate defense brief"
+      description: "Generate a civil defense statement"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于起诉状和已知证据，起草一份答辩状。
+          我方身份：【被告/第三人】
+          答辩立场：【全部否认/部分承认部分否认/程序性抗辩优先】
+
+          输出结构：
+          一、程序性抗辩（优先审查）
+          - 管辖权异议
+          - 诉讼时效抗辩
+          - 当事人适格抗辩
+          - 仲裁条款或重复诉讼抗辩
+
+          二、实体性抗辩（逐项对应诉请）
+          - 对每项诉讼请求分别回应（承认/否认/不知）
+          - 引用对应证据编号与证据页码
+          - 提出抗辩权基础（同时履行/先履行/不安/留置等）
+
+          三、反诉可行性评估
+          - 哪些主张应作为抗辩
+          - 哪些主张需要独立反诉
+
+          四、结论与请求
+
+          输出要求：
+          - 结论先行
+          - 证据与法条逐项锚定
+          - 法规引用需标注名称、条文号、效力状态和来源
+          - 检索不到的明确说明，严禁编造
+
+- id: "00000000-0000-0000-0000-000000000508"
+  name: "反诉策略与反诉状起草"
+  description: "Analyze whether counterclaim is admissible and draft a counterclaim pleading aligned with timing and relation tests"
+  category: "litigation"
+  steps:
+    - name: "Search counterclaim rules"
+      description: "Search legal basis for counterclaim admissibility, timing, and relation tests"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate counterclaim"
+      description: "Generate a counterclaim analysis and pleading"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于本诉信息，完成反诉分析并起草反诉状。
+          本诉情况：【原告诉讼请求与事实理由】
+          反诉目标：【反诉请求及金额/确认请求】
+
+          输出结构：
+          一、反诉可受理性分析
+          - 与本诉是否基于同一法律关系或同一事实
+          - 是否具有关联性或抵销关系
+          - 是否在举证期限届满前提出
+
+          二、反诉与抗辩边界
+          - 可用抗辩处理的主张
+          - 必须独立反诉的主张
+
+          三、反诉请求权基础与金额计算
+          - 引用法条与裁判规则
+          - 损失或违约金计算依据
+
+          四、反诉状正文（同民事起诉状规范）
+          - 当事人信息
+          - 反诉请求
+          - 事实与理由
+          - 证据目录
+
+          输出要求：
+          - 结论先行
+          - 对“关联性 + 时机 + 请求权基础”给出明确结论
+          - 法规引用需标注名称、条文号、效力状态和来源
+          - 检索不到的明确说明，严禁编造
+
+- id: "00000000-0000-0000-0000-000000000509"
+  name: "庭后代理词结构化生成"
+  description: "Generate a courtroom advocacy brief by issue, evidence, and legal rule with targeted rebuttals"
+  category: "litigation"
+  steps:
+    - name: "Search supporting precedents"
+      description: "Search supporting legal rules and similar-case reasoning for each issue"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate advocacy brief"
+      description: "Generate a structured agency opinion/advocacy brief"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于案件材料和庭审要点起草代理词。
+          案号：【】
+          我方身份：【原告/被告】
+          核心争议：【列出1-3个争议焦点】
+
+          输出结构：
+          一、开头与代理权限说明
+          二、事实概述（简明）
+          三、分争议焦点论证（逐点）
+          - 我方观点（结论先行）
+          - 事实依据（证据编号/页码）
+          - 法律依据（法条/司法解释/类案规则）
+          - 对方观点驳斥
+          - 小结
+          四、结论与请求
+          五、庭后补充事项（如有）
+
+          输出要求：
+          - 全文结论先行、层次分明
+          - 法规与类案引用需标注来源和效力状态
+          - 证据引用可回溯到具体编号
+          - 检索不到的明确说明，严禁编造

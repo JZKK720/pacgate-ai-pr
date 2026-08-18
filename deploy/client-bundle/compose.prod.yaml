@@ -1,0 +1,59 @@
+# Pacgate-ai production compose — client AIPC deployment
+#
+# This stack runs: pacgate-api (metadata), deer-flow (research), Postgres, nginx.
+# qm (co-working workspace) runs SEPARATELY via `qm up` from the qm-pacgate/
+# deployment directory. See setup-qm.ps1 for qm bootstrap.
+
+services:
+  pacgate-db:
+    image: postgres:16-alpine
+    container_name: pacgate-db
+    environment:
+      POSTGRES_DB: pacgate
+      POSTGRES_USER: pacgate
+      POSTGRES_PASSWORD: ${PACGATE_DB_PASSWORD}
+    volumes:
+      - pacgate-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  pacgate-api:
+    image: ghcr.io/jzkk720/pacgate-api:0.1.0
+    container_name: pacgate-api
+    depends_on: [pacgate-db]
+    environment:
+      DATABASE_URL: postgres://pacgate:${PACGATE_DB_PASSWORD}@pacgate-db:5432/pacgate
+      DATA_DIR: /data/tenants
+      PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
+      PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      RUST_LOG: info
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  deer-flow:
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+    container_name: deer-flow
+    depends_on: [pacgate-api]
+    environment:
+      PACGATE_API_URL: http://pacgate-api:8080
+      PACGATE_TENANT_ID: ${PACGATE_TENANT_ID:-default-firm}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    volumes:
+      - ./data:/data
+      - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
+      - ./workflows:/app/workflows:ro
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: pacgate-nginx
+    depends_on: [pacgate-api, deer-flow]
+    ports:
+      - "8081:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+volumes:
+  pacgate-db-data:

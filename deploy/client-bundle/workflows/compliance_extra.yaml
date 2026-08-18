@@ -1,0 +1,2082 @@
+# Compliance extra workflows
+# Derived from: 合规律师实用Prompts指南.md
+# Covers templates NOT already present in compliance_specialized.yaml / compliance_corporate.yaml
+# IDs: 00000000-0000-0000-0000-000000000d01 .. 00000000-0000-0000-0000-000000000d1c
+
+- id: "00000000-0000-0000-0000-000000000d01"
+  name: "数据安全事件应急预案"
+  description: "Data security incident emergency response plan — grading, org structure, handling flow, notification duties"
+  category: "data_compliance"
+  steps:
+    - name: "Search legal basis"
+      description: "Search for Data Security Law and PIPL incident response provisions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate plan"
+      description: "Generate data security incident emergency response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份数据安全事件应急处置预案，适用于【互联网企业/金融机构/医疗机构】：
+
+          预案结构：
+
+          1. 总则
+             - 适用范围
+             - 工作原则（及时性、最小损害、合法合规）
+
+          2. 事件分级标准
+             - 特别重大（红色）：泄露【100万条以上个人信息 / 重要数据 / 核心数据】
+             - 重大（橙色）：泄露【10万-100万条个人信息 / 敏感个人信息1万条以上】
+             - 较大（黄色）：泄露【1万-10万条个人信息】
+             - 一般（蓝色）：泄露【1万条以下个人信息】
+             - 每级对应的响应级别和审批层级
+
+          3. 应急响应组织架构
+             - 应急领导小组（CEO/CTO/CPO/DPO）
+             - 应急执行小组（安全/法务/公关/客服/IT）
+             - 各角色职责矩阵
+
+          4. 处置流程
+             阶段一：发现与报告（0-1小时）
+             - 发现渠道（内部监测/外部报告/用户投诉）
+             - 初步评估与上报流程
+             - 启动应急响应的决策机制
+
+             阶段二：评估与遏制（1-4小时）
+             - 事件影响范围评估
+             - 证据保全措施
+             - 遏制措施（断网/封禁/删除/回滚）
+
+             阶段三：处置与恢复（4-24小时）
+             - 系统修复与漏洞修补
+             - 数据恢复方案
+             - 影响用户范围确认
+
+             阶段四：通知（依法及时）
+             - 监管报告义务：
+               * 网信部门报告（触发条件、报告内容、时限）
+               * 行业主管部门报告
+               * 公安机关报告（如涉犯罪）
+             - 数据主体通知义务：
+               * 通知触发条件
+               * 通知内容（事件描述、影响范围、应对措施、用户自我保护建议）
+               * 通知方式（短信/邮件/公告/电话）
+
+             阶段五：总结与改进（事后7-30天）
+             - 事件调查报告
+             - 根因分析
+             - 整改措施与跟进
+             - 内部问责
+
+          5. 对外沟通口径
+             - 媒体回应原则与模板
+             - 用户沟通模板（短信/邮件/公告）
+             - 监管沟通策略
+
+          6. 附件
+             - 应急联系人名单（模板）
+             - 监管部门联系方式清单
+             - 数据安全事件报告模板
+             - 用户通知模板
+
+          引用《数据安全法》第29条、《个人信息保护法》第57条等。
+          输出为Word文档。
+
+- id: "00000000-0000-0000-0000-000000000d02"
+  name: "欧盟 AI Act 合规评估"
+  description: "EU AI Act compliance assessment — risk classification, obligations matrix, timeline"
+  category: "ai_compliance"
+  steps:
+    - name: "Search EU AI Act"
+      description: "Search for EU AI Act provisions and implementation timeline"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate assessment"
+      description: "Generate EU AI Act compliance assessment"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下AI系统进行欧盟AI Act合规评估，确定其风险分级和合规义务：
+
+          AI系统信息：
+          - 系统名称：【XX】
+          - 系统功能：【简述核心功能】
+          - 部署场景：【如：招聘筛选/信用评估/医疗诊断/执法辅助/教育评估/情绪识别/内容推荐】
+          - 使用范围：【仅在欧盟使用 / 全球使用但服务欧盟用户 / 欧盟企业采购】
+          - 部署方式：【自研自用 / 作为产品对外提供 / 嵌入第三方平台】
+
+          EU AI Act合规评估框架：
+
+          一、风险分级判断（Article 6-7）：
+
+            1. 是否属于"禁止的AI实践"（Article 5）——以下AI实践在欧盟绝对禁止：
+               - 操纵人类行为的潜意识技术
+               - 利用年龄/残疾/社会经济状况的剥削性技术
+               - 社会评分（Social Scoring）系统
+               - 实时远程生物识别（执法例外但有严格条件）
+               - 基于敏感特征推断情绪的职场/教育评估
+               - 预测性 policing（基于 profiling 预测犯罪）
+
+            2. 是否属于"高风险AI系统"（Article 6 Annex III）——以下场景自动被归类为高风险：
+               - 生物识别/身份验证
+               - 关键基础设施管理
+               - 教育/职业培训的评估与筛选
+               - 就业/员工管理/自雇机会
+               - 信用评估/保险定价
+               - 执法/移民/边境管理
+               - 司法/民主过程
+               - 医疗设备的AI组件
+
+            3. 是否属于"有限风险"（需要透明度义务）：
+               - 聊天机器人/生成式AI
+               - 情绪识别系统
+               - 深度伪造/合成内容生成
+               - 生物识别分类（非高风险场景）
+
+            4. 是否属于"最小风险"（无特别义务）：
+               - AI驱动的垃圾邮件过滤
+               - AI辅助的库存管理
+               - 游戏AI
+
+          二、对应合规义务矩阵：
+
+          | 风险级别 | 适用条款 | 核心合规义务 | 实施时间线 |
+          | 禁止 | Art.5 | 停止使用 | 立即 |
+          | 高风险 | Art.8-15, Art.20-27 | 风险管理体系+质量管理体系+数据治理+技术文档+人类监督+准确性/鲁棒性/安全性+注册+上市后监测+严重事件报告 | 2026年8月前 |
+          | 有限风险 | Art.50 | 透明度义务（告知用户正在与AI交互/标注AI生成内容） | 2025年8月前 |
+          | 最小风险 | 无 | 自愿遵守AI伦理准则 | 无强制时间 |
+
+          三、高风险AI系统的详细合规要求（如被归类为高风险）：
+
+            1. 风险管理体系（Art.9）：
+               - 持续识别/分析/评估风险
+               - 预防/减轻风险的措施
+               - 风险评估的测试方案
+
+            2. 数据治理（Art.10）：
+               - 训练/验证/测试数据集的质量要求
+               - 数据收集/清洗/标注的治理流程
+               - 偏见检测与纠正措施
+
+            3. 技术文档（Art.11）：
+               - 系统描述/设计/开发的全流程记录
+               - 文档模板（Annex IV）
+
+            4. 记录保存与日志（Art.12）：
+               - 自动生成日志
+               - 日志保存期限
+
+            5. 透明度与用户信息（Art.13）：
+               - 使用说明的格式与内容要求
+               - 预期用途/准确度/风险的告知
+
+            6. 人类监督（Art.14）：
+               - 人类可理解的操作方式
+               - 人类干预/停止/断开的能力
+               - "human-in-the-loop"/"human-on-the-loop"/"human-over-the-loop"的选择
+
+            7. 准确性/鲁棒性/安全性（Art.15）：
+               - 性能指标声明
+               - 对抗性测试
+               - 故障安全机制
+
+            8. 上市后监测（Art.72）：
+               - 持续监测系统性能
+               - 严重事件的报告义务
+
+          四、生成式AI的额外义务（如属于生成式AI）：
+            - Art.53 通用AI模型义务：
+              * 技术文档
+              * 向AI Office提供信息
+              * 版权合规（公开训练数据的摘要）
+            - Art.50 有限风险透明度：
+              * 标注AI生成内容
+              * 告知用户正在与AI交互
+
+          五、合规时间线：
+            - 2025年2月：禁止实践条款生效
+            - 2025年8月：有限风险/通用AI模型义务生效
+            - 2026年8月：高风险AI系统义务生效
+            - 2027年8月：高风险AI系统义务全部适用（含医疗/生物识别等延期领域）
+
+          请输出：风险分级判定结论 + 合规义务清单 + 实施时间线 + 预估合规成本。
+
+- id: "00000000-0000-0000-0000-000000000d03"
+  name: "美国 AI 合规与风险管理"
+  description: "US AI compliance and risk management — NIST AI RMF, federal/state dual-track, contract clauses"
+  category: "ai_compliance"
+  steps:
+    - name: "Search US AI regulations"
+      description: "Search for US federal and state AI regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance path"
+      description: "Generate US AI compliance and risk management analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下AI产品在美国的合规与风险管理路径：
+
+          AI产品信息：
+          - 产品类型：【简述】
+          - 部署场景：【如：消费者产品/B2B企业服务/金融/医疗/教育/招聘】
+          - 服务范围：【仅美国市场/全球市场含美国】
+          - 是否涉及联邦监管领域：【如：金融（SEC/CFTC/FINCEN）/医疗（FDA）/就业（EEOC）/教育/国防】
+
+          美国AI合规评估框架（联邦+州级双轨制）：
+
+          一、联邦层面合规：
+
+            1. NIST AI Risk Management Framework（AI RMF 1.0）对标：
+               - MAP函数（映射AI风险语境）：
+                 * 应用场景的风险识别
+                 * 受影响利益方的分析
+                 * 风险容忍度设定
+               - MEASURE函数（测量AI风险）：
+                 * 信任度评估（可靠/安全/公平/透明/隐私/可问责）
+                 * 性能指标与测试方法
+               - MANAGE函数（管理AI风险）：
+                 * 风险响应策略
+                 * 持续监测机制
+
+            2. 行业监管机关的AI专项要求（如适用）：
+               - FDA：AI/ML驱动的医疗设备（SaMD）的监管路径
+               - SEC：AI在投资建议/交易中的监管要求
+               - EEOC：AI招聘工具的反歧视合规指引
+               - CFPB：AI在信贷决策中的公平贷款合规
+               - FTC：AI产品的消费者保护执法重点
+                 * 虚假声称AI能力（deceptive claims）
+                 * AI生成内容的欺骗性
+                 * 算法歧视的执法行动
+
+            3. 联邦立法动态（关注但尚未统一立法）：
+               - 《AI研发法案》进展
+               - 《AI透明度法案》进展
+               - 《算法问责法案》进展
+
+          二、州级合规（各州独立立法趋势）：
+
+            1. Colorado AI Act（2024年5月签署，2026年2月生效）——目前最全面的州级AI立法：
+               - 适用范围："高风险AI系统"的定义
+               - 部署者义务：影响评估/消费者告知/歧视审查/年度报告
+               - 开发者义务：风险分析/透明度文档/持续监测
+               - 执行机关：Colorado Attorney General
+
+            2. 其他州级立法关注：
+               - California：AI透明度/偏见审计提案
+               - Illinois：AI招聘视频分析法（AIVAA）
+               - New York City：本地AI招聘工具偏见审计法（Local Law 144）
+               - Texas/Connecticut/Virginia等州的AI相关条款
+
+            3. 多州运营的合规策略：
+               - 以最严格州为基准的"最高标准"策略
+               - 州级合规地图制作
+
+          三、合同与商业合规：
+            1. AI服务协议的关键条款：
+               - AI性能保证条款（准确性/延迟/可用性）
+               - AI输出责任的分配
+               - 数据使用与IP归属条款
+               - AI更新/模型迭代的变更通知机制
+               - AI审计权条款
+
+            2. AI保险与责任：
+               - AI产品的责任保险
+               - E&O保险的AI特别条款
+
+          四、行业自律标准对标：
+            - ISO/IEC 42001（AI管理体系标准）
+            - IEEE AI伦理标准
+            - OECD AI原则
+
+          请输出：联邦合规义务清单 + 州级合规地图 + NIST AI RMF对标评估 + 合同条款模板建议。
+
+- id: "00000000-0000-0000-0000-000000000d04"
+  name: "东南亚 AI 合规路径分析"
+  description: "Southeast Asia AI compliance path — Singapore, Vietnam, Thailand, Malaysia, Indonesia"
+  category: "ai_compliance"
+  steps:
+    - name: "Search SEA AI regulations"
+      description: "Search for Southeast Asia AI governance regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance path"
+      description: "Generate Southeast Asia AI compliance path analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下AI产品在东南亚主要市场的合规路径：
+
+          AI产品信息：
+          - 产品类型：【简述】
+          - 目标市场：【新加坡/越南/泰国/马来西亚/印尼/菲律宾，可多选】
+          - 服务模式：【面向消费者/企业服务/嵌入本地平台】
+          - 是否涉及敏感领域：【如：金融/医疗/教育/政务】
+
+          东南亚AI合规评估框架（四国重点）：
+
+          一、新加坡：
+            1. 核心法规与政策：
+               - PDPA（个人数据保护法）+ 2024年修正案对AI的影响
+               - IMDA AI Verify（AI验证框架）——自愿性AI治理测试工具箱
+               - Model AI Governance Framework（2019/2020更新）——新加坡AI治理模型框架
+               - National AI Strategy 2.0（2023年12月发布）
+
+            2. AI治理要求：
+               - 透明度（决策过程的可解释性）
+               - 人类监督（重大决策的人类介入）
+               - 公平性（无偏见/歧视）
+               - 安全性（网络安全/可靠性）
+               - 可问责性（责任分配清晰）
+
+            3. 金融AI特别要求：
+               - MAS（金管局）FEAT原则（公平/伦理/问责/透明）
+               - AI在金融服务的指引文件
+
+          二、越南：
+            1. 核心法规：
+               - 《网络安全法》（2018年）对AI数据的影响
+               - 《数字技术产业法草案》（含AI条款，2025年待通过）
+               - 国会AI法规立法进程
+
+            2. 数据本地化要求：
+               - AI系统处理越南用户数据的数据本地化义务
+               - 跨境数据传输限制
+
+            3. 内容管控：
+               - AI生成内容的审查与过滤义务
+
+          三、泰国：
+            1. 核心政策：
+               - PDPA（个人数据保护法，2022年6月全面生效）
+               - Thailand AI Ethics Guideline（2021年发布，2023年更新）
+               - National AI Strategy（2022-2027）
+
+            2. AI伦理框架：
+               - 六项原则：安全/安保/透明/公平/问责/隐私
+               - AI分级治理建议
+
+            3. 金融AI：
+               - BOT（泰国银行）金融科技监管沙盒
+               - AI在金融服务的准入要求
+
+          四、马来西亚与印尼（补充）：
+            1. 马来西亚：
+               - PDPA 2010对AI数据的适用
+               - Malaysia AI Roadmap 2021-2025
+               - MDEC的AI治理指引
+
+            2. 印尼：
+               - PDP Law 2022（个人数据保护法）对AI的影响
+               - 印尼AI国家战略（Stranas KA 2020-2045）
+               - 通信部对AI内容的监管
+
+          五、多国部署合规策略：
+            1. "新加坡为锚点"策略：
+               - 以新加坡的AI Verify为合规基线
+               - 其他市场叠加本地化要求
+            2. 合规地图制作方法：
+               - 各国法规对照矩阵
+               - 各国数据本地化要求对照表
+            3. 东南亚AI合规日历：
+               - 各国法规生效时间线
+               - 年度合规审查节点
+
+          请输出多法域合规对比矩阵 + 各国合规义务清单 + 合规路径推荐方案。
+          联网搜索东南亚各国最新AI法规动态。
+
+- id: "00000000-0000-0000-0000-000000000d05"
+  name: "AI 训练数据与知识产权合规专项审查"
+  description: "AI training data compliance review — personal information, IP, open source, cross-border risks"
+  category: "ai_compliance"
+  steps:
+    - name: "Search training data regulations"
+      description: "Search for AI training data and IP regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate review report"
+      description: "Generate AI training data compliance review report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下AI模型的训练数据进行合规审查，重点评估知识产权与个人信息风险：
+
+          AI模型信息：
+          - 模型名称：【XX】
+          - 模型类型：【大语言模型/图像生成模型/多模态模型/代码生成模型】
+          - 训练数据规模：【约XX TB / XX亿条 / XX万条】
+          - 训练数据来源：【公开互联网爬取 / 采购第三方数据集 / 自有业务数据 / 用户生成内容 / 开源数据集】
+
+          合规审查框架：
+
+          一、个人信息合规审查：
+            1. 训练数据中的个人信息识别：
+               - 是否包含可识别个人信息的数据集
+               - 个人信息类型（姓名/联系方式/行为数据/生物识别/健康数据）
+            2. 合法性基础分析：
+               - 同意机制（是否获取数据主体的同意）
+               - 去标识化/匿名化处理（是否实施、实施程度）
+               - 合同必要/法定义务等其他合法性基础
+            3. 跨境训练数据合规：
+               - 训练数据是否跨境传输（如数据在境外服务器处理）
+               - 中国数据出境合规要求
+               - 欧盟GDPR跨境要求（如涉及欧盟居民数据）
+
+          二、知识产权合规审查：
+            1. 版权作品使用分析：
+               - 训练数据中受版权保护作品的识别
+               - "合理使用"（Fair Use/Fair Dealing）论证：
+                 * 使用目的与性质（商业 vs. 研究）
+                 * 受版权保护作品的性质
+                 * 使用的数量与实质性
+                 * 对原作品市场的影响
+               - 中国《著作权法》对训练数据使用的解释空间
+               - 欧盟DSM Directive Article 4（文本与数据挖掘例外）的适用
+            2. 开源合规审查：
+               - 训练数据中开源软件/数据集的License审查
+               - GPL/CC系列/Apache/MIT等不同License对AI训练的限制
+               - 开源License的传染性风险分析
+            3. 生成内容的知识产权风险：
+               - 模型输出与训练数据中版权作品的相似度风险
+               - 生成内容本身的可版权性（当前各国立场差异）
+               - 生成内容侵权的归责逻辑
+
+          三、行业特殊数据合规（如适用）：
+            - 医疗数据：HIPAA/《人类遗传资源管理条例》
+            - 金融数据：金融数据使用的行业限制
+            - 政务数据：政府采购数据的使用授权链
+
+          四、风险等级矩阵：
+
+          | 数据来源 | 个人信息风险 | 知识产权风险 | 跨境合规风险 | 综合风险等级 | 处理建议 |
+
+          请输出训练数据合规审查报告 + 风险矩阵 + 合规改进路线图。
+
+- id: "00000000-0000-0000-0000-000000000d06"
+  name: "贸易救济——反倾销/反补贴应对"
+  description: "Anti-dumping / countervailing duty response plan — procedure timeline, margin defense, injury defense"
+  category: "trade_compliance"
+  steps:
+    - name: "Search trade remedy cases"
+      description: "Search for anti-dumping and countervailing duty regulations and cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate response plan"
+      description: "Generate anti-dumping / countervailing duty response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业制定反倾销/反补贴调查应对方案：
+
+          案件信息：
+          - 出口企业：【XX公司】
+          - 出口产品：【XX产品】
+          - 出口目的国：【如：美国/欧盟/印度/巴西/澳大利亚】
+          - 调查发起方：【如：目的国某行业协会/目的国商务部】
+          - 调查类型：【反倾销 / 反补贴 / 保障措施】
+          - 我方角色：【出口商/出口国政府/进口商】
+
+          应对方案框架：
+
+          一、调查程序时间线：
+            1. 【目的国】反倾销/反补贴调查的法定程序：
+               - 发起调查→立案→初裁→终裁→日落复审的时间节点
+               - 各阶段企业应提交的材料和截止日期
+            2. 关键时间窗口：
+               - 立案后【XX日】内提交调查问卷
+               - 【XX日】内申请听证
+               - 【XX日】内提交评论意见
+
+          二、倾销/补贴幅度的抗辩：
+            1. 正常价值确定抗辩：
+               - 出口国国内销售价格的可比性
+               - 替代国/替代价格的选择（如目的国不认可中国市场经济地位）
+               - 成本数据的准备（生产成本+SGA+利润）
+            2. 出口价格抗辩：
+               - 出口价格的调整项目
+               - 出口商→进口商之间的关联交易审查
+            3. 补贴项目审查（反补贴案件）：
+               - 政府补贴项目的逐项审查
+               - 专向性（Specificity）抗辩
+               - 补贴利益计算的抗辩
+
+          三、损害抗辩：
+            1. 目的国国内产业状况分析：
+               - 目的国产业的产量/销售/利润/就业趋势
+               - 是否存在非进口因素导致的损害
+            2. 因果关系抗辩：
+               - 进口与损害之间的因果关系论证
+               - 其他因素的排除论证（需求萎缩/技术变化/本国企业竞争等）
+
+          四、替代策略：
+            1. 价格承诺/数量承诺（如目的国允许）
+            2. 市场经济地位申请（如目的国有此制度）
+            3. 供应链调整（通过第三国加工/原产地变更规避）
+
+          五、日落复审应对（终裁后的长期策略）：
+            - 反倾销措施的5年到期复审
+            - 持续参与复审的必要性评估
+
+          请输出反倾销/反补贴应对方案 + 问卷填写指南 + 时间线日历。
+          使用华宇元典和联网搜索检索目的国的同类调查案例。
+
+- id: "00000000-0000-0000-0000-000000000d07"
+  name: "产品合规认证——多法域路径分析"
+  description: "Multi-jurisdiction product compliance certification path — CCC, CE, FCC, FDA, SEA certifications"
+  category: "trade_compliance"
+  steps:
+    - name: "Search product certification requirements"
+      description: "Search for product certification requirements across markets"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate certification path"
+      description: "Generate multi-jurisdiction product certification path analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下产品在目标市场的合规认证路径：
+
+          产品信息：
+          - 产品名称：【XX】
+          - 产品类型：【如：消费电子/医疗器械/工业设备/玩具/化妆品/食品/汽车零部件/AI设备】
+          - 目标市场：【中国/欧盟/美国/东南亚，可多选】
+          - 产品用途：【简述】
+          - 是否含无线/通信功能：【是/否】
+          - 是否涉及食品/药品/化妆品：【是/否】
+
+          多法域产品合规认证路径分析：
+
+          一、中国市场：
+            1. CCC强制认证（中国强制性产品认证）：
+               - CCC认证目录查询（是否属于强制认证范围）
+               - 认证流程（型式试验→工厂审查→获证→监督）
+               - 认证时间和费用估算
+            2. 其他认证要求（如适用）：
+               - SRRC无线电型号核准
+               - NAL网络接入许可
+               - 医疗器械NMPA注册
+               - 化妆品备案/注册
+               - 食品生产许可
+               - 工业产品生产许可
+            3. GB国标对标：
+               - 产品须符合的强制性国家标准清单
+               - 推荐性标准的合规考量
+
+          二、欧盟市场：
+            1. CE标志认证：
+               - CE适用指令/法规判定：
+                 * LVD（低电压指令）/ EMC（电磁兼容）/ RED（无线电设备）
+                 * MDR（医疗器械）/ PPE（个人防护设备）/ Toy Safety（玩具安全）
+                 * RoHS（有害物质限制）/ WEEE（废弃电子设备）
+                 * CPR（建筑产品）/ Machinery（机械指令）
+               - 合格评定程序选择（模式A/B/C/D/E/F等）
+               - 技术文档（Technical File）编制要求
+               - EU符合性声明（Declaration of Conformity）
+            2. 新立法框架（NLF）合规：
+               - 授权代表（Authorized Representative）的指定
+               - CE标志的使用规范
+
+          三、美国市场：
+            1. FCC认证（含无线功能的产品）：
+               - FCC SDoC vs. FCC Certification路径选择
+               - FCC ID申请流程
+            2. FDA合规（如适用）：
+               - 医疗器械的FDA注册/510(k)/PMA路径
+               - 食品的FDA注册/FSMA合规
+               - 化妆品的MoCRA注册（2023年新规）
+            3. UL/ETL认证（非强制但市场需要）：
+               - 安全认证的选择
+               - 认证成本和时间
+
+          四、东南亚市场（补充）：
+            - 印尼：SNI认证/POSTEL认证
+            - 泰国：TIS认证/NBTC认证
+            - 越南：CR标志/QCVN标准
+            - 马来西亚：SIRIM认证/MCMC认证
+
+          五、认证时间线与成本对比矩阵：
+
+          | 市场 | 认证类型 | 法定/自愿 | 时间预估 | 成本预估 | 关键材料 | 优先级建议 |
+
+          请输出多法域认证对比矩阵 + 各市场的认证流程图 + 材料清单表格。
+
+- id: "00000000-0000-0000-0000-000000000d08"
+  name: "海关合规与贸易合规体系建设"
+  description: "Customs and trade compliance system design — HS classification, valuation, origin, AEO, audit response"
+  category: "trade_compliance"
+  steps:
+    - name: "Search customs regulations"
+      description: "Search for customs and trade compliance regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance system"
+      description: "Generate customs and trade compliance system design"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业设计海关合规与贸易合规管理体系：
+
+          企业信息：
+          - 企业名称：【XX公司】
+          - 行业：【如：电子制造/化工/医药/消费品/跨境电商】
+          - 进出口规模：【年进口额XX万元 / 年出口额XX万元】
+          - 进出口模式：【一般贸易/加工贸易/跨境电商/保税区/保税仓库】
+          - 涉及口岸：【如：上海/深圳/宁波/广州等】
+          - 当前合规状态：【无体系/有初步流程/需要升级】
+
+          合规体系建设框架：
+
+          一、海关申报合规：
+            1. 商品归类合规（HS Code）：
+               - 归类风险的审查机制
+               - 争议归类的预归类申请
+               - 归类变更的合规处理
+            2. 估价合规（海关估价）：
+               - 进出口价格的申报合规
+               - 特殊关系交易的估价审查
+               - 特许权使用费/协助价值的申报义务
+            3. 原产地合规：
+               - 原产地证书的管理
+               - FTA优惠税率的应用合规
+               - 原产地规则的符合性审查
+
+          二、加工贸易合规（如适用）：
+            1. 加工贸易手册管理
+            2. 单耗标准申报与核查
+            3. 深加工结转合规
+            4. 加工贸易保税货物的内销补税
+
+          三、出口管制与制裁合规联动：
+            1. 出口管制筛查嵌入出口流程的节点设计
+            2. 制裁名单筛查的自动化机制
+            3. 限制性贸易管制（两用物项/军品）的审查流程
+
+          四、跨境电商合规（如适用）：
+            1. 跨境电商零售进口的合规（1210/9610/9710/9810监管代码）
+            2. 跨境电商出口的合规
+            3. 跨境电商税收合规
+
+          五、贸易合规内控机制：
+            1. 合规审查嵌入节点：
+               - 采购下单前的管制筛查
+               - 出口报关前的归类/估价/原产地审查
+               - 新产品导入的合规评估
+            2. 定期合规审计：
+               - 年度进出口合规自查
+               - 海关AEO认证的维护
+            3. 合规培训体系
+
+          六、海关稽查应对预案：
+            1. 海关稽查的触发条件与类型
+            2. 应对流程与材料准备
+            3. 税款补缴与处罚的应对
+
+          请输出贸易合规管理体系建设方案 + 内控审查流程图 + AEO认证维护清单。
+
+- id: "00000000-0000-0000-0000-000000000d09"
+  name: "制裁合规筛查"
+  description: "Sanctions compliance screening — OFAC, EU, UK, China counter-sanctions, export control screening"
+  category: "trade_compliance"
+  steps:
+    - name: "Search sanctions lists"
+      description: "Search for current sanctions lists and regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate screening report"
+      description: "Generate sanctions compliance screening report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下交易/合作方进行制裁合规筛查：
+
+          交易/合作信息：
+          - 交易类型：【如：向某国出口设备/与某公司签订合同/收购某公司股权/向某个人支付服务费】
+          - 合作方名称：【XX公司/个人】
+          - 合作方国籍/注册地：【如：俄罗斯/伊朗/某BVI公司实际控制人为中国公民】
+          - 交易标的：【简述】
+          - 涉及资金路径：【如：美元通过美国银行清算/人民币直接支付】
+
+          筛查维度：
+
+          1. 美国OFAC制裁筛查：
+             - SDN名单（特别指定国民名单）筛查
+             - Sectoral Sanctions筛查（行业制裁）
+             - Non-SDN菜单式制裁筛查
+             - 50%规则适用（SDN名单实体持有50%以上股权的子公司也受制裁）
+             - 次级制裁风险（非美国主体与SDN交易的制裁风险）
+
+          2. 欧盟制裁筛查：
+             - 欧盟制裁名单筛查
+             - 行业制裁措施（如对俄罗斯的贸易限制）
+
+          3. 英国制裁筛查：
+             - UK制裁名单筛查
+
+          4. 中国反制裁筛查：
+             - 中国反制清单（《反外国制裁法》）
+             - 不可靠实体清单
+
+          5. 出口管制筛查（美国EAR）：
+             - 是否涉及管制物项（ECCN编码）
+             - 目的地管制
+             - 最终用途管制（军事用途/大规模杀伤性武器）
+             - 最终用户管制（军事最终用户清单MEU）
+
+          6. 风险等级评估：
+             - 🔴禁止交易（合作方在制裁名单上或涉及管制物项）
+             - 🟡高风险（合作方有制裁关联风险/交易涉及敏感国家）
+             - 🟢低风险（筛查通过但仍需持续监控）
+
+          7. 合规建议：
+             - 是否需要拒绝交易
+             - 是否需要申请OFAC许可证
+             - 合同中的制裁合规条款
+             - 持续监控机制
+
+          请联网搜索最新制裁名单动态。
+          输出制裁合规筛查报告。
+
+- id: "00000000-0000-0000-0000-000000000d0a"
+  name: "合同制裁条款起草"
+  description: "Draft sanctions compliance clauses for contracts — representations, termination rights, bilingual"
+  category: "trade_compliance"
+  steps:
+    - name: "Generate sanctions clauses"
+      description: "Generate sanctions compliance contract clauses"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下合同起草制裁合规条款：
+
+          合同类型：【如：国际货物买卖合同/技术服务合同/投资协议/银行贷款协议】
+          我方身份：【如：中国出口方/中国投资方/国际银行】
+          风险场景：【如：交易涉及美元清算/合作方可能受到制裁/需预防未来制裁影响】
+
+          条款起草要求：
+
+          1. 制裁陈述与保证条款：
+             - 合作方当前不受制裁的陈述
+             - 合作方不会从事导致受制裁行为的承诺
+             - 交易不涉及管制物项的陈述（如适用）
+
+          2. 制裁终止权条款：
+             - 如合作方受到制裁，我方有权终止合同
+             - 终止后的费用结算安排
+             - 终止不构成违约的明确约定
+
+          3. 制裁合规义务条款：
+             - 合作方配合制裁筛查的义务
+             - 合作方及时通知受制裁风险的义务
+             - 制裁名单变更的持续监控义务
+
+          4. 制裁合规审查权条款：
+             - 我方有权对合作方进行定期制裁合规审查
+             - 合作方提供相关信息和文件的义务
+
+          5. 间接制裁风险条款：
+             - 次级制裁风险的通知和处理
+             - 美元清算受阻的替代支付安排
+
+          6. 责任限制条款：
+             - 因制裁导致的不可抗力处理
+             - 制裁导致的履约障碍的风险分配
+
+          请提供中英双语版本（英文为谈判和合同主要语言）。
+          输出条款文本及起草说明。
+
+- id: "00000000-0000-0000-0000-000000000d0b"
+  name: "游戏版号与内容审查合规路径"
+  description: "Game license approval and content review compliance path — publication approval, content review, operation qualifications"
+  category: "gaming_compliance"
+  steps:
+    - name: "Search game regulations"
+      description: "Search for game publication approval and content review regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance path"
+      description: "Generate game license and content review compliance path"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下游戏产品在中国境内的版号审批与内容审查合规路径：
+
+          游戏产品信息：
+          - 游戏名称：【XX】
+          - 游戏类型：【MMORPG/手游/端游/主机游戏/小游戏/VR游戏】
+          - 游戏题材：【如：武侠/玄幻/科幻/军事/历史/体育/休闲/益智】
+          - 目标用户：【全年龄/12+/18+】
+          - 运营模式：【免费+内购/买断制/订阅制/广告变现】
+          - 是否含联网功能：【单机/弱联网/强联网/MMO】
+          - 开发商：【XX公司，是否已有版号资质】
+          - 运营资质：【是否已取得《网络文化经营许可证》/ICP证】
+
+          合规路径分析框架：
+
+          一、版号审批路径：
+            1. 出版审批（国家新闻出版署）：
+               - 游戏出版审批的申报条件
+               - 申报材料清单：
+                 * 游戏出版申报表
+                 * 游戏选题报告/内容审查报告
+                 * 游戏防沉迷系统说明
+                 * 游戏测试账号
+                 * 著作权登记证书
+                 * ICP证复印件
+                 * 《网络文化经营许可证》复印件
+               - 审批流程时间线（当前平均审批周期）
+               - 国产游戏 vs. 进口游戏的审批差异
+            2. 版号审批的常见问题与风险：
+               - 题材敏感风险（暴力/血腥/色情/政治/宗教/赌博暗示）
+               - 角色造型审查（暴露/敏感标志/历史人物处理）
+               - 地名/国旗/国徽的合规使用
+               - 游戏名称的合规审查（不得含有违规用语）
+
+          二、内容审查合规：
+            1. 《网络游戏管理暂行办法》合规要点：
+               - 游戏内容的合法性审查清单
+               - 不得含有的内容类型（淫秽/暴力/赌博/违禁/歧视等）
+               - 历史题材的特殊审查要求
+            2. 游戏命名合规：
+               - 《关于严格规范网络游戏名称的通知》要求
+            3. 广告合规：
+               - 游戏内广告的合规要求
+               - 游戏推广素材的合规审查
+
+          三、运营资质合规：
+            1. 《网络文化经营许可证》申请
+            2. ICP经营许可证申请
+            3. 游戏版号的年度报告义务
+
+          四、审批策略建议：
+            - 不同题材的审批风险等级评估
+            - 内容自审查清单（提交前的自查）
+            - 版号获批后的持续合规义务
+
+          请输出版号审批合规路径图 + 申报材料清单 + 内容自查清单 + 风险评估矩阵。
+
+- id: "00000000-0000-0000-0000-000000000d0c"
+  name: "游戏虚拟道具与充值合规"
+  description: "Game virtual items and recharge compliance — gacha disclosure, minor recharge limits, refunds"
+  category: "gaming_compliance"
+  steps:
+    - name: "Search game virtual item regulations"
+      description: "Search for game virtual item and recharge regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance review"
+      description: "Generate game virtual item and recharge compliance review"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下游戏的虚拟道具和充值系统进行合规审查：
+
+          游戏信息：
+          - 游戏名称：【XX】
+          - 运营模式：【免费+内购】
+          - 虚拟道具类型：【角色皮肤/装备/道具/通行证/抽奖/宝箱/代币/金币】
+          - 是否含抽奖/随机机制：【是/否】
+          - 抽奖机制详情：【如：每抽XX元，SSR概率XX%，保底XX次】
+          - 是否含交易功能：【禁止交易/游戏内交易/外部交易平台】
+          - 是否含未成年人充值功能：【是/否】
+
+          合规审查框架：
+
+          一、抽奖/随机机制合规（《关于规范网络游戏运营加强事中事后监管的通知》/各地抽奖规范）：
+            1. 信息披露合规：
+               - 是否公示抽取概率/合成概率
+               - 是否公示虚拟道具的名称/性能/获取方式
+               - 概率公示的位置和方式要求
+            2. 限制性要求：
+               - 单次抽取/多次抽取的价格限制
+               - 保底机制的合规要求
+               - 是否存在"诱导过度消费"的设计
+            3. 盲盒合规联动：
+               - 是否适用《盲盒经营活动规范指引（试行）》
+               - 未成年人购买盲盒的限制
+
+          二、虚拟道具交易合规：
+            1. 游戏内交易：
+               - 交易规则与限制
+               - 交易手续费合规性
+            2. 虚拟道具的财产属性分析：
+               - 虚拟道具的法律性质（虚拟财产/服务内容/数据）
+               - 用户对虚拟道具的权利边界
+            3. 外部交易平台的风险：
+               - 是否允许第三方平台交易
+               - 交易安全与纠纷处理
+
+          三、充值合规与未成年人保护：
+            1. 未成年人充值限制（《关于进一步严格管理切实防止未成年人沉迷网络游戏的通知》）：
+               - 8-16岁：单次充值≤50元，月累计≤200元
+               - 16-18岁：单次充值≤100元，月累计≤400元
+               - 不得为未满8岁用户提供充值
+            2. 实名认证与充值关联：
+               - 实名制对充值的强制性关联
+               - 充值时的年龄验证机制
+            3. 退款机制：
+               - 未成年人未经监护人同意充值的退款规则
+               - 退款申请的处理流程
+
+          四、定价合规：
+            1. 虚拟道具定价的合理性
+            2. 是否存在误导性定价
+            3. "首充优惠"/"限时折扣"的合规性
+
+          请输出合规审查清单（逐项标注 🔴违法 / 🟡风险 / 🟢合规）+ 未成年人充值合规方案 + 抽奖概率公示模板。
+
+- id: "00000000-0000-0000-0000-000000000d0d"
+  name: "游戏出海合规——多法域分析"
+  description: "Game overseas compliance — content rating, data, payment, minor protection across jurisdictions"
+  category: "gaming_compliance"
+  steps:
+    - name: "Search game overseas regulations"
+      description: "Search for game regulations in target overseas markets"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance analysis"
+      description: "Generate multi-jurisdiction game overseas compliance analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下游戏产品出海的多法域合规路径进行分析：
+
+          游戏产品信息：
+          - 游戏名称：【XX】
+          - 游戏类型：【如：RPG/SLG/休闲/竞技/二次元】
+          - 目标市场：【美国/欧盟/日本/韩国/东南亚/中东/巴西，可多选】
+          - 发行方式：【自发行/通过平台发行（App Store/Google Play/Steam）/代理发行】
+          - 是否含实时社交功能：【是/否】
+          - 是否含随机抽取机制：【是/否】
+          - 是否含支付/充值功能：【是/否】
+
+          多法域合规分析框架：
+
+          一、内容审查合规（各国差异最大）：
+            1. 日本：
+               - CERO分级制度（内容审查与分级）
+               - PC游戏的内容审查（EOCS/CSRR）
+               - 赌博性要素的合规界限（"ガチャ"的概率公示要求）
+            2. 韩国：
+               - GRAC分级制度
+               - 韩国强制关机制度（Shutdown Law）已于2021年修法废止，改为家长选择制
+               - 韩国游戏物管理委员会（GRAC）的登记与分级要求
+            3. 欧盟/英国：
+               - PEGI分级
+               - 暴力/色情内容的分级标准
+               - 欧盟对 loot box 的监管态度（比利时认定为赌博予以禁止；荷兰曾禁止但2022年法院改判；其他国家态度不一）
+            4. 中东：
+               - 伊斯兰文化审查要点
+               - 阿联酋/NMC的游戏内容审查
+               - 沙特/GSA的游戏许可
+            5. 美国：
+               - ESRB分级（自愿但App Store/Google Play要求）
+               - COPPA合规（13岁以下儿童数据的特殊要求）
+               - loot box的州级立法动态
+
+          二、数据合规（出海数据挑战）：
+            1. GDPR合规（欧盟）：
+               - 游戏内个人数据处理合规
+               - 儿童数据的特殊要求（13-16岁需监护人同意）
+               - 游戏内广告的数据合规
+            2. 各国数据本地化要求
+            3. 中国数据出境合规（游戏服务器在境外）
+
+          三、支付/充值合规：
+            1. 各国对游戏内支付的监管：
+               - 欧盟PSD2对游戏支付的影响
+               - 日本/韩国的游戏支付合规
+            2. 跨境支付合规：
+               - 游戏内虚拟货币的跨境收付路径
+               - Apple/Google的支付规则合规
+            3. 退款政策的各国要求
+
+          四、未成年人保护合规：
+            1. 各国游戏时间限制对比：
+               - 中国：1小时（周五/六/日+节假日8-9PM）
+               - 韩国：游戏选择制（选择性限制）
+               - 日本：无统一限制但有行业指引
+               - 欧盟/美国：无统一限制但平台有家长控制
+            2. 各国充值限制对比
+
+          五、发行合规：
+            1. 各平台合规要求：
+               - App Store审核指南
+               - Google Play政策
+               - Steam发行合规
+            2. 本地化运营的合规要求：
+               - 本地客服/举报机制
+               - 本地隐私政策/条款的翻译合规
+
+          请输出多法域合规对比矩阵 + 各市场合规优先级排序 + 合规改进路线图。
+          联网搜索各国最新游戏监管动态。
+
+- id: "00000000-0000-0000-0000-000000000d0e"
+  name: "未成年人保护与防沉迷合规专项"
+  description: "Minor protection and anti-addiction compliance — real-name verification, time limits, recharge limits, parental tools"
+  category: "gaming_compliance"
+  steps:
+    - name: "Search minor protection regulations"
+      description: "Search for minor protection and anti-addiction regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance plan"
+      description: "Generate minor protection and anti-addiction compliance plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下游戏的未成年人保护体系进行合规审查与建设方案设计：
+
+          游戏信息：
+          - 游戏名称：【XX】
+          - 当前防沉迷系统状态：【已有系统/需要建设/需要升级】
+          - 用户实名认证方式：【身份证号/手机号/其他】
+          - 当前未成年人占比预估：【约XX%】
+
+          合规审查与建设方案框架：
+
+          一、实名认证合规：
+            1. 《关于进一步严格管理切实防止未成年人沉迷网络游戏的通知》合规：
+               - 实名注册系统的技术标准
+               - 与国家新闻出版署防沉迷实名验证系统的对接
+               - 实名信息的安全存储与使用合规
+            2. 实名认证的技术实现：
+               - 接入公安数据源的身份核验
+               - 人脸识别辅助验证（触发条件）
+               - 实名认证失败的处理流程
+
+          二、游戏时间限制合规：
+            1. 服务时段限制：
+               - 仅周五/周六/周日和法定节假日的20:00-21:00提供服务
+               - 技术实现方案（登录控制/强制退出）
+            2. 限制的对象：
+               - 未满18周岁的用户
+               - 不同年龄段的差异化限制
+
+          三、充值限制合规：
+            1. 年龄分档充值限制：
+               - 8岁以下：禁止充值
+               - 8-16岁：单次≤50元，月累计≤200元
+               - 16-18岁：单次≤100元，月累计≤400元
+            2. 充值触发前的身份验证机制
+            3. 退款机制：
+               - 退款申请渠道
+               - 退款审核流程
+               - 退款时效承诺
+
+          四、内容分级合规：
+            1. 游戏内容的适龄提示制度
+            2. 不同年龄段的差异化内容策略
+            3. 游戏内社交功能的未成年人保护措施
+
+          五、家长监控工具：
+            1. 家长端功能设计：
+               - 查看游戏时长
+               - 查看充值记录
+               - 设置游戏时段限制
+            2. 家长与未成年人账号的关联机制
+
+          六、合规审计与持续监测：
+            1. 防沉迷系统运行监测
+            2. 未成年人保护合规年度自查
+            3. 监管检查应对预案
+
+          请输出未成年人保护合规方案 + 防沉迷系统技术合规要求清单 + 退款流程模板 + 合规自查报告框架。
+
+- id: "00000000-0000-0000-0000-000000000d0f"
+  name: "代币发行合规分析"
+  description: "Token issuance compliance analysis — legal characterization, licensing, AML/KYC, tax across jurisdictions"
+  category: "web3_compliance"
+  steps:
+    - name: "Search token regulations"
+      description: "Search for token issuance regulations across jurisdictions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance analysis"
+      description: "Generate token issuance compliance analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析在以下法域发行【utility token / governance token / security token】的合规路径：
+
+          代币基本信息：
+          - 代币名称：【XXX】
+          - 代币用途：【支付网络服务费/治理投票/质押收益/...】
+          - 发行规模：【总量10亿枚，公开发行2亿枚】
+          - 是否涉及融资：【是/否】
+          - 目标投资者：【散户/合格投资者/机构】
+
+          分析法域：【新加坡、中国香港、开曼群岛、美国、欧盟MiCA】
+
+          每个法域需分析：
+          1. 代币法律性质认定：
+             - 是否构成"证券"（Howey Test / SFC定义 / MAS定义）
+             - 是否构成"虚拟资产"（VASP定义）
+             - 是否构成"数字代币"（PSA定义）
+
+          2. 合规路径：
+             - 需要取得的牌照或注册（MAS PSA牌照 / SFC Type 1 / VASP注册）
+             - 可用的豁免/例外（Accredited Investor / Professional Investor / Regulation S / Regulation D）
+             - 白皮书披露要求
+             - 营销与分销限制
+
+          3. AML/KYC要求：
+             - 适用规则（FATF Travel Rule / 本地AML法规）
+             - 实施方案
+
+          4. 税务处理：
+             - 代币发行的税务影响
+             - 代币交易的GST/VAT处理
+
+          5. 后续合规义务：
+             - 持续披露要求
+             - 投资者保护措施
+             - 智能合约审计要求
+
+          请输出多法域对比矩阵，并推荐最优发行架构。
+
+- id: "00000000-0000-0000-0000-000000000d10"
+  name: "NFT 平台合规意见书"
+  description: "NFT platform legal compliance opinion — legal characterization, IP, consumer protection, AML, platform liability"
+  category: "web3_compliance"
+  steps:
+    - name: "Search NFT regulations"
+      description: "Search for NFT and digital collectible regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate legal opinion"
+      description: "Generate NFT platform legal compliance opinion"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份关于NFT数字藏品平台的法律合规意见书框架：
+
+          平台信息：
+          - 运营主体：【XX公司，注册地：XX】
+          - NFT类型：【数字艺术品 / 游戏道具 / 虚拟地产 / 粉丝通证】
+          - 交易模式：【一级发行 / 二级交易 / 盲盒/合成】
+          - 支付方式：【法币 / 加密货币 / 平台币】
+
+          意见书结构：
+          1. NFT的法律性质认定：
+             - 中国法下：虚拟商品 / 数字资产 / 网络虚拟财产（《民法典》第127条）
+             - 是否构成证券（证券化NFT的分析）
+             - 是否涉及虚拟货币交易（中国禁令的适用边界）
+
+          2. 知识产权：
+             - NFT铸造的版权授权链（原创 vs. 二创 vs. 代理）
+             - NFT持有者的版权范围（展示权 / 复制权 / 商业使用权）
+             - 智能合约中IP许可条款的法律效力
+
+          3. 消费者权益保护：
+             - 信息披露义务（NFT的稀缺性、链上验证方法）
+             - 退换货政策（数字商品的七天无理由退货适用性）
+             - 盲盒/随机性产品的合规要求
+
+          4. 反洗钱合规：
+             - 法币入金通道的AML要求
+             - NFT交易的反洗钱风险评估
+             - 大额交易报告义务
+
+          5. 跨境销售合规：
+             - 不同法域对NFT的监管态度
+             - 跨境支付的合规路径
+             - 数据跨境传输
+
+          6. 平台责任：
+             - 平台作为ISP的"避风港"保护
+             - 内容审核义务
+             - 知识产权侵权通知-删除机制
+
+          请引用最新法律法规和监管政策。
+
+- id: "00000000-0000-0000-0000-000000000d11"
+  name: "RWA 多法域合规路径分析"
+  description: "RWA multi-jurisdiction compliance path — token characterization, licensing, investor access, secondary market"
+  category: "web3_compliance"
+  steps:
+    - name: "Search RWA regulations"
+      description: "Search for RWA and tokenization regulations across jurisdictions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate compliance path"
+      description: "Generate RWA multi-jurisdiction compliance path analysis"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请分析以下RWA项目在目标发行法域的合规路径：
+
+          RWA项目信息：
+          - 底层资产：【XX类资产】，所在地：【XX法域】
+          - 代币性质：代表【SPV股权 / 信托受益权 / 债权 / 收益分享权】
+          - 发行规模：【XX万美元/元】
+          - 目标投资者范围：【全球合格投资者 / 仅特定法域投资者】
+
+          分析法域：【中国香港、新加坡、开曼群岛、瑞士、美国、欧盟、中国大陆】
+
+          每个法域需分析：
+
+          1. 代币法律性质认定：
+             - 是否构成"证券"（香港SFC定义 / 美国Howey Test / 欧盟MiCA定义 / 新加坡MAS定义）
+             - 是否构成"虚拟资产"（香港VASP定义 / MiCA虚拟资产定义）
+             - 是否构成"集体投资计划"（CIS）
+             - RWA代币的特殊性：是否有底层资产支撑→是否降低"证券"认定风险？
+
+          2. 合规路径选择：
+             - 香港：
+               * SFC Type 1/9牌照（如构成证券型代币）
+               * VASP牌照（如构成虚拟资产）
+               * Ensemble沙盒项目的参与路径
+               * 专业投资者豁免适用条件
+             - 新加坡：
+               * MAS PSA下数字代币发行牌照/豁免
+               * Project Guardian沙盒参与路径
+               * SFA下的资本市场服务牌照
+             - 开曼：
+               * 开曼基金法下的代币化基金注册
+               * SIBL下的证券发行豁免
+             - 瑞士：
+               * FINMA下的DTA（Digital Token Offering）框架
+               * 链上资产登记的法律认可度
+             - 美国：
+               * Regulation D/S/A+的适用路径分析
+               * SEC对RWA的最新立场（是否构成证券的分析）
+             - 欧盟：
+               * MiCA框架下的RWA合规路径
+               * DLT Pilot Regime的试点路径
+               * UCITS/ELTIF代币化基金框架
+             - 中国大陆：
+               * 禁止虚拟货币交易的法律红线（924公告）对RWA的影响
+               * 联盟链上的资产数字化（非公链代币化）的合规空间
+               * 数字人民币+联盟链RWA的可行性分析
+
+          3. 投资者准入限制：
+             - 各法域对散户 vs. 专业/合格投资者的准入规则
+             - KYC/AML要求（FATF Travel Rule的适用）
+             - 投资者数量上限（如美国12(g)门槛、香港CIS的50人限制等）
+
+          4. 二级市场合规：
+             - 代币在各法域二级交易的法律限制
+             - 交易所/ATS牌照要求
+             - 做市与交易撮合的合规边界
+
+          5. 底层资产跨境合规：
+             - 底层资产所在法域对"外国SPV持有"的规则
+             - 资产跨境转移的审批/税务问题
+             - 数据出境合规（资产信息上链涉及的跨境数据传输）
+
+          请输出多法域合规对比矩阵，标注各法域的"可行性评级"（✅可行 / ⚠️有条件可行 / ❌不可行）和"合规成本估算"，给出最优发行架构组合方案。
+
+- id: "00000000-0000-0000-0000-000000000d12"
+  name: "RWA 投资者保护与风险披露"
+  description: "RWA investor protection and risk disclosure — risk disclosure document, protection mechanisms"
+  category: "web3_compliance"
+  steps:
+    - name: "Search RWA investor protection frameworks"
+      description: "Search for RWA investor protection and disclosure frameworks"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate disclosure framework"
+      description: "Generate RWA risk disclosure and investor protection framework"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请起草一份RWA项目的投资者风险披露文件框架，并设计投资者保护机制：
+
+          RWA项目信息：
+          - 底层资产：【XX类资产】
+          - 代币代表：【SPV股权/信托受益权/债权/收益分享权】
+          - 代币化架构：【XX法域SPV + XX链上代币】
+          - 二级市场：【有/无】
+
+          一、风险披露文件框架（Risk Disclosure Document）：
+
+          1. 底层资产风险：
+             - 资产价值波动风险（不动产贬值/债券违约/艺术品估值不确定等）
+             - 资产流动性风险（底层资产本身可能难以快速变现）
+             - 资产管理风险（SPV/受托人的管理不善）
+             - 资产权属争议风险（底层资产存在优先债权人/产权瑕疵）
+             - 资产灭失/毁损风险（自然灾害/意外事故）
+
+          2. 代币化架构风险：
+             - SPV/信托的法律风险（设立法域法律变更、破产隔离效力）
+             - 链上与链下权利衔接风险（智能合约条款与法律协议的不一致）
+             - 代币法律性质不确定性风险（监管认定变更）
+             - 代币持有者权利行使风险（权利链条过长、行使程序复杂）
+             - 代币持有者间权利不平等风险（不同批次代币的权利差异）
+
+          3. 技术风险：
+             - 智能合约漏洞/黑客攻击风险
+             - 预言机（Oracle）数据失真风险（底层资产价值上链的准确性）
+             - 区块链网络故障/升级风险
+             - 密钥丢失/被盗风险（代币持有者端）
+             - 链上清算机制的触发条件与执行风险
+
+          4. 市场风险：
+             - 代币二级市场流动性不足风险
+             - 代币价格与底层资产净值偏离风险
+             - 市场操纵风险（低流动性市场更易操纵）
+             - 代币赎回/退出的排队与延迟风险
+
+          5. 合规风险：
+             - 监管政策变更风险（RWA监管仍在快速演变）
+             - 代币被追溯认定为证券的风险
+             - 税务处理变更风险
+             - 跨境合规冲突风险
+
+          6. 运营风险：
+             - 项目方/SPV管理团队风险（团队变动、失职、利益冲突）
+             - 服务提供商风险（托管人、审计师、预言机供应商）
+             - 信息披露不及时/不完整风险
+             - 反洗钱/制裁合规风险
+
+          二、投资者保护机制设计：
+
+          1. 信息披露机制：
+             - 定期披露要求（底层资产估值更新频率、NAV计算与公布、财务报表）
+             - 重大事项临时披露触发条件
+             - 链上可验证的信息披露（预言机+链上证明机制）
+
+          2. 代币持有者治理权：
+             - 代币持有者投票机制（底层资产重大处置的审批权）
+             - 代币持有者委员会/代表机制
+             - 信息权与检查权
+
+          3. 资产保护机制：
+             - 破产隔离设计（SPV/信托的破产隔离效力保障）
+             - 底层资产独立托管/监管安排
+             - 保险覆盖（底层资产保险 + 智能合约保险）
+
+          4. 退出与赎回机制：
+             - 代币赎回触发条件与程序
+             - 赎回排队机制与公平性保障
+             - 二级市场退出的可行性保障
+             - 底层资产清算分配机制（项目终止时）
+
+          5. 争议解决机制：
+             - 链上仲裁机制（如适用）
+             - 链下法律仲裁条款（仲裁机构、仲裁地选择）
+             - 投资者集体维权机制
+
+          6. 合规审计与监督：
+             - 定期合规审计要求
+             - 外部审计师的选聘与轮换
+             - 监管报告义务
+
+          请输出完整的风险披露文件模板和投资者保护机制方案。
+          引用香港SFC《虚拟资产交易平台指引》、新加坡MAS Project Guardian框架、瑞士FINMA DTA指南、欧盟MiCA等最新RWA监管框架。
+
+- id: "00000000-0000-0000-0000-000000000d13"
+  name: "反垄断经营者集中申报"
+  description: "Antitrust merger control filing — filing obligation, market definition, competition assessment, materials"
+  category: "antitrust"
+  steps:
+    - name: "Search merger control regulations"
+      description: "Search for merger control filing regulations and thresholds"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate filing assessment"
+      description: "Generate merger control filing assessment and materials framework"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请评估以下交易是否需要进行反垄断经营者集中申报，并起草申报材料框架：
+
+          交易信息：
+          - 交易类型：【合并/股权收购/资产收购/合同控制/VIE】
+          - 收购方：【XX公司，中国营业额约XX亿元，全球营业额约XX亿元】
+          - 目标公司：【XX公司，中国营业额约XX亿元，全球营业额约XX亿元】
+          - 收购比例：【XX%】
+          - 是否取得控制权：【是/否】
+          - 相关市场：【如：中国乘用车市场/中国在线外卖平台市场】
+
+          分析框架：
+
+          1. 申报义务判断：
+             - 是否构成"经营者集中"（合并/取得控制权/施加决定性影响）
+             - 是否达到申报标准（营业额测试）
+             - 是否属于豁免情形
+
+          2. 相关市场界定：
+             - 商品市场界定（替代性分析）
+             - 地域市场界定
+             - 市场份额估算
+             - 市场集中度（HHI指数计算）
+
+          3. 竞争影响评估：
+             - 单方效应（合并后是否可能单方面提高价格/降低质量）
+             - 协同效应（是否增加与竞争对手协同行为的风险）
+             - 进入壁垒评估
+             - 买方力量评估
+
+          4. 申报材料清单：
+             - 申报书
+             - 营业额证明文件
+             - 相关市场界定说明
+             - 竞争影响分析报告
+             - 交易协议
+             - 当事人说明
+
+          5. 时间线与策略：
+             - 申报时间节点
+             - 审查流程预估（初步审查30日/进一步审查90日/延长60日）
+             - 是否需要主动提出救济措施
+             - 简易程序申请条件评估
+
+          引用《反垄断法》《经营者集中审查规定》《经营者集中申报指南》。
+          输出经营者集中申报评估报告 + 申报材料框架。
+
+- id: "00000000-0000-0000-0000-000000000d14"
+  name: "供应链ESG尽职调查"
+  description: "Supply chain ESG due diligence — scope, tools, core checks, risk grading, remediation, monitoring"
+  category: "esg_compliance"
+  steps:
+    - name: "Search ESG supply chain requirements"
+      description: "Search for supply chain ESG due diligence requirements"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate DD plan"
+      description: "Generate supply chain ESG due diligence plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请设计一份供应链ESG尽职调查方案：
+
+          企业信息：
+          - 采购方：【XX公司】
+          - 供应链规模：【约XX家一级供应商/XX家二级供应商】
+          - 供应商地域分布：【中国XX省/东南亚/非洲/...】
+          - 行业：【如：电子制造/服装/食品/矿产】
+          - 客户/投资人的ESG要求：【如有，如：某国际品牌要求供应商符合XX标准】
+
+          尽职调查方案：
+
+          1. 尽调范围确定：
+             - 一级供应商全覆盖/抽样
+             - 二级供应商的尽调触发条件
+             - 高风险供应商的筛选标准
+
+          2. 尽调工具：
+             - 供应商ESG自评问卷设计（核心问题清单）
+             - 现场审计清单
+             - 文件核查清单
+
+          3. 核心核查事项：
+
+             环境方面：
+             - 环评/排污许可合规
+             - 环境处罚记录
+             - 碳排放数据
+             - 有害物质管理
+             - 水资源使用与废水处理
+
+             社会方面：
+             - 劳动合同签署率
+             - 工时与工资合规
+             - 安全生产记录
+             - 童工/强迫劳动风险
+             - 员工申诉机制
+             - 外籍/女工/未成年工特殊保护
+
+             治理方面：
+             - 反腐败机制
+             - 商业合规制度
+             - 信息透明度
+
+          4. 风险分级标准：
+             🔴高风险：存在严重ESG违规/可能导致供应链中断/客户品牌受损
+             🟡中风险：存在ESG合规缺口但可改进
+             🟢低风险：ESG合规基本达标
+
+          5. 供应商整改方案：
+             - 整改通知模板
+             - 整改期限设定
+             - 整改验证机制
+             - 不整改的后果（终止合作）
+
+          6. 持续监控机制：
+             - 定期审计频率
+             - 年度ESG报告要求
+             - 突发事件通知机制
+
+          输出供应链ESG尽调方案，含自评问卷模板。
+
+- id: "00000000-0000-0000-0000-000000000d15"
+  name: "广告与宣传物料合规审查"
+  description: "Advertising and promotional material compliance review — absolute terms, false claims, industry restrictions, pricing"
+  category: "advertising_compliance"
+  steps:
+    - name: "Search advertising regulations"
+      description: "Search for Advertising Law and marketing regulations"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate review"
+      description: "Generate advertising material compliance review"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下广告/宣传物料进行合规审查：
+
+          物料信息：
+          - 物料类型：【广告文案/电商详情页/直播话术脚本/短视频脚本/产品包装/新闻稿/朋友圈推文/招商宣传】
+          - 产品/服务类型：【普通消费品/食品/保健食品/化妆品/医疗器械/药品/金融产品/教育培训/房地产/汽车】
+          - 投放渠道：【电商平台/社交媒体/线下/电视/户外】
+          - 是否使用代言人/KOL：【是/否】
+
+          【粘贴物料文本或上传物料】
+
+          审查清单：
+
+          1. 绝对化用语（《广告法》第9条）：
+             - "最/第一/顶级/国家级/独家/唯一"等用语逐一排查
+             - 可豁免情形辨析（客观时空顺序表述、自我比较、已获认证的表述）
+
+          2. 虚假与引人误解宣传（《广告法》第4/28条、《反不正当竞争法》第8条）：
+             - 功效/性能表述是否有依据支撑
+             - 引证内容（数据、统计、调查结果、荣誉）是否标明出处和有效期限
+             - 用户评价/案例的真实性
+
+          3. 行业特殊禁区（按产品类型适用）：
+             - 食品/保健食品：不得涉及疾病预防治疗功能、"蓝帽子"标识与功能声称范围
+             - 化妆品：功效宣称的备案依据（美白/防脱等特殊化妆品）、禁用"医学护肤"等医疗术语
+             - 医疗/药品/医疗器械：广告审查批文、适应症表述边界
+             - 金融产品：不得承诺保本保收益、收益率展示规范、风险提示义务
+             - 教育培训：不得承诺通过率/升学效果、不得利用教师名义推荐
+             - 房地产：不得承诺升值回报、学区表述风险、距离表述（不得以时间表示距离）
+
+          4. 价格宣传（《价格法》/《明码标价和禁止价格欺诈规定》）：
+             - 划线价/原价的真实性（近期成交价要求）
+             - "全网最低"等价格比较的风险
+             - 促销规则的明示（满减/定金规则）
+
+          5. 代言与推广合规：
+             - 代言人资格（是否使用过该商品、劣迹艺人风险）
+             - 不得代言的品类（医疗/药品/保健食品不得用代言人）
+             - KOL种草/软文的"广告"标识义务（《互联网广告管理办法》）
+
+          6. 特殊人群与场景：未成年人相关限制、弹窗广告一键关闭要求
+
+          输出：逐条标注 🔴违法（引法条+处罚幅度）/ 🟡风险 / 🟢合规 + 每条给出可直接替换的修改文案。
+
+- id: "00000000-0000-0000-0000-000000000d16"
+  name: "反商业贿赂合规专项方案"
+  description: "Anti-bribery compliance program — risk identification, policies, third-party management, financial controls"
+  category: "compliance_system"
+  steps:
+    - name: "Search anti-bribery regulations"
+      description: "Search for anti-bribery regulations (FCPA, UKBA, Criminal Law, ISO 37001)"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate program"
+      description: "Generate anti-bribery compliance program"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业设计反商业贿赂合规专项方案：
+
+          企业信息：
+          - 企业名称：【XX】
+          - 行业：【如：医药/医疗器械/工程建设/政府采购/矿产/金融】
+          - 业务模式：【简述核心业务和客户类型】
+          - 已有合规措施：【简述，如：仅有员工手册中的零散规定】
+
+          方案框架：
+
+          1. 反贿赂风险识别：
+             - 与政府官员/公职人员交往的场景清单
+             - 与客户/供应商/渠道商的礼品/招待/赞助场景
+             - 第三方中介/代理的使用场景
+             - 高风险国家/地区的业务场景
+
+          2. 反贿赂合规制度：
+             - 反贿赂合规政策（原则性声明）
+             - 礼品与招待管理制度（限额+审批+记录）
+             - 政治捐赠管理制度
+             - 商业赞助管理制度
+             - 招投标合规管理制度
+
+          3. 第三方管理：
+             - 第三方尽职调查程序
+             - 第三方合规承诺书/协议条款
+             - 第三方合规审计权
+
+          4. 财务控制：
+             - 费用报销审核机制（关联费用审批增加合规审查节点）
+             - 现金支出控制
+             - 账簿与记录的准确性要求
+
+          5. 培训与沟通：
+             - 全员反贿赂培训（入职+年度）
+             - 重点岗位专项培训（销售/采购/政府关系/招投标）
+             - 管理层合规承诺声明签署
+
+          6. 监测与审计：
+             - 合规审计
+             - 举报机制与调查程序
+             - 违规处理与纪律处分
+
+          引用FCPA（美国反海外腐败法）、UKBA（英国反贿赂法）、《刑法》第389/393条、ISO 37001（反贿赂管理体系）等。
+          输出反贿赂合规专项方案（Word文档）。
+
+- id: "00000000-0000-0000-0000-000000000d17"
+  name: "企业刑事合规风险评估"
+  description: "Corporate criminal compliance risk assessment — screening key offenses, risk matrix, compliance system"
+  category: "criminal_compliance"
+  steps:
+    - name: "Search criminal law provisions"
+      description: "Search for Criminal Law provisions on corporate offenses"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate risk assessment"
+      description: "Generate corporate criminal compliance risk assessment report"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下企业进行刑事合规风险评估：
+
+          企业信息：
+          - 企业名称：【XX】
+          - 行业：【如：金融/P2P/电商/医药/矿产/数据服务】
+          - 业务模式：【简述核心业务模式】
+          - 已有合规措施：【简述】
+
+          风险评估框架——重点罪名筛查：
+
+          1. 经营类犯罪风险：
+             - 非法经营罪（《刑法》第225条）
+               * 是否涉及特许经营/许可/资质要求
+               * 业务模式是否可能被认定为"非法经营"
+             - 非法吸收公众存款罪/集资诈骗罪（《刑法》第176/192条）
+               * 是否涉及向公众募集资金
+               * 是否有合规的融资渠道
+
+          2. 财税类犯罪风险：
+             - 虚开发票罪（《刑法》第205条）
+               * 发票管理合规性
+               * 是否存在"票货分离"风险
+             - 逃税罪（《刑法》第201条）
+               * 税务合规评估
+               * 初次违法的补缴免罪条款适用
+
+          3. 商业贿赂类犯罪风险：
+             - 行贿罪/单位行贿罪（《刑法》第389/393条）
+               * 政府关系交往合规
+               * 第三方中介合规
+             - 非国家工作人员受贿罪（《刑法》第163条）
+               * 内部反腐机制
+
+          4. 数据与网络安全犯罪风险：
+             - 侵犯公民个人信息罪（《刑法》第253条之一）
+               * 个人信息收集与使用的合规性
+               * 是否存在"非法获取/出售/提供"个人信息的行为
+             - 非法侵入计算机信息系统罪/破坏计算机信息系统罪
+             - 拒不履行信息网络安全管理义务罪（《刑法》第286条之一）
+
+          5. 证券类犯罪风险（如适用）：
+             - 内幕交易/泄露内幕信息罪
+             - 操纵证券市场罪
+             - 欺诈发行证券罪
+
+          6. 知识产权犯罪风险（如适用）：
+             - 侵犯著作权罪
+             - 侵犯商业秘密罪
+             - 假冒注册商标罪
+
+          7. 其他行业特定犯罪风险：
+             - 【如：金融行业的洗钱罪/违法发放贷款罪；医药行业的生产销售假药罪】
+
+          8. 风险矩阵：
+             | 罪名 | 风险等级 | 触发条件 | 预防措施 | 合规建议 |
+
+          9. 刑事合规体系建设建议：
+             - 紧急整改事项
+             - 中长期合规建设路线图
+             - 刑事合规不起诉的申请条件（如已涉嫌犯罪）
+
+          输出企业刑事合规风险评估报告。
+
+- id: "00000000-0000-0000-0000-000000000d18"
+  name: "刑事合规不起诉申请"
+  description: "Criminal compliance non-prosecution application — eligibility review, remediation plan, application strategy"
+  category: "criminal_compliance"
+  steps:
+    - name: "Search non-prosecution policy"
+      description: "Search for criminal compliance non-prosecution pilot policy"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate application"
+      description: "Generate non-prosecution feasibility assessment and remediation plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下涉嫌犯罪情况，评估刑事合规不起诉的可行性，并起草合规整改方案：
+
+          涉嫌犯罪信息：
+          - 企业名称：【XX】
+          - 涉嫌罪名：【如：虚开发票罪/侵犯公民个人信息罪/单位行贿罪/非法经营罪】
+          - 案件阶段：【侦查阶段/审查起诉阶段/已起诉】
+          - 检察机关态度：【如：已提示可适用合规不起诉】
+          - 涉案金额/情节：【简述】
+
+          第一步：合规不起诉适用条件审查：
+
+          1. 适用条件（《刑事诉讼法》第177条 + 最高检合规不起诉试点政策）：
+             - 企业是否愿意合规整改
+             - 涉嫌犯罪是否属于适用范围（三年以下有期徒刑的轻微犯罪/涉企犯罪）
+             - 企业是否具有合规整改的意愿和能力
+             - 是否初犯/偶犯
+             - 是否已弥补损失/修复社会关系
+
+          2. 不适用情形审查：
+             - 涉嫌严重犯罪（可能判处三年以上）
+             - 惯犯/累犯
+             - 敷衍整改/拒不配合
+
+          第二步：合规整改方案起草：
+
+          1. 停止犯罪行为并弥补损失：
+             - 具体措施
+             - 已采取的措施
+
+          2. 合规整改方案：
+             - 合规组织架构调整
+             - 专项合规制度建设（针对涉嫌罪名）
+             - 内部控制流程改进
+             - 人员处理（对责任人员的纪律处分）
+             - 培训计划
+
+          3. 合规有效性保障：
+             - 合规考察期（6个月-1年）
+             - 第三方合规监管人机制
+             - 定期合规报告
+             - 整改成果评估标准
+
+          4. 申请材料清单：
+             - 合规整改承诺书
+             - 合规整改方案
+             - 损失弥补证明
+             - 企业合规制度
+
+          第三步：申请策略建议：
+             - 申请时机
+             - 与检察机关的沟通策略
+             - 第三方监管人的选择建议
+
+          输出合规不起诉可行性评估 + 合规整改方案。
+
+- id: "00000000-0000-0000-0000-000000000d19"
+  name: "行政监管调查应对"
+  description: "Administrative regulatory investigation response — legal basis review, strategy, evidence, communication, penalty plan"
+  category: "regulatory_response"
+  steps:
+    - name: "Search administrative investigation rules"
+      description: "Search for administrative investigation and penalty procedures"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate response plan"
+      description: "Generate administrative regulatory investigation response plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下企业制定行政监管调查应对方案：
+
+          调查信息：
+          - 调查机关：【如：市场监管局/网信办/银保监/证监/税务稽查/海关/数据安全审查】
+          - 调查类型：【日常检查/专项检查/举报调查/立案调查】
+          - 调查事由：【如：涉嫌垄断行为/数据安全违规/虚假宣传/违规收集个人信息/证券违规】
+          - 调查阶段：【即将到来/正在进行/已收到处罚告知书】
+          - 我方角色：【被调查企业/相关方】
+
+          应对方案框架：
+
+          1. 调查法律依据审查：
+             - 调查机关是否有法定职权
+             - 调查范围是否超出法定授权
+             - 调查程序是否合法（通知/出示证件/告知权利等）
+
+          2. 企业应对策略：
+             - 配合原则（依法配合vs.合法抗辩）
+             - 信息披露范围控制：
+               * 哪些信息必须提供
+               * 哪些信息可以拒绝提供（商业秘密/法律特权）
+               * 提供信息的方式和口径统一
+             - 内部信息管控：
+               * 统一对外沟通窗口
+               * 员工不得私自回应调查人员
+               * 文件审查和提交前的法律审核
+             - 调查期间的业务持续性安排
+
+          3. 证据准备：
+             - 合规证据（已有合规制度/培训记录/审计报告）
+             - 自查报告起草（主动自查可能减轻处罚）
+             - 整改措施即时启动（减轻处罚的法定因素）
+
+          4. 沟通策略：
+             - 与监管机关的沟通策略
+             - 沟通口径统一
+             - 媒体/公众沟通预案（如调查可能公开）
+
+          5. 行政处罚预案：
+             - 可能的处罚类型和幅度
+             - 从轻/减轻处罚的争取策略
+             - 行政复议/行政诉讼的预备
+
+          6. 配套民事/刑事风险评估：
+             - 行政处罚是否可能引发民事赔偿（消费者/投资者）
+             - 行政调查是否可能移送刑事
+
+          输出监管调查应对方案。
+
+- id: "00000000-0000-0000-0000-000000000d1a"
+  name: "行政复议/诉讼"
+  description: "Administrative reconsideration / litigation plan — legality review, reconsideration, litigation strategy"
+  category: "regulatory_response"
+  steps:
+    - name: "Search administrative reconsideration cases"
+      description: "Search for similar administrative reconsideration and litigation cases"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate plan"
+      description: "Generate administrative reconsideration / litigation plan"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请基于以下行政处罚，起草行政复议/行政诉讼方案：
+
+          处罚信息：
+          - 处罚机关：【XX行政机关】
+          - 处罚决定：【简述处罚内容和理由】
+          - 处罚金额：【XX万元】
+          - 处罚日期：【XX】
+          - 申请人/原告：【我方当事人】
+
+          法律分析框架：
+
+          1. 处罚合法性审查：
+             a. 事实认定：
+                - 处罚认定的事实是否准确
+                - 证据是否充分
+             b. 法律适用：
+                - 处罚依据的法规是否正确
+                - 法条理解是否准确
+                - 是否存在法律适用错误
+             c. 程序合法性：
+                - 是否履行了告知义务
+                - 是否给予了陈述申辩权
+                - 是否组织了听证（如应组织）
+                - 是否有程序违规
+
+          2. 处罚合理性审查：
+             - 处罚幅度是否合理
+             - 是否考虑了从轻/减轻因素
+             - 是否与类似案件的处罚一致（同等情况同等对待）
+
+          3. 行政复议（首选路径）：
+             - 复议机关：【原机关的上一级/本级政府】
+             - 申请期限：【60日】
+             - 申请书要点
+             - 复议理由
+
+          4. 行政诉讼（复议后/直接起诉）：
+             - 管辖法院
+             - 起诉期限：【6个月】
+             - 诉讼请求
+             - 举证责任分配（行政机关负主要举证责任）
+
+          5. 策略选择：
+             - 复议先行 vs. 直接诉讼
+             - 复议+诉讼组合策略
+
+          请使用华宇元典数据库检索同类行政复议/诉讼案例。
+          输出行政复议/诉讼方案 + 申请书/起诉状草稿。
+
+- id: "00000000-0000-0000-0000-000000000d1b"
+  name: "多法域合规对比——中国/美国/欧盟/东南亚四地框架"
+  description: "Cross-border compliance comparison across China/US/EU/SEA — regulatory overview, conflict identification, path decision tree"
+  category: "compliance_system"
+  steps:
+    - name: "Search cross-border regulations"
+      description: "Search for regulations across the four jurisdictions"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate comparison"
+      description: "Generate multi-jurisdiction compliance comparison and decision matrix"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请对以下合规事项在四个法域（中国/美国/欧盟/东南亚）进行合规路径对比分析，输出决策矩阵：
+
+          合规事项：
+          - 合规领域：【如：数据出境/AI产品合规/出口管制/游戏出海/个人信息保护/产品认证/制裁合规】
+          - 企业业务描述：【简述核心业务和跨境场景】
+          - 涉及法域：【中国/美国/欧盟/【东南亚某国】，可多选】
+          - 当前合规状态：【无合规措施/部分合规/需要全面合规建设】
+
+          四法域合规对比分析框架：
+
+          一、各法域法规体系概览：
+
+          | 法域 | 核心法规/政策 | 监管机构 | 管辖范围 | 执法风格 | 罚款上限 |
+
+            1. 中国：
+               - 核心法规体系（按合规领域列举）
+               - 监管机构（网信办/市场监管局/海关等）
+               - "属地管辖+效果管辖"的适用范围
+               - 执法特点：事前审批重+事后执法趋严
+
+            2. 欧盟：
+               - 核心法规体系（按合规领域列举）
+               - 监管机构（各国DSA/EDPB/欧盟委员会等）
+               - "设立地+目标指向"管辖
+               - 执法特点：框架性立法+各国执行差异
+
+            3. 美国：
+               - 核心法规体系（联邦+州级双轨制）
+               - 监管机构（FTC/SEC/BIS/OFAC/各州AG等）
+               - 管辖范围（效果管辖为主）
+               - 执法特点：执法驱动+州级差异大
+
+            4. 东南亚（以【指定国家】为重点）：
+               - 核心法规体系
+               - 监管机构
+               - 数据本地化要求
+               - 执法特点：法规尚在完善+执法能力参差
+
+          二、合规冲突识别：
+
+            1. 法域间合规要求冲突清单：
+               - 数据本地化 vs. 跨境传输自由
+               - 事前审批 vs. 事后自律
+               - 严格禁止 vs. 有条件允许
+               - 长臂管辖 vs. 反制裁/阻断法
+            2. 冲突严重程度分级：
+               - 🔴不可调和（必须选择遵守一方，违反另一方）
+               - 🟡可通过设计规避（调整架构可同时满足）
+               - 🟢无冲突或微调可满足
+
+          三、合规路径选择决策树：
+            1. "最高标准"策略——以最严格法域为基准统一合规
+            2. "分层合规"策略——各法域独立合规，数据/运营分区管理
+            3. "架构隔离"策略——不同法域使用不同法律实体和系统
+            4. 各策略的合规成本/运营成本/风险对比
+
+          四、统一合规框架建议：
+            - 基于四法域对比的统一合规框架设计
+            - 各法域的叠加合规要求
+            - 合规日历（各法域年度合规义务时间线）
+
+          请输出多法域合规对比矩阵 + 冲突识别清单 + 合规路径决策树 + 统一合规框架建议。
+
+- id: "00000000-0000-0000-0000-000000000d1c"
+  name: "跨境合规冲突解决——决策树与策略选择"
+  description: "Cross-border compliance conflict resolution — legal analysis, architecture solutions, strategy selection matrix"
+  category: "compliance_system"
+  steps:
+    - name: "Search blocking statutes"
+      description: "Search for blocking statutes and counter-sanctions laws"
+      tool: "kb_search"
+      parameters:
+        top_k: 10
+
+    - name: "Generate solution"
+      description: "Generate cross-border compliance conflict resolution solution"
+      tool: "generate_docx"
+      parameters:
+        system_prompt: |
+          请为以下跨境合规冲突场景设计解决方案：
+
+          冲突场景：
+          - 冲突类型：【如：数据本地化要求 vs. 全球化数据处理 / 美国制裁要求 vs. 中国反制裁法 / 欧盟AI Act要求 vs. 中国AI备案 / 欧盟GDPR删除权 vs. 中国数据留存义务】
+          - 涉及法域：【列举】
+          - 企业运营模式：【简述全球化架构】
+          - 冲突焦点：【简述具体合规要求之间的矛盾】
+
+          解决方案设计框架：
+
+          一、冲突法律分析：
+            1. 各法域要求的详细对比：
+               | 维度 | 法域A要求 | 法域B要求 | 冲突点 |
+            2. 不可调和区域识别：
+               - 哪些要求确实无法同时满足
+               - 哪些看似冲突但可通过架构设计化解
+            3. 阻断法/反制裁法的适用分析：
+               - 中国《反外国制裁法》的适用场景
+               - 欧盟Blocking Statute的适用场景
+               - 阻断法是否提供"合规豁免"
+
+          二、架构解决方案：
+            1. 法律实体隔离方案：
+               - 不同法域设立独立法律实体
+               - 数据/系统/人员的物理/逻辑隔离
+               - 成本评估与可行性
+            2. 技术解决方案：
+               - 数据分区存储（本地化+全球化分区）
+               - 访问控制的分区设计
+               - 加密/匿名化的中间方案
+            3. 合同解决方案：
+               - 合同条款的冲突缓冲设计
+               - 合同中的法域选择与管辖选择
+               - 不可抗力/合规终止权的嵌入
+
+          三、策略选择矩阵：
+
+          | 解决策略 | 合规满足度 | 运营影响 | 成本 | 风险残留 | 推荐场景 |
+
+          四、持续监测机制：
+            1. 法规变化监测（各国法规动态追踪）
+            2. 合规冲突的定期重新评估
+            3. 监管执法案例的跟踪学习
+
+          请输出冲突法律分析 + 架构解决方案 + 策略选择矩阵 + 持续监测机制设计。
