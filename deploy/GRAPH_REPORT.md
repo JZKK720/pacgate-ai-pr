@@ -1,16 +1,16 @@
 # Graph Report - crates  (2026-08-18)
 
 ## Corpus Check
-- 39 files · ~38,467 words
+- 39 files · ~38,630 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 917 nodes · 2157 edges · 48 communities (41 shown, 7 thin omitted)
+- 917 nodes · 2157 edges · 47 communities (41 shown, 6 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 24 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `de6092c8`
+- Built from commit: `25b05faa`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -59,7 +59,6 @@
 - [[_COMMUNITY_Community 42|Community 42]]
 - [[_COMMUNITY_Community 43|Community 43]]
 - [[_COMMUNITY_Community 45|Community 45]]
-- [[_COMMUNITY_Community 46|Community 46]]
 - [[_COMMUNITY_Community 47|Community 47]]
 - [[_COMMUNITY_Community 48|Community 48]]
 
@@ -109,7 +108,7 @@
 - 1-file cycle: `pacgate-rag/src/ingest.rs -> pacgate-rag/src/ingest.rs`
 - 1-file cycle: `pacgate-search/src/lib.rs -> pacgate-search/src/lib.rs`
 
-## Communities (48 total, 7 thin omitted)
+## Communities (47 total, 6 thin omitted)
 
 ### Community 0 - "LLM Provider & Tool Calling"
 Cohesion: 0.13
@@ -224,8 +223,8 @@ Cohesion: 0.13
 Nodes (23): AgentLoop, CitationRef, DdAgentConfig, MatterId, Option, PacgateError, Result, Self (+15 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.24
-Nodes (7): Arc, Send, Sync, CourtListenerConnector, DataSourceConnector, default_router(), SearchRouter
+Cohesion: 0.21
+Nodes (8): Arc, Default, Send, Sync, DataSourceConnector, default_router(), EurLexConnector, SearchRouter
 
 ### Community 30 - "Community 30"
 Cohesion: 0.19
@@ -233,7 +232,7 @@ Nodes (8): Duration, Into, Option, Self, String, build_timeout_connector_client(
 
 ### Community 31 - "Community 31"
 Cohesion: 0.15
-Nodes (5): Client, Default, build_connector_client(), EurLexConnector, SecEdgarConnector
+Nodes (4): Client, build_connector_client(), QccConnector, SecEdgarConnector
 
 ### Community 32 - "Community 32"
 Cohesion: 0.25
@@ -264,8 +263,8 @@ Cohesion: 0.29
 Nodes (11): DateTime, MatterId, PersonaId, TenantId, UserId, Document, DocumentFormat, Matter (+3 more)
 
 ### Community 40 - "Community 40"
-Cohesion: 0.26
-Nodes (4): Value, OpenCorporatesConnector, SearchResult, source_level_priority()
+Cohesion: 0.14
+Nodes (5): Value, GleifConnector, OpenCorporatesConnector, SearchResult, source_level_priority()
 
 ### Community 41 - "Community 41"
 Cohesion: 0.48
@@ -274,7 +273,7 @@ Nodes (6): PgPool, String, full_api_flow(), run_rag_migrations_if_available(), t
 ## Knowledge Gaps
 - **143 isolated node(s):** `ToolResult`, `MessageId`, `LlmTier`, `ChatMessage`, `CitationRef` (+138 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **6 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
