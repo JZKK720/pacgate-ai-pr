@@ -1,16 +1,16 @@
 # Graph Report - crates  (2026-08-18)
 
 ## Corpus Check
-- 39 files · ~38,422 words
+- 39 files · ~38,467 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 918 nodes · 2153 edges · 49 communities (42 shown, 7 thin omitted)
+- 917 nodes · 2157 edges · 48 communities (41 shown, 7 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 24 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `637334be`
+- Built from commit: `de6092c8`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -58,7 +58,6 @@
 - [[_COMMUNITY_Community 41|Community 41]]
 - [[_COMMUNITY_Community 42|Community 42]]
 - [[_COMMUNITY_Community 43|Community 43]]
-- [[_COMMUNITY_Community 44|Community 44]]
 - [[_COMMUNITY_Community 45|Community 45]]
 - [[_COMMUNITY_Community 46|Community 46]]
 - [[_COMMUNITY_Community 47|Community 47]]
@@ -110,7 +109,7 @@
 - 1-file cycle: `pacgate-rag/src/ingest.rs -> pacgate-rag/src/ingest.rs`
 - 1-file cycle: `pacgate-search/src/lib.rs -> pacgate-search/src/lib.rs`
 
-## Communities (49 total, 7 thin omitted)
+## Communities (48 total, 7 thin omitted)
 
 ### Community 0 - "LLM Provider & Tool Calling"
 Cohesion: 0.13
@@ -134,7 +133,7 @@ Nodes (20): FindResult, Document, DocumentId, DocumentStore, Into, MatterId, Opt
 
 ### Community 5 - "Matter & Document State"
 Cohesion: 0.08
-Nodes (18): Matter, MatterId, PathBuf, PgPool, PgRow, Result, TenantError, TenantId (+10 more)
+Nodes (19): Matter, MatterId, Path, PathBuf, PgPool, PgRow, Result, TenantError (+11 more)
 
 ### Community 6 - "XML Document Patching"
 Cohesion: 0.21
@@ -145,7 +144,7 @@ Cohesion: 0.24
 Nodes (10): Error, From, Into, IntoResponse, PacgateError, Response, Self, StatusCode (+2 more)
 
 ### Community 8 - "Chat Application State"
-Cohesion: 0.23
+Cohesion: 0.24
 Nodes (29): ApiError, AppState, Claims, Document, Extension, Json, Matter, MatterId (+21 more)
 
 ### Community 9 - "Tool Dispatcher & Operations"
@@ -217,24 +216,24 @@ Cohesion: 0.47
 Nodes (4): Error, From, Self, StoreError
 
 ### Community 26 - "Community 26"
-Cohesion: 0.40
-Nodes (5): String, Value, Vec, LegalDocumentTemplate, list_templates()
+Cohesion: 0.50
+Nodes (3): String, Value, LegalDocumentTemplate
 
 ### Community 27 - "Community 27"
 Cohesion: 0.13
 Nodes (23): AgentLoop, CitationRef, DdAgentConfig, MatterId, Option, PacgateError, Result, Self (+15 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.33
-Nodes (6): Arc, Send, Sync, DataSourceConnector, default_router(), SearchRouter
+Cohesion: 0.24
+Nodes (7): Arc, Send, Sync, CourtListenerConnector, DataSourceConnector, default_router(), SearchRouter
 
 ### Community 30 - "Community 30"
 Cohesion: 0.19
 Nodes (8): Duration, Into, Option, Self, String, build_timeout_connector_client(), FyOpenConnector, SearchQuery
 
 ### Community 31 - "Community 31"
-Cohesion: 0.11
-Nodes (6): Client, Default, build_connector_client(), EurLexConnector, GleifConnector, SecEdgarConnector
+Cohesion: 0.15
+Nodes (5): Client, Default, build_connector_client(), EurLexConnector, SecEdgarConnector
 
 ### Community 32 - "Community 32"
 Cohesion: 0.25
@@ -249,35 +248,31 @@ Cohesion: 0.16
 Nodes (6): Display, Formatter, Result, ArchiveDirectory, DataLevel, FileDirectoryEntry
 
 ### Community 36 - "Community 36"
-Cohesion: 0.18
-Nodes (9): Branding, Option, Self, Branding, dd_domain_from_str(), LlmProvider, LlmTier, ModelConfig (+1 more)
+Cohesion: 0.13
+Nodes (14): BoundaryRule, Branding, EscalationRule, IdentityMode, OutputFormat, Option, Self, SecurityLevel (+6 more)
 
 ### Community 37 - "Community 37"
-Cohesion: 0.20
+Cohesion: 0.18
 Nodes (12): EnforcementPoint, DocumentId, String, Value, BoundaryRule, CitationRef, EscalationRule, FindResult (+4 more)
 
 ### Community 38 - "Community 38"
 Cohesion: 0.29
-Nodes (8): Vec, dd_agent_configs(), dd_config_for_domain(), DdAgentConfig, DdAgentDomain, DdFocusArea, DdSeverity, FocusAreaAction
+Nodes (9): Vec, dd_agent_configs(), dd_config_for_domain(), dd_domain_from_str(), DdAgentConfig, DdAgentDomain, DdFocusArea, DdSeverity (+1 more)
 
 ### Community 39 - "Community 39"
 Cohesion: 0.29
 Nodes (11): DateTime, MatterId, PersonaId, TenantId, UserId, Document, DocumentFormat, Matter (+3 more)
 
 ### Community 40 - "Community 40"
-Cohesion: 0.29
+Cohesion: 0.26
 Nodes (4): Value, OpenCorporatesConnector, SearchResult, source_level_priority()
 
 ### Community 41 - "Community 41"
 Cohesion: 0.48
 Nodes (6): PgPool, String, full_api_flow(), run_rag_migrations_if_available(), test_db_url(), unauthenticated_request_returns_401()
 
-### Community 42 - "Community 42"
-Cohesion: 0.33
-Nodes (6): BoundaryRule, EscalationRule, IdentityMode, OutputFormat, SecurityLevel, SoulPersona
-
 ## Knowledge Gaps
-- **144 isolated node(s):** `ToolResult`, `MessageId`, `LlmTier`, `ChatMessage`, `CitationRef` (+139 more)
+- **143 isolated node(s):** `ToolResult`, `MessageId`, `LlmTier`, `ChatMessage`, `CitationRef` (+138 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -285,11 +280,11 @@ Nodes (6): BoundaryRule, EscalationRule, IdentityMode, OutputFormat, SecurityLev
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Utc` connect `Community 39` to `Agent Loop Configuration`, `DOCX Document Builder`, `Matter & Document State`?**
-  _High betweenness centrality (0.050) - this node is a cross-community bridge._
+  _High betweenness centrality (0.051) - this node is a cross-community bridge._
 - **Why does `build_router()` connect `Document Versioning API` to `Agent Loop Configuration`?**
   _High betweenness centrality (0.039) - this node is a cross-community bridge._
 - **What connects `ToolResult`, `MessageId`, `LlmTier` to the rest of the system?**
-  _144 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _143 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `LLM Provider & Tool Calling` be split into smaller, more focused modules?**
   _Cohesion score 0.13450292397660818 - nodes in this community are weakly interconnected._
 - **Should `Agent Message Routing` be split into smaller, more focused modules?**
