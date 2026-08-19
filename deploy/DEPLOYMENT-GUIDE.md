@@ -31,7 +31,7 @@ This document describes the target client runtime bundle. It does not reflect th
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build the Rust binary in Docker (multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.0 `
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 `
   -f pacgate-ai/Dockerfile `
   ./pacgate-ai
 ```
@@ -87,7 +87,7 @@ script in the client bundle for first-run bootstrap. There is no
 echo $env:GHCR_TOKEN | docker login ghcr.io -u jzkk720 --password-stdin
 
 # Push the two images (qm runs via qm up, not as a Docker image)
-docker push ghcr.io/jzkk720/pacgate-api:0.1.0
+docker push ghcr.io/jzkk720/pacgate-api:0.1.1
 docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 ```
 
@@ -124,7 +124,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.0
+    image: ghcr.io/jzkk720/pacgate-api:0.1.1
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:

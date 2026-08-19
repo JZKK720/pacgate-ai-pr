@@ -60,17 +60,17 @@ graph TB
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build pacgate-api (Rust 1.94 multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.0 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 -f pacgate-ai/Dockerfile ./pacgate-ai
 
 # Build deer-flow wrapper
 docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 -f deploy/deer-flow-pacgate/Dockerfile .
 
 # Push both
-docker push ghcr.io/jzkk720/pacgate-api:0.1.0
+docker push ghcr.io/jzkk720/pacgate-api:0.1.1
 docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 
 # Verify pullable
-docker pull ghcr.io/jzkk720/pacgate-api:0.1.0
+docker pull ghcr.io/jzkk720/pacgate-api:0.1.1
 docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 ```
 
@@ -366,7 +366,7 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 
 | Image | Contains | Base |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.0` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.1.1` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow backend + Python adapter (~150 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
 
 ### 8.2 Data flow
@@ -393,5 +393,6 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 | Deployment Guide | Cubecloud engineer (build reference) | `deploy/DEPLOYMENT-GUIDE.md` |
 | User Manual | Attorneys (day-to-day usage) | `deploy/USER-MANUAL.md` |
 | Client README | Client IT (quick start) | `deploy/client-bundle/README-client.md` |
+| Chinese client PDF | Client IT / on-site install (ZH) | `docs/SETUP-AND-OPERATIONS-ZH.pdf` |
 | Architecture Diagrams | Technical reference | `deploy/ARCHITECTURE-DIAGRAMS.md` |
 | Architecture Plans | Architecture memo | `deploy/PLANS.md` |

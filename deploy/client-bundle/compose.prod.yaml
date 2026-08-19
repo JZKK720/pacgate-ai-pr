@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.0
+    image: ghcr.io/jzkk720/pacgate-api:0.1.1
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
