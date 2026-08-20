@@ -31,8 +31,8 @@ def build_styles() -> StyleSheet1:
             name="PgBody",
             parent=stylesheet["BodyText"],
             fontName=FONT_NAME,
-            fontSize=10.5,
-            leading=15,
+            fontSize=10.2,
+            leading=14.4,
             alignment=TA_LEFT,
             spaceAfter=4,
         )
@@ -42,8 +42,12 @@ def build_styles() -> StyleSheet1:
             name="PgQuote",
             parent=stylesheet["PgBody"],
             leftIndent=10 * mm,
-            borderPadding=0,
-            textColor=colors.HexColor("#444444"),
+            borderPadding=6,
+            borderColor=colors.HexColor("#D7C38B"),
+            borderWidth=0.7,
+            borderLeft=2,
+            backColor=colors.HexColor("#FBF6EA"),
+            textColor=colors.HexColor("#4E4637"),
         )
     )
     stylesheet.add(
@@ -51,8 +55,9 @@ def build_styles() -> StyleSheet1:
             name="PgH1",
             parent=stylesheet["Heading1"],
             fontName=FONT_NAME,
-            fontSize=20,
-            leading=24,
+            fontSize=21.5,
+            leading=26,
+            textColor=colors.HexColor("#1F2D44"),
             spaceBefore=6,
             spaceAfter=8,
         )
@@ -62,9 +67,10 @@ def build_styles() -> StyleSheet1:
             name="PgH2",
             parent=stylesheet["Heading2"],
             fontName=FONT_NAME,
-            fontSize=15,
+            fontSize=15.5,
             leading=20,
-            spaceBefore=10,
+            textColor=colors.HexColor("#CFA652"),
+            spaceBefore=12,
             spaceAfter=6,
         )
     )
@@ -73,8 +79,9 @@ def build_styles() -> StyleSheet1:
             name="PgH3",
             parent=stylesheet["Heading3"],
             fontName=FONT_NAME,
-            fontSize=12.5,
-            leading=16,
+            fontSize=12.2,
+            leading=15,
+            textColor=colors.HexColor("#4B6EA7"),
             spaceBefore=8,
             spaceAfter=4,
         )
@@ -103,8 +110,24 @@ def build_styles() -> StyleSheet1:
         ParagraphStyle(
             name="PgList",
             parent=stylesheet["PgBody"],
-            leftIndent=6 * mm,
+            leftIndent=7 * mm,
             firstLineIndent=0,
+        )
+    )
+    stylesheet.add(
+        ParagraphStyle(
+            name="PgCode",
+            parent=stylesheet["Code"],
+            fontName="Courier",
+            fontSize=8.3,
+            leading=10.4,
+            backColor=colors.HexColor("#F7F7F7"),
+            borderColor=colors.HexColor("#D7D7D7"),
+            borderWidth=0.7,
+            borderPadding=6,
+            leftIndent=0,
+            spaceBefore=3,
+            spaceAfter=4,
         )
     )
     return stylesheet
@@ -163,8 +186,9 @@ def build_table(tag: Tag, styles: StyleSheet1) -> Table:
                 ("FONTSIZE", (0, 0), (-1, -1), 8.8),
                 ("LEADING", (0, 0), (-1, -1), 11),
                 ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CFCFCF")),
-                ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.HexColor("#9A9A9A")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#A69255")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F3E7C7")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2F271A")),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 5),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 5),
@@ -173,6 +197,13 @@ def build_table(tag: Tag, styles: StyleSheet1) -> Table:
             ]
         )
     )
+    if len(rows) > 1:
+        alternating = []
+        for index in range(1, len(rows)):
+            if index % 2 == 1:
+                alternating.append(("BACKGROUND", (0, index), (-1, index), colors.HexColor("#FAFAFA")))
+        if alternating:
+            table.setStyle(TableStyle(alternating))
     return table
 
 
@@ -214,7 +245,7 @@ def build_story(markdown_text: str, styles: StyleSheet1) -> list:
             story.append(Spacer(1, 2))
         elif element.name == "pre":
             code = plain_text(element)
-            story.append(Preformatted(code, ParagraphStyle(name="PgCode", fontName="Courier", fontSize=8, leading=10)))
+            story.append(Preformatted(code, styles["PgCode"]))
             story.append(Spacer(1, 4))
         elif element.name == "ul":
             append_list(element, story, styles, ordered=False)
@@ -229,11 +260,31 @@ def build_story(markdown_text: str, styles: StyleSheet1) -> list:
     return story
 
 
+def make_page_decorator(title: str):
+    def draw_page(canvas, doc):
+        canvas.saveState()
+        page_width, page_height = doc.pagesize
+        canvas.setStrokeColor(colors.HexColor("#D8D8D8"))
+        canvas.setLineWidth(0.6)
+        canvas.line(doc.leftMargin, page_height - 13 * mm, page_width - doc.rightMargin, page_height - 13 * mm)
+        canvas.setFillColor(colors.HexColor("#6B6B6B"))
+        canvas.setFont("Helvetica", 8.2)
+        canvas.drawString(doc.leftMargin, page_height - 10 * mm, title)
+        canvas.drawRightString(page_width - doc.rightMargin, 10 * mm, f"{canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    return draw_page
+
+
 def convert_markdown_to_pdf(source: Path, target: Path) -> None:
     register_fonts()
     styles = build_styles()
     markdown_text = source.read_text(encoding="utf-8")
     story = build_story(markdown_text, styles)
+
+    title = source.stem.replace("-", " ")
+    if title.upper().endswith("ZH"):
+        title = title[:-2].rstrip()
 
     doc = SimpleDocTemplate(
         str(target),
@@ -246,7 +297,8 @@ def convert_markdown_to_pdf(source: Path, target: Path) -> None:
         author="Cubecloud Limited",
         creator="safe_markdown_to_pdf.py",
     )
-    doc.build(story)
+    page_decorator = make_page_decorator(title)
+    doc.build(story, onFirstPage=page_decorator, onLaterPages=page_decorator)
 
 
 def main() -> None:

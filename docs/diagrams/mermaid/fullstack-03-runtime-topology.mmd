@@ -1,0 +1,24 @@
+flowchart TB
+    subgraph Client["客户 AIPC 机器"]
+        N["nginx :8081"]:::svc
+        API["pacgate-api :8080"]:::svc
+        DF["deer-flow :8001"]:::svc
+        QM["qm :8182"]:::svc
+        DB[("Postgres :5432")]:::db
+        O["Ollama :11434"]:::model
+    end
+
+    U["律师浏览器"]:::user --> N
+    N --> API
+    N --> DF
+    U --> QM
+    API --> DB
+    DF --> API
+    DF --> O
+    QM --> O
+    QM --> API
+
+    classDef svc fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef db fill:#F7F2E6,stroke:#B89544,stroke-width:1.3px,color:#4D3B18;
+    classDef model fill:#EAF5F9,stroke:#3D8AA7,stroke-width:1.3px,color:#17465A;
+    classDef user fill:#FFFFFF,stroke:#7B8AA8,stroke-width:1.2px,color:#2D3B56;

@@ -1,0 +1,25 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Segoe UI, PingFang SC, Microsoft YaHei, sans-serif",
+    "primaryColor": "#F3E7C7",
+    "primaryTextColor": "#1F2D44",
+    "primaryBorderColor": "#B89544",
+    "lineColor": "#4B6EA7",
+    "secondaryColor": "#EEF3FB",
+    "tertiaryColor": "#F7F2E6",
+    "background": "#FFFFFF",
+    "mainBkg": "#F7F2E6",
+    "nodeBorder": "#B89544",
+    "clusterBkg": "#F8FAFF",
+    "clusterBorder": "#B7C4DE",
+    "edgeLabelBackground": "#FFFFFF"
+  },
+  "flowchart": {
+    "curve": "basis",
+    "padding": 20,
+    "nodeSpacing": 42,
+    "rankSpacing": 52,
+    "htmlLabels": false
+  }
+}

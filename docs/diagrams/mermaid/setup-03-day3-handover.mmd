@@ -1,0 +1,7 @@
+flowchart LR
+    A["管理员运维培训"]:::step --> B["律师使用培训"]:::step
+    B --> C["健康检查\ncompose / qm / ollama"]:::step
+    C --> D["交接清单签收"]:::done
+
+    classDef step fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef done fill:#E9F7EF,stroke:#4E9D68,stroke-width:1.3px,color:#1E4C2E;

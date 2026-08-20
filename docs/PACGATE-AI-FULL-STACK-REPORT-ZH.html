@@ -243,6 +243,30 @@
       margin-top: 0.3rem;
     }
 
+    .diagram-card {
+      margin: 1rem 0 1.5rem;
+      padding: 0.8rem;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    .diagram-card img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 6px;
+      background: #f6f8fc;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .diagram-card figcaption {
+      margin-top: 0.55rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: left;
+    }
+
     @media print {
       body { background: #08101b; -webkit-print-color-adjust: exact; }
       .container { max-width: 100%; padding: 0 1rem; }
@@ -282,6 +306,11 @@
         <div class="stat-label">客户端包文件数</div>
       </div>
     </div>
+
+    <figure class="diagram-card">
+      <img src="diagrams/svg/fullstack-01-layer-status.svg" alt="Pacgate AI 第一阶段分层状态图">
+      <figcaption>图 A - 第一阶段交付分层状态总览</figcaption>
+    </figure>
 
     <h2>二、各层状态</h2>
     <table>
@@ -394,6 +423,11 @@
       </tbody>
     </table>
 
+    <figure class="diagram-card">
+      <img src="diagrams/svg/fullstack-02-delivery-roadmap.svg" alt="Pacgate AI 第一阶段交付路线图">
+      <figcaption>图 B - 从仓库完成态到客户现场验收的执行路径</figcaption>
+    </figure>
+
     <h2>四、构建时间线</h2>
     <div class="timeline"><span class="done">第一阶段蓝图（Rust 工作空间）     ████████████████████████████████████████████ 100%</span>
 <span class="done">第一阶段交付（客户端包 + GHCR + 文档）  ████████████████████████████████████████████ 100%</span>
@@ -464,6 +498,10 @@ docker push ghcr.io/jzkk720/pacgate-api:0.1.1</code></pre>
     </table>
 
     <h3>数据流</h3>
+    <figure class="diagram-card">
+      <img src="diagrams/svg/fullstack-03-runtime-topology.svg" alt="Pacgate AI 运行时拓扑图">
+      <figcaption>图 C - 客户 AIPC 本地运行拓扑（入口、研究、协作、模型）</figcaption>
+    </figure>
     <ol>
       <li>律师打开 <code>http://localhost:8081</code> → nginx → pacgate-api（着陆页）</li>
       <li>律师进入 <code>/research/</code> → nginx → deer-flow（研究工作空间）</li>

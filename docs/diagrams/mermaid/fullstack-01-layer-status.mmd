@@ -1,0 +1,12 @@
+flowchart LR
+    A["Rust 元数据核心\n11 Crates"]:::done --> B["RAG 检索层\npgvector + tsvector"]:::done
+    B --> C["连接器层\n11 Data Connectors"]:::warn
+    C --> D["协作层\ndeer-flow + qm"]:::done
+    D --> E["交付层\nClient Bundle + GHCR"]:::done
+
+    F["待处理\n北大法宝令牌"]:::risk -.影响.-> C
+    G["待处理\nAPI 镜像重构建"]:::risk -.影响.-> E
+
+    classDef done fill:#E9F7EF,stroke:#4E9D68,stroke-width:1.4px,color:#1E4C2E;
+    classDef warn fill:#FFF6E6,stroke:#CFA652,stroke-width:1.4px,color:#5B4520;
+    classDef risk fill:#FDECEC,stroke:#CF6A6A,stroke-width:1.4px,color:#5A2121;

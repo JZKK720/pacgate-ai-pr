@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacgate AI - 现场安装与运维（客户视图）</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --panel-soft: #f7f3e9;
+      --line: #d8deea;
+      --line-strong: #b9c5dc;
+      --ink: #1f2d44;
+      --muted: #596b8a;
+      --accent: #b89544;
+      --accent-soft: #f2e7cb;
+      --ok: #3f8f5f;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(76, 110, 183, 0.08), transparent 28%),
+        radial-gradient(circle at 90% 0%, rgba(184, 149, 68, 0.10), transparent 30%),
+        var(--bg);
+      line-height: 1.66;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1.2rem 3rem;
+    }
+
+    header {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.5rem 1.4rem;
+      margin-bottom: 1.2rem;
+    }
+
+    .brand {
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.74rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.65rem;
+      line-height: 1.32;
+    }
+
+    .subtitle {
+      margin: 0.45rem 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    h2 {
+      margin: 1.7rem 0 0.75rem;
+      font-size: 1.2rem;
+      color: var(--ink);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.45rem;
+    }
+
+    .lead {
+      background: var(--panel-soft);
+      border: 1px solid #e4d7b6;
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      margin: 1rem 0 1.2rem;
+      font-size: 0.94rem;
+    }
+
+    .diagram-card {
+      margin: 0.9rem 0 1.3rem;
+      background: var(--panel);
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      padding: 0.75rem;
+    }
+
+    .diagram-card img {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #f8fafe;
+      border-radius: 6px;
+      border: 1px solid #ecf0f7;
+    }
+
+    .diagram-card figcaption {
+      margin-top: 0.45rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .steps {
+      display: grid;
+      gap: 0.9rem;
+    }
+
+    .step {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+    }
+
+    .step h3 {
+      margin: 0;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      width: 1.45rem;
+      height: 1.45rem;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      font-size: 0.73rem;
+      color: #4c3a18;
+      border: 1px solid var(--accent);
+      background: var(--accent-soft);
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    ul { margin: 0.5rem 0 0.2rem; padding-left: 1.15rem; }
+    li { margin: 0.24rem 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+      margin-top: 0.75rem;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.56rem 0.65rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      background: #f4f7fc;
+      color: #314567;
+      font-weight: 600;
+    }
+
+    .ok { color: var(--ok); font-weight: 600; }
+
+    .footnote {
+      margin-top: 1.3rem;
+      color: var(--muted);
+      font-size: 0.81rem;
+      border-top: 1px solid var(--line);
+      padding-top: 0.8rem;
+    }
+
+    @media print {
+      .container { max-width: 100%; padding: 1rem; }
+      .step, header, .diagram-card, table { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">Cubecloud · Pacgate AI</div>
+      <h1>现场安装与运维操作手册（客户交付版）</h1>
+      <p class="subtitle">用于 3 天现场部署窗口，聚焦可执行动作、验收结果与责任边界</p>
+    </header>
+
+    <div class="lead">
+      本页是客户与项目管理方的执行总览。完整命令与低层细节仍以
+      <strong>deploy/SETUP-AND-OPERATIONS-ZH.md</strong> 为准。
+    </div>
+
+    <h2>1. 交付范围与运行边界</h2>
+    <figure class="diagram-card">
+      <img src="diagrams/svg/fullstack-03-runtime-topology.svg" alt="Pacgate AI 运行拓扑图">
+      <figcaption>图 1 - 客户 AIPC 本地运行拓扑</figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>组件</th>
+          <th>运行方式</th>
+          <th>归属</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>pacgate-api / deer-flow / Postgres / nginx</td>
+          <td>Docker Compose</td>
+          <td>客户本地环境</td>
+        </tr>
+        <tr>
+          <td>qm 协作空间</td>
+          <td>qm up 独立容器</td>
+          <td>客户本地环境</td>
+        </tr>
+        <tr>
+          <td>Ollama</td>
+          <td>Windows 本机运行</td>
+          <td>客户本地环境</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. 三天部署节奏</h2>
+    <div class="steps">
+      <section class="step">
+        <h3><span class="pill">1</span>第 1 天 - 基础栈启动</h3>
+        <figure class="diagram-card">
+          <img src="diagrams/svg/setup-01-day1-bootstrap.svg" alt="第1天部署流程图">
+          <figcaption>图 2 - 第 1 天动作顺序</figcaption>
+        </figure>
+        <ul>
+          <li>完成 AIPC 驱动、Docker、Ollama、Node.js 准备</li>
+          <li>部署 client bundle，填写 .env，执行 install.ps1</li>
+          <li>初始化默认租户与管理员账号</li>
+        </ul>
+      </section>
+
+      <section class="step">
+        <h3><span class="pill">2</span>第 2 天 - 协作联调</h3>
+        <figure class="diagram-card">
+          <img src="diagrams/svg/setup-02-day2-integration.svg" alt="第2天联调流程图">
+          <figcaption>图 3 - 第 2 天动作顺序</figcaption>
+        </figure>
+        <ul>
+          <li>部署 qm-pacgate 并创建 bridge 账号</li>
+          <li>执行 setup-qm.ps1 与 qm up</li>
+          <li>联调 deer-flow、qm、Agent OS 表层</li>
+        </ul>
+      </section>
+
+      <section class="step">
+        <h3><span class="pill">3</span>第 3 天 - 培训与验收</h3>
+        <figure class="diagram-card">
+          <img src="diagrams/svg/setup-03-day3-handover.svg" alt="第3天交接流程图">
+          <figcaption>图 4 - 第 3 天动作顺序</figcaption>
+        </figure>
+        <ul>
+          <li>管理员运维培训（启动、更新、日志、备份）</li>
+          <li>律师使用培训（研究模式与协作模式）</li>
+          <li>交接清单签收并关闭安装窗口</li>
+        </ul>
+      </section>
+    </div>
+
+    <h2>3. 客户侧验收口径</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>验收项</th>
+          <th>通过标准</th>
+          <th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>基础服务健康</td>
+          <td>docker compose ps 全部 healthy，/api/health 正常返回</td>
+          <td class="ok">必过</td>
+        </tr>
+        <tr>
+          <td>协作工作空间</td>
+          <td>qm Web UI 可登录，workflow 调用成功</td>
+          <td class="ok">必过</td>
+        </tr>
+        <tr>
+          <td>研究工作空间</td>
+          <td>/research/ 可用，模型调用与结果保存成功</td>
+          <td class="ok">必过</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="footnote">
+      说明：本页面用于客户可读展示与安装过程复盘。工程执行仍以 deploy 目录下原始操作文档为主。
+    </p>
+  </div>
+</body>
+</html>

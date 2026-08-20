@@ -1,0 +1,8 @@
+flowchart TB
+    A["注册 bridge 服务账号"]:::step --> B["部署 qm-pacgate"]:::step
+    B --> C["setup-qm.ps1\n生成密钥与配置"]:::step
+    C --> D["qm up\n启动协作工作空间"]:::step
+    D --> E["联调 deer-flow 与 Agent OS"]:::done
+
+    classDef step fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef done fill:#E9F7EF,stroke:#4E9D68,stroke-width:1.3px,color:#1E4C2E;

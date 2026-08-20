@@ -6,6 +6,9 @@
 > Cubecloud's existing prototype work in this repository remains pre-sales architecture and research support.
 > A full Pacgate SaaS quotation is explicitly deferred until Phase 1 trials, operating patterns, and learning outcomes are proven.
 
+> **Current repo baseline note**
+> The checked-in repository has already advanced into a delivery-ready local stack with client bundle, wrapper images, and deployment docs. Treat this plan as the commercial anchor and the repo artifacts as the operating baseline.
+
 ---
 
 ## Executive Summary

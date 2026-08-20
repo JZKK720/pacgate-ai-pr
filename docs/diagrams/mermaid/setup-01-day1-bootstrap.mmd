@@ -1,0 +1,8 @@
+flowchart LR
+    A["硬件与驱动\nAIPC + GPU 扩展坞"]:::step --> B["Docker + Ollama + Node.js"]:::step
+    B --> C["解压 client bundle\n填写 .env"]:::step
+    C --> D["install.ps1\n启动 compose 栈"]:::step
+    D --> E["创建租户与管理员账号"]:::done
+
+    classDef step fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef done fill:#E9F7EF,stroke:#4E9D68,stroke-width:1.3px,color:#1E4C2E;

@@ -24,7 +24,7 @@ nginx :8081
 └── /api/      → pacgate-api :8080 (Rust, Axum)         → pacgate-docx, pacgate-rag, pacgate-llm, pacgate-auth
 ```
 
-Current checked-in root runtime is smaller: workspace `compose.yaml` + root `nginx/default.conf` only serve `pacgate-docs` behind `pacgate-auth`.
+Current checked-in repo baseline now includes the client bundle, wrapper-image deployment docs, and the delivery-ready local stack. The root compose/nginx path is still the minimal local shell, but the practical operating baseline is the checked-in Phase 1 delivery package, not just the docs surface.
 
 ## Key design decisions
 
@@ -49,12 +49,18 @@ Current checked-in root runtime is smaller: workspace `compose.yaml` + root `ngi
 | pacgate-workflow | ❌          | Cargo.toml only (160+ templates)                                                        |
 | WASM crates (4)  | ❌          | Cargo.toml only (citation-check, clause-parser, doc-validator, rule-engine)             |
 
+## Current operating baseline
+
+- The repo is now in a delivery-ready Phase 1 state rather than a pure prototype state.
+- The story anchor remains the Phase 1 pilot contract, but the checked-in artifacts already include the deployable bundle and operational handoff docs.
+- Immediate next steps are operational: rebuild `pacgate-api` with connector fixes, refresh the PkuLaw token, and deploy/verify on client AIPC hardware.
+
 ## Deployment model
 
 - **Docker Compose** on client AI PC (Windows, AMD GPU/NPU)
 - **Ollama native** (not Dockerized) for GPU access
 - **3 GHCR images**: `pacgate-api`, `deer-flow-pacgate` (wrapper), `qm-pacgate` (wrapper)
-- **Client bundle**: compose.prod.yaml + nginx config + install.ps1 + .env + ollama-models.txt
+- **Client bundle**: compose.prod.yaml + nginx config + install.ps1 + .env + ollama-models.txt + qm bootstrap materials + workflow/persona references
 - **Data**: `./data/tenants/{tenant_id}/` on volume mount, never in images
 - **Updates**: client runs `install.ps1 -Update`; data preserved across upgrades
 

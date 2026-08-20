@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import argparse
 import html
+import io
+import logging
+import re
 from pathlib import Path
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.platypus import HRFlowable, Paragraph, Spacer
+from reportlab.platypus import HRFlowable, Image, Paragraph, Spacer
+from svglib.svglib import svg2rlg
 
 from safe_markdown_to_pdf import append_list, build_styles, build_table, flatten_children, plain_text, register_fonts
+
+
+MAX_SVG_BYTES = 10 * 1024 * 1024
 
 
 def add_paragraph(story: list, text: str, style) -> None:
@@ -24,7 +31,68 @@ def add_label(story: list, text: str, styles, style_name: str = "PgLabel") -> No
         story.append(Paragraph(f"<b>{html.escape(text)}</b>", styles[style_name]))
 
 
-def append_node(node: Tag | NavigableString, story: list, styles) -> None:
+def add_image(story: list, node: Tag, base_path: Path) -> None:
+    src = node.get("src")
+    if not isinstance(src, str) or not src.strip():
+        return
+
+    base_resolved = base_path.resolve()
+    image_path = (base_path / src).resolve()
+    try:
+        image_path.relative_to(base_resolved)
+    except ValueError:
+        return
+
+    if not image_path.exists() or not image_path.is_file():
+        return
+
+    # Prefer pre-rendered PNG siblings for Mermaid-exported SVGs in PDF mode;
+    # this avoids foreignObject/font issues that can drop labels in vector parsing.
+    if image_path.suffix.lower() == ".svg":
+        png_fallback = image_path.with_suffix(".png")
+        if png_fallback.exists() and png_fallback.is_file():
+            image_path = png_fallback
+
+    max_width_pt = 160 * 2.834645669
+    max_height_pt = 95 * 2.834645669
+    suffix = image_path.suffix.lower()
+
+    image_flowable = None
+    if suffix == ".svg":
+        if image_path.stat().st_size > MAX_SVG_BYTES:
+            logging.warning("Skipping oversized SVG in PDF export: %s", image_path)
+            return
+        svg_text = image_path.read_text(encoding="utf-8")
+        svg_text = re.sub(r"stroke-dasharray\s*:\s*0(?:\.0+)?\s*;?", "stroke-dasharray:none;", svg_text)
+        drawing = svg2rlg(io.StringIO(svg_text))
+        if drawing is None:
+            logging.warning("Failed to parse SVG for PDF export: %s", image_path)
+            return
+        width_scale = max_width_pt / drawing.width if drawing.width > 0 else 1.0
+        height_scale = max_height_pt / drawing.height if drawing.height > 0 else 1.0
+        scale = min(1.0, width_scale, height_scale)
+        if scale < 1.0:
+            drawing.width = drawing.width * scale
+            drawing.height = drawing.height * scale
+            drawing.scale(scale, scale)
+        image_flowable = drawing
+    else:
+        image_flowable = Image(str(image_path))
+        width_pt = image_flowable.drawWidth
+        height_pt = image_flowable.drawHeight
+        width_scale = max_width_pt / width_pt if width_pt > 0 else 1.0
+        height_scale = max_height_pt / height_pt if height_pt > 0 else 1.0
+        scale = min(1.0, width_scale, height_scale)
+        if scale < 1.0:
+            image_flowable.drawWidth = width_pt * scale
+            image_flowable.drawHeight = height_pt * scale
+
+    if image_flowable is not None:
+        story.append(image_flowable)
+        story.append(Spacer(1, 5))
+
+
+def append_node(node: Tag | NavigableString, story: list, styles, base_path: Path) -> None:
     if isinstance(node, NavigableString):
         return
 
@@ -55,6 +123,17 @@ def append_node(node: Tag | NavigableString, story: list, styles) -> None:
         story.append(build_table(node, styles))
         story.append(Spacer(1, 6))
         return
+    if node.name == "img":
+        add_image(story, node, base_path)
+        return
+    if node.name == "figure":
+        image = node.find("img")
+        if isinstance(image, Tag):
+            add_image(story, image, base_path)
+        caption = node.find("figcaption")
+        if isinstance(caption, Tag):
+            add_paragraph(story, flatten_children(caption), styles["PgSmallNote"])
+        return
     if node.name == "hr":
         story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#BEBEBE"), spaceBefore=4, spaceAfter=8))
         return
@@ -72,7 +151,7 @@ def append_node(node: Tag | NavigableString, story: list, styles) -> None:
     if node.name in {"div", "section", "article", "footer"}:
         start_len = len(story)
         for child in node.children:
-            append_node(child, story, styles)
+            append_node(child, story, styles, base_path)
         if node.name in {"section", "article", "footer"} and len(story) > start_len:
             story.append(Spacer(1, 8))
 
@@ -126,10 +205,13 @@ def build_story_from_html(source: Path, lang: str) -> tuple[list, str]:
 
     wrapper = soup.select_one(f".lang-wrap.{lang}")
     if not isinstance(wrapper, Tag):
-        raise ValueError(f"Language block not found: {lang}")
+        body = soup.body
+        if not isinstance(body, Tag):
+            raise ValueError("Page body not found")
+        wrapper = body
 
     for child in wrapper.find_all(recursive=False):
-        append_node(child, story, styles)
+        append_node(child, story, styles, source.parent)
 
     footer = soup.find("footer")
     if isinstance(footer, Tag):

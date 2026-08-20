@@ -10,11 +10,11 @@
 
 本报告汇总 Pacgate AI 第一阶段（Phase 1）本地试点的完整技术栈状态，覆盖从 Rust 元数据核心到客户端部署包的全部交付层。
 
-**当前阶段：交付就绪**
+**当前阶段：交付就绪，待现场部署**
 
 - 62 次提交，全部推送至 origin
 - 全部测试通过（23 项冒烟测试 + 5 项代理测试 + 3 项工作流加载测试 + 2 项集成测试 + 8 项 TS 适配器测试）
-- 知识图谱已更新（917 节点、2157 边、48 社区）
+- 知识图谱已更新（917 节点、2157 边、47 社区）
 
 ---
 
@@ -35,7 +35,7 @@
 | 综合安装操作指南 | ✅ 完成 | SETUP-AND-OPERATIONS.md — 3 天现场安装操作手册 |
 | 集成测试 | ✅ 通过 | 2 项测试连接真实 Postgres 数据库 |
 | TS 适配器 | ✅ 通过 | 8 项单元测试（契约库，非 qm 接入层） |
-| 知识图谱（Graphify） | ✅ 已更新 | 917 节点、2157 边、48 社区，已同步至 deploy/ |
+| 知识图谱（Graphify） | ✅ 已更新 | 917 节点、2157 边、47 社区，已同步至 deploy/ |
 
 ---
 
@@ -51,7 +51,26 @@
 
 ---
 
-## 四、构建时间线位置
+## 四、当前我们到底在哪里
+
+Pacgate AI 现在不是“还在搭架子”的阶段，而是“可交付、可部署、可验证”的阶段。仓库里已经具备以下内容：
+
+- Rust 元数据核心与周边 crate 已完成并通过测试
+- 客户端部署包已经检查入库
+- deer-flow 与 qm 的包装/适配路径已经定型
+- 仍然缺的是现场交付前的少量运营动作，而不是新的架构设计
+
+### 现在最应该做的 3 件事
+
+1. 重新构建并推送 `pacgate-api` 镜像，确保连接器修复真正进入镜像。
+2. 重新生成或替换北大法宝令牌，恢复中国法律检索链路。
+3. 按 `SETUP-AND-OPERATIONS.md` 进行客户 AIPC 现场安装、联调和验收。
+
+这三步做完，Phase 1 才算从“准备就绪”真正进入“客户可用”。
+
+---
+
+## 五、构建时间线位置
 
 ```
 第一阶段蓝图（Rust 工作空间）     ████████████████████████████████████████████ 100%
@@ -62,7 +81,7 @@
 
 ---
 
-## 五、建议的后续步骤（按优先级排序）
+## 六、建议的后续步骤（按优先级排序）
 
 ### 步骤 1：重新构建并推送 pacgate-api 镜像（约 5 分钟）
 
@@ -98,16 +117,16 @@ Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip
 
 ---
 
-## 六、架构参考
+## 七、架构参考
 
-### 6.1 GHCR 容器镜像
+### 7.1 GHCR 容器镜像
 
 | 镜像 | 内容 | 基础镜像 |
 |---|---|---|
 | `ghcr.io/jzkk720/pacgate-api:0.1.0` | Rust 二进制（pacgate-server）+ SQL 迁移 | `rust:1.94-bookworm` → `debian:bookworm-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow 后端 + Python 适配器（约 150 行） | `ghcr.io/bytedance/deer-flow-backend`（SHA 固定） |
 
-### 6.2 数据流
+### 7.2 数据流
 
 1. 律师打开 `http://localhost:8081` → nginx → pacgate-api（着陆页）
 2. 律师进入 `/research/` → nginx → deer-flow（研究工作空间）
@@ -116,7 +135,7 @@ Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip
 5. 律师打开 `http://localhost:8182` → qm（协作工作空间）
 6. qm 代理调用 `pacgate-qm` CLI → pacgate-api（工作流执行）
 
-### 6.3 客户端数据（不包含在镜像中）
+### 7.3 客户端数据（不包含在镜像中）
 
 - `./data/tenants/{tenant_id}/` — 事项、文档、记忆
 - Postgres 数据卷 — 元数据库
