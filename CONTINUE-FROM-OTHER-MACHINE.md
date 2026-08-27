@@ -64,7 +64,35 @@ pacgate-ai-pr/
 └── nginx/                    ← Nginx config
 ```
 
-## Current status (as of 2026-08-18, session 14 — DELIVERY READY)
+## Current status (as of 2026-08-27, session 15 — v0.1.2 FIXES)
+
+### Session 15 (2026-08-27) — audit + deploy-blocking fix
+
+- **Full gstack-review audit run** — all test suites green, live e2e of prod compose on scratch port 8089.
+- **Deploy-blocking bug found + fixed**: LLM router hardcoded `localhost:11434` → 500 "LLM HTTP request" for every workflow/chat execution inside containers. Fixed in `pacgate-api:0.1.2`:
+  - `ModelConfig::default_local_with_base_url()` added to pacgate-core; router now honors `OLLAMA_BASE_URL`.
+  - Per-tenant model overrides (`tenants.config_json.model_overrides`) applied via `AppState::router_for_tenant()` + `AgentLoop::run_with_router()` / `WorkflowExecutor::execute_with_router()`.
+  - LLM errors now include model name + URL.
+- New tests: 5 pacgate-core (base-url propagation, override deserialization) + 3 pacgate-llm (router overrides/fallback). All pass. Smoke 23/23, agent 5/5, yaml_loader 3/3.
+- Docs fixed: `/api/health` → `/health` across handbook/guides; `.env.example` connector key placeholders; port-conflict note in handbook; DEPLOYMENT-GUIDE version history + troubleshooting sections.
+- Plan doc: `plans/007-aipc-full-installation-handoff.md` (audit evidence, phases, agent handoff prompt, Appendix A SQL with correct serde casing).
+- E2E harness: `deploy/client-bundle/compose.e2e-override.yaml` (scratch, not for client).
+- **Second bug found + fixed during e2e re-run**: Ollama rejects object-typed
+  tool-message content (`invalid message content type: map[string]interface {}`).
+  Agent loop now stringifies non-string tool-result values before sending.
+  Root cause proven by direct request reproduction against nemotron.
+- **Fix B verified live**: tenant override to `nemotron-3.5-lightning:30b-a3b`
+  correctly routed (error messages showed the override model + host URL), and
+  chat with tool-call round-trips return 200 after the tool-content fix.
+- **Third finding (OPEN)**: workflow step 2 (`generate_docx`) hangs >40 min on
+  nemotron reasoning-mode generation — no timeout fires, API stays responsive,
+  no DB writes. Options: switch Main tier to a non-reasoning model
+  (`gemma4:12b-it-qat` verified working), disable reasoning, or add a hard
+  total-request timeout in `OpenAiCompatClient`. See plan 007 execution log.
+- **Pending**: push 0.1.2 to GHCR, resolve step-2 hang decision, commit,
+  then Phase 3 AIPC installation.
+
+## Previous status (2026-08-18, session 14 — DELIVERY READY)
 
 ### Done — Phase 1 critical path complete + Sessions 5-12 enrichment
 
