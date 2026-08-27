@@ -115,11 +115,19 @@ impl ModelConfig {
     /// | Mid  | qwen3.6:27b    | Agent automation · tabular review · core tasks    |
     /// | Low  | qwen3.5:9b     | Fast labels · short summaries · routing           |
     pub fn default_local() -> Vec<Self> {
+        Self::default_local_with_base_url("http://localhost:11434")
+    }
+
+    /// Returns the default three-tier config pointing at an explicit Ollama
+    /// base URL. Containerized deployments must pass the host-reachable URL
+    /// (e.g. `http://host.docker.internal:11434`) — `localhost` inside a
+    /// container refers to the container itself, not the host.
+    pub fn default_local_with_base_url(base_url: &str) -> Vec<Self> {
         vec![
             ModelConfig {
                 tier: LlmTier::Main,
                 provider: LlmProvider::Ollama {
-                    base_url: "http://localhost:11434".into(),
+                    base_url: base_url.to_string(),
                 },
                 model_name: "nemotron3:33b".into(),
                 max_tokens: 16384,
@@ -128,7 +136,7 @@ impl ModelConfig {
             ModelConfig {
                 tier: LlmTier::Mid,
                 provider: LlmProvider::Ollama {
-                    base_url: "http://localhost:11434".into(),
+                    base_url: base_url.to_string(),
                 },
                 model_name: "qwen3.6:27b".into(),
                 max_tokens: 8192,
@@ -137,7 +145,7 @@ impl ModelConfig {
             ModelConfig {
                 tier: LlmTier::Low,
                 provider: LlmProvider::Ollama {
-                    base_url: "http://localhost:11434".into(),
+                    base_url: base_url.to_string(),
                 },
                 model_name: "qwen3.5:9b".into(),
                 max_tokens: 4096,
@@ -1306,3 +1314,71 @@ pub enum PacgateError {
 }
 
 pub type Result<T, E = PacgateError> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod model_config_tests {
+    use super::*;
+
+    #[test]
+    fn default_local_uses_localhost() {
+        let configs = ModelConfig::default_local();
+        assert_eq!(configs.len(), 3);
+        for cfg in &configs {
+            match &cfg.provider {
+                LlmProvider::Ollama { base_url } => {
+                    assert_eq!(base_url, "http://localhost:11434");
+                }
+                other => panic!("unexpected provider: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn default_local_with_base_url_propagates_to_all_tiers() {
+        let base = "http://host.docker.internal:11434";
+        let configs = ModelConfig::default_local_with_base_url(base);
+        assert_eq!(configs.len(), 3);
+
+        let tiers: Vec<_> = configs.iter().map(|c| c.tier.clone()).collect();
+        assert_eq!(tiers, vec![LlmTier::Main, LlmTier::Mid, LlmTier::Low]);
+
+        for cfg in &configs {
+            match &cfg.provider {
+                LlmProvider::Ollama { base_url } => {
+                    assert_eq!(base_url, base, "tier {:?} must carry the explicit base url", cfg.tier);
+                }
+                other => panic!("unexpected provider: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn default_local_delegates_with_default_url() {
+        // Both constructors must produce identical configs for the default URL.
+        let a = ModelConfig::default_local();
+        let b = ModelConfig::default_local_with_base_url("http://localhost:11434");
+        assert_eq!(
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap()
+        );
+    }
+
+    #[test]
+    fn tenant_config_deserializes_model_overrides() {
+        let json = r#"{
+            "model_overrides": [
+                {"tier": "main", "provider": {"ollama": {"base_url": "http://host.docker.internal:11434"}},
+                 "model_name": "gemma4:12b-it-qat", "max_tokens": 8192, "temperature": 0.1}
+            ]
+        }"#;
+        let config: TenantConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.model_overrides.len(), 1);
+        assert_eq!(config.model_overrides[0].model_name, "gemma4:12b-it-qat");
+    }
+
+    #[test]
+    fn tenant_config_defaults_when_empty() {
+        let config: TenantConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.model_overrides.is_empty());
+    }
+}

@@ -269,10 +269,20 @@ pub async fn execute_workflow(
         );
     }
 
-    // Execute the workflow via WorkflowExecutor
+    // Execute the workflow via WorkflowExecutor (per-tenant model overrides)
+    let router = state
+        .router_for_tenant(&tenant_id)
+        .await
+        .map_err(ApiError::from)?;
     let executor = pacgate_agent::WorkflowExecutor::new(state.agent_loop.as_ref());
     let result = executor
-        .execute(&workflow, persona_prompt.as_deref(), Some(&matter_id), dd_config.as_ref())
+        .execute_with_router(
+            &router,
+            &workflow,
+            persona_prompt.as_deref(),
+            Some(&matter_id),
+            dd_config.as_ref(),
+        )
         .await
         .map_err(ApiError::from)?;
 

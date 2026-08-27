@@ -13,7 +13,9 @@
 //! contains the full prompt template from the client's prompt guides.
 
 use pacgate_core::{DdAgentConfig, MatterId};
+use pacgate_llm::LlmRouter;
 use pacgate_workflow::{Workflow, WorkflowStep};
+use std::sync::Arc;
 use tracing::{info, instrument};
 
 use crate::AgentLoop;
@@ -120,6 +122,20 @@ impl<'a> WorkflowExecutor<'a> {
         matter_id: Option<&MatterId>,
         dd_config: Option<&DdAgentConfig>,
     ) -> Result<WorkflowResult, pacgate_core::PacgateError> {
+        self.execute_with_router(&self.agent.router, workflow, persona_prompt, matter_id, dd_config)
+            .await
+    }
+
+    /// Execute a workflow using an explicit router (per-tenant model overrides).
+    #[instrument(skip(self, router, workflow, persona_prompt, dd_config), fields(workflow = %workflow.name, steps = workflow.steps.len()))]
+    pub async fn execute_with_router(
+        &self,
+        router: &Arc<LlmRouter>,
+        workflow: &Workflow,
+        persona_prompt: Option<&str>,
+        matter_id: Option<&MatterId>,
+        dd_config: Option<&DdAgentConfig>,
+    ) -> Result<WorkflowResult, pacgate_core::PacgateError> {
         // Pre-compose the DD system prompt if a DD config is provided
         let dd_prompt = dd_config.map(|c| c.compose_system_prompt());
 
@@ -143,7 +159,7 @@ impl<'a> WorkflowExecutor<'a> {
             // Run the agent loop for this step
             let turn_result = self
                 .agent
-                .run(vec![], &user_message, combined_prompt.as_deref(), matter_id)
+                .run_with_router(router, vec![], &user_message, combined_prompt.as_deref(), matter_id)
                 .await?;
 
             // Record the result

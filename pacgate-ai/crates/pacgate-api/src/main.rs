@@ -34,6 +34,12 @@ async fn main() -> anyhow::Result<()> {
     let workflows_dir = std::env::var("WORKFLOWS_DIR")
         .map(std::path::PathBuf::from)
         .ok();
+    // Ollama base URL used by BOTH the LLM router and the RAG embedding
+    // service. In containerized deployments this must be host-reachable
+    // (e.g. http://host.docker.internal:11434) — localhost would point at
+    // the container itself.
+    let ollama_url = std::env::var("OLLAMA_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
 
     let config = Arc::new(AppConfig {
         data_dir: std::path::PathBuf::from(&data_dir),
@@ -68,67 +74,15 @@ async fn main() -> anyhow::Result<()> {
         pool.clone(),
     ));
 
-    // Create LLM router with default local config
-    let model_configs = pacgate_core::ModelConfig::default_local();
+    // Create LLM router with default local config, honoring OLLAMA_BASE_URL
+    let model_configs = pacgate_core::ModelConfig::default_local_with_base_url(&ollama_url);
     let api_keys = std::collections::HashMap::new();
     let router = Arc::new(LlmRouter::new(model_configs, api_keys));
 
     // Create agent loop and tool dispatcher
-    // For now, use stub stores — these will be replaced with real implementations
-    use pacgate_core::{DocumentStore, KbStore, WorkflowStore};
-
-    struct StubDocStore;
-    #[async_trait::async_trait]
-    impl DocumentStore for StubDocStore {
-        async fn read(&self, _id: &pacgate_core::DocumentId) -> pacgate_core::Result<String> {
-            Err(pacgate_core::PacgateError::StorageError("stub".into()))
-        }
-        async fn read_version(
-            &self,
-            _id: &pacgate_core::DocumentId,
-            _version: u32,
-        ) -> pacgate_core::Result<String> {
-            Err(pacgate_core::PacgateError::StorageError("stub".into()))
-        }
-        async fn list_for_matter(
-            &self,
-            _matter_id: &pacgate_core::MatterId,
-        ) -> pacgate_core::Result<Vec<pacgate_core::Document>> {
-            Ok(Vec::new())
-        }
-        async fn find_in(
-            &self,
-            _id: &pacgate_core::DocumentId,
-            _query: &str,
-        ) -> pacgate_core::Result<Vec<pacgate_core::FindResult>> {
-            Ok(Vec::new())
-        }
-        async fn create_from_structure(
-            &self,
-            _matter_id: &pacgate_core::MatterId,
-            _filename: &str,
-            _structure: &serde_json::Value,
-        ) -> pacgate_core::Result<pacgate_core::Document> {
-            Err(pacgate_core::PacgateError::StorageError("stub".into()))
-        }
-        async fn apply_edit(
-            &self,
-            _id: &pacgate_core::DocumentId,
-            _find: &str,
-            _replace: &str,
-            _ctx_before: Option<&str>,
-            _ctx_after: Option<&str>,
-        ) -> pacgate_core::Result<pacgate_core::Document> {
-            Err(pacgate_core::PacgateError::StorageError("stub".into()))
-        }
-        async fn replicate(
-            &self,
-            _id: &pacgate_core::DocumentId,
-            _count: u32,
-        ) -> pacgate_core::Result<Vec<pacgate_core::Document>> {
-            Ok(Vec::new())
-        }
-    }
+    // Wire the real FsDocumentStore into the agent tools so read_document /
+    // generate_docx / edit_document operate on actual matter documents.
+    use pacgate_core::{KbStore, WorkflowStore};
 
     struct StubWorkflowStore;
     #[async_trait::async_trait]
@@ -155,8 +109,7 @@ async fn main() -> anyhow::Result<()> {
     let search = Arc::new(pacgate_search::default_router());
 
     // Create RAG store (optional — requires Ollama embedding service)
-    let ollama_url = std::env::var("OLLAMA_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+    // Reuses `ollama_url` read at config load (shared with the LLM router).
     let embedding_model = std::env::var("OLLAMA_EMBED_MODEL")
         .unwrap_or_else(|_| "nomic-embed-text".to_string());
     let embed_svc = pacgate_rag::EmbeddingService::new(&ollama_url, &embedding_model);
@@ -171,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
 
     let dispatcher = Arc::new(
         ToolDispatcher::new(
-            Arc::new(StubDocStore),
+            doc_store.clone(),
             Arc::new(StubWorkflowStore),
             Arc::new(StubKbStore),
         )

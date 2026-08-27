@@ -155,9 +155,13 @@ impl OpenAiCompatClient {
         max_tokens:  u32,
         temperature: f32,
     ) -> Self {
+        // Total-request timeout: covers the entire call including body read.
+        // Long legal-document generations can take several minutes on local
+        // models; 10 minutes is a hard ceiling that converts an indefinite
+        // hang into a clean, diagnosable error.
         Self {
             http: Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
+                .timeout(std::time::Duration::from_secs(600))
                 .build()
                 .expect("reqwest client"),
             base_url:    base_url.into(),
@@ -199,12 +203,33 @@ impl LlmClient for OpenAiCompatClient {
             .json(&req)
             .send()
             .await
-            .context("LLM HTTP request")?
+            .map_err(|e| {
+                PacgateError::LlmError(format!(
+                    "LLM HTTP request failed: model={} url={} error={}",
+                    self.model,
+                    self.chat_url(),
+                    e
+                ))
+            })?
             .error_for_status()
-            .context("LLM HTTP status")?
+            .map_err(|e| {
+                PacgateError::LlmError(format!(
+                    "LLM HTTP status: model={} url={} error={}",
+                    self.model,
+                    self.chat_url(),
+                    e
+                ))
+            })?
             .json::<ChatResponse>()
             .await
-            .context("LLM JSON decode")?;
+            .map_err(|e| {
+                PacgateError::LlmError(format!(
+                    "LLM JSON decode failed: model={} url={} error={}",
+                    self.model,
+                    self.chat_url(),
+                    e
+                ))
+            })?;
 
         let choice = resp.choices.into_iter().next().ok_or_else(|| {
             PacgateError::LlmError("empty choices".into())
@@ -387,5 +412,61 @@ impl LlmRouter {
             }
         }
         Err(PacgateError::LlmError(format!("no model config for tier {tier:?}")))
+    }
+}
+
+#[cfg(test)]
+mod router_tests {
+    use super::*;
+    use pacgate_core::{LlmProvider, LlmTier, ModelConfig};
+
+    fn ollama_config(tier: LlmTier, model: &str, base: &str) -> ModelConfig {
+        ModelConfig {
+            tier,
+            provider: LlmProvider::Ollama {
+                base_url: base.to_string(),
+            },
+            model_name: model.to_string(),
+            max_tokens: 4096,
+            temperature: 0.1,
+        }
+    }
+
+    #[test]
+    fn router_honors_override_configs() {
+        let base = "http://host.docker.internal:11434";
+        let configs = vec![
+            ollama_config(LlmTier::Main, "gemma4:12b-it-qat", base),
+            ollama_config(LlmTier::Mid, "gemma4:12b-it-qat", base),
+            ollama_config(LlmTier::Low, "gemma4:12b-it-qat", base),
+        ];
+        let router = LlmRouter::new(configs, std::collections::HashMap::new());
+
+        // get() builds a client from the override config — the client must
+        // target the override base URL and model, not the defaults.
+        let client = router.get(LlmTier::Main).expect("main tier must resolve");
+        // LlmClient is a trait object; verify indirectly via complete() URL is
+        // not possible without a server. Instead assert the router accepted
+        // the override configs by resolving all tiers.
+        let _mid = router.get(LlmTier::Mid).expect("mid tier must resolve");
+        let _low = router.get(LlmTier::Low).expect("low tier must resolve");
+        drop(client);
+    }
+
+    #[test]
+    fn router_falls_back_from_main_to_mid_to_low() {
+        let configs = vec![
+            ollama_config(LlmTier::Mid, "m", "http://localhost:11434"),
+            ollama_config(LlmTier::Low, "l", "http://localhost:11434"),
+        ];
+        let router = LlmRouter::new(configs, std::collections::HashMap::new());
+        // Main missing → falls back to Mid without error.
+        assert!(router.get(LlmTier::Main).is_ok());
+    }
+
+    #[test]
+    fn router_errors_when_no_tiers_configured() {
+        let router = LlmRouter::new(vec![], std::collections::HashMap::new());
+        assert!(router.get(LlmTier::Low).is_err());
     }
 }

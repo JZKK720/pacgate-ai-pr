@@ -578,8 +578,16 @@ impl DocumentStore for FsDocumentStore {
 
         debug!(path = %abs_path.display(), version, "document created");
 
-        // Insert metadata row — owner_id is a placeholder until auth is wired
-        let owner_id = UserId::new();
+        // Attribute the document to the matter's creator (the agent tools do
+        // not carry the requesting user's identity yet; the matter creator is
+        // a valid owner that satisfies the FK constraint).
+        let owner_row = sqlx::query("SELECT created_by FROM matters WHERE id = $1")
+            .bind(matter_id.0)
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+        let owner_id = UserId(owner_row.get::<Uuid, _>("created_by"));
+
         self.insert_doc_row(
             matter_id, &tenant_id, filename, format, version, &rel_path, &owner_id,
         )

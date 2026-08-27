@@ -421,14 +421,22 @@ pub fn tool_definitions() -> Vec<OaiTool> {
         ),
         oai_tool(
             "generate_docx",
-            "Generate a new DOCX document from a structured JSON description. Supports heading hierarchy, legal numbering, tables, landscape pages, and signature pages.",
+            "Generate a new DOCX document from a structured JSON description. \
+             The structure object must have: title (string), and sections (array). \
+             Each section is an object with a 'type' field — one of: \
+             'heading' {level: 1-3, text}, 'paragraph' {text}, \
+             'numbered_list' {items: [string]}, 'bullet_list' {items: [string]}, \
+             'table' {headers: [string], rows: [[string]]}, 'page_break' {}, \
+             'recital' {text} (WHEREAS clauses), or \
+             'signature_page' {parties: [{name, role, title?}]}. \
+             Example: {\"title\": \"Memo\", \"sections\": [{\"type\": \"heading\", \"level\": 1, \"text\": \"Overview\"}, {\"type\": \"paragraph\", \"text\": \"Body text...\"}]}",
             serde_json::json!({
                 "type": "object",
                 "required": ["matter_id", "filename", "structure"],
                 "properties": {
                     "matter_id": { "type": "string" },
                     "filename":  { "type": "string" },
-                    "structure": { "type": "object", "description": "Document structure JSON" }
+                    "structure": { "type": "object", "description": "Document structure JSON with title + sections array; section types: heading/paragraph/numbered_list/bullet_list/table/page_break/recital/signature_page" }
                 }
             }),
         ),
@@ -592,7 +600,23 @@ impl AgentLoop {
         persona_prompt: Option<&str>,
         matter_id: Option<&MatterId>,
     ) -> Result<AgentTurnResult> {
-        let llm = self.router.get(self.tier)?;
+        self.run_with_router(&self.router, history, user_message, persona_prompt, matter_id)
+            .await
+    }
+
+    /// Run one agent turn using an explicit router. Used by the API layer to
+    /// apply per-tenant model overrides (`TenantConfig::model_overrides`)
+    /// without rebuilding the shared AgentLoop.
+    #[instrument(skip(self, router, history, persona_prompt))]
+    pub async fn run_with_router(
+        &self,
+        router: &Arc<LlmRouter>,
+        history: Vec<AgentMessage>,
+        user_message: &str,
+        persona_prompt: Option<&str>,
+        matter_id: Option<&MatterId>,
+    ) -> Result<AgentTurnResult> {
+        let llm = router.get(self.tier)?;
         let tools = tool_definitions();
 
         let mut messages = self.convert_history(&history);
@@ -661,9 +685,16 @@ impl AgentLoop {
             // Execute each tool and push results
             for tc in &tool_calls {
                 let result = self.dispatcher.dispatch(tc).await;
+                // Ollama requires tool-message content to be a string; a raw
+                // JSON object triggers "invalid message content type". Stringify
+                // non-string values while preserving the payload.
+                let tool_content = match result.content {
+                    serde_json::Value::String(s) => s,
+                    other => other.to_string(),
+                };
                 messages.push(ChatMessage {
                     role: "tool".into(),
-                    content: Some(result.content.clone()),
+                    content: Some(serde_json::Value::String(tool_content)),
                     tool_calls: None,
                     tool_call_id: Some(result.tool_call_id.clone()),
                     name: None,

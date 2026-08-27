@@ -158,9 +158,14 @@ pub async fn chat_handler(
 
     let persona_prompt = compose_persona_prompt(soul.as_ref(), req.persona_id.as_deref());
 
+    let router = state
+        .router_for_tenant(&tenant_id)
+        .await
+        .map_err(ApiError::from)?;
     let result = state
         .agent_loop
-        .run(
+        .run_with_router(
+            &router,
             req.history,
             &req.message,
             persona_prompt.as_deref(),
@@ -242,9 +247,14 @@ pub async fn chat_stream_handler(
     let event_stream: std::pin::Pin<
         Box<dyn futures::Stream<Item = Result<Event, Infallible>> + Send>,
     > = {
+        let router = match state.router_for_tenant(&tenant_id).await {
+            Ok(r) => r,
+            Err(e) => return sse_error_response(e.to_string()),
+        };
         match state
             .agent_loop
-            .run(
+            .run_with_router(
+                &router,
                 req.history,
                 &req.message,
                 persona_prompt.as_deref(),

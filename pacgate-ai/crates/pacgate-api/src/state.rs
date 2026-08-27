@@ -26,6 +26,35 @@ pub struct AppState {
     pub db: sqlx::PgPool,
 }
 
+impl AppState {
+    /// Resolve the LLM router for a tenant. If the tenant's
+    /// `config_json.model_overrides` is non-empty, build a router from those
+    /// overrides; otherwise fall back to the shared default router.
+    pub async fn router_for_tenant(
+        &self,
+        tenant_id: &pacgate_core::TenantId,
+    ) -> Result<Arc<LlmRouter>, pacgate_core::PacgateError> {
+        let tenant = self
+            .tenant_store
+            .get(tenant_id)
+            .await
+            .map_err(|e| {
+                pacgate_core::PacgateError::ValidationError(format!(
+                    "tenant lookup failed: {e}"
+                ))
+            })?;
+
+        if tenant.config.model_overrides.is_empty() {
+            return Ok(self.router.clone());
+        }
+
+        Ok(Arc::new(LlmRouter::new(
+            tenant.config.model_overrides.clone(),
+            std::collections::HashMap::new(),
+        )))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub data_dir: std::path::PathBuf,
