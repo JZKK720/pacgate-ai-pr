@@ -13,9 +13,37 @@
 | Phase 1: Fix B (tenant `model_overrides` honored via `router_for_tenant`, `run_with_router`, `execute_with_router`) | ✅ DONE | llm router tests 3/3; live e2e shows override model used |
 | Phase 1: Fix C (LLM errors include model + URL) | ✅ DONE | error messages now self-diagnosing |
 | Phase 1 regression | ✅ PASS | smoke 23/23 · agent 5/5 · yaml 3/3 · clippy back to baseline 2 warnings |
-| Phase 2: image build `pacgate-api:0.1.2` | ✅ built ×2 | rebuilt after tool-content fix |
-| Phase 2: e2e re-run | ✅ DONE (partial pass) | see e2e results below |
-| Phase 3: AIPC installation | ⬜ pending | blocked on push + step-2 hang decision |
+| Phase 2: image build `pacgate-api:0.1.2` | ✅ built ×4 | final build incl. doc-store wiring + FK fix |
+| Phase 2: e2e re-run | ✅ **PASS** | workflow execute 200 in 27s, all 3 steps, docx persisted |
+| Phase 2: GHCR push | ✅ DONE | `sha256:0d8dfa76...` pullable |
+| Phase 2: commits | ✅ DONE | b35b91a (fix) + b812791 (release) + 1cb2549 (docs), pushed to origin/main |
+| Phase 3: AIPC installation | ⬜ READY | handbook v0.1.1 + image 0.1.2 both final; execute Stage 1–6 per machine |
+
+### Final e2e acceptance (2026-08-27, image 0.1.2 final)
+
+| Check | Result |
+|---|---|
+| Stack health (`/health`) | ✅ 200 |
+| Login / register / matter create | ✅ |
+| Chat with tool-call round-trip | ✅ 200 |
+| `generate_docx` via chat (explicit instruction) | ✅ docx written to disk + DB row with valid owner FK |
+| **Workflow execute (Contract Review, 3 steps)** | ✅ **200 in 27s** — Read document → Identify risks → Generate review memo |
+| Generated document persisted | ✅ `review_memo.docx` v1 |
+| Regression: smoke 23/23 · agent 5/5 · core 5/5 · llm 3/3 | ✅ |
+
+### Additional fixes applied during final verification (beyond original plan)
+
+1. **StubDocStore removed** — `main.rs` now wires the real `FsDocumentStore`
+   into `ToolDispatcher`, so `read_document` / `generate_docx` /
+   `edit_document` operate on actual matter documents (previously stubs
+   returned errors/empty lists).
+2. **generate_docx schema documented** in the tool description — the LLM was
+   producing `{type: content, content: [...]}` structures that failed to
+   deserialize; the description now lists all valid section types with an
+   example.
+3. **Document owner FK fix** — `create_from_structure` attributes new
+   documents to the matter's creator (`matters.created_by`) instead of a
+   random `UserId::new()` that violated `documents_owner_id_fkey`.
 
 ### E2E re-run results (2026-08-27, image 0.1.2 with tool-content fix)
 
@@ -28,14 +56,14 @@
 | Workflow execute step 1 (Identify risks) | ✅ executed |
 | Workflow execute step 2 (Generate review memo → `generate_docx`) | ⚠️ **HANGS >40 min** — new finding, see below |
 
-### Third finding: workflow step-2 hang (OPEN — needs owner decision)
+### Third finding: workflow step-2 hang (RESOLVED 2026-08-27)
 
 With `nemotron-3.5-lightning:30b-a3b` as the Main tier model, workflow step 2
-(`generate_docx`) starts but never completes (>40 min, zero further log lines,
+(`generate_docx`) started but never completed (>40 min, zero further log lines,
 no DB writes, no error). Evidence:
 
-- The API stays responsive during the hang (parallel chat requests succeed).
-- No reqwest timeout fires despite the client's 120s timeout — the request is
+- The API stayed responsive during the hang (parallel chat requests succeeded).
+- No reqwest timeout fired despite the client's 120s timeout — the request was
   stuck reading a response body that never finishes.
 - Baseline timing: a direct 500-word nemotron generation takes ~2 min; the
   model emits a large `reasoning` field alongside `content`, so a full memo
@@ -44,15 +72,16 @@ no DB writes, no error). Evidence:
   structure JSON is enormous; the non-streaming `complete()` path waits for
   the entire body with no effective total-duration cap.
 
-Recommended fixes (owner decision 2026-08-27: **option 1 + option 3**):
-1. ✅ APPLIED — Main tier switched to non-reasoning `gemma4:12b-it-qat`
-   (verified end-to-end); handbook recommendation updated.
-2. ✅ APPLIED — hard total-request timeout (600s) added to
-   `OpenAiCompatClient`, converting any future hang into a clean error.
+**Resolution (owner decision: option 1 + option 3, both applied):**
+1. ✅ Main tier switched to non-reasoning `gemma4:12b-it-qat` — workflow now
+   completes in 27s end-to-end.
+2. ✅ Hard 600s total-request timeout added to `OpenAiCompatClient` — any
+   future hang becomes a clean, diagnosable error.
 
-This does NOT block Fix A/B/C correctness: chat + tool calls work, steps 0–1
-execute. It blocks the "workflow execute returns 200" acceptance criterion
-until resolved or until a non-reasoning Main model is chosen.
+Follow-on fixes discovered while verifying (all applied, see "Additional
+fixes" below): StubDocStore replaced with the real FsDocumentStore,
+generate_docx schema documented in the tool description, and the document
+owner FK violation fixed.
 
 ### Second bug found during Phase 2 e2e (fixed)
 
