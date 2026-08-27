@@ -63,4 +63,4 @@ Quick checks:
 - `docker compose -f compose.prod.yaml ps` — are all services running?
 - `docker compose -f compose.prod.yaml logs <service>` — check logs
 - `ollama list` — are models available?
-- `curl http://localhost:8081/api/health` — is the API healthy?
+- `curl http://localhost:8081/health` — is the API healthy? (returns `ok`)

@@ -60,17 +60,17 @@ graph TB
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # 构建 pacgate-api（Rust 1.94 多阶段）
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 -f pacgate-ai/Dockerfile ./pacgate-ai
 
 # 构建 deer-flow 包装镜像
 docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 -f deploy/deer-flow-pacgate/Dockerfile .
 
 # 推送
-docker push ghcr.io/jzkk720/pacgate-api:0.1.1
+docker push ghcr.io/jzkk720/pacgate-api:0.1.2
 docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 
 # 验证可拉取
-docker pull ghcr.io/jzkk720/pacgate-api:0.1.1
+docker pull ghcr.io/jzkk720/pacgate-api:0.1.2
 docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 ```
 
@@ -148,7 +148,7 @@ notepad .env    # 填写 PACGATE_DB_PASSWORD、PACGATE_JWT_SECRET、PACGATE_TENA
 验证：
 ```powershell
 docker compose -f compose.prod.yaml ps    # 所有服务都应运行
-curl http://localhost:8081/api/health     # 返回 {"status":"ok"}
+curl http://localhost:8081/health    # 返回 ok
 ```
 
 ### 3.4 初始化默认租户
@@ -237,7 +237,7 @@ npm exec qm -- up
 | 切换 qm 模型 | 编辑 `qm.config.jsonc` 中的 `MODEL_NAME`，然后 `qm down` + `qm up` |
 | 注册新用户 | `POST /api/auth/register` |
 | 备份数据库 | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` |
-| 检查服务健康 | `curl http://localhost:8081/api/health` |
+| 检查服务健康 | `curl http://localhost:8081/health` |
 
 ### 5.2 律师培训
 
@@ -353,7 +353,7 @@ npm exec qm -- check    # 校验配置
 ### deer-flow 报错
 
 ```powershell
-curl http://localhost:8081/api/health    # 检查 API 是否健康
+curl http://localhost:8081/health    # 检查 API 是否健康
 ollama show deepseek-v4-flash:0731-cloud  # 检查模型是否合法
 docker compose -f compose.prod.yaml logs deer-flow  # 查看日志
 ```
@@ -364,7 +364,7 @@ docker compose -f compose.prod.yaml logs deer-flow  # 查看日志
 
 | 镜像 | 内容 | 基础镜像 |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.1` | Rust 二进制（pacgate-server）+ SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.1.2` | Rust 二进制（pacgate-server）+ SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow 后端 + Python 适配器（约 150 行） | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
 
 ### 8.2 数据流

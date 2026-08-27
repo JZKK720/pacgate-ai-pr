@@ -76,7 +76,7 @@ graph LR
     end
 
     subgraph GHCR["GHCR (jzkk720)"]
-        IMG1["pacgate-api:0.1.1"]
+        IMG1["pacgate-api:0.1.2"]
         IMG2["deer-flow-pacgate:0.1.0"]
         IMG3["qm-pacgate:0.1.0"]
     end

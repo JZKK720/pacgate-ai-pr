@@ -60,17 +60,17 @@ graph TB
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build pacgate-api (Rust 1.94 multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 -f pacgate-ai/Dockerfile ./pacgate-ai
 
 # Build deer-flow wrapper
 docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 -f deploy/deer-flow-pacgate/Dockerfile .
 
 # Push both
-docker push ghcr.io/jzkk720/pacgate-api:0.1.1
+docker push ghcr.io/jzkk720/pacgate-api:0.1.2
 docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 
 # Verify pullable
-docker pull ghcr.io/jzkk720/pacgate-api:0.1.1
+docker pull ghcr.io/jzkk720/pacgate-api:0.1.2
 docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 ```
 
@@ -150,7 +150,7 @@ notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENAN
 Verify:
 ```powershell
 docker compose -f compose.prod.yaml ps    # all services running
-curl http://localhost:8081/api/health     # {"status":"ok"}
+curl http://localhost:8081/health    # ok
 ```
 
 ### 3.4 Seed the default tenant
@@ -239,7 +239,7 @@ Show the client IT admin how to:
 | Switch qm model | Edit `qm.config.jsonc` MODEL_NAME, `qm down` + `qm up` |
 | Register new user | `POST /api/auth/register` |
 | Backup database | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` |
-| Check service health | `curl http://localhost:8081/api/health` |
+| Check service health | `curl http://localhost:8081/health` |
 
 ### 5.2 Attorney training
 
@@ -355,7 +355,7 @@ npm exec qm -- check    # validate config
 ### deer-flow returns errors
 
 ```powershell
-curl http://localhost:8081/api/health    # check API is healthy
+curl http://localhost:8081/health    # check API is healthy
 ollama show deepseek-v4-flash:0731-cloud  # check model is valid
 docker compose -f compose.prod.yaml logs deer-flow  # check logs
 ```
@@ -366,7 +366,7 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 
 | Image | Contains | Base |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.1` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.1.2` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow backend + Python adapter (~150 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
 
 ### 8.2 Data flow

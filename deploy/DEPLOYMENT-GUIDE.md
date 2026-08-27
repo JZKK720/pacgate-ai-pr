@@ -3,6 +3,14 @@
 > For Cubecloud engineers deploying to client AI PCs
 > Phase 1 — two-machine pilot
 
+## Version history
+
+| Version | Date | Changes |
+|---------|------|---------|
+| `pacgate-api:0.1.2` | 2026-08-27 | **Container-networking fix**: LLM router now honors `OLLAMA_BASE_URL` (was hardcoded to `localhost:11434`, which fails inside Docker — every workflow/chat execution returned 500). Per-tenant model overrides (`tenants.config_json.model_overrides`) are now applied to chat + workflow execution. LLM errors include model name + URL for debugging. |
+| `pacgate-api:0.1.1` | 2026-08-19 | YuanDian/PkuLaw connector fixes, JWT secret removed from image ENV. |
+| `deer-flow-pacgate:0.1.0` | 2026-08-19 | Initial wrapper on bytedance deer-flow-backend. |
+
 This document describes the target client runtime bundle. It does not reflect the workspace root `compose.yaml` and `nginx/default.conf`, which currently only run the static docs surface plus `pacgate-auth`.
 
 ## Prerequisites
@@ -31,7 +39,7 @@ This document describes the target client runtime bundle. It does not reflect th
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build the Rust binary in Docker (multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 `
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 `
   -f pacgate-ai/Dockerfile `
   ./pacgate-ai
 ```
@@ -87,7 +95,7 @@ script in the client bundle for first-run bootstrap. There is no
 echo $env:GHCR_TOKEN | docker login ghcr.io -u jzkk720 --password-stdin
 
 # Push the two images (qm runs via qm up, not as a Docker image)
-docker push ghcr.io/jzkk720/pacgate-api:0.1.1
+docker push ghcr.io/jzkk720/pacgate-api:0.1.2
 docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
 ```
 
@@ -124,7 +132,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.1
+    image: ghcr.io/jzkk720/pacgate-api:0.1.2
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -374,7 +382,7 @@ notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENAN
 docker compose -f compose.prod.yaml ps
 
 # Check API health
-curl http://localhost:8081/api/health
+curl http://localhost:8081/health
 
 # Open browser
 start http://localhost:8081
@@ -448,6 +456,40 @@ ollama list
 # Test from a container
 docker run --rm curlimages/curl http://host.docker.internal:11434/api/tags
 ```
+
+**Important (fixed in 0.1.2):** earlier images hardcoded the LLM router to
+`localhost:11434`. Inside a container that address is the container itself, so
+workflow/chat execution failed with `500 {"code":"internal_error","message":"LLM HTTP request"}`.
+If you see this error on 0.1.1, upgrade to 0.1.2. On 0.1.2+ the router uses
+`OLLAMA_BASE_URL` from compose (`http://host.docker.internal:11434`).
+
+### Workflow/chat returns wrong-model or model-not-found errors
+
+The API's built-in defaults reference models that may not exist on the target
+machine. After seeding the tenant, apply per-tenant model overrides so each
+tier points at a model present in `ollama list`:
+
+```sql
+-- docker exec pacgate-db psql -U pacgate -f /tmp/overrides.sql
+-- Casing matters: serde expects snake_case ("main", "ollama").
+UPDATE tenants
+SET config_json = jsonb_set(
+  '{}'::jsonb,
+  '{model_overrides}',
+  '[
+    {"tier":"main","provider":{"ollama":{"base_url":"http://host.docker.internal:11434"}},
+     "model_name":"<MAIN_MODEL>","max_tokens":8192,"temperature":0.1},
+    {"tier":"mid", "provider":{"ollama":{"base_url":"http://host.docker.internal:11434"}},
+     "model_name":"<MID_MODEL>", "max_tokens":8192,"temperature":0.1},
+    {"tier":"low", "provider":{"ollama":{"base_url":"http://host.docker.internal:11434"}},
+     "model_name":"<LOW_MODEL>", "max_tokens":4096,"temperature":0.2}
+  ]'::jsonb,
+  true)
+WHERE slug = '<TENANT_SLUG>';
+```
+
+No restart needed — overrides are read per request. Empty overrides fall back
+to the `OLLAMA_BASE_URL` defaults.
 
 ### GPU not detected by Ollama
 

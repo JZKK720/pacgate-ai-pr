@@ -1,0 +1,20 @@
+# Scratch override for local e2e verification of the client-bundle stack.
+# NOT for client deployment. Remaps nginx to 8089 (8081 is occupied by the
+# proposal viewer on the dev machine) and renames containers to avoid clashes.
+#
+# Usage:
+#   docker compose -p pacgate-e2e -f compose.prod.yaml -f compose.e2e-override.yaml up -d
+#   ... run checks ...
+#   docker compose -p pacgate-e2e -f compose.prod.yaml -f compose.e2e-override.yaml down -v
+
+services:
+  pacgate-db:
+    container_name: pacgate-e2e-db
+  pacgate-api:
+    container_name: pacgate-e2e-api
+  deer-flow:
+    container_name: pacgate-e2e-deer-flow
+  nginx:
+    container_name: pacgate-e2e-nginx
+    ports: !override
+      - "8089:80"

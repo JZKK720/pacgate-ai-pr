@@ -11,7 +11,7 @@ Privacy-first local legal AI platform for multi-tenant attorney offices. Headles
 - RAG retrieval (pgvector + tsvector + Ollama embeddings, T1-T4 data level filtering)
 - Auth (JWT + argon2 + SOUL resolver middleware)
 - deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0`
-- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.1.1` (includes YuanDian/PkuLaw connector fixes)
+- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.1.2` (includes YuanDian/PkuLaw connector fixes)
 - qm collaboration bridge validated (Python CLI, HARNESS=pi, real Ollama)
 - Client deployment bundle checked in at `deploy/client-bundle/`
 - Knowledge graph: 917 nodes, 2157 edges, 47 communities
@@ -61,7 +61,7 @@ Both AIPC machines run the full stack identically. Each machine is independently
 
 | Image | Contents | Base |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.1.1` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.1.2` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
 
 qm does not use a GHCR image. It runs via `qm up` from the checked-in `deploy/qm-pacgate/` directory.

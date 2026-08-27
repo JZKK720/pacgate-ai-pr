@@ -136,7 +136,7 @@ Current repo reality: the checked-in workspace-level `compose.yaml` and `nginx/d
 
 | Image                                     | Base                                        | Contents                                | Rebuild cadence                         |
 | ----------------------------------------- | ------------------------------------------- | --------------------------------------- | --------------------------------------- |
-| `ghcr.io/jzkk720/pacgate-api:0.1.1`       | `rust:1.81` \u2192 `debian:slim`                 | Rust binary                             | When you ship a new version             |
+| `ghcr.io/jzkk720/pacgate-api:0.1.2`       | `rust:1.81` \u2192 `debian:slim`                 | Rust binary                             | When you ship a new version             |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | `ghcr.io/bytedance/deer-flow-backend:2.1.0` | deer-flow + Python adapter (~150 lines) | Quarterly or when deer-flow ships value |
 | `ghcr.io/jzkk720/qm-pacgate:0.1.0`        | `ghcr.io/yc-software/qm/core:latest`        | qm core + TS adapter (~200 lines)       | Quarterly or when qm ships value        |
 

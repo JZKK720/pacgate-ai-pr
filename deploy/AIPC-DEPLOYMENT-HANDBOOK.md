@@ -31,25 +31,22 @@ If you later want shared matter data across both machines, connect them with a p
 
 ## Stage 0: Rebuild the API image (dev machine, one-time)
 
-The current `ghcr.io/jzkk720/pacgate-api:0.1.0` image does not include the YuanDian and PkuLaw connector fixes. Rebuild before deploying so both AIPCs pull the corrected runtime.
+The current `ghcr.io/jzkk720/pacgate-api:0.1.1` image has a container-networking bug: the LLM router hardcodes `localhost:11434`, which fails inside Docker. Version `0.1.2` fixes this (router honors `OLLAMA_BASE_URL`, per-tenant model overrides are applied). Rebuild before deploying so both AIPCs pull the corrected runtime.
 
 On your dev machine:
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push ghcr.io/jzkk720/pacgate-api:0.1.1
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push ghcr.io/jzkk720/pacgate-api:0.1.2
 ```
 
-The `compose.prod.yaml` in this repo now references `pacgate-api:0.1.1`. Rebuild and push the image before deploying:
-
-```powershell
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.1 -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push ghcr.io/jzkk720/pacgate-api:0.1.1
-```
+The `compose.prod.yaml` in this repo now references `pacgate-api:0.1.2`.
 
 The `deer-flow-pacgate:0.1.0` image does not need rebuilding. It is a thin wrapper on top of the upstream deer-flow backend image, and the wrapper layer has not changed.
+
+> **Port conflict note:** the stack binds nginx to host port `8081`. If that port is already in use on the machine, edit the `ports:` entry for `nginx` in `deploy/client-bundle/compose.prod.yaml` (e.g. `"8089:80"`) and use the new port in all verification URLs below.
 
 ## Stage 1: Clone the repo on each AIPC
 
@@ -103,10 +100,10 @@ Verify the core stack:
 
 ```powershell
 docker compose -f compose.prod.yaml ps
-curl http://localhost:8081/api/health
+curl http://localhost:8081/health
 ```
 
-Expected: all four containers running (pacgate-db, pacgate-api, deer-flow, nginx) and `/api/health` returns a health response.
+Expected: all four containers running (pacgate-db, pacgate-api, deer-flow, nginx) and `/health` returns `ok`.
 
 ## Stage 3: Seed the tenant and register users (both machines)
 
@@ -179,7 +176,7 @@ Run this checklist on each AIPC independently.
 ### Core stack
 
 - [ ] `docker compose -f compose.prod.yaml ps` shows 4 services up
-- [ ] `curl http://localhost:8081/api/health` returns a health response
+- [ ] `curl http://localhost:8081/health` returns `ok`
 - [ ] Postgres has the `pacgate-law` tenant
 - [ ] Admin user can log in at `http://localhost:8081/api/auth/login`
 - [ ] deer-flow returns a real research response at `http://localhost:8081/research/`
@@ -271,6 +268,7 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 - Each machine has its own independent Postgres and `./data/tenants/` directory. Matter data is not shared between machines unless you later add a private mesh and a sync or single-authority model.
 - The PkuLaw connector token is expired. Regenerate it at `https://mcp.pkulaw.com` and set `PKULAW_API_KEY` in `.env` if China-law search is needed during the pilot.
 - Four WASM crates (citation-check, clause-parser, doc-validator, rule-engine) remain stubs. These are future-blueprint work and do not affect Phase 1 pilot functionality.
+- **Model selection:** the API defaults to models that may not exist on the target machine. After Stage 3, apply per-tenant model overrides so the LLM tiers point at models actually present in `ollama list` on that machine. Recommended pilot set: `gemma4:12b-it-qat` (Main/Mid — verified end-to-end; reasoning-mode models like nemotron can hang long docx generations), `nomic-embed-text:latest` (embeddings). See `plans/007-aipc-full-installation-handoff.md` Appendix A for the SQL template.
 
 ## Files referenced
 
