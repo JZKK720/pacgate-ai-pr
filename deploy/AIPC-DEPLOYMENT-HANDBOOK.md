@@ -13,6 +13,7 @@ Each AIPC machine:
   nginx :8081  -> pacgate-api :8080 (Rust metadata API)
                 -> deer-flow  :8001 (research workspace)
   Postgres :5432 (local metadata DB)
+  OpenViking :1933 (long-term memory lane, MCP)
   qm :8182 (co-working workspace, runs via `qm up`)
   Ollama :11434 (native, GPU/NPU)
 ```
@@ -125,6 +126,34 @@ $body = @{email="qm-bridge@pacgate.local"; password="<strong-bridge-password>"} 
 Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
+## Stage 3.5: Verify OpenViking memory service (both machines)
+
+OpenViking is the long-term memory lane: deer-flow and qm store conversational
+context there and recall it in later sessions. It starts as part of the compose
+stack.
+
+```powershell
+curl http://localhost:1933/health
+```
+
+Expected: `{"status":"ok","healthy":true,...}`. The installer renders the
+OpenViking config (Ollama embedding + VLM) into `.env` as
+`OPENVIKING_CONF_CONTENT` and seeds the server's `ov.conf` on first boot.
+
+Functional check (optional, uses the root key from `.env`):
+
+```powershell
+$key = (Get-Content .env | Select-String '^OPENVIKING_ROOT_API_KEY=').Line.Split('=')[1]
+$body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl.exe -s -X POST http://localhost:1933/mcp -H "X-API-Key: $key" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d $body
+```
+
+Expected: a tool list including `find`, `search`, `read`, `remember`.
+
+Boundary rule: OpenViking stores conversational context only (decisions,
+preferences, working knowledge). Matter documents and T1-T4-controlled content
+stay in pacgate-api/pacgate-rag.
+
 ## Stage 4: Bootstrap qm (both machines, identical steps)
 
 qm runs separately from the Docker Compose stack. Bootstrap it on each machine after the core stack is healthy.
@@ -175,8 +204,9 @@ Run this checklist on each AIPC independently.
 
 ### Core stack
 
-- [ ] `docker compose -f compose.prod.yaml ps` shows 4 services up
+- [ ] `docker compose -f compose.prod.yaml ps` shows 5 services up (incl. openviking)
 - [ ] `curl http://localhost:8081/health` returns `ok`
+- [ ] `curl http://localhost:1933/health` returns healthy JSON
 - [ ] Postgres has the `pacgate-law` tenant
 - [ ] Admin user can log in at `http://localhost:8081/api/auth/login`
 - [ ] deer-flow returns a real research response at `http://localhost:8081/research/`
@@ -198,8 +228,10 @@ Run this checklist on each AIPC independently.
 ### Data
 
 - [ ] `./data/tenants/` directory exists and is writable
+- [ ] `./openviking/` directory exists and persists across restarts
 - [ ] Document upload works through the API
 - [ ] Matter memory persists after a deer-flow research run
+- [ ] Cross-session recall: a fact stored via OpenViking `remember` is recalled via `search` in a later session
 
 ## Managing the stack after deployment
 

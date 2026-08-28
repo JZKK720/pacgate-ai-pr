@@ -5,7 +5,7 @@
 
 ## What this project is
 
-Pacgate-ai is a **privacy-first, local-first legal AI platform** for multi-tenant attorney offices. It is the **metadata spine** — a headless Rust HTTP gateway + storage engines — behind two upstream runtimes (deer-flow for research, qm for collaboration). Neither upstream is forked; thin adapter packages translate between their native storage interfaces and pacgate-api's HTTP endpoints.
+Pacgate-ai is a **privacy-first, local-first legal AI platform** for multi-tenant attorney offices. It is the **metadata spine** — a headless Rust HTTP gateway + storage engines — behind two upstream runtimes (deer-flow for research, qm for collaboration) and one upstream context database (OpenViking for long-term conversational memory). None of the upstreams are forked; thin adapter packages translate between their native storage interfaces and pacgate-api's HTTP endpoints.
 
 ## The four layers
 
@@ -30,7 +30,8 @@ Current checked-in repo baseline now includes the client bundle, wrapper-image d
 
 - **deer-flow** (bytedance, MIT, 19k stars): research runtime. Multi-step pipeline (Planner→Researcher→Coder→Reporter), citation extraction, legal skills. Integrated today via a Python adapter package plus Pacgate matter-memory/document APIs; DeerFlow config must explicitly opt in through `memory.manager_class: deermem` and `memory.backend_config.storage_class`.
 - **qm** (yc-software): collaboration runtime. Scope model (`org`→`channel`→`personal`→`team`) maps to pacgate-ai's `TenantId`→`MatterId`→`UserId`→`PracticeArea`. Per-scope security posture = ethical walls. Per-scope egress = confidentiality control. Current repo state: tested TypeScript helper package + first-class `matters.external_key`; actual qm wrapper image is still pending.
-- **Never fork** either upstream. Wrapper Dockerfiles `FROM` their published GHCR images + layer adapters on top. Upgrades = bump one `FROM` line.
+- **Never fork** any upstream. Wrapper Dockerfiles `FROM` their published GHCR images + layer adapters on top. Upgrades = bump one `FROM` line. OpenViking runs unmodified as a side-car service (AGPL-3.0 — never modify or redistribute its source; config-only integration via its MCP endpoint at `/mcp`).
+- **Memory boundary:** OpenViking stores conversational context only (session summaries, decisions, preferences). Matter documents and T1–T4-controlled content stay in pacgate-rag. Identity mapping: TenantId→OpenViking account, MatterId→peer, UserId→user (ethical walls enforced server-side by peer isolation).
 - **Cubecloud owns code (GHCR images); client owns data (volume mount).** Client's `./data/tenants/{tenant_id}/` is on their disk, never in images.
 
 ## Crate status

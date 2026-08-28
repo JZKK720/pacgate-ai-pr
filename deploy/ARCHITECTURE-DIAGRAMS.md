@@ -46,7 +46,9 @@ graph TB
         end
 
         DB[("Postgres 16<br/>pacgate-db")]
+        OV["OpenViking :1933<br/>context database<br/>memory lane (MCP)"]
         DATA["./data/tenants/<br/>{tenant_id}/<br/>matters/ persona/<br/>workflows/ kb/"]
+        OVDATA["./openviking/<br/>conversational memory<br/>(client-owned volume)"]
     end
 
     OLLAMA["Ollama<br/>native :11434<br/>GPU / NPU"]
@@ -55,15 +57,20 @@ graph TB
     NGINX -->|"/collab/"| QM
     NGINX -->|"/api/"| API
 
+    DF -.->|"MCP: recall"| OV
+    QM -.->|"MCP: remember/search/read"| OV
+
     AUTH --> DB
     API --> DB
     DF -.->|host.docker.internal| OLLAMA
     QM -.->|host.docker.internal| OLLAMA
     LLM -.->|host.docker.internal| OLLAMA
+    OV -.->|embedding + VLM| OLLAMA
 
     DATA -->|volume mount| API
     DATA -->|volume mount| DF
     DATA -->|volume mount| QM
+    OVDATA -->|volume mount| OV
 ```
 
 ## Deployment flow
@@ -126,6 +133,7 @@ graph TB
     subgraph Upstream["Upstream repos (never forked)"]
         DF_UP["bytedance/deer-flow"]
         QM_UP["yc-software/qm"]
+        OV_UP["volcengine/OpenViking<br/>(AGPL-3.0, unmodified side-car)"]
     end
 
     subgraph Client["Client AI PC (data owner)"]
