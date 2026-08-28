@@ -28,3 +28,5 @@ pacgate-ai/crates/graphify-out/
 .DS_Store
 Thumbs.db
 desktop.ini
+# Rendered deer-flow MCP config (contains client API key)
+deploy/client-bundle/deer-flow-extensions-config.json

@@ -34,15 +34,17 @@ services:
   deer-flow:
     image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
     container_name: deer-flow
-    depends_on: [pacgate-api]
+    depends_on: [pacgate-api, openviking]
     environment:
       PACGATE_API_URL: http://pacgate-api:8080
       PACGATE_TENANT_ID: ${PACGATE_TENANT_ID:-default-firm}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      DEER_FLOW_EXTENSIONS_CONFIG_PATH: /app/deer-flow-extensions-config.json
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
       - ./workflows:/app/workflows:ro
+      - ./deer-flow-extensions-config.json:/app/deer-flow-extensions-config.json:ro
     restart: unless-stopped
 
   openviking:

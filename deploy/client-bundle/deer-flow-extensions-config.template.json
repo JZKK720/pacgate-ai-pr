@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "openviking": {
+      "enabled": true,
+      "type": "http",
+      "url": "http://openviking:1933/mcp",
+      "headers": {
+        "X-API-Key": "${OPENVIKING_API_KEY}"
+      }
+    }
+  }
+}
