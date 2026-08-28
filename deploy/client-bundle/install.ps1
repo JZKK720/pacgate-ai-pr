@@ -38,10 +38,37 @@ if (-not (Test-Path .env)) {
     }
 }
 
-# 4. Create data directory
+# 4. Create data directories
 if (-not (Test-Path $DataDir)) {
     New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
     Write-Host "[OK] Created $DataDir" -ForegroundColor Green
+}
+$OvDir = ".\openviking"
+if (-not (Test-Path $OvDir)) {
+    New-Item -ItemType Directory -Path $OvDir -Force | Out-Null
+    Write-Host "[OK] Created $OvDir" -ForegroundColor Green
+}
+
+# 4b. Render OpenViking config (OPENVIKING_CONF_CONTENT) from template + secrets
+$envPath = ".\.env"
+$ovTemplate = ".\openviking\ov.conf.template"
+if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
+    $envVars = @{}
+    Get-Content $envPath | ForEach-Object {
+        if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$') {
+            $envVars[$Matches[1]] = $Matches[2]
+        }
+    }
+    $needsRender = -not (Test-Path env:OPENVIKING_CONF_CONTENT) -and
+        (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and $envVars['OPENVIKING_CONF_CONTENT']))
+    if ($needsRender -and $envVars.ContainsKey('OPENVIKING_ROOT_API_KEY') -and
+        $envVars['OPENVIKING_ROOT_API_KEY'] -notmatch '^change-me') {
+        $conf = Get-Content $ovTemplate -Raw
+        $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
+        $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
+        Add-Content -Path $envPath -Value "OPENVIKING_CONF_CONTENT=$minified"
+        Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT into .env" -ForegroundColor Green
+    }
 }
 
 # 5. Pull models (first install only)

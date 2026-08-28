@@ -1,0 +1,18 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 1933,
+    "root_api_key": "${OPENVIKING_ROOT_API_KEY}"
+  },
+  "storage": {
+    "workspace": "/app/.openviking/workspace"
+  },
+  "embedding": {
+    "dense": {
+      "provider": "ollama",
+      "api_base": "http://host.docker.internal:11434/v1",
+      "model": "nomic-embed-text",
+      "dimension": 768
+    }
+  }
+}
