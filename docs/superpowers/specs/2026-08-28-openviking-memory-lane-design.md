@@ -1,9 +1,53 @@
 # OpenViking as Pacgate's Memory Lane — Design Spec
 
-> Status: **DRAFT — awaiting owner review**
+> Status: **DRAFT v2 — deep-dive verified against the OpenViking codebase (cloned 2026-08-28)**
 > Date: 2026-08-28
 > Decision basis: Option B (unified context layer) scoped by Option A (split duties) — OpenViking owns conversational/session memory; pacgate-rag keeps document RAG with T1–T4 compliance filtering.
 > Related: `deploy/PLANS.md` (architecture memo), `deploy/COPILOT_CONTEXT.md` (integration principles), Plan 007 (AIPC delivery).
+
+---
+
+## 0. Deep-dive verification results (codebase-level, 2026-08-28)
+
+The full OpenViking repo was cloned (`C:\Users\cubecloud-io\github-pr\OpenViking`, 3997 files) and the spec's four open items were resolved **from source, not docs**:
+
+### 0.1 🔴 CRITICAL finding: the DeerFlow `manager_class: openviking` path does NOT exist in our pinned image
+
+- The upstream doc `docs/images/agents/en/deerflow-memory-manager.md` documents `manager_class: openviking` — but `OpenVikingMemoryManager` **does not exist anywhere in the OpenViking repo** (grep: zero hits), and **does not exist in our pinned deer-flow-backend image** (`ghcr.io/bytedance/deer-flow-backend@sha256:e7c503...` — grep for `openviking` across `/app/backend/packages`: zero hits).
+- The pinned image's `MemoryConfig` supports only `storage_class` (dynamic class-path loading — this is what our `PacgateMemoryStorage` adapter uses) and has **no `manager_class` field at all**.
+- Conclusion: the upstream doc targets a *newer/different* DeerFlow build than the one we pin. **OV-2 as originally designed (config-only swap) is not possible with our current image.**
+
+**Revised OV-2 options (decision needed):**
+- **OV-2a (recommended): MCP path instead.** The pinned image *does* support MCP servers via `extensions_config.json` (`mcpServers` config verified in `config/extensions_config.py`). OpenViking exposes a streamable-HTTP MCP endpoint at `/mcp` with 15 tools (`find`, `search`, `read`, `remember`, `write`, `grep`, `glob`, `forget`, `health`, …). DeerFlow agents get active memory search/read as tools — this is the *other* officially documented DeerFlow integration (`deerflow-mcp.md`) and it works with our pinned version. Memory *capture* would still flow through our existing `PacgateMemoryStorage` (or a thin OpenViking-writing variant), while *recall* becomes agentic via MCP tools.
+- **OV-2b: bump the deer-flow base image** to a version that ships `OpenVikingMemoryManager` (requires identifying which upstream DeerFlow release added it — the doc exists in OpenViking's repo, so the pairing is documented somewhere; needs a DeerFlow changelog check). Higher risk: our wrapper is validated against the pinned SHA.
+
+### 0.2 ✅ VLM is optional (open item 1 resolved)
+
+`VLMBase.is_available()` returns `True` when `api_key` OR `api_base` is set — and the bootstrap only *warns* ("Embedding/VLM may fail") if Ollama is unreachable; it does not hard-fail. A text-only deployment with embedding-only config is viable. For Pacgate: configure Ollama embedding (`nomic-embed-text`); add an Ollama vision model only if/when image understanding is needed.
+
+### 0.3 ✅ qm integration mechanism confirmed (open item 2 resolved)
+
+OpenViking server exposes **streamable-HTTP MCP at `/mcp`** with identity headers (`X-OpenViking-Account`, `X-OpenViking-User`, `X-OpenViking-Actor-Peer`) extracted per-request via contextvars. qm's sandbox can mount this as an HTTP MCP server with per-request headers — no plugin development needed, just config. The 15 registered MCP tools are the authoritative surface (`openviking/server/mcp_endpoint.py`).
+
+### 0.4 ✅ Peer isolation is enforced server-side (ethical-wall property verified)
+
+`openviking/session/memory/memory_isolation_handler.py` implements write-target resolution with explicit skip codes: `PEER_NOT_ALLOWED` ("Target peer is outside the allowed memory scope"), `INVALID_PEER_ID`, `SELF_MEMORY_DISABLED`, etc. Memory writes are resolved against the request's identity scope — the ethical-wall mapping in §4 is enforceable, not aspirational.
+
+### 0.5 ✅ Release pinning (open item 3 resolved)
+
+No git tags in the shallow clone; pin by **image digest** instead (same practice as our deer-flow wrapper): `ghcr.io/volcengine/openviking@sha256:<digest>` once OV-1 validates a version.
+
+### 0.6 ⚠️ License: AGPL-3.0 (new consideration)
+
+OpenViking is **AGPLv3** (deer-flow is MIT, qm per yc-software terms). Running it as an unmodified separate service over HTTP is the standard AGPL-safe pattern (we are not distributing or modifying it; network use triggers source-availability obligations for *OpenViking itself*, which upstream already satisfies). **However**: if we ever modify OpenViking source or link it into our distributed images, AGPL obligations attach. The no-fork principle protects us. Flag for Cubecloud commercial review before client deployment — upstream offers paid self-managed licenses if AGPL is unacceptable to the client.
+
+### 0.7 Resource footprint
+
+Helm defaults: 2 CPU / 4Gi memory limits (1 CPU / 2Gi requests). Acceptable alongside the existing AIPC stack; the Rust RAGFS crates compile into the published image (no local Rust toolchain needed on AIPCs).
+
+### 0.8 Windows/Docker Desktop (open item 4 — partially resolved)
+
+Official compose binds `1933:1933` directly; the socat workaround in the docs is **Mac-specific**. Windows Desktop port mapping is expected to work the same as our existing nginx mapping — verify live in OV-1.
 
 ---
 
@@ -74,33 +118,17 @@ openviking:
 
 `ov.conf` essentials: `root_api_key` (required for 0.0.0.0 binding), embedding → Ollama (`nomic-embed-text`), VLM → Ollama vision model (or skipped if not using image understanding initially — verify at implementation whether VLM is mandatory).
 
-### 5.2 deer-flow (config-only)
+### 5.2 deer-flow (REVISED after deep-dive — see §0.1)
 
-Our wrapper's mounted `config.yaml` memory section changes from:
+The originally planned `manager_class: openviking` config swap is **not supported by our pinned deer-flow-backend image** (no `manager_class` field; no OpenViking code in the image). Two paths:
 
-```yaml
-memory:
-  storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
-```
+**OV-2a (recommended): MCP recall + existing capture.**
+- Add OpenViking to deer-flow's `extensions_config.json` as an HTTP MCP server (`url: http://openviking:1933/mcp`, `X-API-Key` header) — verified supported by the pinned image's `extensions_config.py`.
+- DeerFlow agents gain `find`/`search`/`read`/`remember` tools for active memory recall.
+- Session *capture* continues through our `PacgateMemoryStorage` adapter (unchanged), optionally extended later to also mirror writes into OpenViking via its HTTP API.
+- Zero image changes; fully reversible.
 
-to the upstream-documented OpenViking manager:
-
-```yaml
-memory:
-  enabled: true
-  injection_enabled: true
-  manager_class: openviking
-  mode: middleware
-  backend_config:
-    base_url: http://openviking:1933
-    owner_user_id: ${PACGATE_TENANT_ID}
-    api_key_env: OPENVIKING_API_KEY
-    startup_policy: fail_fast
-    failure_policy: { read: fail_open, write: log_and_drop }
-    retrieval: { top_k: 8, score_threshold: 0.25, max_injection_chars: 12000, content_mode: overview }
-```
-
-`PacgateMemoryStorage` is **kept in the adapter package** (not deleted) so the previous behavior remains available via config rollback.
+**OV-2b: bump the deer-flow base image** to a release that ships `OpenVikingMemoryManager` (the upstream doc's `manager_class: openviking` path). Requires identifying the compatible DeerFlow release and re-validating our wrapper against the new SHA. Higher risk; pursue only if middleware-style automatic recall (vs agentic tool recall) is a hard requirement.
 
 ### 5.3 qm (config-only)
 
@@ -135,12 +163,14 @@ Each phase is independently revertible. Phase 2 (AIPC delivery, Plan 007) is **n
 - **OV-3**: qm conversation commits; new qm session recalls; verify peer isolation (matter A memory not visible from matter B context).
 - **Rollback drill**: revert `config.yaml` memory block to `PacgateMemoryStorage`; verify deer-flow still works against pacgate-api memory endpoints.
 
-## 9. Open items (to resolve during implementation)
+## 9. Open items (updated after deep-dive)
 
-1. Is VLM strictly mandatory in `ov.conf`, or can a text-only deployment omit it? (Affects whether an Ollama vision model must be pulled on AIPCs.)
-2. Exact qm plugin/MCP mounting mechanism (OV-3).
-3. Pin an OpenViking release tag (avoid `latest`) once validated.
-4. Confirm OpenViking's Windows/Docker-Desktop behavior on AIPCs (upstream notes a socat workaround for Mac; verify Windows port mapping is clean).
+1. ~~Is VLM strictly mandatory?~~ **RESOLVED** — optional; embedding-only config is viable (§0.2).
+2. ~~Exact qm plugin/MCP mechanism~~ **RESOLVED** — streamable-HTTP MCP at `/mcp` with identity headers (§0.3).
+3. ~~Release pinning~~ **RESOLVED** — pin by image digest after OV-1 validation (§0.5).
+4. ~~Windows port-mapping~~ **Partially resolved** — Mac-only socat note; verify live in OV-1 (§0.8).
+5. **NEW — DeerFlow integration path**: choose OV-2a (MCP tools, works with pinned image) vs OV-2b (bump base image for `manager_class: openviking`) — see §0.1. **This is the main decision blocking implementation.**
+6. **NEW — AGPL review**: confirm Cubecloud/client accept AGPLv3 for an unmodified side-car service (§0.6).
 
 ## 10. Explicitly out of scope
 
