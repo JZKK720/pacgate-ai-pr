@@ -262,6 +262,14 @@ working tree committed with conventional-commit messages
 
 ## Appendix A — Tenant model override SQL template
 
+**Recommended pilot values (benchmarked 2026-08-28):**
+`<MAIN_MODEL>` = `gemma4:12b-it-qat` · `<MID_MODEL>` = `qwen3.8:27b-mtp-q4_K_M` · `<LOW_MODEL>` = `gemma4:12b-it-qat`
+
+Rationale: gemma4:12b is 5–9× faster per tool-round (13s vs 73–115s) with
+schema-valid tool calls — right for interactive chat/workflows (Main) and
+fast labels (Low). qwen3.8:27b is stronger for batch tabular review (Mid)
+where latency tolerance is higher. Both fit VRAM on the target AIPC class.
+
 ```sql
 UPDATE tenants
 SET config_json = jsonb_set(
