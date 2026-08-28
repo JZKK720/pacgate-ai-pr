@@ -298,6 +298,13 @@ pacgate-api (Rust metadata gateway) + deer-flow (research workspace) + qm
    TENANT_SLUG=<your PACGATE_TENANT_ID>. Casing is snake_case
    (main/mid/low, ollama) — capitalized values silently fall back to
    defaults.
+4b. **OpenViking memory service (Stage 3.5 in the handbook)** — the compose
+   stack now includes `openviking` (5th container). The installer renders
+   `OPENVIKING_CONF_CONTENT` into `.env` automatically. Verify:
+   `curl http://localhost:1933/health` returns healthy JSON. Also set the
+   qm-side secrets in `deploy/qm-pacgate/.env` (setup-qm.ps1 prompts, or add
+   manually): `OPENVIKING_API_KEY` (same value as client-bundle .env),
+   `OPENVIKING_ACCOUNT=<PACGATE_TENANT_ID>`, `OPENVIKING_USER=<admin user id>`.
 5. **Stage 4** — qm bootstrap: `.\setup-qm.ps1` (prompts for admin email +
    bridge credentials), then `cd ..\qm-pacgate && npm exec qm -- up`.
    Verify: http://localhost:8182 loads; admin can sign in; qm lists Pacgate
@@ -309,7 +316,7 @@ pacgate-api (Rust metadata gateway) + deer-flow (research workspace) + qm
    machine, dated).
 
 ## Acceptance criteria (all must pass before declaring done)
-- [ ] All four containers healthy; `/health` 200
+- [ ] All five containers healthy; `/health` 200; OpenViking `/health` healthy
 - [ ] Workflow execute returns 200 with real LLM content:
       login → create matter → POST /api/workflows/
       00000000-0000-0000-0000-000000000101/execute with
@@ -318,6 +325,8 @@ pacgate-api (Rust metadata gateway) + deer-flow (research workspace) + qm
 - [ ] Generated document appears in `documents` table
 - [ ] deer-flow research round-trip with citations saved to matter memory
 - [ ] qm web UI sign-in + one workflow execution through the bridge
+- [ ] OpenViking memory lane: `pacgate-qm ov-remember` a fact, wait ~2 min,
+      `pacgate-qm ov-search` recalls it in a new session
 
 ## Ground rules
 - Never commit secrets; `.env` files stay local.
