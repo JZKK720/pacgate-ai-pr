@@ -1,9 +1,50 @@
 # Plan 007 — AIPC Full Installation Handoff
 
-> Status: **IN EXECUTION — Q1–Q5 approved 2026-08-27; Phase 1 complete, Phase 2 in progress**
-> Date: 2026-08-27 (updated same day during execution)
-> Author: Audit session (gstack-review × karpathy-guidelines)
+> Status: **PHASE 2 COMPLETE — Phase 3 (AIPC installation) READY**
+> Dates: 2026-08-27 → 2026-08-28
+> Author: Audit + execution sessions (gstack-review × karpathy-guidelines × systematic-debugging)
 > Scope: Fix audit findings → build/push corrected image → full installation on Pacgate Law AIPC(s): pacgate-api gateway middleware + deer-flow research workspace + qm collaboration runtime.
+
+---
+
+## 0. Consolidated stage log (sessions 15–16, 2026-08-27/28)
+
+### Session 15 — Audit + Phase 1 (2026-08-27)
+
+| Stage | Outcome | Evidence |
+|---|---|---|
+| Full gstack-review audit | All suites green; live e2e of prod compose on scratch port 8089 | smoke 23/23 · agent 5/5 · yaml 3/3 · TS 8/8 · integration 2/2 |
+| Bug 1 found+fixed: LLM router hardcoded `localhost:11434` | Deploy blocker resolved | `default_local_with_base_url()` + `OLLAMA_BASE_URL` wired to router AND RAG |
+| Bug 2 found+fixed: tenant `model_overrides` never consulted | Per-tenant routing live | `router_for_tenant()` + `run_with_router()` + `execute_with_router()` |
+| Fix C: LLM error context | Errors self-diagnosing | model + URL in every LLM error |
+| Docs corrections | `/api/health`→`/health` (11 occurrences, 6 files); `.env.example` connector placeholders; port-conflict note | committed |
+| Phase 1 validation | All green | core 5/5 · llm 3/3 new tests; full regression pass |
+
+### Session 16 — Phase 2 + model scan (2026-08-27/28)
+
+| Stage | Outcome | Evidence |
+|---|---|---|
+| Bug 3 found+fixed: Ollama rejects object-typed tool content | Chat with tool calls works | `invalid message content type` reproduced directly; stringify fix |
+| Bug 4 found+fixed: workflow step-2 hang on nemotron reasoning mode | Resolved by model choice + 600s timeout | >40 min hang evidence; gemma4 completes in 27s |
+| Bug 5 found+fixed: StubDocStore in live path | Real FsDocumentStore wired | generate_docx now writes real files |
+| Bug 6 found+fixed: generate_docx schema undocumented | Tool description lists all section types | LLM produces valid structures |
+| Bug 7 found+fixed: document owner FK violation | Attributed to matter creator | `documents_owner_id_fkey` satisfied |
+| Image `pacgate-api:0.1.2` | Built ×4, pushed to GHCR | digest `sha256:0d8dfa76...` |
+| **Final acceptance e2e** | **Workflow execute 200 in 27s, all 3 steps, docx persisted** | full regression green |
+| Ollama model scan (16 models inventoried, 5 benchmarked) | Tier split chosen | gemma4:12b 13s vs 73–115s for larger; both fit VRAM |
+| Tier split applied to docs | Main=gemma4:12b · Mid=qwen3.8:27b · Low=gemma4:12b | handbook + Appendix A updated |
+| Commits | 5 pushed to origin/main | b35b91a · b812791 · 1cb2549 · 7d3c10b · 836d75e |
+
+### Release artifacts
+
+| Artifact | Location | State |
+|---|---|---|
+| `pacgate-api:0.1.2` | `ghcr.io/jzkk720/pacgate-api:0.1.2` | pushed, pullable |
+| `deer-flow-pacgate:0.1.0` | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | unchanged (wrapper) |
+| Handbook | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` v0.1.1 | final, references 0.1.2 |
+| Tenant override SQL | Plan 007 Appendix A | final, tier-split values |
+
+---
 
 ## Execution log (session 15 — 2026-08-27)
 
@@ -207,9 +248,96 @@ Follow `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` v0.1.1 stages exactly, with these ad
 
 ---
 
-## 5. Agent handoff prompt
+## 5. Agent handoff prompt — Phase 3: AIPC machine installation
 
-Copy everything inside the fence below into a fresh agent session in this repo root.
+Phases 1–2 are COMPLETE (see §0 stage log). This prompt is for the *next*
+agent session that performs the actual installation on the client AIPC
+machines. Copy everything inside the fence below into a fresh agent session
+running ON the target AIPC (or with access to it).
+
+```markdown
+# TASK: Install Pacgate AI on this AIPC (Plan 007 Phase 3)
+
+You are performing the on-machine installation of the Pacgate AI stack:
+pacgate-api (Rust metadata gateway) + deer-flow (research workspace) + qm
+(collaboration runtime) + Postgres + nginx, per
+`deploy/AIPC-DEPLOYMENT-HANDBOOK.md`. Read that handbook FIRST, plus
+`plans/007-aipc-full-installation-handoff.md` §0 (stage log) and Appendix A
+(tenant model override SQL).
+
+## Preconditions you must verify before starting
+- [ ] Docker Desktop running (`docker info` succeeds)
+- [ ] Ollama running (`curl http://localhost:11434/api/tags` returns models)
+- [ ] Node.js 24+ installed (`node --version` ≥ v24)
+- [ ] GitHub access to `JZKK720/pacgate-ai-pr` (private repo; `gh auth login`
+      or PAT)
+- [ ] Host port 8081 free (if occupied, remap nginx in compose.prod.yaml and
+      use the new port in ALL verification URLs)
+
+## Execution order (handbook stages)
+1. **Stage 1** — clone the repo to `C:\pacgate-ai-pr` (or verify existing
+   clone is on origin/main ≥ commit 836d75e).
+2. **Stage 2** — `cd deploy\client-bundle`; copy `.env.example` to `.env`;
+   generate strong `PACGATE_DB_PASSWORD` and `PACGATE_JWT_SECRET` (commands
+   in handbook); set `PACGATE_TENANT_ID=pacgate-law`; run `.\install.ps1`.
+   Verify: `docker compose -f compose.prod.yaml ps` shows 4 services;
+   `curl http://localhost:8081/health` returns `ok`.
+3. **Stage 3** — seed tenant + register users. NOTE: seed the tenant with
+   slug matching `PACGATE_TENANT_ID` from `.env` (e.g. `pacgate-law`):
+   `docker exec pacgate-db psql -U pacgate -c "INSERT INTO tenants (name,
+   slug) VALUES ('Pacgate Law', 'pacgate-law');"` then register
+   `admin@pacgate-law.com` and `qm-bridge@pacgate.local` via
+   `POST /api/auth/register`.
+4. **Model overrides (CRITICAL — do not skip)** — run `ollama list` on this
+   machine; confirm `gemma4:12b-it-qat` and `qwen3.8:27b-mtp-q4_K_M` are
+   present (pull via `ollama pull` if missing, plus `nomic-embed-text`).
+   Then apply the Appendix A SQL template via
+   `docker exec pacgate-db psql -U pacgate -f /tmp/overrides.sql`
+   (docker cp the file in) with:
+   MAIN=gemma4:12b-it-qat, MID=qwen3.8:27b-mtp-q4_K_M, LOW=gemma4:12b-it-qat,
+   TENANT_SLUG=<your PACGATE_TENANT_ID>. Casing is snake_case
+   (main/mid/low, ollama) — capitalized values silently fall back to
+   defaults.
+5. **Stage 4** — qm bootstrap: `.\setup-qm.ps1` (prompts for admin email +
+   bridge credentials), then `cd ..\qm-pacgate && npm exec qm -- up`.
+   Verify: http://localhost:8182 loads; admin can sign in; qm lists Pacgate
+   workflow categories through the bridge.
+6. **Stage 5** — deer-flow verification: http://localhost:8081/research/;
+   run a research query; verify citations + matter memory persistence.
+7. **Stage 6** — complete the full smoke checklist in the handbook and write
+   results to `plans/007-delivery-log.md` (create it; one section per
+   machine, dated).
+
+## Acceptance criteria (all must pass before declaring done)
+- [ ] All four containers healthy; `/health` 200
+- [ ] Workflow execute returns 200 with real LLM content:
+      login → create matter → POST /api/workflows/
+      00000000-0000-0000-0000-000000000101/execute with
+      {"matter_id":"<id>","input":"Review this sample contract clause for
+      liability limitations."} — expect 200 in under 2 minutes with 3 steps
+- [ ] Generated document appears in `documents` table
+- [ ] deer-flow research round-trip with citations saved to matter memory
+- [ ] qm web UI sign-in + one workflow execution through the bridge
+
+## Ground rules
+- Never commit secrets; `.env` files stay local.
+- If any step fails twice, STOP and report evidence (container logs, HTTP
+  status, exact command) — do not improvise.
+- Do not modify Rust code or rebuild images on the AIPC; the runtime comes
+  from `ghcr.io/jzkk720/pacgate-api:0.1.2`.
+- If a model is missing from `ollama list`, pull it; never substitute a
+  reasoning-mode model (nemotron etc.) for Main tier.
+
+## Report back
+Delivery log path, checklist status per machine, any deviations with
+justification, and the exact image digests running (`docker inspect
+pacgate-api --format {{.Image}}`).
+```
+
+### Historical prompt (Phases 1–2, kept for reference)
+
+<details>
+<summary>Original Phase 1–2 execution prompt (completed)</summary>
 
 ```markdown
 # TASK: Implement Plan 007 — Pacgate AI AIPC full installation
@@ -257,6 +385,8 @@ Plan §Phase-4 acceptance criteria all checked, delivery log written,
 working tree committed with conventional-commit messages
 (feat:/fix:/docs:/chore:), nothing pushed without owner confirmation.
 ```
+
+</details>
 
 ---
 
