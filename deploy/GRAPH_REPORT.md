@@ -1,16 +1,16 @@
-# Graph Report - crates  (2026-08-18)
+# Graph Report - crates  (2026-08-28)
 
 ## Corpus Check
-- 39 files · ~38,630 words
+- 39 files · ~39,424 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 917 nodes · 2157 edges · 47 communities (41 shown, 6 thin omitted)
+- 935 nodes · 2220 edges · 50 communities (44 shown, 6 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 24 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `25b05faa`
+- Built from commit: `a5e4bd3e`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -58,9 +58,12 @@
 - [[_COMMUNITY_Community 41|Community 41]]
 - [[_COMMUNITY_Community 42|Community 42]]
 - [[_COMMUNITY_Community 43|Community 43]]
+- [[_COMMUNITY_Community 44|Community 44]]
 - [[_COMMUNITY_Community 45|Community 45]]
+- [[_COMMUNITY_Community 46|Community 46]]
 - [[_COMMUNITY_Community 47|Community 47]]
 - [[_COMMUNITY_Community 48|Community 48]]
+- [[_COMMUNITY_Community 49|Community 49]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Self` - 27 edges
@@ -108,23 +111,23 @@
 - 1-file cycle: `pacgate-rag/src/ingest.rs -> pacgate-rag/src/ingest.rs`
 - 1-file cycle: `pacgate-search/src/lib.rs -> pacgate-search/src/lib.rs`
 
-## Communities (47 total, 6 thin omitted)
+## Communities (50 total, 6 thin omitted)
 
 ### Community 0 - "LLM Provider & Tool Calling"
 Cohesion: 0.13
-Nodes (17): Send, Sync, AgentMessage, DocumentStore, EnforcementPoint, Jurisdiction, KbStore, OutputFormat (+9 more)
+Nodes (12): AgentMessage, EnforcementPoint, Jurisdiction, OutputFormat, PacgateError, PracticeArea, ProjectBusinessModule, ProjectOverview (+4 more)
 
 ### Community 1 - "Agent Message Routing"
-Cohesion: 0.09
+Cohesion: 0.10
 Nodes (41): ChatMessage, KbStore, MessageId, OaiTool, AgentMessage, Arc, CitationRef, DocumentStore (+33 more)
 
 ### Community 2 - "Matter & Document System"
-Cohesion: 0.09
-Nodes (38): Box, Choice, ChoiceMessage, HashMap, LlmProvider, LlmStream, ModelConfig, OaiFunctionCall (+30 more)
+Cohesion: 0.08
+Nodes (42): Box, Choice, ChoiceMessage, HashMap, LlmProvider, LlmStream, ModelConfig, OaiFunctionCall (+34 more)
 
 ### Community 3 - "Document Versioning API"
 Cohesion: 0.06
-Nodes (36): AppConfig, FsDocumentStore, MatterStore, AppState, Result, AgentLoop, Arc, AuthService (+28 more)
+Nodes (39): AppConfig, FsDocumentStore, MatterStore, AppState, Result, AgentLoop, Arc, AuthService (+31 more)
 
 ### Community 4 - "DOCX Document Builder"
 Cohesion: 0.20
@@ -219,20 +222,20 @@ Cohesion: 0.50
 Nodes (3): String, Value, LegalDocumentTemplate
 
 ### Community 27 - "Community 27"
-Cohesion: 0.13
-Nodes (23): AgentLoop, CitationRef, DdAgentConfig, MatterId, Option, PacgateError, Result, Self (+15 more)
+Cohesion: 0.15
+Nodes (25): AgentLoop, Arc, CitationRef, DdAgentConfig, LlmRouter, MatterId, Option, PacgateError (+17 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.21
-Nodes (8): Arc, Default, Send, Sync, DataSourceConnector, default_router(), EurLexConnector, SearchRouter
+Cohesion: 0.33
+Nodes (6): Arc, Send, Sync, DataSourceConnector, default_router(), SearchRouter
 
 ### Community 30 - "Community 30"
-Cohesion: 0.19
-Nodes (8): Duration, Into, Option, Self, String, build_timeout_connector_client(), FyOpenConnector, SearchQuery
+Cohesion: 0.17
+Nodes (9): Duration, Client, Into, Option, String, build_connector_client(), build_timeout_connector_client(), FyOpenConnector (+1 more)
 
 ### Community 31 - "Community 31"
-Cohesion: 0.15
-Nodes (4): Client, build_connector_client(), QccConnector, SecEdgarConnector
+Cohesion: 0.11
+Nodes (6): Default, Self, EurLexConnector, GleifConnector, SearchQuery, SecEdgarConnector
 
 ### Community 32 - "Community 32"
 Cohesion: 0.25
@@ -247,31 +250,43 @@ Cohesion: 0.16
 Nodes (6): Display, Formatter, Result, ArchiveDirectory, DataLevel, FileDirectoryEntry
 
 ### Community 36 - "Community 36"
-Cohesion: 0.13
-Nodes (14): BoundaryRule, Branding, EscalationRule, IdentityMode, OutputFormat, Option, Self, SecurityLevel (+6 more)
+Cohesion: 0.27
+Nodes (7): Self, default_local_delegates_with_default_url(), default_local_uses_localhost(), default_local_with_base_url_propagates_to_all_tiers(), LlmProvider, LlmTier, ModelConfig
 
 ### Community 37 - "Community 37"
 Cohesion: 0.18
 Nodes (12): EnforcementPoint, DocumentId, String, Value, BoundaryRule, CitationRef, EscalationRule, FindResult (+4 more)
 
 ### Community 38 - "Community 38"
-Cohesion: 0.29
-Nodes (9): Vec, dd_agent_configs(), dd_config_for_domain(), dd_domain_from_str(), DdAgentConfig, DdAgentDomain, DdFocusArea, DdSeverity (+1 more)
+Cohesion: 0.33
+Nodes (8): Vec, dd_agent_configs(), dd_config_for_domain(), DdAgentConfig, DdAgentDomain, DdFocusArea, DdSeverity, FocusAreaAction
 
 ### Community 39 - "Community 39"
 Cohesion: 0.29
 Nodes (11): DateTime, MatterId, PersonaId, TenantId, UserId, Document, DocumentFormat, Matter (+3 more)
 
 ### Community 40 - "Community 40"
-Cohesion: 0.14
-Nodes (5): Value, GleifConnector, OpenCorporatesConnector, SearchResult, source_level_priority()
+Cohesion: 0.26
+Nodes (4): Value, OpenCorporatesConnector, SearchResult, source_level_priority()
 
 ### Community 41 - "Community 41"
 Cohesion: 0.48
 Nodes (6): PgPool, String, full_api_flow(), run_rag_migrations_if_available(), test_db_url(), unauthenticated_request_returns_401()
 
+### Community 44 - "Community 44"
+Cohesion: 0.33
+Nodes (6): BoundaryRule, EscalationRule, IdentityMode, OutputFormat, SecurityLevel, SoulPersona
+
+### Community 46 - "Community 46"
+Cohesion: 0.33
+Nodes (5): Branding, Option, Branding, dd_domain_from_str(), TenantConfig
+
+### Community 48 - "Community 48"
+Cohesion: 0.60
+Nodes (5): Send, Sync, DocumentStore, KbStore, WorkflowStore
+
 ## Knowledge Gaps
-- **143 isolated node(s):** `ToolResult`, `MessageId`, `LlmTier`, `ChatMessage`, `CitationRef` (+138 more)
+- **142 isolated node(s):** `ToolResult`, `MessageId`, `LlmTier`, `ChatMessage`, `CitationRef` (+137 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **6 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -279,16 +294,16 @@ Nodes (6): PgPool, String, full_api_flow(), run_rag_migrations_if_available(), t
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Utc` connect `Community 39` to `Agent Loop Configuration`, `DOCX Document Builder`, `Matter & Document State`?**
-  _High betweenness centrality (0.051) - this node is a cross-community bridge._
+  _High betweenness centrality (0.052) - this node is a cross-community bridge._
 - **Why does `build_router()` connect `Document Versioning API` to `Agent Loop Configuration`?**
-  _High betweenness centrality (0.039) - this node is a cross-community bridge._
+  _High betweenness centrality (0.041) - this node is a cross-community bridge._
 - **What connects `ToolResult`, `MessageId`, `LlmTier` to the rest of the system?**
-  _143 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _142 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `LLM Provider & Tool Calling` be split into smaller, more focused modules?**
-  _Cohesion score 0.13450292397660818 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.13333333333333333 - nodes in this community are weakly interconnected._
 - **Should `Agent Message Routing` be split into smaller, more focused modules?**
-  _Cohesion score 0.09409701928696669 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.1 - nodes in this community are weakly interconnected._
 - **Should `Matter & Document System` be split into smaller, more focused modules?**
-  _Cohesion score 0.08953900709219859 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.083710407239819 - nodes in this community are weakly interconnected._
 - **Should `Document Versioning API` be split into smaller, more focused modules?**
-  _Cohesion score 0.0627177700348432 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.057971014492753624 - nodes in this community are weakly interconnected._
