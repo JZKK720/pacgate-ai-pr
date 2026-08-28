@@ -25,6 +25,10 @@ class RuntimeConfig:
     token: str | None = None
     email: str | None = None
     password: str | None = None
+    openviking_url: str | None = None
+    openviking_api_key: str | None = None
+    openviking_account: str | None = None
+    openviking_user: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,10 @@ def load_config(environ: dict[str, str] | None = None) -> RuntimeConfig:
         token=token,
         email=email,
         password=password,
+        openviking_url=(env.get("OPENVIKING_URL", "").strip() or None),
+        openviking_api_key=(env.get("OPENVIKING_API_KEY", "").strip() or None),
+        openviking_account=(env.get("OPENVIKING_ACCOUNT", "").strip() or None),
+        openviking_user=(env.get("OPENVIKING_USER", "").strip() or None),
     )
 
 
@@ -128,6 +136,81 @@ def request_json(
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise PacgateToolError(f"Pacgate API returned invalid JSON for {path}") from exc
+
+
+def openviking_request(
+    config: RuntimeConfig,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> Any:
+    """Call an OpenViking MCP tool over streamable HTTP and return the text result."""
+    if not config.openviking_url:
+        raise PacgateToolError("OPENVIKING_URL is required for openviking commands")
+    if not config.openviking_api_key:
+        raise PacgateToolError("OPENVIKING_API_KEY is required for openviking commands")
+
+    url = config.openviking_url.rstrip("/") + "/mcp"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "X-API-Key": config.openviking_api_key,
+    }
+    if config.openviking_account:
+        headers["X-OpenViking-Account"] = config.openviking_account
+    if config.openviking_user:
+        headers["X-OpenViking-User"] = config.openviking_user
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments},
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(url, data=data, headers=headers, method="POST")
+
+    try:
+        with urllib_request.urlopen(req) as response:
+            raw = response.read().decode("utf-8")
+    except urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise PacgateToolError(f"OpenViking MCP {exc.code} {tool_name}: {body}") from exc
+    except urllib_error.URLError as exc:
+        raise PacgateToolError(f"Unable to reach OpenViking at {url}: {exc.reason}") from exc
+
+    # Streamable HTTP may reply as SSE (data: {...}) or plain JSON.
+    if raw.lstrip().startswith("{"):
+        body_json = json.loads(raw)
+    else:
+        for line in raw.splitlines():
+            if line.startswith("data:"):
+                body_json = json.loads(line[len("data:"):].strip())
+                break
+        else:
+            raise PacgateToolError("OpenViking MCP returned an empty SSE stream")
+
+    if "error" in body_json:
+        raise PacgateToolError(f"OpenViking MCP error: {body_json['error']}")
+    content = body_json.get("result", {}).get("content", [])
+    texts = [part.get("text", "") for part in content if part.get("type") == "text"]
+    return "\n".join(texts)
+
+
+def ov_remember(config: RuntimeConfig, content: str) -> Any:
+    return openviking_request(config, "remember", {
+        "messages": [{"role": "user", "content": content}],
+    })
+
+
+def ov_search(config: RuntimeConfig, query: str, limit: int | None = None) -> Any:
+    args: dict[str, Any] = {"query": query}
+    if limit:
+        args["limit"] = limit
+    return openviking_request(config, "search", args)
+
+
+def ov_read(config: RuntimeConfig, uri: str) -> Any:
+    return openviking_request(config, "read", {"uris": uri})
 
 
 def resolve_token(config: RuntimeConfig, requestor: JsonRequestor = request_json) -> str:
@@ -371,6 +454,16 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--persona-id")
     execute.add_argument("--description")
 
+    ov_remember_cmd = subparsers.add_parser("ov-remember")
+    ov_remember_cmd.add_argument("--content", required=True)
+
+    ov_search = subparsers.add_parser("ov-search")
+    ov_search.add_argument("--query", required=True)
+    ov_search.add_argument("--limit", type=int)
+
+    ov_read = subparsers.add_parser("ov-read")
+    ov_read.add_argument("--uri", required=True)
+
     return parser
 
 
@@ -404,6 +497,12 @@ def dispatch(args: argparse.Namespace, config: RuntimeConfig) -> Any:
             persona_id=args.persona_id,
             description=args.description,
         )
+    if args.command == "ov-remember":
+        return ov_remember(config, args.content)
+    if args.command == "ov-search":
+        return ov_search(config, args.query, limit=args.limit)
+    if args.command == "ov-read":
+        return ov_read(config, args.uri)
     raise PacgateToolError(f"Unknown command: {args.command}")
 
 
