@@ -30,3 +30,7 @@ Thumbs.db
 desktop.ini
 # Rendered deer-flow MCP config (contains client API key)
 deploy/client-bundle/deer-flow-extensions-config.json
+
+# OpenViking runtime state (client-owned, per-machine)
+deploy/client-bundle/openviking/ov.conf
+deploy/client-bundle/openviking/workspace/
