@@ -1,9 +1,22 @@
 # Plan 007 — AIPC Full Installation Handoff
 
-> Status: **PHASE 2 COMPLETE — Phase 3 (AIPC installation) READY**
-> Dates: 2026-08-27 → 2026-08-28
+> Status: **PHASE 3 READY — execution prompt: [`007-aipc1-kickoff-prompt.md`](007-aipc1-kickoff-prompt.md)**
+> Dates: 2026-08-27 → 2026-08-28 (stage log) · updated 2026-08-30 (pilot prep)
 > Author: Audit + execution sessions (gstack-review × karpathy-guidelines × systematic-debugging)
 > Scope: Fix audit findings → build/push corrected image → full installation on Pacgate Law AIPC(s): pacgate-api gateway middleware + deer-flow research workspace + qm collaboration runtime.
+
+> **Update 2026-08-30 (commits `3b15829`…`65fdb38`)** — things this document's
+> stage log predates: both Pacgate GHCR packages are now **public** (anonymous
+> pull verified; no `docker login` on the client path); `ollama-models.txt` now
+> pulls the decided tier set (gemma4/qwen3.8) alongside the cloud deepseek chat
+> models; `install.ps1` renders `deer-flow-extensions-config.json` and
+> **hard-stops unless `OPENVIKING_API_KEY` is set in `.env`** (Stage 2 of the
+> handbook lists all five required `.env` values); cloud chat models are a
+> recorded firm decision (see `.github/copilot-instructions.md`); illustrated
+> EN/ZH staff handbooks ship in `docs/` and `deploy/`. The **authoritative
+> install procedure is `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`**, and the
+> copy-paste pilot run prompt is `007-aipc1-kickoff-prompt.md` — this file
+> remains the historical stage log + Appendix A (model-override SQL).
 
 ---
 
