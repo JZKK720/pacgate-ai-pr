@@ -43,10 +43,16 @@ Pacgate AI is currently a proposal-heavy repository with static presentation pag
   when public, 401 when still private. Flipping personal-account package visibility
   is UI-only; the API `/visibility` route 404s even with `write:packages`.
 - Ollama `:cloud` tags are not local. Models like `deepseek-*-cloud` have no weight
-  layers on disk and route inference through ollama.com. Only tags such as
+  layers on disk (empty manifest `layers`) and route inference through ollama.com.
+  They need no API key — auth rides the `ollama signin` OAuth session — so no-key
+  does not mean local; verify with `ollama ps` (cloud tags never appear loaded) and
+  the manifest, not by which endpoint was called. Only tags such as
   `gemma4`, `qwen3.8`, and `nomic-embed-text` run on-device. Flag any cloud-routed
   model that sits on a client-data path (deer-flow active model, qm `MODEL_NAME`);
-  for law-firm data residency, prefer the local set.
+  for law-firm data residency, prefer the local set. The RAG pipeline itself
+  (nomic embeddings, OpenViking extraction via gemma4, local Postgres) is fully
+  on-device — the exposure surface is only generation prompts sent through
+  cloud-routed chat models.
 - The local Ollama model choice belongs to the user and can change per machine.
   Do not treat a tier set as a fixed repo constant; when a decision depends on it,
   check the current set (`ollama list`, `deer-flow-config.yaml`, `qm.config.jsonc`)
