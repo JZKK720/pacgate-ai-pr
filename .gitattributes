@@ -1,0 +1,11 @@
+# Binary artifacts: never apply line-ending conversion
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.drawio.png binary
+*.woff binary
+*.woff2 binary
