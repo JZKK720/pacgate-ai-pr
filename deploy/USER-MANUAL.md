@@ -17,6 +17,8 @@ Pacgate-ai has **two working modes**, each for a different kind of task:
 
 You switch between them by clicking a different link in your browser. Both run on the same AI PC; both see the same matters and documents.
 
+![How the pieces connect](../docs/diagrams/svg/fullstack-03-runtime-topology.png)
+
 ---
 
 ## Getting started
@@ -67,6 +69,8 @@ The research workspace is for tasks that need deep analysis:
 6. The response appears in the chat, with a panel on the right showing **artifacts** (files the AI produced)
 
 ### Understanding the response
+
+![How an answer is generated](../docs/diagrams/svg/user-02-answer-flow.png)
 
 - **Inline citations** look like `[1]`, `[2]` — click them to jump to the source document and page
 - **Artifacts** (files produced by the AI) appear in the right panel — click to preview, download, or open
@@ -233,6 +237,8 @@ Your firm's administrator configures which models serve each tier, and the set c
 ---
 
 ## Privacy and security
+
+![What stays in the building, and what is sent](../docs/diagrams/svg/user-03-privacy-split.png)
 
 ### What stays on your machine
 

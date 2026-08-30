@@ -1,0 +1,17 @@
+flowchart TB
+    U["律师提问 / Attorney asks"]:::user --> P["对话文字发送至模型服务 / Conversation text to model service"]:::model
+    P --> A["快速高质量回答 / Fast, high-quality answer"]:::svc
+
+    subgraph LOCAL["留在所内 · Stays in your office (AI PC)"]
+        D1["文件 Documents"]:::db
+        D2["案件与记忆 Matters & memory"]:::db
+        D3["知识库 Knowledge base"]:::db
+        D4["审计日志 Audit trail"]:::db
+    end
+
+    A --> LOCAL
+
+    classDef svc fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef db fill:#F7F2E6,stroke:#B89544,stroke-width:1.3px,color:#4D3B18;
+    classDef model fill:#EAF5F9,stroke:#3D8AA7,stroke-width:1.3px,color:#17465A;
+    classDef user fill:#FFFFFF,stroke:#7B8AA8,stroke-width:1.2px,color:#2D3B56;

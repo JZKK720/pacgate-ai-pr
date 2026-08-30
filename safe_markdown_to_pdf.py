@@ -7,13 +7,13 @@ from pathlib import Path
 import markdown
 from bs4 import BeautifulSoup, NavigableString, Tag
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, StyleSheet1, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import HRFlowable, Paragraph, Preformatted, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import HRFlowable, Image, Paragraph, Preformatted, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 FONT_NAME = "STSong-Light"
@@ -116,6 +116,16 @@ def build_styles() -> StyleSheet1:
     )
     stylesheet.add(
         ParagraphStyle(
+            name="PgCaption",
+            parent=stylesheet["PgBody"],
+            fontSize=8.4,
+            leading=11,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#6B6B6B"),
+        )
+    )
+    stylesheet.add(
+        ParagraphStyle(
             name="PgCode",
             parent=stylesheet["Code"],
             fontName="Courier",
@@ -207,6 +217,34 @@ def build_table(tag: Tag, styles: StyleSheet1) -> Table:
     return table
 
 
+def build_image(tag: Tag, styles: StyleSheet1, base_dir: Path):
+    src = tag.get("src", "")
+    if not src or src.startswith(("http://", "https://", "data:")):
+        return None
+    img_path = (base_dir / src).resolve()
+    if not img_path.exists() or img_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif"}:
+        return None
+    from PIL import Image as PILImage
+
+    with PILImage.open(img_path) as im:
+        native_w, native_h = im.size
+    usable_width = A4[0] - (18 * mm * 2)
+    usable_height = A4[1] - (16 * mm * 2) - (14 * mm)  # margins + header/footer band
+    # diagrams render at -s 2; divide native px by 2 for display size,
+    # then fit inside the frame on BOTH axes (portrait diagrams are tall)
+    scale = min(1.0 / 2.0, usable_width / native_w, (usable_height * 0.92) / native_h)
+    display_w = native_w * scale
+    display_h = native_h * scale
+    flowable = Image(str(img_path), width=display_w, height=display_h)
+    flowable.hAlign = "CENTER"
+    parts = [Spacer(1, 4), flowable, Spacer(1, 2)]
+    caption = (tag.get("alt") or "").strip()
+    if caption:
+        parts.append(Paragraph(html.escape(caption), styles["PgCaption"]))
+    parts.append(Spacer(1, 6))
+    return parts
+
+
 def append_list(tag: Tag, story: list, styles: StyleSheet1, ordered: bool) -> None:
     index = 1
     for item in tag.find_all("li", recursive=False):
@@ -216,7 +254,7 @@ def append_list(tag: Tag, story: list, styles: StyleSheet1, ordered: bool) -> No
     story.append(Spacer(1, 2))
 
 
-def build_story(markdown_text: str, styles: StyleSheet1) -> list:
+def build_story(markdown_text: str, styles: StyleSheet1, base_dir: Path) -> list:
     html_text = markdown.markdown(
         markdown_text,
         extensions=["tables", "fenced_code", "sane_lists"],
@@ -238,6 +276,12 @@ def build_story(markdown_text: str, styles: StyleSheet1) -> list:
         elif element.name == "h4":
             story.append(Paragraph(flatten_children(element), styles["PgH4"]))
         elif element.name == "p":
+            img = element.find("img")
+            if img is not None and element.get_text(strip=True) == "":
+                built = build_image(img, styles, base_dir)
+                if built:
+                    story.extend(built)
+                    continue
             story.append(Paragraph(flatten_children(element), styles["PgBody"]))
         elif element.name == "blockquote":
             for child in element.find_all("p", recursive=False):
@@ -280,7 +324,7 @@ def convert_markdown_to_pdf(source: Path, target: Path) -> None:
     register_fonts()
     styles = build_styles()
     markdown_text = source.read_text(encoding="utf-8")
-    story = build_story(markdown_text, styles)
+    story = build_story(markdown_text, styles, base_dir=source.parent)
 
     title = source.stem.replace("-", " ")
     if title.upper().endswith("ZH"):

@@ -22,6 +22,8 @@ There are two ways to work with it:
 
 Both workspaces see the same matters and the same documents. Think of them as two doors into one filing system.
 
+![Two doors, one filing system](diagrams/svg/user-01-two-doors.png)
+
 ---
 
 ## 2. Your first time
@@ -58,6 +60,8 @@ Type it the way you would ask a very fast junior associate:
 Press Enter. The assistant works in visible steps — searching your firm's documents, reading them, cross-checking — and writes its answer back in the chat. A quick question takes seconds. A full research task can take **2 to 10 minutes**. It is working, not stuck. You can leave the page and come back.
 
 ### 4.2 Reading the answer: citations
+
+![How an answer is generated](diagrams/svg/user-02-answer-flow.png)
 
 Every factual claim the assistant makes carries a numbered citation like `[1]`. **Click it** and the source document opens at the exact page, with the quoted passage highlighted.
 
@@ -101,6 +105,8 @@ When the assistant wants to take an action that touches other people's work — 
 ## 6. Privacy: what stays in the building, and what doesn't
 
 This is the section your IT and compliance teams will ask about, so here is the honest picture.
+
+![What stays in the building, and what is sent](diagrams/svg/user-03-privacy-split.png)
 
 ### Stays inside your office, on the AI computer
 

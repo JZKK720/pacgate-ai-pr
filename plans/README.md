@@ -24,6 +24,19 @@ model), and a **comprehensive setup guide** that ties it all together.
 | 004  | Fix stale DEPLOYMENT-GUIDE references | P2 | S | — | DONE |
 | 005  | Package workflow YAMLs for agent workspaces | P2 | M | 001 | DONE |
 | 006  | Comprehensive setup + operational guide | P1 | M | 001-005 | DONE |
+| 008  | Refine bilingual user manuals (design-skill pass) + Mermaid diagrams + PDF image support | P2 | M | — | DONE (2026-08-30) |
+
+Note: 007 numbering is taken by `007-aipc-full-installation-handoff.md` (the
+AIPC install handoff), so the next improve-plan is 008.
+
+## Considered and rejected / already fixed
+
+- Fresh-clone deploy blockers (model list mismatch, missing extensions-config
+  render, GHCR private, stale handbook Stage 0) — fixed 2026-08-30 through
+  commit `231f451`; packages verified public via anonymous pull (200).
+- Cloud-routed chat models (deepseek-*-cloud) — **decided intentional**
+  (firm accepts prompt egress for research timelines); do not re-report as a
+  residency finding. See `.github/copilot-instructions.md` Deployment Ground Truth.
 
 ## Dependency notes
 

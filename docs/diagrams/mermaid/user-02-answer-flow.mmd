@@ -1,0 +1,10 @@
+flowchart LR
+    Q["您提问 / You ask"]:::user --> S["拆解步骤 / Plan steps"]:::svc
+    S --> K["检索贵所文件 / Search firm documents"]:::db
+    K --> A["生成回答 / Draft answer"]:::svc
+    A --> C["可点击引用 / Clickable citations"]:::cite
+
+    classDef svc fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef db fill:#F7F2E6,stroke:#B89544,stroke-width:1.3px,color:#4D3B18;
+    classDef cite fill:#EAF5F9,stroke:#3D8AA7,stroke-width:1.3px,color:#17465A;
+    classDef user fill:#FFFFFF,stroke:#7B8AA8,stroke-width:1.2px,color:#2D3B56;
