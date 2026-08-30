@@ -47,12 +47,14 @@ Pacgate AI is currently a proposal-heavy repository with static presentation pag
   They need no API key — auth rides the `ollama signin` OAuth session — so no-key
   does not mean local; verify with `ollama ps` (cloud tags never appear loaded) and
   the manifest, not by which endpoint was called. Only tags such as
-  `gemma4`, `qwen3.8`, and `nomic-embed-text` run on-device. Flag any cloud-routed
-  model that sits on a client-data path (deer-flow active model, qm `MODEL_NAME`);
-  for law-firm data residency, prefer the local set. The RAG pipeline itself
-  (nomic embeddings, OpenViking extraction via gemma4, local Postgres) is fully
-  on-device — the exposure surface is only generation prompts sent through
-  cloud-routed chat models.
+  `gemma4`, `qwen3.8`, and `nomic-embed-text` run on-device.
+- **Decided 2026-08-30:** cloud chat models (deepseek-v4-flash/pro) are INTENTIONAL
+  for deer-flow and qm generation — the firm accepts prompt egress to ollama.com in
+  exchange for faster research timelines. Do not re-flag this as a residency bug or
+  propose switching chat to local models unless the user reopens the decision. The
+  RAG pipeline itself (nomic embeddings, OpenViking extraction via gemma4, local
+  Postgres) stays fully on-device; `ollama signin` remains an AIPC install
+  precondition.
 - The local Ollama model choice belongs to the user and can change per machine.
   Do not treat a tier set as a fixed repo constant; when a decision depends on it,
   check the current set (`ollama list`, `deer-flow-config.yaml`, `qm.config.jsonc`)
