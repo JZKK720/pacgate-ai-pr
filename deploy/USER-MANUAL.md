@@ -1,11 +1,12 @@
 # Pacgate-ai User Manual
 
 > For attorneys, paralegals, and partners at the law firm
-> Version 0.1.0 — Phase 1 pilot
+> Version 0.2.0 — 2026-08-30
+> 中文版：[USER-MANUAL-ZH.md](USER-MANUAL-ZH.md) | PDF: [EN](USER-MANUAL.pdf) / [ZH](USER-MANUAL-ZH.pdf)
 
 ## What Pacgate-ai is
 
-Pacgate-ai is your firm's private legal AI assistant. It runs on the AI PC in your office — your documents, your matters, and your research never leave your building. There is no cloud, no third-party server, no data sent to external APIs.
+Pacgate-ai is your firm's private legal AI assistant. It runs on the AI PC in your office — your documents, your matters, and your research history stay on that machine. There is no firm account on any cloud storage service. When you ask the assistant a question, the text of the conversation is processed by the AI model service your firm has enabled (for speed and quality); your document files themselves are never uploaded. See *Privacy and security* below for the exact split.
 
 Pacgate-ai has **two working modes**, each for a different kind of task:
 
@@ -217,17 +218,17 @@ Your firm can customize personas or add new ones. Ask your administrator if you 
 
 ## The three-tier model system
 
-Pacgate-ai uses three model tiers for different tasks, all running locally on your AI PC:
+Pacgate-ai uses three model tiers for different tasks:
 
-| Tier | Model | Used for | Speed |
-|---|---|---|---|
-| **Main** | nemotron3:33b | Deep analysis, contract review, complex reasoning | Slower, most capable |
-| **Mid** | qwen3.6:27b | Tabular review, batch extraction, structured output | Medium |
-| **Low** | qwen3.5:9b | Titles, short summaries, quick labels | Fastest |
+| Tier | Used for | Speed |
+|---|---|---|
+| **Main** | Deep analysis, contract review, complex reasoning | Slower, most capable |
+| **Mid** | Tabular review, batch extraction, structured output | Medium |
+| **Low** | Titles, short summaries, quick labels | Fastest |
 
 You don't choose the tier — the AI automatically picks the right model for each subtask. A quick label uses Low; a contract review uses Main.
 
-Your firm's administrator can override which models are used for each tier (per-tenant model config).
+Your firm's administrator configures which models serve each tier, and the set can change over time as better models become available. The research and collaboration chat assistants may use hosted models for speed; heavy document processing runs on the office AI PC.
 
 ---
 
@@ -236,16 +237,16 @@ Your firm's administrator can override which models are used for each tier (per-
 ### What stays on your machine
 
 - **All documents** — uploaded, generated, and edited
-- **All matter data** — case files, research, memory
-- **All AI processing** — runs on the local AI PC's GPU/NPU
+- **All matter data** — case files, research history, memory
+- **The knowledge base and search index**
 - **All collaboration** — shared within your firm's network only
 
-### What never leaves your building
+### What is sent to the AI model service
 
-- No documents are sent to external APIs
-- No matter data is uploaded to any cloud service
-- The AI models run locally via Ollama on your AI PC
-- The only external network access is for web search during research (if enabled by your administrator)
+- **The text of your conversation** — your question and the specific passages the assistant reads to answer it are processed by the model service your firm has enabled, so answers come back fast and at high quality.
+- Your document files themselves are never uploaded to that service, and no matter data is stored in any cloud account.
+
+If a client matter requires zero external processing of any kind, tell your firm administrator before using the system on that matter.
 
 ### Who can see what
 

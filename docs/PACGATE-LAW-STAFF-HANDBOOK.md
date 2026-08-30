@@ -3,6 +3,7 @@
 > How to use your firm's AI assistant, in plain language.
 > For attorneys, paralegals, secretaries, and partners. No technical knowledge needed.
 > Version 1.0 — 2026-08-30
+> 中文版本：[PACGATE-LAW-STAFF-HANDBOOK-ZH.md](PACGATE-LAW-STAFF-HANDBOOK-ZH.md)
 
 ---
 
