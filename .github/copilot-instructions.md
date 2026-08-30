@@ -34,3 +34,24 @@ Pacgate AI is currently a proposal-heavy repository with static presentation pag
 - For docs work, do not assume React, Next.js, Tailwind, or build tooling. Stay within the existing static stack unless the task says otherwise.
 - For Rust work, keep changes scoped to the owning crate when possible and validate the touched crate or module instead of the entire workspace first.
 - When adapting outside guidance or reusable skills, translate it into Pacgate-specific rules instead of copying generic upstream conventions verbatim.
+
+## Deployment Ground Truth (AIPC / client install)
+
+- The client install is by our on-site engineer, and the runtime images are public
+  on GHCR by design. Do not propose `docker login ghcr.io` for the client path.
+  Verify state instead of assuming: anonymous HEAD on the GHCR manifest returns 200
+  when public, 401 when still private. Flipping personal-account package visibility
+  is UI-only; the API `/visibility` route 404s even with `write:packages`.
+- Ollama `:cloud` tags are not local. Models like `deepseek-*-cloud` have no weight
+  layers on disk and route inference through ollama.com. Only tags such as
+  `gemma4`, `qwen3.8`, and `nomic-embed-text` run on-device. Flag any cloud-routed
+  model that sits on a client-data path (deer-flow active model, qm `MODEL_NAME`);
+  for law-firm data residency, prefer the local set.
+- The local Ollama model choice belongs to the user and can change per machine.
+  Do not treat a tier set as a fixed repo constant; when a decision depends on it,
+  check the current set (`ollama list`, `deer-flow-config.yaml`, `qm.config.jsonc`)
+  and keep `deploy/client-bundle/ollama-models.txt` in sync with what configs use.
+- A fresh clone is the only valid test for install-path changes. This dev box
+  accumulates credentials, pulled models, and rendered gitignored configs, which
+  hides failures a clean AIPC would hit. Prove installer and compose changes in a
+  clean temp clone before claiming deploy readiness.
