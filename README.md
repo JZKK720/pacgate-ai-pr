@@ -54,7 +54,7 @@ Both AIPC machines run the full stack identically. Each machine is independently
 
 | Path | Purpose |
 |------|---------|
-| `pacgate-ai/crates/` | Rust workspace (11 crates) |
+| `pacgate-ai/crates/` | Rust workspace (12 crates) |
 | `pacgate-adapters/python/` | deer-flow adapter (~150 lines) |
 | `pacgate-adapters/typescript/` | qm contract library (8 tests) |
 | `deploy/client-bundle/` | Client deployment bundle (compose, install.ps1, nginx, qm bootstrap) |

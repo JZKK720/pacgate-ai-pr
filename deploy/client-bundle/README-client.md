@@ -1,13 +1,21 @@
-# Pacgate-ai Client Bundle v0.1.1
+# Pacgate-ai Client Bundle v0.1.2
 
 ## Quick start
 
 1. Install Docker Desktop (https://docs.docker.com/desktop/)
-2. Install Ollama (https://ollama.com)
-3. Unzip this bundle to `C:\pacgate`
-4. Copy `.env.example` to `.env` and fill in passwords
-5. Run: `.\install.ps1`
+2. Install Ollama (https://ollama.com) and run `ollama signin` (the research
+   chat models route through ollama.com; see `ollama-models.txt`)
+3. Clone the repo: `git clone https://github.com/JZKK720/pacgate-ai-pr.git`
+   and work in `pacgate-ai-pr\deploy\client-bundle`
+4. Copy `.env.example` to `.env` and fill in all five values — DB password,
+   JWT secret, tenant id, and **both OpenViking keys** (32-char hex each; the
+   installer stops without them)
+5. Run: `.\install.ps1` (pulls public GHCR images — no docker login — and the
+   Ollama models, and renders the OpenViking configs)
 6. Open browser: `http://localhost:8081`
+
+Full step-by-step (tenant seeding, model overrides, qm, acceptance):
+see `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`.
 
 ## What runs
 
@@ -16,6 +24,7 @@
 | nginx | 8081 (external) | Entry point — routes to API and research |
 | pacgate-api | 8080 (internal) | Metadata API, auth, matters, workflows, documents |
 | deer-flow | 8001 (internal) | Legal research workspace |
+| OpenViking | 1933 | Long-term memory lane (MCP) |
 | Postgres | 5432 (internal) | Metadata database |
 
 QM (co-working workspace) runs **separately** via `qm up` on port 8182.

@@ -101,15 +101,24 @@ Fill in these values:
 PACGATE_DB_PASSWORD=<generate a strong password>
 PACGATE_JWT_SECRET=<generate a random hex string>
 PACGATE_TENANT_ID=pacgate-law
+OPENVIKING_ROOT_API_KEY=<generate a 32-char hex string>
+OPENVIKING_API_KEY=<generate a 32-char hex string>
 ```
+
+`OPENVIKING_API_KEY` is **required** — the installer renders
+`deer-flow-extensions-config.json` from it and stops with an error if it is
+missing or left as `change-me`.
 
 Generate secrets if you need them:
 
 ```powershell
-# DB password
+# DB password (16 hex)
 -join ((1..16) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
 
-# JWT secret
+# JWT secret (32 hex)
+-join ((1..32) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+
+# OpenViking keys (32 hex each) — generate a fresh value per line
 -join ((1..32) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
 ```
 
@@ -131,7 +140,7 @@ docker compose -f compose.prod.yaml ps
 curl http://localhost:8081/health
 ```
 
-Expected: all four containers running (pacgate-db, pacgate-api, deer-flow, nginx) and `/health` returns `ok`.
+Expected: all five containers running (pacgate-db, pacgate-api, deer-flow, openviking, nginx) and `/health` returns `ok`.
 
 ## Stage 3: Seed the tenant and register users (both machines)
 
