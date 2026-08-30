@@ -1,19 +1,27 @@
 # Pacgate-ai required Ollama models
-# Pull these before starting the stack:
-#   ollama pull <model-name>
+# Pulled automatically by install.ps1 on first run.
+# Keep this list in sync with:
+#   - plans/007-aipc1-kickoff-prompt.md Stage 3.5 (tier verification)
+#   - deploy/client-bundle/deer-flow-config.yaml (active research models)
+#   - deploy/qm-pacgate/qm.config.jsonc (MODEL_NAME)
 
-# Primary legal execution model (cloud-tagged, fast)
-deepseek-v4-flash:0731-cloud
+# --- pacgate-api workflow tiers (Appendix A model-overrides SQL) ---
+# Main + Low tier: fast legal execution, local GPU/NPU
+gemma4:12b-it-qat
+# Mid tier: heavier reasoning, local GPU
+qwen3.8:27b-mtp-q4_K_M
 
-# Heavier model for complex research (cloud-tagged)
-deepseek-v4-pro:0813-cloud
-
-# Embedding model for RAG (required by pacgate-api)
+# --- RAG embeddings (required by pacgate-api, no alternative) ---
 nomic-embed-text:latest
 
-# Alternative local models (uncomment to use)
-# qwen3.8:27b-mtp-q4_K_M
-# qwen3.6:35b-a3b-mtp-q4_K_M
-# nemotron-3.5-lightning:30b-a3b
-# muse-glimmer:30b-q4_K_M-dflash
-# gemma4:26b-a4b-it-qat
+# --- deer-flow active model + qm harness model ---
+# Cloud-tagged: routed through ollama.com. Requires `ollama signin`
+# on the AIPC before install.ps1 runs, and a network path to ollama.com.
+# If the client forbids cloud routing, reorder deer-flow-config.yaml to
+# put qwen3.8-27b-local first and set qm MODEL_NAME to a local tag instead.
+deepseek-v4-flash:0731-cloud
+deepseek-v4-pro:0813-cloud
+
+# --- Alternative local models (do NOT enable for Main tier) ---
+# nemotron-3.5-lightning:30b-a3b  <- reasoning-mode, breaks workflow tiers
+# gemma4:26b-a4b-it-qat           <- heavier than AIPC NPU budget for Main

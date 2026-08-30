@@ -69,6 +69,25 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
         Add-Content -Path $envPath -Value "OPENVIKING_CONF_CONTENT=$minified"
         Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT into .env" -ForegroundColor Green
     }
+
+    # Render deer-flow MCP extensions config (gitignored; compose mounts it :ro).
+    # Without this, a fresh clone gets a Docker-created directory at the mount
+    # path and deer-flow's OpenViking recall (OV-2a) silently fails.
+    $dfTemplate = ".\deer-flow-extensions-config.template.json"
+    $dfRendered = ".\deer-flow-extensions-config.json"
+    if ((Test-Path $dfTemplate) -and -not (Test-Path $dfRendered)) {
+        if ($envVars['OPENVIKING_API_KEY'] -and $envVars['OPENVIKING_API_KEY'] -notmatch '^change-me') {
+            $df = Get-Content $dfTemplate -Raw
+            $df = $df.Replace('${OPENVIKING_API_KEY}', $envVars['OPENVIKING_API_KEY'])
+            Set-Content -Path $dfRendered -Value $df -NoNewline -Encoding UTF8
+            Write-Host "[OK] Rendered $dfRendered from template" -ForegroundColor Green
+        } else {
+            Write-Host "ERROR: $dfRendered missing and OPENVIKING_API_KEY is unset or still 'change-me'." -ForegroundColor Red
+            Write-Host "  Set OPENVIKING_API_KEY in .env, then re-run. compose.prod.yaml mounts this" -ForegroundColor Yellow
+            Write-Host "  file :ro, so a missing file breaks deer-flow memory recall (OV-2a)." -ForegroundColor Yellow
+            exit 1
+        }
+    }
 }
 
 # 5. Pull models (first install only)

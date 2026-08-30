@@ -1,8 +1,8 @@
 # Pacgate AI - Two-AIPC Deployment Handbook
 
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
-> Version 0.1.1 - 2026-08-19
-> Prerequisites: Docker Desktop, Ollama, Node.js 24+, and all models already installed on both AIPCs.
+> Version 0.1.2 - 2026-08-30
+> Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`.
 
 ## Architecture: two identical machines
 
@@ -24,28 +24,50 @@ If you later want shared matter data across both machines, connect them with a p
 
 ## What you need before starting
 
-- GitHub access to `JZKK720/pacgate-ai-pr` (private repo)
+- GitHub access to `JZKK720/pacgate-ai-pr` (private repo) — a PAT or `gh auth login`
 - Docker Desktop running on both AIPCs
-- Ollama running on both AIPCs with models pre-pulled
+- Ollama running on both AIPCs (`install.ps1` pulls the models it needs)
+- `ollama signin` completed on each AIPC if the cloud-tagged deepseek models are in use
 - Node.js 24+ installed on both AIPCs (for qm)
-- The `pacgate-api` GHCR image rebuilt with connector fixes (see Stage 0)
+- **No `docker login ghcr.io` needed** — the Pacgate runtime images are published as
+  **public** GHCR packages (see Stage 0). Only the source repo is private.
 
-## Stage 0: Rebuild the API image (dev machine, one-time)
+## Stage 0: Runtime images (dev machine, already done)
 
-The current `ghcr.io/jzkk720/pacgate-api:0.1.1` image has a container-networking bug: the LLM router hardcodes `localhost:11434`, which fails inside Docker. Version `0.1.2` fixes this (router honors `OLLAMA_BASE_URL`, per-tenant model overrides are applied). Rebuild before deploying so both AIPCs pull the corrected runtime.
+The runtime is published on GHCR and needs no rebuild on the AIPC:
 
-On your dev machine:
+| Image | Status |
+|---|---|
+| `ghcr.io/jzkk720/pacgate-api:0.1.2` | Published. Fixes the 0.1.1 container-networking bug (LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides applied). |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | Published. Thin wrapper on the upstream deer-flow backend; unchanged. |
+| `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
+
+**Both Pacgate packages must be set to public visibility on GHCR** so an AIPC can pull
+without registry credentials. Verify before rollout:
+
+```powershell
+# Expect HTTP 200 with no docker login. 401/403 means the package is still private.
+$t = (Invoke-RestMethod "https://ghcr.io/token?scope=repository:jzkk720/pacgate-api:pull").token
+(Invoke-WebRequest "https://ghcr.io/v2/jzkk720/pacgate-api/manifests/0.1.2" -Headers @{Authorization="Bearer $t"} -Method Head -UseBasicParsing).StatusCode
+```
+
+To flip it (GitHub web UI — the API route 404s for personal accounts):
+GitHub → your profile → Packages → `pacgate-api` → Package settings → Visibility →
+**Public** → Save. Repeat for `deer-flow-pacgate`. This is safe: the images contain only
+the compiled binary and SQL migrations, every secret is injected at runtime via `.env`,
+and the installer already has full source access to the same code.
+
+Only rebuild and push if the Rust source changes, from the dev machine:
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
-
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push ghcr.io/jzkk720/pacgate-api:0.1.2
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.3 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push ghcr.io/jzkk720/pacgate-api:0.1.3
 ```
 
-The `compose.prod.yaml` in this repo now references `pacgate-api:0.1.2`.
+Then bump the tag in `deploy/client-bundle/compose.prod.yaml`.
 
-The `deer-flow-pacgate:0.1.0` image does not need rebuilding. It is a thin wrapper on top of the upstream deer-flow backend image, and the wrapper layer has not changed.
+Do **not** rebuild on the AIPC — the pilot runs the published digests.
 
 > **Port conflict note:** the stack binds nginx to host port `8081`. If that port is already in use on the machine, edit the `ports:` entry for `nginx` in `deploy/client-bundle/compose.prod.yaml` (e.g. `"8089:80"`) and use the new port in all verification URLs below.
 
@@ -95,7 +117,10 @@ Run the installer:
 .\install.ps1
 ```
 
-The installer pulls GHCR images, starts the Docker Compose stack, and pulls Ollama models listed in `ollama-models.txt`. If models are already pulled, this step is fast.
+The installer pulls the (public, no-login) GHCR images, renders `OPENVIKING_CONF_CONTENT`
+and `deer-flow-extensions-config.json` from the `.env` secrets, starts the Docker Compose
+stack, and pulls the Ollama models listed in `ollama-models.txt`. If models are already
+pulled, this step is fast.
 
 Verify the core stack:
 

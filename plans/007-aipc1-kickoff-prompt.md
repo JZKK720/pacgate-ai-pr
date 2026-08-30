@@ -4,8 +4,10 @@
 > **running on AIPC#1** (or with shell access to it). Working directory: the
 > cloned repo root (`C:\pacgate-ai-pr`).
 >
-> Prerequisites already verified for you: all GHCR images pullable, all
-> configs final at commit `f2a956e`.
+> Prerequisites already verified for you: the two Pacgate GHCR images are published
+> and set to **public** (no `docker login` needed — only the source repo is private),
+> and all configs are final. If an anonymous pull 401s, the package was not flipped —
+> see handbook Stage 0 and STOP.
 
 ```markdown
 # TASK: Install Pacgate AI on this AIPC (Plan 007 Phase 3 — pilot machine)
@@ -22,8 +24,12 @@ Read FIRST, in this order:
 ## Preconditions — verify before touching anything
 - [ ] `docker info` succeeds (Docker Desktop running)
 - [ ] `curl http://localhost:11434/api/tags` returns model list (Ollama running)
+- [ ] `ollama signin` done (cloud-tagged deepseek models in `ollama-models.txt` route via ollama.com; skip only if the client forbids cloud routing and configs were switched to local tags)
 - [ ] `node --version` ≥ v24
 - [ ] `gh auth status` or a PAT works for the private repo `JZKK720/pacgate-ai-pr`
+- [ ] Anonymous GHCR pull works (images must be public):
+      `docker pull ghcr.io/jzkk720/pacgate-api:0.1.2` on a machine that has never
+      logged in — expect success with no credential prompt.
 - [ ] Port 8081 free (`netstat -ano | findstr :8081` empty). If occupied:
       remap nginx ports in `deploy/client-bundle/compose.prod.yaml` and use
       the new port in EVERY verification URL below.
@@ -42,8 +48,10 @@ Read FIRST, in this order:
   - `PACGATE_JWT_SECRET` (32 hex chars)
   - `PACGATE_TENANT_ID=pacgate-law`  ← must match the tenant slug in Stage 3
   - `OPENVIKING_ROOT_API_KEY` and `OPENVIKING_API_KEY` (32 hex chars each)
-- `.\install.ps1` — pulls 3 GHCR images, starts 5 containers, pulls Ollama
-  models, renders `OPENVIKING_CONF_CONTENT` into `.env`.
+- `.\install.ps1` — pulls 3 GHCR images (public, no login), starts 5 containers, pulls Ollama
+  models, renders `OPENVIKING_CONF_CONTENT` into `.env` and `deer-flow-extensions-config.json`
+  from the template. If the extensions-config render is skipped (warning: key still
+  `change-me`), fix `.env` and re-run — deer-flow memory recall depends on it.
 - Verify: `docker compose -f compose.prod.yaml ps` → 5 services Up
 - Verify: `curl http://localhost:8081/health` → `ok`
 - Verify: `curl http://localhost:1933/health` → healthy JSON (OpenViking)
