@@ -47,8 +47,10 @@ without registry credentials. Verify before rollout:
 
 ```powershell
 # Expect HTTP 200 with no docker login. 401/403 means the package is still private.
+# (The Accept header is required — omit it and a public manifest returns 404, not 200.)
+$acc = "application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
 $t = (Invoke-RestMethod "https://ghcr.io/token?scope=repository:jzkk720/pacgate-api:pull").token
-(Invoke-WebRequest "https://ghcr.io/v2/jzkk720/pacgate-api/manifests/0.1.2" -Headers @{Authorization="Bearer $t"} -Method Head -UseBasicParsing).StatusCode
+(Invoke-WebRequest "https://ghcr.io/v2/jzkk720/pacgate-api/manifests/0.1.2" -Headers @{Authorization="Bearer $t"; Accept=$acc} -Method Head -UseBasicParsing).StatusCode
 ```
 
 To flip it (GitHub web UI — the API route 404s for personal accounts):
