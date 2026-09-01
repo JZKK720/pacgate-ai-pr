@@ -1,22 +1,28 @@
 # AIPC#1 Kickoff — Agent Run Prompt
 
 > Copy everything in the fence below into a fresh Copilot agent session
-> **running on AIPC#1** (or with shell access to it). Working directory: the
-> cloned repo root (`C:\pacgate-ai-pr`).
+> **running on AIPC#1** (or with shell access to it). Starting state: the machine
+> is fresh — the `JZKK720/pacgate-ai-pr` repo is **NOT cloned yet**, so the prompt
+> starts the agent from `C:\` and includes the clone itself.
 >
 > Prerequisites already verified for you: the two Pacgate GHCR images are published
 > and set to **public** (no `docker login` needed — only the source repo is private),
 > and all configs are final. If an anonymous pull 401s, the package was not flipped —
-> see handbook Stage 0 and STOP.
+> see handbook Stage 0 and STOP. The only human-in-the-loop moments are `gh auth
+> login` and `ollama signin` (both interactive); the prompt tells the agent to pause
+> for them.
 
 ```markdown
-# TASK: Install Pacgate AI on this AIPC (Plan 007 Phase 3 — pilot machine)
+# TASK: Install Pacgate AI on this AIPC (Plan 007 Phase 3 — pilot machine, FRESH setup)
 
 You are installing the complete Pacgate AI stack on the client's AIPC:
 pacgate-api (Rust gateway) + deer-flow (research) + OpenViking (memory lane)
 + qm (collaboration) + Postgres + nginx.
 
-Read FIRST, in this order:
+**This machine is FRESH — the repo is NOT cloned yet.** Start from `C:\` with
+nothing prepared. Work top-to-bottom; never skip a stage.
+
+Read FIRST, in this order (the repo — and these files — exist only after Stage 1):
 1. `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` — the authoritative stage guide
 2. `plans/007-aipc-full-installation-handoff.md` §0 (stage log) + §5 (this prompt's source) + Appendix A (model override SQL)
 3. `deploy/COPILOT_CONTEXT.md` — architecture + memory boundary rules
@@ -24,9 +30,13 @@ Read FIRST, in this order:
 ## Preconditions — verify before touching anything
 - [ ] `docker info` succeeds (Docker Desktop running)
 - [ ] `curl http://localhost:11434/api/tags` returns model list (Ollama running)
-- [ ] `ollama signin` done (cloud-tagged deepseek models in `ollama-models.txt` route via ollama.com; skip only if the client forbids cloud routing and configs were switched to local tags)
+- [ ] `ollama signin` status UNKNOWN on a fresh box — INTERACTIVE (opens a browser).
+      PAUSE and have the human run it before install.ps1. Cloud-tagged deepseek
+      models in `ollama-models.txt` route via ollama.com. Skip only if the client
+      forbids cloud routing and configs were switched to local tags.
 - [ ] `node --version` ≥ v24
-- [ ] `gh auth status` or a PAT works for the private repo `JZKK720/pacgate-ai-pr`
+- [ ] GitHub access to the private repo `JZKK720/pacgate-ai-pr` — verified in
+      Stage 1; the agent pauses for the human on `gh auth login`
 - [ ] Anonymous GHCR pull works (images must be public):
       `docker pull ghcr.io/jzkk720/pacgate-api:0.1.2` on a machine that has never
       logged in — expect success with no credential prompt.
@@ -37,9 +47,19 @@ Read FIRST, in this order:
 
 ## Execution order
 
-### Stage 1 — Clone
-- `cd C:\` ; `git clone https://github.com/JZKK720/pacgate-ai-pr.git` ; `cd pacgate-ai-pr`
-- Verify: `git log --oneline -1` shows `f2a956e` or later.
+### Stage 1 — Authenticate + clone (private repo; the only human-in-the-loop step)
+- Check `gh auth status`:
+  - Authenticated → clone directly.
+  - Not authenticated → PAUSE and ask the human to run `gh auth login`
+    (browser/device flow — the agent cannot complete it) or supply a read-only
+    PAT. NEVER place the PAT in a URL, a command, or a file.
+- Clone and enter the repo:
+  `cd C:\`
+  `git clone https://github.com/JZKK720/pacgate-ai-pr.git`
+  `cd pacgate-ai-pr`
+- Verify: `git log --oneline -1` shows `65fdb38` or later. If older: `git pull`
+  and re-check; still older → STOP and report.
+- NOW read the three docs listed at the top before continuing.
 
 ### Stage 2 — Core stack
 - `cd deploy\client-bundle`
@@ -77,6 +97,7 @@ Read FIRST, in this order:
 - Casing is snake_case: tiers `main`/`mid`/`low`, provider `ollama`.
 
 ### Stage 4 — qm
+- `cd C:\pacgate-ai-pr\deploy\client-bundle` (be explicit — do not rely on cwd)
 - `.\setup-qm.ps1` (prompts: admin email, bridge email `qm-bridge@pacgate.local`,
   bridge password from Stage 3)
 - When prompted for OpenViking secrets (OPENVIKING_API_KEY / ACCOUNT / USER):
