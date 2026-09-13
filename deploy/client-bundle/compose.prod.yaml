@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.9
+    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -81,6 +81,12 @@ services:
       # system prompt, so the model never drops a required arg and loops on
       # "description: Field required".
       - ./patches/deer-flow-prompt.py:/app/backend/packages/harness/deerflow/agents/lead_agent/prompt.py:ro
+      # Pacgate: auto-route local vs cloud model by bound tool count (see
+      # compose.bundle.yaml for the rationale).
+      - ./patches/deer-flow-agent.py:/app/backend/packages/harness/deerflow/agents/lead_agent/agent.py:ro
+      # Pacgate: inject conversation-history token estimate for auto-routing
+      # (see compose.bundle.yaml for the rationale).
+      - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
       # Pacgate: run sync tool invocations on a single shared background event
       # loop. The stock wrapper calls asyncio.run() per call (new loop each
       # time), so parallel tool calls to the same stdio MCP server (e.g. two
@@ -102,7 +108,7 @@ services:
   # correct without a runtime patch. Published to GHCR by the build-ghcr.yml
   # workflow; pushed on every release tag so both AIPCs stay in sync.
   deer-flow-frontend:
-    image: ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.9
+    image: ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.11
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     ports:

@@ -46,6 +46,26 @@ if (-not (Test-Path $FrontendDir)) {
     Write-Host "[1/3] Frontend source already present at $FrontendDir" -ForegroundColor Cyan
 }
 
+# 2b. Apply PacGate frontend source overrides (persist across re-clones of the
+# source tree). We copy tracked files over the cloned tree because these
+# changes contain long Chinese strings that break git-patch parsing. Each file
+# under deploy/frontend-patches/files/ mirrors the path in src/.
+$PatchFiles = Join-Path $Root "deploy/frontend-patches/files"
+if (Test-Path $PatchFiles) {
+    Write-Host "[1b/3] Applying PacGate frontend source overrides..." -ForegroundColor Cyan
+    $overrides = Get-ChildItem -Path $PatchFiles -Recurse -File
+    foreach ($file in $overrides) {
+        $rel = $file.FullName.Substring($PatchFiles.Length).TrimStart('\', '/')
+        $target = Join-Path $FrontendDir $rel
+        $targetDir = Split-Path -Parent $target
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($file.FullName))
+        Write-Host "  OK: $rel" -ForegroundColor Green
+    }
+}
+
 # 3. Build the image.
 Write-Host "[2/3] Building ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:$Tag ..." -ForegroundColor Cyan
 docker build `

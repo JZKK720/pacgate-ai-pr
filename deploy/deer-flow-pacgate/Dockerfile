@@ -20,7 +20,12 @@ RUN pip install --no-cache-dir /app/adapters/pacgate_deerflow_adapter
 # /app/backend/.venv/bin and is reachable via the pacgate_convert_document MCP
 # tool. apt-get update is required because the base image's package lists are
 # not refreshed at build time.
-RUN apt-get update && apt-get install -y --no-install-recommends pandoc weasyprint \
+#
+# fonts-noto-cjk is REQUIRED for Chinese PDF/DOCX rendering: the base image ships
+# zero CJK glyphs, so `pandoc --pdf-engine=weasyprint` produced blank/boxed Chinese
+# text. Without these fonts, weasyprint/pandoc cannot render any CJK content.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pandoc weasyprint fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Pacgate: expose markitdown on the agent's PATH. markitdown lives in the image
@@ -38,6 +43,13 @@ RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
 # survives container recreation. The URL below is the GitHub release asset
 # `officecli-linux-x64` (glibc, matches Debian 12). We use python (already in
 # the image) as the downloader because the base image has no curl/wget.
+#
+# IMPORTANT: BEST-EFFORT. Some client/CI networks egress-block `github.com`
+# release *asset* downloads (verified 2026-09-13: deb.debian.org + ghcr.io work,
+# github.com release HEAD times out). If the download fails, do NOT fail the
+# whole image build — log and continue. The agent prompt carries a fallback
+# ("if `which officecli` returns nothing, use `pandoc <file>.md -o <file>.docx`"),
+# so a missing binary degrades gracefully instead of breaking the image.
 ARG OFFICECLI_VERSION=v1.0.149
 RUN python3 -c "import urllib.request,os,sys; \
     v=sys.argv[1]; \
@@ -47,6 +59,7 @@ RUN python3 -c "import urllib.request,os,sys; \
     open('/usr/local/bin/officecli','wb').write(d)" "$OFFICECLI_VERSION" \
     && chmod +x /usr/local/bin/officecli \
     && OFFICECLI_SKIP_UPDATE=1 officecli --version \
+    || echo "WARNING: officecli download skipped (github.com unreachable on this network); agent will fall back to pandoc for docx delivery." \
     && rm -rf /tmp/*
 
 # Ship a minimal startup-safe DeerFlow config. This keeps the wrapper bootable
