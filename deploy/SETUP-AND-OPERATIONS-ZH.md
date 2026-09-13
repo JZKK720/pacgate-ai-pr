@@ -18,7 +18,7 @@
 ```mermaid
 graph TB
     subgraph "Client AIPC Machine"
-        NGINX["nginx :8081<br/>入口"]
+        NGINX["nginx :8089<br/>入口"]
         API["pacgate-api :8080<br/>Rust 元数据 API"]
         DF["deer-flow :8001<br/>研究工作空间"]
         DB[("Postgres :5432<br/>元数据数据库")]
@@ -60,18 +60,26 @@ graph TB
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # 构建 pacgate-api（Rust 1.94 多阶段）
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.3 -f pacgate-ai/Dockerfile ./pacgate-ai
+
+# 构建 pacgate-mcp 桥接镜像
+docker build -t ghcr.io/pacgate-ai/pacgate-mcp:0.1.3 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
 
 # 构建 deer-flow 包装镜像
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 -f deploy/deer-flow-pacgate/Dockerfile .
+docker build -t ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3 -f deploy/deer-flow-pacgate/Dockerfile .
+
+# 构建 deer-flow 前端（构建时烘焙网关地址）
+.\deploy\build-frontend.ps1 -Push
 
 # 推送
-docker push ghcr.io/jzkk720/pacgate-api:0.1.2
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+docker push ghcr.io/pacgate-ai/pacgate-api:0.1.3
+docker push ghcr.io/pacgate-ai/pacgate-mcp:0.1.3
+docker push ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
+docker push ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0
 
 # 验证可拉取
-docker pull ghcr.io/jzkk720/pacgate-api:0.1.2
-docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+docker pull ghcr.io/pacgate-ai/pacgate-api:0.1.3
+docker pull ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
 ```
 
 注意：qm 没有 Docker 镜像，它通过 `deploy/qm-pacgate/` 目录里的 `qm up` 独立运行。
@@ -148,7 +156,7 @@ notepad .env    # 填写 PACGATE_DB_PASSWORD、PACGATE_JWT_SECRET、PACGATE_TENA
 验证：
 ```powershell
 docker compose -f compose.prod.yaml ps    # 所有服务都应运行
-curl http://localhost:8081/health    # 返回 ok
+curl http://localhost:8089/health    # 返回 ok
 ```
 
 ### 3.4 初始化默认租户
@@ -161,7 +169,7 @@ docker exec pacgate-db psql -U pacgate -c "INSERT INTO tenants (name, slug) VALU
 
 # 注册管理员用户
 $body = @{email="admin@pacgate-law.com"; password="<strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 ## 4. 安装第 2 天 - qm + Agent OS 表层
@@ -171,7 +179,7 @@ Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -B
 ```powershell
 # 1. 在 pacgate-api 中注册 bridge 服务账号
 $body = @{email="qm-bridge@pacgate.local"; password="<generate-strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 
 # 2. 把 qm-pacgate 复制到客户机器
 Copy-Item -Path qm-pacgate -Destination C:\pacgate\qm-pacgate -Recurse
@@ -203,7 +211,7 @@ npm exec qm -- up
 ### 4.3 验证 deer-flow 研究工作空间
 
 ```powershell
-# 打开 http://localhost:8081/research/
+# 打开 http://localhost:8089/research/
 # 先选择一个事项（如果还没有就先创建）
 # 询问：“总结中国近期 force majeure（不可抗力）相关案例法”
 # 验证：返回结果包含引用
@@ -237,12 +245,12 @@ npm exec qm -- up
 | 切换 qm 模型 | 编辑 `qm.config.jsonc` 中的 `MODEL_NAME`，然后 `qm down` + `qm up` |
 | 注册新用户 | `POST /api/auth/register` |
 | 备份数据库 | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` |
-| 检查服务健康 | `curl http://localhost:8081/health` |
+| 检查服务健康 | `curl http://localhost:8089/health` |
 
 ### 5.2 律师培训
 
 按 `deploy/USER-MANUAL.md` 演示：
-- 研究模式（deer-flow，`http://localhost:8081/research/`）
+- 研究模式（deer-flow，`http://localhost:8089/research/`）
 - 协作模式（qm，`http://localhost:8182`）
 - 文档上传 + 工作流执行
 
@@ -255,7 +263,7 @@ npm exec qm -- up
 - [ ] 默认租户已在 pacgate-api 中初始化
 - [ ] 管理员用户已注册
 - [ ] Bridge 服务账号已注册
-- [ ] 如需局域网访问，端口 8081 的防火墙规则已放行
+- [ ] 如需局域网访问，端口 8089 的防火墙规则已放行
 - [ ] Agent OS 表层已配置完成
 - [ ] 律师已完成培训
 - [ ] `.env` 已安全备份（不要放进 git）
@@ -268,7 +276,7 @@ npm exec qm -- up
 1. 编辑 `C:\pacgate\deer-flow-config.yaml`
 2. 调整 `models` 列表顺序（第一项即默认模型）
 3. 重启：`docker compose -f compose.prod.yaml restart deer-flow`
-4. 验证：打开 `http://localhost:8081/research/` 并发送测试消息
+4. 验证：打开 `http://localhost:8089/research/` 并发送测试消息
 
 ### 6.2 切换模型（qm）
 
@@ -281,7 +289,7 @@ npm exec qm -- up
 
 ```powershell
 $body = @{email="new.attorney@pacgate-law.com"; password="<temp-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 该用户现在可以同时登录研究（deer-flow）和协作（qm）两个入口。
@@ -315,8 +323,8 @@ Get-Content .env
 # 检查 Docker Desktop 是否启动
 docker info
 
-# 检查 8081 端口是否被占用
-netstat -an | findstr 8081
+# 检查 8089 端口是否被占用
+netstat -an | findstr 8089
 
 # 检查日志
 docker compose -f compose.prod.yaml logs <service>
@@ -347,13 +355,13 @@ npm exec qm -- check    # 校验配置
 # 检查 PACGATE_API_EMAIL / PASSWORD 是否正确
 # 测试 bridge 登录：
 #   $body = @{email="$env:PACGATE_API_EMAIL"; password="$env:PACGATE_API_PASSWORD"} | ConvertTo-Json
-#   Invoke-RestMethod -Uri "http://localhost:8081/api/auth/login" -Method POST -Body $body -ContentType "application/json"
+#   Invoke-RestMethod -Uri "http://localhost:8089/api/auth/login" -Method POST -Body $body -ContentType "application/json"
 ```
 
 ### deer-flow 报错
 
 ```powershell
-curl http://localhost:8081/health    # 检查 API 是否健康
+curl http://localhost:8089/health    # 检查 API 是否健康
 ollama show deepseek-v4-flash:0731-cloud  # 检查模型是否合法
 docker compose -f compose.prod.yaml logs deer-flow  # 查看日志
 ```
@@ -364,12 +372,14 @@ docker compose -f compose.prod.yaml logs deer-flow  # 查看日志
 
 | 镜像 | 内容 | 基础镜像 |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.2` | Rust 二进制（pacgate-server）+ SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow 后端 + Python 适配器（约 150 行） | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | Rust 二进制（pacgate-server）+ SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
+| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | deer-flow 后端 + Python 适配器（176 行） | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | pacgate-api MCP 桥接（10 个工具） | `python:3.12-slim` |
+| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | deer-flow Next.js 检索界面 | `node:22-alpine` |
 
 ### 8.2 数据流
 
-1. 律师打开 `http://localhost:8081` → nginx → pacgate-api（着陆页）
+1. 律师打开 `http://localhost:8089` → nginx → pacgate-api（着陆页）
 2. 律师进入 `/research/` → nginx → deer-flow（研究工作空间）
 3. deer-flow 调用 pacgate-api 获取事项记忆 + 文档存储
 4. deer-flow 调用 Ollama 进行模型推理

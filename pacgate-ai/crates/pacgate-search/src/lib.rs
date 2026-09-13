@@ -196,24 +196,34 @@ impl SearchRouter {
 
     /// Search all available connectors and merge results.
     ///
-    /// Failed connectors are logged and skipped — partial results are returned.
+    /// Connectors are queried concurrently (bounded by each connector's own
+    /// timeout) so a slow external database does not serialize the whole
+    /// fan-out. Failed connectors are logged and skipped — partial results
+    /// are returned.
     pub async fn search_all(&self, query: &SearchQuery) -> Vec<SearchResult> {
-        let mut all_results = Vec::new();
+        let futures = self.connectors.iter().map(|connector| {
+            let connector = Arc::clone(connector);
+            async move {
+                if !connector.is_available() {
+                    tracing::debug!(connector = connector.name(), "skipping unavailable connector");
+                    return Vec::new();
+                }
 
-        for connector in &self.connectors {
-            if !connector.is_available() {
-                tracing::debug!(connector = connector.name(), "skipping unavailable connector");
-                continue;
+                let results = connector.search(query).await;
+                tracing::info!(
+                    connector = connector.name(),
+                    results = results.len(),
+                    "connector returned results"
+                );
+                results
             }
+        });
 
-            let results = connector.search(query).await;
-            tracing::info!(
-                connector = connector.name(),
-                results = results.len(),
-                "connector returned results"
-            );
-            all_results.extend(results);
-        }
+        let mut all_results: Vec<SearchResult> = futures::future::join_all(futures)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
 
         // Sort by source_level priority (authority_verified > auxiliary_db > internal_template > model_inference)
         all_results.sort_by(|a, b| {
@@ -764,6 +774,126 @@ fn build_timeout_connector_client(timeout: std::time::Duration) -> reqwest::Clie
         .expect("static timed connector client configuration should be valid")
 }
 
+/// Perform an MCP Streamable HTTP `tools/call` against a remote MCP server.
+///
+/// Many legal databases (元典, 北大法宝, 企查查, Vaquill, Ansvar) expose their
+/// search as an MCP Streamable HTTP endpoint rather than a plain REST API.
+/// This helper runs the minimal handshake (initialize → capture session id →
+/// tools/call) and returns the parsed JSON-RPC result.
+///
+/// Returns `Ok(Some(result))` on a successful call, `Ok(None)` when the server
+/// returns an error result, and `Err` on transport/auth failures.
+async fn mcp_tools_call(
+    client: &reqwest::Client,
+    url: &str,
+    auth_header: Option<(&str, &str)>,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<Option<serde_json::Value>, SearchError> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("application/json, text/event-stream"),
+    );
+    if let Some((name, value)) = auth_header {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(value) {
+            headers.insert(reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap_or(reqwest::header::AUTHORIZATION), v);
+        }
+    }
+
+    // 1. initialize — capture the session id from the response header.
+    let init_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "pacgate-search", "version": "0.1" }
+        }
+    });
+    let init_resp = client
+        .post(url)
+        .headers(headers.clone())
+        .json(&init_body)
+        .send()
+        .await
+        .map_err(|e| SearchError::Connection(e.to_string()))?;
+    if !init_resp.status().is_success() {
+        return Err(SearchError::Unavailable(format!("MCP initialize HTTP {}", init_resp.status())));
+    }
+    let session_id = init_resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if let Some(sid) = &session_id {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(sid) {
+            headers.insert(reqwest::header::HeaderName::from_static("mcp-session-id"), v);
+        }
+    }
+
+    // 2. tools/call
+    let call_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": tool_name, "arguments": arguments }
+    });
+    let call_resp = client
+        .post(url)
+        .headers(headers)
+        .json(&call_body)
+        .send()
+        .await
+        .map_err(|e| SearchError::Connection(e.to_string()))?;
+    if !call_resp.status().is_success() {
+        return Err(SearchError::Unavailable(format!("MCP tools/call HTTP {}", call_resp.status())));
+    }
+    let text = call_resp
+        .text()
+        .await
+        .map_err(|e| SearchError::Parse(e.to_string()))?;
+
+    // Parse SSE (`data: {...}` lines) or plain JSON.
+    let parsed: serde_json::Value = if text.trim_start().starts_with('{') {
+        serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?
+    } else {
+        let mut found = None;
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("data:") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest.trim()) {
+                    found = Some(v);
+                    break;
+                }
+            }
+        }
+        found.ok_or_else(|| SearchError::Parse("no SSE data frame in MCP response".into()))?
+    };
+
+    if let Some(err) = parsed.get("error") {
+        tracing::warn!(connector = tool_name, error = %err, "MCP tools/call returned error");
+        return Ok(None);
+    }
+    Ok(parsed.get("result").cloned())
+}
+
+/// Extract the first text content item from an MCP `tools/call` result.
+/// MCP text content is `{"type":"text","text":"..."}` inside `result.content[]`.
+fn mcp_result_text(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("content")?
+        .as_array()?
+        .iter()
+        .find(|c| c.get("type").and_then(|t| t.as_str()) == Some("text"))
+        .and_then(|c| c.get("text").and_then(|t| t.as_str()))
+        .map(String::from)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Chinese connectors — MCP endpoints
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1028,11 +1158,12 @@ impl DataSourceConnector for PkuLawConnector {
 }
 
 /// Qcc (企查查) — Chinese corporate registry via MCP endpoint.
-/// URL: https://agent.qcc.com
-/// Auth: API key (env: QCC_API_KEY)
+/// URL: https://agent.qcc.com/mcp/company/stream
+/// Auth: Bearer token (env: QCC_API_KEY)
 ///
 /// Provides company information, shareholder structures, legal proceedings,
-/// and corporate registration data.
+/// and corporate registration data. Exposed as an MCP Streamable HTTP server;
+/// the `get_company_by_query` tool searches companies by keyword.
 pub struct QccConnector {
     endpoint: String,
     api_key:  Option<String>,
@@ -1064,72 +1195,110 @@ impl DataSourceConnector for QccConnector {
             }
         };
 
-        // Agent-style API request — search companies by keyword
-        let url = format!(
-            "{}/api/search?keyword={}&limit={}",
-            self.endpoint.trim_end_matches('/'),
-            urlencoding::encode(&query.keywords),
-            query.limit
-        );
-        let req = self.client
-            .get(&url)
-            .header("Authorization", format!("Bearer {api_key}"));
-
-        match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.json::<serde_json::Value>().await
-                    .ok()
-                    .and_then(|json| {
-                        json.get("data")?.as_array().map(|arr| {
-                            arr.iter().filter_map(|item| {
-                                Some(SearchResult {
-                                    title:       item.get("name")?.as_str()?.to_string(),
-                                    citation:    item.get("creditNo")
-                                        .or_else(|| item.get("uscc"))
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
-                                    summary:     item.get("operatingScope")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string(),
-                                    url:         item.get("detailUrl")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
-                                    source_name: "qcc".to_string(),
-                                    source_level: "auxiliary_db".to_string(),
-                                    jurisdiction: Some("ChinaMainland".to_string()),
-                                    date:        item.get("establishDate")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
-                                    metadata:    Some(item.clone()),
-                                })
-                            }).collect()
-                        })
-                    })
-                    .unwrap_or_default()
-            }
-            Ok(resp) => {
-                tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "qcc request failed");
-                Vec::new()
-            }
+        // Qcc MCP Streamable HTTP — call get_company_by_query with the keyword.
+        let url = self.endpoint.trim_end_matches('/').to_string();
+        let result = match mcp_tools_call(
+            &self.client,
+            &url,
+            Some(("Authorization", &format!("Bearer {api_key}"))),
+            "get_company_by_query",
+            serde_json::json!({ "searchKey": &query.keywords }),
+        )
+        .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => return Vec::new(),
             Err(e) => {
-                tracing::warn!(connector = self.name(), error = %e, "qcc connection error");
-                Vec::new()
+                tracing::warn!(connector = self.name(), error = %e, "qcc MCP call failed");
+                return Vec::new();
             }
-        }
+        };
+
+        // The result is `{"content":[{"type":"text","text":"<json string>"}]}`.
+        // The inner text is a JSON object with an "企业信息" (company info) array.
+        let text = match mcp_result_text(&result) {
+            Some(t) => t,
+            None => {
+                tracing::warn!(connector = self.name(), "qcc MCP returned no text content");
+                return Vec::new();
+            }
+        };
+        let inner: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "qcc MCP text not JSON");
+                return Vec::new();
+            }
+        };
+
+        // Company array is under "企业信息" (or "companyInfo").
+        let companies = inner
+            .get("企业信息")
+            .or_else(|| inner.get("companyInfo"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        companies
+            .into_iter()
+            .filter_map(|item| {
+                let title = item
+                    .get("企业名称")
+                    .or_else(|| item.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if title.is_empty() {
+                    return None;
+                }
+                Some(SearchResult {
+                    title,
+                    citation: item
+                        .get("统一社会信用代码")
+                        .or_else(|| item.get("creditNo"))
+                        .or_else(|| item.get("uscc"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    summary: item
+                        .get("经营范围")
+                        .or_else(|| item.get("operatingScope"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    url: item
+                        .get("detailUrl")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    source_name: "qcc".to_string(),
+                    source_level: "auxiliary_db".to_string(),
+                    jurisdiction: Some("ChinaMainland".to_string()),
+                    date: item
+                        .get("成立日期")
+                        .or_else(|| item.get("establishDate"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    metadata: Some(item),
+                })
+            })
+            .collect()
     }
 
     async fn health_check(&self) -> Result<(), SearchError> {
         let api_key = self.api_key.as_ref()
             .ok_or_else(|| SearchError::Auth("no API key configured".into()))?;
-        let url = format!("{}/api/health", self.endpoint.trim_end_matches('/'));
-        match self.client.get(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .send().await
+        let url = self.endpoint.trim_end_matches('/').to_string();
+        match mcp_tools_call(
+            &self.client,
+            &url,
+            Some(("Authorization", &format!("Bearer {api_key}"))),
+            "get_company_by_query",
+            serde_json::json!({ "searchKey": "test" }),
+        )
+        .await
         {
-            Ok(resp) if resp.status().is_success() => Ok(()),
-            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
-            Err(e) => Err(SearchError::Connection(e.to_string())),
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(SearchError::Unavailable("qcc MCP returned no result".into())),
+            Err(e) => Err(e),
         }
     }
 }
@@ -1502,7 +1671,7 @@ pub fn default_router() -> SearchRouter {
             std::env::var("PKULAW_API_KEY").ok(),
         )))
         .with_connector(Arc::new(QccConnector::new(
-            "https://agent.qcc.com",
+            "https://agent.qcc.com/mcp/company/stream",
             std::env::var("QCC_API_KEY").ok(),
         )))
         .with_connector(Arc::new(FyOpenConnector::with_default_endpoint(
@@ -1517,9 +1686,6 @@ pub fn default_router() -> SearchRouter {
             std::env::var("VAQUILL_API_KEY").ok(),
         )))
         .with_connector(Arc::new(EurLexConnector::new()))
-        .with_connector(Arc::new(AnsvarConnector::new(
-            std::env::var("ANSVAR_API_KEY").ok(),
-        )))
         .with_connector(Arc::new(OpenCorporatesConnector::new(
             std::env::var("OPENCORPORATES_API_KEY").ok(),
         )))
@@ -1531,7 +1697,8 @@ pub fn default_router() -> SearchRouter {
 
 /// Vaquill — US legal research platform with AI-powered search.
 /// Requires API key (env: VAQUILL_API_KEY).
-/// Configure credentials locally through environment variables only.
+/// Exposed as an MCP Streamable HTTP server; the key is embedded in the URL path
+/// (`https://mcp.vaquill.ai/s/<api_key>`), and the `search` tool queries US law.
 pub struct VaquillConnector {
     api_key: Option<String>,
     client: reqwest::Client,
@@ -1558,60 +1725,76 @@ impl DataSourceConnector for VaquillConnector {
             None => return Vec::new(),
         };
 
-        let url = format!(
-            "https://api.vaquill.ai/v1/search?q={}&limit={}",
-            urlencoding::encode(&query.keywords),
-            query.limit
-        );
-
-        let resp = match self.client
-            .get(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("Accept", "application/json")
-            .send()
-            .await
+        // Vaquill MCP Streamable HTTP — the API key is part of the URL path.
+        let url = format!("https://mcp.vaquill.ai/s/{}", api_key);
+        let result = match mcp_tools_call(
+            &self.client,
+            &url,
+            None,
+            "search",
+            serde_json::json!({ "query": &query.keywords }),
+        )
+        .await
         {
-            Ok(r) => r,
+            Ok(Some(r)) => r,
+            Ok(None) => return Vec::new(),
             Err(e) => {
-                tracing::warn!(connector = self.name(), error = %e, "connection error");
+                tracing::warn!(connector = self.name(), error = %e, "vaquill MCP call failed");
                 return Vec::new();
             }
         };
 
-        if !resp.status().is_success() {
-            tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "request failed");
-            return Vec::new();
-        }
+        // The result is `{"content":[{"type":"text","text":"<json string>"}]}`.
+        // The inner text is `{"results":[{id,title,url,snippet},...]}`.
+        let text = match mcp_result_text(&result) {
+            Some(t) => t,
+            None => {
+                tracing::warn!(connector = self.name(), "vaquill MCP returned no text content");
+                return Vec::new();
+            }
+        };
+        let inner: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "vaquill MCP text not JSON");
+                return Vec::new();
+            }
+        };
 
-        resp.json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|json| json.get("results").and_then(|r| r.as_array()).map(|arr| {
-                arr.iter().filter_map(|item| {
-                    Some(SearchResult {
-                        title:       item.get("title")?.as_str()?.to_string(),
-                        citation:    item.get("citation").and_then(|v| v.as_str()).map(String::from),
-                        summary:     item.get("snippet").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        url:         item.get("url").and_then(|v| v.as_str()).map(String::from),
-                        source_name: "vaquill".to_string(),
-                        source_level: "auxiliary_db".to_string(),
-                        jurisdiction: Some("UnitedStates".to_string()),
-                        date:        item.get("date").and_then(|v| v.as_str()).map(String::from),
-                        metadata:    Some(item.clone()),
-                    })
-                }).collect()
-            }))
+        inner
+            .get("results")
+            .and_then(|r| r.as_array())
+            .cloned()
             .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| {
+                let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if title.is_empty() {
+                    return None;
+                }
+                Some(SearchResult {
+                    title,
+                    citation: item.get("id").and_then(|v| v.as_str()).map(String::from),
+                    summary: item.get("snippet").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    url: item.get("url").and_then(|v| v.as_str()).map(String::from),
+                    source_name: "vaquill".to_string(),
+                    source_level: "auxiliary_db".to_string(),
+                    jurisdiction: Some("UnitedStates".to_string()),
+                    date: item.get("date").and_then(|v| v.as_str()).map(String::from),
+                    metadata: Some(item),
+                })
+            })
+            .collect()
     }
 
     async fn health_check(&self) -> Result<(), SearchError> {
-        if self.api_key.is_none() {
-            return Err(SearchError::Unavailable("no API key configured".into()));
-        }
-        match self.client.get("https://api.vaquill.ai/v1/health").send().await {
-            Ok(resp) if resp.status().is_success() => Ok(()),
-            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
-            Err(e) => Err(SearchError::Connection(e.to_string())),
+        let api_key = self.api_key.as_ref()
+            .ok_or_else(|| SearchError::Unavailable("no API key configured".into()))?;
+        let url = format!("https://mcp.vaquill.ai/s/{}", api_key);
+        match mcp_tools_call(&self.client, &url, None, "search", serde_json::json!({ "query": "test" })).await {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(SearchError::Unavailable("vaquill MCP returned no result".into())),
+            Err(e) => Err(e),
         }
     }
 }
@@ -1619,9 +1802,10 @@ impl DataSourceConnector for VaquillConnector {
 /// EUR-Lex — EU law database (public SPARQL endpoint, no API key required).
 /// Endpoint: https://publications.europa.eu/webapi/rdf/sparql
 /// Datadump: datadump.publications.europa.eu
-/// Note: The client asset notes "都不能被agent调用" for the SPARQL endpoint,
-/// but the public REST API at https://eur-lex.europa.eu/content/legal-information/legal-information.html
-/// can be queried via the Cellar API.
+///
+/// The Cellar SPARQL endpoint serves document metadata (works of type
+/// `cdm:resource_legal`). We query it for legal works whose title matches the
+/// search keywords, and return the work URI + CELEX id as results.
 pub struct EurLexConnector {
     client: reqwest::Client,
 }
@@ -1648,17 +1832,30 @@ impl DataSourceConnector for EurLexConnector {
     fn is_available(&self) -> bool { true }
 
     async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
-        // EUR-Lex search API (public, no key required)
-        // Uses the public search endpoint at publications.europa.eu
-        let url = format!(
-            "https://publications.europa.eu/resource/celex/search?q={}&pageSize={}&format=json",
-            urlencoding::encode(&query.keywords),
+        // EUR-Lex Cellar SPARQL — query legal works by title keyword.
+        // The SPARQL endpoint returns JSON when Accept is set.
+        // NOTE: the Cellar dataset exposes titles via cdm:work_title (294k+ hits).
+        // cdm:resource_legal_title_eng does not exist in the live dataset and
+        // always returns an empty binding set (verified 2026-09-05 against
+        // publications.europa.eu/webapi/rdf/sparql).
+        let sparql = format!(
+            "PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>\n\
+             SELECT ?work ?title WHERE {{\n\
+               ?work a cdm:resource_legal .\n\
+               ?work cdm:work_title ?title .\n\
+               FILTER(CONTAINS(LCASE(?title), \"{}\"))\n\
+             }} LIMIT {}",
+            query.keywords.to_lowercase(),
             query.limit
+        );
+        let url = format!(
+            "https://publications.europa.eu/webapi/rdf/sparql?query={}",
+            urlencoding::encode(&sparql)
         );
 
         match self.client
             .get(&url)
-            .header("Accept", "application/json")
+            .header("Accept", "application/sparql-results+json")
             .send()
             .await
         {
@@ -1667,36 +1864,32 @@ impl DataSourceConnector for EurLexConnector {
                     .await
                     .ok()
                     .and_then(|json| {
-                        // EUR-Lex returns results in different possible structures
-                        // Try the "results" array first, then "entries"
-                        let results = json.get("results")
-                            .or_else(|| json.get("entries"))
-                            .and_then(|r| r.as_array())?;
-                        Some(results.iter().map(|item| SearchResult {
-                                title:       item.get("title")
-                                    .and_then(|t| t.as_str())
+                        json.get("results")?.get("bindings")?.as_array().map(|arr| {
+                            arr.iter().filter_map(|b| {
+                                let work = b.get("work")?.get("value")?.as_str()?.to_string();
+                                let title = b.get("title")
+                                    .and_then(|t| t.get("value"))
+                                    .and_then(|v| v.as_str())
                                     .unwrap_or("EUR-Lex document")
-                                    .to_string(),
-                                citation:    item.get("celex")
-                                    .or_else(|| item.get("id"))
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                                summary:     item.get("summary")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                url:         item.get("link")
-                                    .or_else(|| item.get("url"))
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                                source_name: "eur-lex".to_string(),
-                                source_level: "authority_verified".to_string(),
-                                jurisdiction: Some("EuropeanUnion".to_string()),
-                                date:        item.get("date")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                                metadata:    Some(item.clone()),
-                            }).collect())
+                                    .to_string();
+                                // Derive a CELEX id from the cellar URI if possible.
+                                let celex = work
+                                    .rsplit('/')
+                                    .next()
+                                    .map(String::from);
+                                Some(SearchResult {
+                                    title,
+                                    citation: celex,
+                                    summary: String::new(),
+                                    url: Some(work.clone()),
+                                    source_name: "eur-lex".to_string(),
+                                    source_level: "authority_verified".to_string(),
+                                    jurisdiction: Some("EuropeanUnion".to_string()),
+                                    date: None,
+                                    metadata: Some(serde_json::json!({ "work": work })),
+                                })
+                            }).collect()
+                        })
                     })
                     .unwrap_or_default()
             }
@@ -1713,97 +1906,11 @@ impl DataSourceConnector for EurLexConnector {
 
     async fn health_check(&self) -> Result<(), SearchError> {
         match self.client
-            .get("https://publications.europa.eu/resource/celex/search?q=test&pageSize=1&format=json")
+            .get("https://publications.europa.eu/webapi/rdf/sparql?query=SELECT%20%3Fs%20WHERE%20%7B%3Fs%20%3Fp%20%3Fo%7D%20LIMIT%201")
+            .header("Accept", "application/sparql-results+json")
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => Ok(()),
-            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
-            Err(e) => Err(SearchError::Connection(e.to_string())),
-        }
-    }
-}
-
-/// Ansvar — EU compliance MCP server.
-/// Requires API key (env: ANSVAR_API_KEY).
-/// Docs: https://ansvar.eu/docs/setup
-pub struct AnsvarConnector {
-    api_key: Option<String>,
-    client: reqwest::Client,
-}
-
-impl AnsvarConnector {
-    pub fn new(api_key: Option<String>) -> Self {
-        Self {
-            api_key,
-            client: build_connector_client(),
-        }
-    }
-}
-
-#[async_trait]
-impl DataSourceConnector for AnsvarConnector {
-    fn name(&self) -> &str { "ansvar" }
-    fn display_name(&self) -> &str { "Ansvar (EU Compliance MCP)" }
-    fn is_available(&self) -> bool { self.api_key.is_some() }
-
-    async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
-        let api_key = match &self.api_key {
-            Some(k) => k,
-            None => return Vec::new(),
-        };
-
-        let url = format!(
-            "https://ansvar.eu/api/v1/search?q={}&limit={}",
-            urlencoding::encode(&query.keywords),
-            query.limit
-        );
-
-        let resp = match self.client
-            .get(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("Accept", "application/json")
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(connector = self.name(), error = %e, "connection error");
-                return Vec::new();
-            }
-        };
-
-        if !resp.status().is_success() {
-            tracing::warn!(connector = self.name(), status = resp.status().as_u16(), "request failed");
-            return Vec::new();
-        }
-
-        resp.json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|json| json.get("results").and_then(|r| r.as_array()).map(|arr| {
-                arr.iter().filter_map(|item| {
-                    Some(SearchResult {
-                        title:       item.get("title")?.as_str()?.to_string(),
-                        citation:    item.get("reference").and_then(|v| v.as_str()).map(String::from),
-                        summary:     item.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        url:         item.get("url").and_then(|v| v.as_str()).map(String::from),
-                        source_name: "ansvar".to_string(),
-                        source_level: "auxiliary_db".to_string(),
-                        jurisdiction: Some("EuropeanUnion".to_string()),
-                        date:        item.get("effective_date").and_then(|v| v.as_str()).map(String::from),
-                        metadata:    Some(item.clone()),
-                    })
-                }).collect()
-            }))
-            .unwrap_or_default()
-    }
-
-    async fn health_check(&self) -> Result<(), SearchError> {
-        if self.api_key.is_none() {
-            return Err(SearchError::Unavailable("no API key configured".into()));
-        }
-        match self.client.get("https://ansvar.eu/api/v1/health").send().await {
             Ok(resp) if resp.status().is_success() => Ok(()),
             Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
             Err(e) => Err(SearchError::Connection(e.to_string())),

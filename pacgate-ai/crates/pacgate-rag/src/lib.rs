@@ -143,7 +143,7 @@ impl RagStore {
         // Build query with optional jurisdiction + source_level filters
         let (sql, jur_param, sl_param) = Self::build_filtered_sql(
             "SELECT c.content, c.page, d.name as doc_name,
-                    1 - (c.embedding <=> $3::vector) as score
+                    (1 - (c.embedding <=> $3::vector))::float8 as score
              FROM kb_chunks c
              JOIN documents d ON c.document_id = d.id
              WHERE c.tenant_id = $1 AND c.matter_id = $2
@@ -172,6 +172,7 @@ impl RagStore {
             .into_iter()
             .map(|row| KbSearchResult {
                 content: row.get("content"),
+                // Score is cast to ::float8 in the SQL so it is always FLOAT8.
                 score: row.get::<f64, _>("score") as f32,
                 source_doc: row.get("doc_name"),
                 page: row.get::<Option<i32>, _>("page").map(|p| p as u32),
@@ -219,7 +220,8 @@ impl RagStore {
             .into_iter()
             .map(|row| KbSearchResult {
                 content: row.get("content"),
-                score: row.get::<f64, _>("score") as f32,
+                // ts_rank returns real (FLOAT4), not FLOAT8. Decode as f32.
+                score: row.get::<f32, _>("score"),
                 source_doc: row.get("doc_name"),
                 page: row.get::<Option<i32>, _>("page").map(|p| p as u32),
             })
@@ -366,6 +368,14 @@ impl RagStore {
                 .await
                 .map_err(|e| RagError::Migration(e.to_string()))?;
 
+            // Migration 004 adds the T1-T4 data_level column to kb_chunks. Without it,
+            // ingest_with_data_level fails because the data_level column does not exist.
+            let data_level_sql = include_str!("../../../migrations/004_data_level.sql");
+            sqlx::raw_sql(data_level_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
             Ok::<(), RagError>(())
         }
         .await;
@@ -378,7 +388,7 @@ impl RagStore {
 
         result?;
 
-        tracing::info!("RAG migrations applied (002_schema + 003_enrichment)");
+        tracing::info!("RAG migrations applied (002_schema + 003_enrichment + 004_data_level)");
         Ok(())
     }
 }

@@ -1,0 +1,350 @@
+From 453646f0b134dcbe260c232082a0865650e2172e Mon Sep 17 00:00:00 2001
+From: Developer <developer@example.com>
+Date: Wed, 2 Sep 2026 07:59:12 +0800
+Subject: [PATCH 2/4] feat(deer-flow): add pacgate-mcp so the agent can query
+ legal databases
+
+Add a FastMCP HTTP server (deploy/pacgate-mcp) exposing pacgate_kb_search,
+pacgate_connector_search and pacgate_list_connectors, backed by pacgate-api's
+/api/kb/search, /api/search and /api/search/connectors. Register it besides
+openviking in deer-flow-extensions-config, add a pacgate-mcp service to
+compose.prod.yaml, and pass PACGATE_MATTER_ID + API credentials to deer-flow
+so the memory adapter stops falling back to local file storage.
+
+Also switch the deer-flow model list to on-board Ollama models (ornith-1.5:9b
+default) since ollama.com is unreachable on the AIPC.
+---
+ deploy/client-bundle/compose.prod.yaml        |  26 ++-
+ .../deer-flow-extensions-config.template.json |   8 +-
+ deploy/pacgate-mcp/Dockerfile                 |  14 ++
+ deploy/pacgate-mcp/requirements.txt           |   2 +
+ deploy/pacgate-mcp/server.py                  | 206 ++++++++++++++++++
+ 5 files changed, 252 insertions(+), 4 deletions(-)
+ create mode 100644 deploy/pacgate-mcp/Dockerfile
+ create mode 100644 deploy/pacgate-mcp/requirements.txt
+ create mode 100644 deploy/pacgate-mcp/server.py
+
+diff --git a/deploy/client-bundle/compose.prod.yaml b/deploy/client-bundle/compose.prod.yaml
+index 8d7c9a6..7515def 100644
+--- a/deploy/client-bundle/compose.prod.yaml
++++ b/deploy/client-bundle/compose.prod.yaml
+@@ -17,7 +17,7 @@ services:
+     restart: unless-stopped
+ 
+   pacgate-api:
+-    image: ghcr.io/jzkk720/pacgate-api:0.1.2
++    image: ghcr.io/jzkk720/pacgate-api:0.1.3
+     container_name: pacgate-api
+     depends_on: [pacgate-db]
+     environment:
+@@ -34,10 +34,14 @@ services:
+   deer-flow:
+     image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+     container_name: deer-flow
+-    depends_on: [pacgate-api, openviking]
++    depends_on: [pacgate-api, openviking, pacgate-mcp]
+     environment:
+       PACGATE_API_URL: http://pacgate-api:8080
+       PACGATE_TENANT_ID: ${PACGATE_TENANT_ID:-default-firm}
++      PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
++      PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
++      PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
++      PACGATE_MATTER_ID: ${PACGATE_MATTER_ID}
+       OLLAMA_BASE_URL: http://host.docker.internal:11434
+       DEER_FLOW_EXTENSIONS_CONFIG_PATH: /app/deer-flow-extensions-config.json
+     volumes:
+@@ -47,6 +51,22 @@ services:
+       - ./deer-flow-extensions-config.json:/app/deer-flow-extensions-config.json:ro
+     restart: unless-stopped
+ 
++  pacgate-mcp:
++    build:
++      context: ../pacgate-mcp
++      dockerfile: Dockerfile
++    image: pacgate-mcp:0.1.0
++    container_name: pacgate-mcp
++    depends_on: [pacgate-api]
++    environment:
++      PACGATE_API_URL: http://pacgate-api:8080
++      PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
++      PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
++      PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
++      PACGATE_MCP_PORT: "8000"
++      PACGATE_MCP_TIMEOUT: "60"
++    restart: unless-stopped
++
+   openviking:
+     image: ghcr.io/volcengine/openviking@sha256:46f9e34cd37238c28cbd9535033773d179006bdf7f3e528dd1c46567abce7701
+     container_name: openviking
+@@ -63,7 +83,7 @@ services:
+     container_name: pacgate-nginx
+     depends_on: [pacgate-api, deer-flow]
+     ports:
+-      - "8081:80"
++      - "8089:80"
+     volumes:
+       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+     restart: unless-stopped
+diff --git a/deploy/client-bundle/deer-flow-extensions-config.template.json b/deploy/client-bundle/deer-flow-extensions-config.template.json
+index 5cb4379..c1537b5 100644
+--- a/deploy/client-bundle/deer-flow-extensions-config.template.json
++++ b/deploy/client-bundle/deer-flow-extensions-config.template.json
+@@ -5,8 +5,14 @@
+       "type": "http",
+       "url": "http://openviking:1933/mcp",
+       "headers": {
+-        "X-API-Key": "${OPENVIKING_API_KEY}"
++        "X-API-Key": "${OPENVIKING_ROOT_API_KEY}"
+       }
++    },
++    "pacgate": {
++      "enabled": true,
++      "type": "http",
++      "url": "http://pacgate-mcp:8000/mcp",
++      "description": "Query pacgate's legal RAG knowledge base and external legal database connectors."
+     }
+   }
+ }
+diff --git a/deploy/pacgate-mcp/Dockerfile b/deploy/pacgate-mcp/Dockerfile
+new file mode 100644
+index 0000000..b41e54d
+--- /dev/null
++++ b/deploy/pacgate-mcp/Dockerfile
+@@ -0,0 +1,14 @@
++FROM python:3.12-slim
++
++WORKDIR /app
++
++# Copy requirements first for layer caching
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++
++COPY server.py .
++
++EXPOSE 8000
++
++# Use a heredoc-safe CMD: the module runs its own streams via mcp.run()
++CMD ["python", "server.py"]
+diff --git a/deploy/pacgate-mcp/requirements.txt b/deploy/pacgate-mcp/requirements.txt
+new file mode 100644
+index 0000000..9e01285
+--- /dev/null
++++ b/deploy/pacgate-mcp/requirements.txt
+@@ -0,0 +1,2 @@
++mcp>=1.27.0,<2.0
++httpx>=0.24
+diff --git a/deploy/pacgate-mcp/server.py b/deploy/pacgate-mcp/server.py
+new file mode 100644
+index 0000000..36ccb8b
+--- /dev/null
++++ b/deploy/pacgate-mcp/server.py
+@@ -0,0 +1,206 @@
++"""Pacgate MCP server — exposes pacgate-api's RAG + legal connector search as MCP tools.
++
++This is a standard MCP HTTP (streamable) server that deer-flow consumes the same
++way it consumes `openviking` (via `mcpServers` in `extensions_config.json`).
++
++It reuses pacgate-api's own HTTP endpoints so deer-flow never sees credentials —
++auth happens inside pacgate-api. The MCP server authenticates once at startup
++using `PACGATE_API_EMAIL`/`PACGATE_API_PASSWORD` (or `PACGATE_JWT_TOKEN`) and
++forwards a Bearer token on every call.
++
++Exposed tools:
++    pacgate_kb_search        — query the internal per-matter RAG store
++                              (GET /api/kb/search?matter_id=&q=&top_k=&max_data_level=)
++    pacgate_connector_search — query external legal databases
++                              (GET /api/search?q=&jurisdiction=&doc_type=&limit=&connector=)
++    pacgate_list_connectors  — list available legal data source connectors
++                              (GET /api/search/connectors)
++"""
++
++from __future__ import annotations
++
++import json
++import logging
++import os
++from typing import Any
++
++import httpx
++from mcp.server.fastmcp import FastMCP
++
++logging.basicConfig(
++    level=os.environ.get("PACGATE_MCP_LOG_LEVEL", "INFO").upper(),
++    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
++)
++logger = logging.getLogger("pacgate_mcp")
++
++# Bind the streamable HTTP transport on 0.0.0.0 so the deer-flow container on
++# the compose network can reach it. Host must not stay 127.0.0.1.
++mcp = FastMCP(
++    "pacgate",
++    host="0.0.0.0",
++    port=int(os.environ.get("PACGATE_MCP_PORT", "8000")),
++)
++
++
++class PacgateApi:
++    """Minimal authenticated client for pacgate-api."""
++
++    def __init__(self) -> None:
++        self.base_url = os.environ.get(
++            "PACGATE_API_URL", "http://pacgate-api:8080"
++        ).rstrip("/")
++        self.email = os.environ.get("PACGATE_API_EMAIL", "")
++        self.password = os.environ.get("PACGATE_API_PASSWORD", "")
++        self.jwt_token = os.environ.get("PACGATE_JWT_TOKEN", "")
++        self.timeout = float(os.environ.get("PACGATE_MCP_TIMEOUT", "60"))
++        self._client = httpx.Client(timeout=self.timeout)
++        if not self.jwt_token and self.email and self.password:
++            self.jwt_token = self._login()
++
++    def _login(self) -> str:
++        resp = self._client.post(
++            f"{self.base_url}/api/auth/login",
++            json={"email": self.email, "password": self.password},
++            headers={"Content-Type": "application/json"},
++        )
++        resp.raise_for_status()
++        token = resp.json().get("token", "")
++        if not token:
++            raise ValueError("pacgate-api login did not return a token")
++        logger.info("Authenticated with pacgate-api")
++        return token
++
++    def _headers(self) -> dict[str, str]:
++        headers = {"Content-Type": "application/json"}
++        if self.jwt_token:
++            headers["Authorization"] = f"Bearer {self.jwt_token}"
++        return headers
++
++    def get(self, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
++        return self._client.get(
++            f"{self.base_url}{path}", params=params, headers=self._headers()
++        )
++
++
++# Instantiate lazily so the MCP server can start even if pacgate-api is not yet
++# reachable; auth is refreshed on first tool call if needed.
++_client: PacgateApi | None = None
++
++
++def get_client() -> PacgateApi:
++    global _client
++    if _client is None:
++        _client = PacgateApi()
++    return _client
++
++
++def _handle_error(resp: httpx.Response) -> None:
++    if resp.status_code >= 400:
++        raise RuntimeError(
++            f"pacgate-api error {resp.status_code}: {resp.text}"
++        )
++
++
++@mcp.tool()
++def pacgate_kb_search(
++    query: str,
++    matter_id: str,
++    top_k: int = 5,
++    jurisdiction: str | None = None,
++    source_level: str | None = None,
++    max_data_level: str = "T3",
++) -> str:
++    """Search pacgate's internal per-matter knowledge base (RAG).
++
++    Retrieves chunks of law-firm documents relevant to a matter using hybrid
++    semantic + keyword search, filtered by the T1-T4 data classification level.
++
++    Args:
++        query: The search keywords / natural-language question.
++        matter_id: The UUID of the matter to search within.
++        top_k: Maximum number of chunks to return (default 5).
++        jurisdiction: Optional filter, e.g. "ChinaMainland" or "UnitedStates".
++        source_level: Optional source-level filter (e.g. "AuthorityVerified").
++        max_data_level: Max data classification T1-T4 (default T3; excludes T4).
++    """
++    client = get_client()
++    params: dict[str, Any] = {
++        "q": query,
++        "matter_id": matter_id,
++        "top_k": top_k,
++    }
++    if jurisdiction:
++        params["jurisdiction"] = jurisdiction
++    if source_level:
++        params["source_level"] = source_level
++    if max_data_level:
++        params["max_data_level"] = max_data_level
++
++    resp = client.get("/api/kb/search", params=params)
++    _handle_error(resp)
++    results = resp.json()
++    return json.dumps(results, ensure_ascii=False, indent=2)
++
++
++@mcp.tool()
++def pacgate_connector_search(
++    query: str,
++    jurisdiction: str | None = None,
++    doc_type: str | None = None,
++    limit: int = 10,
++    connector: str | None = None,
++    data_level: str | None = None,
++) -> str:
++    """Search external legal databases (元典, 北大法宝, 企查查, CourtListener, SEC EDGAR, ...).
++
++    Fans out across all available legal data source connectors and returns
++    matching laws, cases, and filings.
++
++    Args:
++        query: The search keywords (e.g. a legal term or company name).
++        jurisdiction: Optional filter, e.g. "ChinaMainland" or "UnitedStates".
++        doc_type: Optional document type filter (law, case, regulation, ...).
++        limit: Maximum results per connector (default 10).
++        connector: Optional: restrict to a single connector by name.
++        data_level: Optional data classification tag T1-T4 (audit only).
++    """
++    client = get_client()
++    params: dict[str, Any] = {"q": query, "limit": limit}
++    if jurisdiction:
++        params["jurisdiction"] = jurisdiction
++    if doc_type:
++        params["doc_type"] = doc_type
++    if connector:
++        params["connector"] = connector
++    if data_level:
++        params["data_level"] = data_level
++
++    resp = client.get("/api/search", params=params)
++    _handle_error(resp)
++    results = resp.json()
++    return json.dumps(results, ensure_ascii=False, indent=2)
++
++
++@mcp.tool()
++def pacgate_list_connectors() -> str:
++    """List the legal data source connectors available to pacgate.
++
++    Returns each connector's name, display name, and availability so you know
++    which external databases you can search.
++    """
++    client = get_client()
++    resp = client.get("/api/search/connectors")
++    _handle_error(resp)
++    results = resp.json()
++    return json.dumps(results, ensure_ascii=False, indent=2)
++
++
++def main() -> None:
++    port = int(os.environ.get("PACGATE_MCP_PORT", "8000"))
++    logger.info("Starting pacgate MCP server on :%s", port)
++    # Tools are registered on the module-level `mcp` via @mcp.tool().
++    mcp.run(transport="streamable-http")
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.55.0.windows.4
+

@@ -503,7 +503,7 @@ docker push ghcr.io/jzkk720/pacgate-api:0.1.1</code></pre>
       <figcaption>图 C - 客户 AIPC 本地运行拓扑（入口、研究、协作、模型）</figcaption>
     </figure>
     <ol>
-      <li>律师打开 <code>http://localhost:8081</code> → nginx → pacgate-api（着陆页）</li>
+      <li>律师打开 <code>http://localhost:8089</code> → nginx → pacgate-api（着陆页）</li>
       <li>律师进入 <code>/research/</code> → nginx → deer-flow（研究工作空间）</li>
       <li>deer-flow 调用 pacgate-api 获取事项记忆 + 文档存储</li>
       <li>deer-flow 调用 Ollama 进行模型推理</li>

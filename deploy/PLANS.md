@@ -14,7 +14,7 @@ The core design principle: **Cubecloud owns the code (images); the client owns t
 ```mermaid
 graph TB
     subgraph "Client AI PC (Docker Compose)"
-        NGINX["nginx :8081<br/>reverse proxy"]
+        NGINX["nginx :8089<br/>reverse proxy"]
 
         subgraph "Metadata Spine (Cubecloud GHCR)"
             API["pacgate-api<br/>Rust / Axum :8080"]

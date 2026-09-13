@@ -29,7 +29,7 @@ Both workspaces see the same matters and the same documents. Think of them as tw
 ## 2. Your first time
 
 1. Open Chrome or Edge.
-2. Go to the address your IT administrator gave you (it looks like `http://192.168.x.x:8081`).
+2. Go to the address your IT administrator gave you (it looks like `http://192.168.x.x:8089`).
 3. Sign in with the email and password your administrator set up for you.
 4. Pick a workspace. You'll be asked to choose or create a **matter** — see next section.
 

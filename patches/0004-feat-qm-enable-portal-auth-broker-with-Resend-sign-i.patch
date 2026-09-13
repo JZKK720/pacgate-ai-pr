@@ -1,0 +1,51 @@
+From 3ac721ce728d6d4a0640d7c1f8fab45959241fa6 Mon Sep 17 00:00:00 2001
+From: Developer <developer@example.com>
+Date: Wed, 2 Sep 2026 08:22:49 +0800
+Subject: [PATCH 4/4] feat(qm): enable portal+auth broker with Resend sign-in
+ transport
+
+Turn on the qm portal and auth services and switch the sign-in-link broker
+from SMTP to Resend (AUTH_EMAIL_TRANSPORT=resend). Resend replaces the
+fragile Outlook SMTP app-password path, which is affected by Microsoft's
+retirement of Basic Auth. Blocks only on a RESEND_API_KEY secret to be
+entered in the operator .env.
+---
+ deploy/qm-pacgate/qm.config.jsonc | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/deploy/qm-pacgate/qm.config.jsonc b/deploy/qm-pacgate/qm.config.jsonc
+index c35adba..9c43446 100644
+--- a/deploy/qm-pacgate/qm.config.jsonc
++++ b/deploy/qm-pacgate/qm.config.jsonc
+@@ -30,7 +30,7 @@
+   // "web-ui" (a browser chat UI), "admin" (the operator dashboard), "portal"
+   // (the public sign-in front door), and "auth" (the built-in sign-in broker that
+   // emails one-time links; drop it to sign in through an external OIDC provider).
+-  "services": ["core", "web-ui"],
++  "services": ["core", "web-ui", "portal", "auth"],
+ 
+   // Extra plugins to run alongside the services. A prebuilt image runs with
+   // { "name": "linear", "image": "ghcr.io/you/qm-linear:1.0" }. A plugin with a
+@@ -43,14 +43,17 @@
+   // Non-secret env overrides, per service. The pi harness connects to
+   // Ollama for local model inference. MODEL_NAME selects which Ollama model
+   // to use. Model credentials (MODEL_API_KEY) go in .env, not here.
+-  "env": { "core": { "HARNESS": "pi", "SANDBOX_BACKEND": "local", "MODEL_BASE_URL": "http://host.docker.internal:11434/v1", "MODEL_NAME": "deepseek-v4-flash:0731-cloud" } },
++  // portal+auth use the Resend transport (API key, not SMTP basic auth) to
++  // deliver sign-in magic links; set RESEND_API_KEY in the .env secret store.
++  "env": { "core": { "HARNESS": "pi", "SANDBOX_BACKEND": "local", "MODEL_BASE_URL": "http://host.docker.internal:11434/v1", "MODEL_NAME": "ornith-1.5:9b" },
++    "auth": { "AUTH_EMAIL_TRANSPORT": "resend", "AUTH_ALLOWED_EMAIL_DOMAIN": "outlook.com", "AUTH_BRAND_NAME": "PacGate" } },
+ 
+   // The Fly app agents execute in. The core boots the immutable sandbox image
+   // recorded by `qm sandbox publish`.
+   "sandbox": { "image": "localhost:5000/pacgate-sandboxes@sha256:207a779d0d40ba0bc46c18a4139b936a5ce00dd825f0d8f389e547d1a9991ffc", "baseImage": "ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873",
+     "app": "pacgate-sandboxes",
+     "env": {
+-      "PACGATE_API_URL": "http://host.docker.internal:8080",
++      "PACGATE_API_URL": "http://host.docker.internal:8089",
+       "OPENVIKING_URL": "http://host.docker.internal:1933"
+     },
+     "secretEnv": ["PACGATE_API_EMAIL", "PACGATE_API_PASSWORD", "OPENVIKING_API_KEY", "OPENVIKING_ACCOUNT", "OPENVIKING_USER"]
+-- 
+2.55.0.windows.4
+

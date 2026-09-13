@@ -1,0 +1,218 @@
+# Pacgate QM stack — single declarative definition for the local docker target.
+#
+# This mirrors the exact topology QM's own `qm up` produces so the runtime is
+# clean and organized in ONE stack file (like compose.bundle.yaml for the main
+# pacgate stack). It is for managing/reference; QM's `qm up`/`qm down` remain
+# the canonical launcher for this deployment. If you bring it up with
+# `docker compose -f compose.qm.yaml up -d`, do NOT also run `qm up` against
+# the same directory — the two would fight over the same named volumes/network.
+#
+# Secrets (CORE_SIGNING_SECRET, CAPABILITY_SECRET, etc.) are sourced from .env
+# via ${VAR}; never hardcode them here. Values mirror the running containers.
+#
+# Network: qm-pacgate (bridge, 172.24.0.0/16). Volumes: qm-pacgate-coredata,
+# qm-pacgate-pgdata.
+name: qm-pacgate
+
+services:
+  core:
+    image: ghcr.io/yc-software/qm/core@sha256:bee03e7f22719dfe76ea2c83bb65db2bdefd55b714eae4014007033800bdb5ab
+    # Pin the name so `docker exec qm-pacgate-core`, tasks/patch-pi-models.sh,
+    # the handbooks, and Docker Desktop keep referencing the same container after
+    # migration. Without this, compose auto-names it qm-pacgate-core-1.
+    container_name: qm-pacgate-core
+    user: node
+    depends_on:
+      - pg
+    environment:
+      # secrets (from .env)
+      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
+      CAPABILITY_SECRET: ${CAPABILITY_SECRET}
+      CONNECTOR_SECRET_KEY: ${CONNECTOR_SECRET_KEY}
+      SKILL_SIGNING_SECRET: ${SKILL_SIGNING_SECRET}
+      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
+      # model / harness
+      HARNESS: pi
+      MODEL_PROVIDER: openai
+      MODEL_BASE_URL: http://host.docker.internal:11434/v1
+      PI_MODEL: ${PI_MODEL:-glm-5.3-flash:cloud}
+      PI_DETECT_MODEL: ${PI_DETECT_MODEL:-glm-5.3-flash:cloud}
+      PI_TITLE_MODEL: ${PI_TITLE_MODEL:-glm-5.3-flash:cloud}
+      PI_JUDGE_MODEL: ${PI_JUDGE_MODEL:-glm-5.3-flash:cloud}
+      OPENAI_API_KEY: ${MODEL_API_KEY:-ollama}
+      # admin grants (email:role) -> seeds core's org_admin grant for the sign-in email
+      ADMIN_GRANTS: ${ADMIN_GRANTS}
+      # app / data
+      ORG_ID: pacgate
+      NODE_ENV: development
+      PORT: 8080
+      DATA_DIR: /data
+      RUN_STORE: postgres
+      SESSION_STORE: postgres
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@pg:5432/qm
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8180}
+      PUBLIC_WEB_URL: http://localhost:8181
+      WEB_UI_PUBLIC_URL: http://localhost:8181
+      # sandbox bridge / connectors
+      FLY_BASE_IMAGE: ${FLY_BASE_IMAGE:-localhost:5000/pacgate-sandboxes@sha256:207a779d0d40ba0bc46c18a4139b936a5ce00dd825f0d8f389e547d1a9991ffc}
+      FLY_SANDBOX_APP_NAME: pacgate-sandboxes
+      SANDBOX_BACKEND: local
+      DEPLOYMENT_LAYER: /layer
+      # nginx routes the metadata API under /pacgate/ (root / goes to the
+      # deer-flow frontend) — mirror the 7528e49 qm.config.jsonc fix so sandbox
+      # pacgate tools reach pacgate-api, not the frontend.
+      FLY_RESIDENT_ENV_PACGATE_API_URL: http://host.docker.internal:8089/pacgate
+      FLY_RESIDENT_ENV_PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
+      FLY_RESIDENT_ENV_PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
+      FLY_RESIDENT_ENV_OPENVIKING_URL: http://host.docker.internal:1933
+      # /mcp authenticates with the ROOT key; the app key returns 401 there.
+      # Provide both (7528e49 parity) so ov-* tools work in sandboxes.
+      FLY_RESIDENT_ENV_OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+      FLY_RESIDENT_ENV_OPENVIKING_API_KEY: ${OPENVIKING_API_KEY}
+      FLY_RESIDENT_ENV_OPENVIKING_ACCOUNT: ${OPENVIKING_ACCOUNT}
+      FLY_RESIDENT_ENV_OPENVIKING_USER: ${OPENVIKING_USER}
+      FLY_RESIDENT_ENV_FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY}
+    volumes:
+      - ./sandbox/skills:/layer/skills:ro
+      - ./sandbox/tools:/layer/tools:ro
+      # Pacgate: override the pi model registry so the pi harness points the
+      # configured Ollama model (glm-5.3-flash:cloud) at MODEL_BASE_URL instead
+      # of the hardcoded api.openai.com catalog entry. Durable across recreation.
+      - ./patch/pi-models.ts:/app/src/model/pi-models.ts:ro
+      - qm-pacgate-coredata:/data
+    ports:
+      - "${QM_CORE_PORT:-8180}:8080"
+    restart: unless-stopped
+
+  web-ui:
+    image: ghcr.io/yc-software/qm/web-ui@sha256:f037834fd726bcff220245665ef46accb10b476331006a85c59defbde1635e52
+    container_name: qm-pacgate-web-ui
+    depends_on:
+      - core
+    environment:
+      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
+      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
+      CORE_API_URL: http://core:8080
+      CORE_ORG_ID: pacgate
+      WEB_UI_PUBLIC_URL: http://localhost:8181
+      PORT: 8080
+      NODE_ENV: development
+    ports:
+      - "${QM_WEBUI_PORT:-8182}:8080"
+    restart: unless-stopped
+
+  portal:
+    image: ghcr.io/yc-software/qm/portal@sha256:e245dfc2c12a47f18f0bb367622538b30e9b89e890a145dcfd5abefe342d0e98
+    container_name: qm-pacgate-portal
+    depends_on:
+      - core
+      - auth
+      - web-ui
+      - admin
+    environment:
+      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
+      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
+      PORTAL_SESSION_SECRET: ${PORTAL_SESSION_SECRET}
+      AUTH_BROKER_UPSTREAM: http://auth:8080
+      AUTH_BROKER_PREFIX: /idp
+      OIDC_CLIENT_ID: qm-portal
+      OIDC_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
+      OIDC_ISSUER: http://localhost:8181/idp
+      OIDC_AUTH_ENDPOINT: http://localhost:8181/idp/authorize
+      OIDC_TOKEN_ENDPOINT: http://auth:8080/token
+      OIDC_USERINFO_ENDPOINT: http://auth:8080/userinfo
+      OIDC_JWKS_URI: http://auth:8080/.well-known/jwks.json
+      OIDC_PRINCIPAL_CLAIM: email
+      OIDC_SCOPES: openid email
+      # plain email list (NO :role suffix) - the portal does an exact match against the OIDC email
+      OIDC_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS}
+      CORE_API_URL: http://core:8080
+      CORE_ORG_ID: pacgate
+      ADMIN_UPSTREAM: http://admin:8080
+      WEB_UI_UPSTREAM: http://web-ui:8080
+      PORTAL_PUBLIC_URL: http://localhost:8181
+      PORT: 8080
+      NODE_ENV: development
+    ports:
+      - "${QM_PORTAL_PORT:-8181}:8080"
+    restart: unless-stopped
+
+  auth:
+    image: ghcr.io/yc-software/qm/auth@sha256:27f2e1467adca3d5dc6fb75f2d624a514d113a437893cc75d1eb54ebf365639b
+    container_name: qm-pacgate-auth
+    depends_on:
+      - core
+      - mailpit
+    environment:
+      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
+      AUTH_SIGNING_JWK: ${AUTH_SIGNING_JWK}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
+      AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM}
+      # plain email list (NO :role suffix) - the auth broker does an exact match before sending the link
+      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS}
+      AUTH_EMAIL_TRANSPORT: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_TLS: none
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      AUTH_ISSUER: http://localhost:8181/idp
+      AUTH_CLIENT_ID: qm-portal
+      AUTH_REDIRECT_URI: http://localhost:8181/auth/callback
+      AUTH_BRAND_NAME: PacGate
+      CORE_API_URL: http://core:8080
+      CORE_ORG_ID: pacgate
+      PORT: 8080
+      NODE_ENV: development
+    restart: unless-stopped
+
+  admin:
+    image: ghcr.io/yc-software/qm/admin@sha256:ec071338547e17d44337441d3144a068e6f3119fc377b2d9dd5c75d5b210c604
+    container_name: qm-pacgate-admin
+    depends_on:
+      - core
+    environment:
+      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
+      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
+      CORE_API_URL: http://core:8080
+      CORE_ORG_ID: pacgate
+      ADMIN_BASE_PATH: /admin
+      PORT: 8080
+      NODE_ENV: development
+    ports:
+      - "${QM_ADMIN_PORT:-8183}:8080"
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1.24
+    container_name: qm-mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "${QM_MAILPIT_PORT:-8025}:8025"
+    restart: unless-stopped
+
+  pg:
+    image: postgres:16
+    container_name: qm-pacgate-pg
+    environment:
+      POSTGRES_DB: qm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - qm-pacgate-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  qm-pacgate-coredata:
+    name: qm-pacgate-coredata
+    external: true
+  qm-pacgate-pgdata:
+    name: qm-pacgate-pgdata
+    external: true
+
+networks:
+  default:
+    name: qm-pacgate
+    external: true

@@ -26,9 +26,9 @@ You switch between them by clicking a different link in your browser. Both run o
 ### How to access
 
 1. Open your web browser (Chrome, Edge, or Firefox)
-2. Go to: **http://<your-ai-pc-ip>:8081**
+2. Go to: **http://<your-ai-pc-ip>:8089**
    - Ask your IT person for the AI PC's IP address
-   - If you're on the AI PC itself, use **http://localhost:8081**
+   - If you're on the AI PC itself, use **http://localhost:8089**
 3. You'll see the Pacgate-ai landing page with two options:
    - **"Research a matter"** → opens the research workspace
    - **"Collaborate on a matter"** → opens the collaboration workspace

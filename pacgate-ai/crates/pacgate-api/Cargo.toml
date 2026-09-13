@@ -7,6 +7,10 @@ edition.workspace = true
 name = "pacgate-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "pacgate-seed"
+path = "src/bin/seed.rs"
+
 [dependencies]
 pacgate-core = { path = "../pacgate-core" }
 pacgate-agent = { path = "../pacgate-agent" }

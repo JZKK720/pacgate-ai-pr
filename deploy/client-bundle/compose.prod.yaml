@@ -6,7 +6,7 @@
 
 services:
   pacgate-db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: pacgate-db
     environment:
       POSTGRES_DB: pacgate
@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.2
+    image: ghcr.io/pacgate-ai/pacgate-api:0.1.9
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -27,24 +27,109 @@ services:
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       RUST_LOG: info
+    # Load ALL secrets from .env so pacgate-search's default_router() can read
+    # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
+    # FYOPEN_API_KEY, COURT_LISTENER_API_KEY, VAQUILL_API_KEY, ANSVAR_API_KEY,
+    # OPENCORPORATES_API_KEY). Without these, every external legal connector
+    # reports available=false and search returns only free sources.
+    env_file:
+      - .env
     volumes:
       - ./data:/data
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10
     container_name: deer-flow
-    depends_on: [pacgate-api, openviking]
+    depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
       PACGATE_API_URL: http://pacgate-api:8080
       PACGATE_TENANT_ID: ${PACGATE_TENANT_ID:-default-firm}
+      PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
+      PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
+      PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
+      PACGATE_MATTER_ID: ${PACGATE_MATTER_ID}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       DEER_FLOW_EXTENSIONS_CONFIG_PATH: /app/deer-flow-extensions-config.json
+      # Allow the browser (via the frontend proxy) to call auth routes. The
+      # gateway rejects cross-site auth POSTs unless the Origin is same-origin or
+      # explicitly allowlisted; the frontend proxies /api/* internally so the
+      # browser Origin (:8089/:8090) must be allowlisted here.
+      # IMPORTANT: clients access the AIPC via IP/hostname (not localhost), which
+      # is NOT in the default list. Set GATEWAY_CORS_ORIGINS in .env to the
+      # client's actual access origin (e.g. http://192.168.1.10:8089) or login
+      # fails with "Cross-site auth request denied" (403). Comma-separated.
+      GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:8089,http://localhost:8090}
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
       - ./workflows:/app/workflows:ro
       - ./deer-flow-extensions-config.json:/app/deer-flow-extensions-config.json:ro
+      # Pacgate: add a unified generated-outputs listing endpoint
+      # (GET /api/threads/{id}/outputs). Mounted so it survives container
+      # recreation without rebuilding the image.
+      - ./patches/deer-flow-artifacts.py:/app/backend/app/gateway/routers/artifacts.py:ro
+      # Pacgate: default multitask_strategy to "interrupt" so a new message
+      # during a long agent run cancels the stale run instead of returning
+      # 409 Conflict to the user.
+      - ./patches/deer-flow-thread-runs.py:/app/backend/app/gateway/routers/thread_runs.py:ro
+      # Pacgate: populate extension/modified/original_filename in the upload
+      # response and enrich the upload listing with markdown metadata + original
+      # filename, so clients can read/analyze converted docs reliably.
+      - ./patches/deer-flow-uploads.py:/app/backend/app/gateway/routers/uploads.py:ro
+      # Pacgate: require `description` on write_file/str_replace in the agent
+      # system prompt, so the model never drops a required arg and loops on
+      # "description: Field required".
+      - ./patches/deer-flow-prompt.py:/app/backend/packages/harness/deerflow/agents/lead_agent/prompt.py:ro
+      # Pacgate: auto-route local vs cloud model by bound tool count (see
+      # compose.bundle.yaml for the rationale).
+      - ./patches/deer-flow-agent.py:/app/backend/packages/harness/deerflow/agents/lead_agent/agent.py:ro
+      # Pacgate: inject conversation-history token estimate for auto-routing
+      # (see compose.bundle.yaml for the rationale).
+      - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
+      # Pacgate: run sync tool invocations on a single shared background event
+      # loop. The stock wrapper calls asyncio.run() per call (new loop each
+      # time), so parallel tool calls to the same stdio MCP server (e.g. two
+      # Firecrawl tools) race across loops and cancel the subprocess spawn,
+      # hanging the run. Sharing one loop eliminates the cross-loop race.
+      - ./patches/deer-flow-sync.py:/app/backend/packages/harness/deerflow/tools/sync.py:ro
+      # Pacgate: normalize hyphens to underscores in the MCP server-name tool
+      # prefix (see compose.bundle.yaml for the rationale).
+      - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
+      # Persist deer-flow's own SQLite state (threads/runs/admin account) across
+      # container recreation. Without this, every `docker compose up -d` resets
+      # the deer-flow admin account and chat history (first-boot each time).
+      - ./data/deer-flow:/app/backend/.deer-flow
+    restart: unless-stopped
+
+  # DeerFlow Next.js web UI (the research workspace frontend).
+  # Built by deploy/deer-flow-frontend-pacgate/Dockerfile with the gateway URL
+  # (http://deer-flow:8001) baked in at BUILD time, so the /api/* rewrites are
+  # correct without a runtime patch. Published to GHCR by the build-ghcr.yml
+  # workflow; pushed on every release tag so both AIPCs stay in sync.
+  deer-flow-frontend:
+    image: ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.11
+    container_name: deer-flow-frontend
+    depends_on: [deer-flow]
+    ports:
+      - "8090:3000"
+    environment:
+      DEER_FLOW_INTERNAL_GATEWAY_BASE_URL: http://deer-flow:8001
+      DEER_FLOW_TRUSTED_ORIGINS: http://localhost:8089,http://localhost:8090,http://localhost:3000
+      BETTER_AUTH_SECRET: ${PACGATE_JWT_SECRET}
+    restart: unless-stopped
+
+  pacgate-mcp:
+    image: ghcr.io/pacgate-ai/pacgate-mcp:0.1.9
+    container_name: pacgate-mcp
+    depends_on: [pacgate-api]
+    environment:
+      PACGATE_API_URL: http://pacgate-api:8080
+      PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
+      PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
+      PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
+      PACGATE_MCP_PORT: "8000"
+      PACGATE_MCP_TIMEOUT: "60"
     restart: unless-stopped
 
   openviking:
@@ -63,7 +148,7 @@ services:
     container_name: pacgate-nginx
     depends_on: [pacgate-api, deer-flow]
     ports:
-      - "8081:80"
+      - "8089:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped

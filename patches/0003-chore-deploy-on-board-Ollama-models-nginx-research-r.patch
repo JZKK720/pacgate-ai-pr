@@ -1,0 +1,120 @@
+From e4bc6d7109c5bf754ccf92778a03180bba5b917a Mon Sep 17 00:00:00 2001
+From: Developer <developer@example.com>
+Date: Wed, 2 Sep 2026 07:59:30 +0800
+Subject: [PATCH 3/4] chore(deploy): on-board Ollama models + nginx research
+ redirect
+
+Switch deer-flow's model list to on-board ollama models (ollama.com is
+unreachable on the AIPC). Point nginx /research/ to the standalone deer-flow
+frontend and raise the /api proxy read timeout for multi-step workflows.
+---
+ deploy/client-bundle/deer-flow-config.yaml | 48 ++++++++--------------
+ deploy/client-bundle/nginx/default.conf    | 12 +++---
+ 2 files changed, 23 insertions(+), 37 deletions(-)
+
+diff --git a/deploy/client-bundle/deer-flow-config.yaml b/deploy/client-bundle/deer-flow-config.yaml
+index 11d32a9..c41c354 100644
+--- a/deploy/client-bundle/deer-flow-config.yaml
++++ b/deploy/client-bundle/deer-flow-config.yaml
+@@ -1,54 +1,42 @@
+-# Pacgate-ai DeerFlow configuration
+-# To switch the active model, reorder the models list so your preferred
+-# model is first. All models use Ollama (local or cloud-routed).
+-# To add a new model, copy an existing entry and change the name/model fields.
++# Pacgate-ai DeerFlow configuration — on-board local models (ollama.com blocked)
++# Default (first) model = ornith-1.5:9b (non-thinking, fast, on-board)
+ 
+ models:
+-  - name: deepseek-v4-flash-0731-cloud
+-    display_name: DeepSeek V4 Flash 0731 (Ollama)
+-    description: Fast legal execution model. Cloud-tagged via Ollama.
++  - name: ornith-1.5-9b-local
++    display_name: Ornith 1.5 9B (Local)
++    description: Fast non-reasoning local model. Default for research.
+     use: langchain_openai:ChatOpenAI
+-    model: deepseek-v4-flash:0731-cloud
++    model: ornith-1.5:9b
+     api_key: ollama
+     base_url: http://host.docker.internal:11434/v1
+     max_tokens: 8192
+     temperature: 0.1
+ 
+-  - name: deepseek-v4-pro-0813-cloud
+-    display_name: DeepSeek V4 Pro 0813 (Ollama)
+-    description: Heavier model for complex research tasks. Cloud-tagged via Ollama.
++  - name: ornith-1.5-35b-local
++    display_name: Ornith 1.5 35B (Local)
++    description: Heavier local model for complex research.
+     use: langchain_openai:ChatOpenAI
+-    model: deepseek-v4-pro:0813-cloud
++    model: ornith-1.5:35b
+     api_key: ollama
+     base_url: http://host.docker.internal:11434/v1
+     max_tokens: 8192
+     temperature: 0.1
+ 
+-  - name: qwen3.8-27b-local
+-    display_name: Qwen 3.8 27B (Local GPU)
+-    description: Local Qwen model, GPU-accelerated. No cloud dependency.
++  - name: gemma4-12b-local
++    display_name: Gemma 4 12B (Local)
++    description: Local Gemma model.
+     use: langchain_openai:ChatOpenAI
+-    model: qwen3.8:27b-mtp-q4_K_M
++    model: gemma4:12b-it-q8_0
+     api_key: ollama
+     base_url: http://host.docker.internal:11434/v1
+     max_tokens: 8192
+     temperature: 0.1
+ 
+-  - name: nemotron-3.5-lightning-30b-local
+-    display_name: Nemotron 3.5 Lightning 30B (Local GPU)
+-    description: Local Nemotron model, GPU-accelerated. Good for legal reasoning.
++  - name: qwen3.5-9b-local
++    display_name: Qwen 3.5 9B (Local)
++    description: Local Qwen model.
+     use: langchain_openai:ChatOpenAI
+-    model: nemotron-3.5-lightning:30b-a3b
+-    api_key: ollama
+-    base_url: http://host.docker.internal:11434/v1
+-    max_tokens: 8192
+-    temperature: 0.1
+-
+-  - name: gemma4-26b-local
+-    display_name: Gemma 4 26B (Local GPU)
+-    description: Local Gemma model, lighter footprint. Good for drafting.
+-    use: langchain_openai:ChatOpenAI
+-    model: gemma4:26b-a4b-it-qat
++    model: qwen3.5:9b-q8_0
+     api_key: ollama
+     base_url: http://host.docker.internal:11434/v1
+     max_tokens: 8192
+diff --git a/deploy/client-bundle/nginx/default.conf b/deploy/client-bundle/nginx/default.conf
+index a5b4954..1f48934 100644
+--- a/deploy/client-bundle/nginx/default.conf
++++ b/deploy/client-bundle/nginx/default.conf
+@@ -22,15 +22,13 @@ server {
+         proxy_pass http://pacgate-api:8080/api/;
+         proxy_set_header Host $host;
+         proxy_set_header X-Forwarded-Proto $scheme;
++        # Workflow execution can take up to 2 minutes (multi-step LLM)
++        proxy_read_timeout 300s;
++        proxy_send_timeout 300s;
+     }
+ 
+-    # Research surface → deer-flow
++    # Research surface → deer-flow web UI (redirect to the standalone frontend)
+     location /research/ {
+-        proxy_pass http://deer-flow:8001/;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-        # SSE support for streaming research responses
+-        proxy_buffering off;
+-        proxy_read_timeout 300s;
++        return 302 http://localhost:8090/;
+     }
+ }
+\ No newline at end of file
+-- 
+2.55.0.windows.4
+

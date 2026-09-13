@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -69,7 +70,16 @@ def load_config(environ: dict[str, str] | None = None) -> RuntimeConfig:
         email=email,
         password=password,
         openviking_url=(env.get("OPENVIKING_URL", "").strip() or None),
-        openviking_api_key=(env.get("OPENVIKING_API_KEY", "").strip() or None),
+        # OpenViking's /mcp endpoint authenticates against the ROOT key, not the
+        # application key. Prefer OPENVIKING_ROOT_API_KEY (the key the
+        # deer-flow-extensions-config.json sends as X-API-Key); fall back to the
+        # legacy OPENVIKING_API_KEY for backward compatibility with older sandbox
+        # envs. Using the app key against /mcp returns 401 "Invalid API Key".
+        openviking_api_key=(
+            env.get("OPENVIKING_ROOT_API_KEY", "").strip()
+            or env.get("OPENVIKING_API_KEY", "").strip()
+            or None
+        ),
         openviking_account=(env.get("OPENVIKING_ACCOUNT", "").strip() or None),
         openviking_user=(env.get("OPENVIKING_USER", "").strip() or None),
     )
@@ -347,6 +357,135 @@ def execute_workflow_for_scope(
     return requestor(config, "POST", f"/api/workflows/{workflow_id}/execute", token, payload)
 
 
+# ---------------------------------------------------------------------------
+# Document commands 鈥?let QM agents work with matter documents through the
+# same authenticated pacgate-api path the deer-flow MCP tools use.
+# ---------------------------------------------------------------------------
+
+
+def list_documents(config: RuntimeConfig, matter_id: str, *, requestor: JsonRequestor = request_json) -> Any:
+    token = resolve_token(config, requestor)
+    return requestor(config, "GET", f"/api/matters/{matter_id}/documents", token, None)
+
+
+def download_document(config: RuntimeConfig, document_id: str, *, version: int | None = None) -> dict[str, Any]:
+    """Download a document's raw bytes (binary-safe, unlike request_json)."""
+    token = resolve_token(config)
+    path = f"/api/documents/{document_id}/download"
+    if version is not None:
+        path += f"?version={version}"
+    url = f"{config.api_url}{path}"
+    req = urllib_request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib_request.urlopen(req) as response:
+            return {
+                "content_type": response.headers.get("Content-Type", ""),
+                "bytes": response.read(),
+            }
+    except urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise PacgateToolError(f"Pacgate API {exc.code} {path}: {body}") from exc
+    except urllib_error.URLError as exc:
+        raise PacgateToolError(f"Unable to reach Pacgate API at {url}: {exc.reason}") from exc
+
+
+def upload_document_bytes(
+    config: RuntimeConfig,
+    matter_id: str,
+    filename: str,
+    data: bytes,
+    *,
+    requestor: JsonRequestor = request_json,
+) -> Any:
+    """Upload raw bytes as a multipart document (binary-safe)."""
+    token = resolve_token(config, requestor)
+    boundary = "----pacgateqmformboundary7d1a2c9f"
+    parts: list[bytes] = []
+    part_disposition = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="matter_id"\r\n\r\n'
+        f"{matter_id}\r\n"
+    )
+    parts.append(part_disposition.encode("utf-8"))
+    file_header = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: application/octet-stream\r\n\r\n"
+    )
+    parts.append(file_header.encode("utf-8"))
+    parts.append(data)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+
+    url = f"{config.api_url}/api/documents"
+    req = urllib_request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req) as response:
+            raw = response.read().decode("utf-8")
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise PacgateToolError(f"Pacgate API {exc.code} /api/documents: {detail}") from exc
+    except urllib_error.URLError as exc:
+        raise PacgateToolError(f"Unable to reach Pacgate API at {url}: {exc.reason}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PacgateToolError("Pacgate API returned invalid JSON for /api/documents") from exc
+
+
+def convert_document(
+    config: RuntimeConfig,
+    document_id: str,
+    *,
+    matter_id: str | None = None,
+    version: int | None = None,
+) -> dict[str, Any]:
+    """Download a document, convert it to Markdown with markitdown, and
+    optionally upload the .md back to the matter.
+
+    Requires the `markitdown` CLI in the sandbox image (sandbox/Dockerfile
+    installs it into /opt/agent-venv, which is on PATH).
+    """
+    downloaded = download_document(config, document_id, version=version)
+    data = downloaded["bytes"]
+    content_type = downloaded["content_type"]
+
+    import subprocess
+
+    proc = subprocess.run(
+        ["markitdown"],
+        input=data,
+        capture_output=True,
+        timeout=300,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace")[:500]
+        raise PacgateToolError(f"markitdown conversion failed: {stderr or 'unknown error'}")
+    markdown = proc.stdout.decode("utf-8", errors="replace")
+
+    result: dict[str, Any] = {
+        "document_id": document_id,
+        "content_type": content_type,
+        "size_bytes": len(data),
+        "markdown_chars": len(markdown),
+        "markdown": markdown,
+    }
+
+    if matter_id:
+        base_name = document_id
+        uploaded = upload_document_bytes(config, matter_id, f"{base_name}.md", markdown.encode("utf-8"))
+        result["uploaded"] = uploaded
+    return result
+
+
 def parse_memory_json(spec: str) -> dict[str, Any]:
     if spec == "-":
         text = sys.stdin.read()
@@ -454,6 +593,31 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--persona-id")
     execute.add_argument("--description")
 
+    doc_list = subparsers.add_parser("doc-list")
+    doc_list.add_argument("--matter-id")
+    add_scope_args(doc_list)
+    doc_list.add_argument("--persona-id")
+    doc_list.add_argument("--description")
+
+    doc_read = subparsers.add_parser("doc-read")
+    doc_read.add_argument("--document-id", required=True)
+    doc_read.add_argument("--version", type=int)
+    doc_read.add_argument("--out", help="write raw bytes to this file instead of stdout")
+
+    doc_upload = subparsers.add_parser("doc-upload")
+    doc_upload.add_argument("--matter-id")
+    add_scope_args(doc_upload)
+    doc_upload.add_argument("--persona-id")
+    doc_upload.add_argument("--description")
+    doc_upload.add_argument("--file", required=True, help="local file to upload")
+    doc_upload.add_argument("--filename", help="remote filename (defaults to basename of --file)")
+
+    doc_convert = subparsers.add_parser("doc-convert")
+    doc_convert.add_argument("--document-id", required=True)
+    doc_convert.add_argument("--version", type=int)
+    doc_convert.add_argument("--matter-id", help="upload the converted .md back to this matter")
+    doc_convert.add_argument("--out", help="write the Markdown to this file instead of stdout")
+
     ov_remember_cmd = subparsers.add_parser("ov-remember")
     ov_remember_cmd.add_argument("--content", required=True)
 
@@ -497,6 +661,38 @@ def dispatch(args: argparse.Namespace, config: RuntimeConfig) -> Any:
             persona_id=args.persona_id,
             description=args.description,
         )
+    if args.command == "doc-list":
+        return list_documents(config, matter_id_from_args(config, args))
+    if args.command == "doc-read":
+        downloaded = download_document(config, args.document_id, version=args.version)
+        if args.out:
+            Path(args.out).write_bytes(downloaded["bytes"])
+            return {"document_id": args.document_id, "written_to": args.out, "size_bytes": len(downloaded["bytes"])}
+        return {
+            "document_id": args.document_id,
+            "content_type": downloaded["content_type"],
+            "size_bytes": len(downloaded["bytes"]),
+            "content_base64": base64.b64encode(downloaded["bytes"]).decode("ascii"),
+        }
+    if args.command == "doc-upload":
+        matter_id = matter_id_from_args(config, args)
+        source = Path(args.file)
+        if not source.is_file():
+            raise PacgateToolError(f"--file does not exist or is not a file: {source}")
+        filename = args.filename or source.name
+        return upload_document_bytes(config, matter_id, filename, source.read_bytes())
+    if args.command == "doc-convert":
+        result = convert_document(
+            config,
+            args.document_id,
+            matter_id=args.matter_id,
+            version=args.version,
+        )
+        if args.out:
+            Path(args.out).write_text(result["markdown"], encoding="utf-8")
+            result["written_to"] = args.out
+            del result["markdown"]
+        return result
     if args.command == "ov-remember":
         return ov_remember(config, args.content)
     if args.command == "ov-search":

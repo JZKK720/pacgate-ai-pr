@@ -9,8 +9,12 @@ Configuration via environment variables:
     PACGATE_JWT_TOKEN   — JWT token for authentication (or set via deer-flow config)
 """
 
-from .storage import PacgateMemoryStorage
+from .storage import PacgateMemoryStorage, PacgateArtifactStore
 from .client import PacgateApiClient
 
-__all__ = ["PacgateMemoryStorage", "PacgateApiClient"]
+__all__ = [
+    "PacgateMemoryStorage",
+    "PacgateArtifactStore",
+    "PacgateApiClient",
+]
 __version__ = "0.1.0"

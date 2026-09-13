@@ -10,7 +10,7 @@ graph TB
     subgraph Client["Client AI PC (Docker Compose)"]
         direction TB
 
-        NGINX["nginx :8081<br/>reverse proxy<br/>single entry point"]
+        NGINX["nginx :8089<br/>reverse proxy<br/>single entry point"]
 
         subgraph Spine["Metadata Spine (Cubecloud GHCR images)"]
             direction LR
@@ -82,10 +82,11 @@ graph LR
         BUILD["docker build<br/>3 wrapper Dockerfiles"]
     end
 
-    subgraph GHCR["GHCR (jzkk720)"]
-        IMG1["pacgate-api:0.1.2"]
-        IMG2["deer-flow-pacgate:0.1.0"]
-        IMG3["qm-pacgate:0.1.0"]
+    subgraph GHCR["GHCR (pacgate-ai)"]
+        IMG1["pacgate-api:0.1.3"]
+        IMG2["deer-flow-pacgate:0.1.3"]
+        IMG3["pacgate-mcp:0.1.3"]
+        IMG4["deer-flow-frontend-pacgate:0.1.0"]
     end
 
     subgraph Bundle["Client bundle (zip)"]

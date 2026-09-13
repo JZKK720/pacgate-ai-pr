@@ -1,0 +1,8 @@
+mcp>=1.27.0,<2.0
+httpx>=0.24
+# Document conversion for pacgate_convert_document (PDF/DOCX/PPTX/XLSX -> Markdown).
+# DOCX/PPTX/XLSX/PDF support are OPTIONAL extras in markitdown — they do NOT
+# come in automatically. Without markitdown[docx] (mammoth), pacgate_convert_document
+# throws FileConversionException on any .docx. Pin the extras explicitly.
+# Valid extras in markitdown 0.1.7: docx, pptx, xlsx (also 'xls'), pdf, all.
+markitdown[docx,pptx,xlsx,pdf]>=0.1.5

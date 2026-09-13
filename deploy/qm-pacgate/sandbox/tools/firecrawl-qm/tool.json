@@ -1,0 +1,8 @@
+{
+  "id": "firecrawl-qm",
+  "label": "Firecrawl web search",
+  "advertise": "firecrawl-qm",
+  "install": {
+    "binary": "firecrawl-qm"
+  }
+}

@@ -1,61 +1,230 @@
-# Pacgate-ai DeerFlow configuration
-# To switch the active model, reorder the models list so your preferred
-# model is first. All models use Ollama (local or cloud-routed).
-# To add a new model, copy an existing entry and change the name/model fields.
+# Pacgate-ai DeerFlow configuration — on-board local models (ollama.com blocked)
+# Default (first) model = gemma4:12b-it-q8_0 (schema-valid structured/tool calls,
+# benchmarked end-to-end). ornith-1.5:9b is listed after it as a fast fallback.
+#
+# IMPORTANT: the deep-research "Generate follow-up questions" step uses structured
+# output (json_schema -> Ollama grammar). Some local models (e.g. ornith-1.5:9b)
+# fail with "Failed to initialize samplers: failed to parse grammar" on that
+# step. gemma4:12b-it-q8_0 handles the grammar reliably, so it must be the default.
 
 models:
+  - name: gemma4-12b-local
+    display_name: Gemma 4 12B (Local)
+    description: Local Gemma model. Default for research (schema-valid structured/tool calls).
+    use: langchain_openai:ChatOpenAI
+    model: gemma4:12b-it-q8_0
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+
+  - name: ornith-1.5-9b-local
+    display_name: Ornith 1.5 9B (Local)
+    description: Fast non-reasoning local model. Fallback for research.
+    use: langchain_openai:ChatOpenAI
+    model: ornith-1.5:9b
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+
+  - name: ornith-1.5-35b-local
+    display_name: Ornith 1.5 35B (Local)
+    description: Heavier local model for complex research.
+    use: langchain_openai:ChatOpenAI
+    model: ornith-1.5:35b
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+
+  - name: qwen3.5-9b-local
+    display_name: Qwen 3.5 9B (Local)
+    description: Local Qwen model.
+    use: langchain_openai:ChatOpenAI
+    model: qwen3.5:9b-q8_0
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+
+  # Nemotron 3.5 Lightning 30B — longest-context local model (1M context window).
+  # Supports tools + thinking. Heavier (32.9B, Q4_K_M) so it is NOT the default;
+  # select it in the chat model picker for long-context research runs.
+  - name: nemotron-3.5-lightning-30b-local
+    display_name: Nemotron 3.5 Lightning 30B (Local)
+    description: Longest-context local model (1M tokens). Supports thinking + tools. Best for deep multi-step research.
+    use: langchain_openai:ChatOpenAI
+    model: nemotron-3.5-lightning:30b-a3b
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 16384
+    temperature: 0.1
+    supports_thinking: true
+    # Long thinking pauses on a 30B reasoning model — raise the stream chunk
+    # timeout so the gateway does not drop the connection mid-thought.
+    stream_chunk_timeout: 300
+
+  # Gemma 4 26B — heavier local model (28GB on host) for complex reasoning
+  # WITHOUT cloud egress. Not the default (slower on the 16GB dGPU); pick it
+  # for long-context legal analysis that must stay fully on-device.
+  - name: gemma4-26b-local
+    display_name: Gemma 4 26B (Local)
+    description: Heavier local Gemma model (28GB). Strong reasoning, stays fully on-device. Not default (slower).
+    use: langchain_openai:ChatOpenAI
+    model: gemma4:26b-a4b-it-q8_0
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+    supports_thinking: true
+    stream_chunk_timeout: 300
+
+  # ── Cloud-routed models (via ollama.com / `ollama signin`) ────────────────
+  # These tags have no weight layers on disk (size "-"); inference routes to
+  # ollama.com. Auth rides the `ollama signin` OAuth session — no API key. Add
+  # them as OPTIONS so users can pick local OR cloud per workload; local stays
+  # default. Requires `ollama signin` on the AIPC.
   - name: deepseek-v4-flash-0731-cloud
-    display_name: DeepSeek V4 Flash 0731 (Ollama)
-    description: Fast legal execution model. Cloud-tagged via Ollama.
+    display_name: DeepSeek V4 Flash 0731 (Cloud)
+    description: Fast cloud model for quick research iterations and high-throughput drafting.
     use: langchain_openai:ChatOpenAI
     model: deepseek-v4-flash:0731-cloud
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    supports_thinking: true
+    stream_chunk_timeout: 120
 
-  - name: deepseek-v4-pro-0813-cloud
-    display_name: DeepSeek V4 Pro 0813 (Ollama)
-    description: Heavier model for complex research tasks. Cloud-tagged via Ollama.
+  - name: deepseek-v4-pro-cloud
+    display_name: DeepSeek V4 Pro (Cloud)
+    description: Heavier cloud model for complex research and legal reasoning.
     use: langchain_openai:ChatOpenAI
-    model: deepseek-v4-pro:0813-cloud
+    model: deepseek-v4-pro:cloud
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    supports_thinking: true
+    stream_chunk_timeout: 120
 
-  - name: qwen3.8-27b-local
-    display_name: Qwen 3.8 27B (Local GPU)
-    description: Local Qwen model, GPU-accelerated. No cloud dependency.
+  - name: glm-5.3-flash-cloud
+    display_name: GLM 5.3 Flash (Cloud)
+    description: Fast cloud model for research and drafting. VLM-capable (vision) so view_image is registered; used as the auto-routed cloud model. Cloud-tagged via Ollama.
     use: langchain_openai:ChatOpenAI
-    model: qwen3.8:27b-mtp-q4_K_M
+    model: glm-5.3-flash:cloud
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    supports_thinking: true
+    supports_vision: true
+    stream_chunk_timeout: 120
 
-  - name: nemotron-3.5-lightning-30b-local
-    display_name: Nemotron 3.5 Lightning 30B (Local GPU)
-    description: Local Nemotron model, GPU-accelerated. Good for legal reasoning.
-    use: langchain_openai:ChatOpenAI
-    model: nemotron-3.5-lightning:30b-a3b
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
-
-  - name: gemma4-26b-local
-    display_name: Gemma 4 26B (Local GPU)
-    description: Local Gemma model, lighter footprint. Good for drafting.
-    use: langchain_openai:ChatOpenAI
-    model: gemma4:26b-a4b-it-qat
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
+# ── Automatic local/cloud model routing ─────────────────────────────────────
+# When enabled and NO explicit model is requested, deer-flow auto-picks the
+# model per request. It routes to the cloud model when EITHER:
+#   - the conversation-history token estimate (from the run's messages)
+#     >= message_token_threshold, OR
+#   - the bound tool surface count >= tool_count_threshold.
+# Otherwise it stays on the local default (private, fast).
+#
+# The base prompt (system prompt + tool schemas) is constant (~41K tokens) no
+# matter the request, so it CANNOT distinguish simple from complex. The variable
+# signal is the conversation-history token count (message_tokens), which grows
+# with multi-step research, long tool results, etc. So:
+#   - a short chat (small history) stays LOCAL,
+#   - a long research thread (large history) routes to CLOUD.
+#
+#   enabled:            master switch. false = manual picker only.
+#   local_model:        the model used for small prompts (must be in `models:`).
+#   cloud_model:        the model used for large prompts (must be in `models:`).
+#   message_token_threshold: conversation-history tokens above which we route to cloud.
+#   tool_count_threshold:   number of bound tools above which we route to cloud.
+#                           (The tool surface is constant ~151 here, so set this
+#                           ABOVE 151 to disable the tool-count trigger, or below
+#                           to always route to cloud.)
+#
+# NOTE: cloud routing sends prompt text to ollama.com. The firm accepted this
+# for deer-flow/QM generation (decided 2026-08-30). Set enabled: false to keep
+# everything fully on-device.
+model_routing:
+  enabled: true
+  local_model: gemma4-12b-local
+  cloud_model: glm-5.3-flash-cloud
+  message_token_threshold: 20000
+  tool_count_threshold: 200
 
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
+  # Pacgate: opt in to host bash for the LocalSandboxProvider. This is the
+  # documented escape hatch for fully trusted single-tenant local deployments
+  # (deerflow/sandbox/security.py: is_host_bash_allowed). Without it the bash
+  # tool is hard-gated off and skills that carry scripts/ cannot execute.
+  allow_host_bash: true
+
+# Pacgate: expose the sandbox file/shell tools to the agent. Without a tools:
+# section get_available_tools() returns only the 2 builtins + MCP tools, so the
+# agent cannot read/write files or run commands even though the sandbox exists.
+# Tool names must match the @tool() names in deerflow/sandbox/tools.py.
+tools:
+  - name: bash
+    group: sandbox
+    use: deerflow.sandbox.tools:bash_tool
+  - name: ls
+    group: sandbox
+    use: deerflow.sandbox.tools:ls_tool
+  - name: read_file
+    group: sandbox
+    use: deerflow.sandbox.tools:read_file_tool
+  - name: write_file
+    group: sandbox
+    use: deerflow.sandbox.tools:write_file_tool
+  - name: str_replace
+    group: sandbox
+    use: deerflow.sandbox.tools:str_replace_tool
+  - name: glob
+    group: sandbox
+    use: deerflow.sandbox.tools:glob_tool
+  - name: grep
+    group: sandbox
+    use: deerflow.sandbox.tools:grep_tool
+
+# Pacgate: auto-convert uploaded PDF/DOCX/PPTX/XLSX to Markdown on upload.
+# markitdown + mammoth/openpyxl/python-pptx/pdfplumber are already installed in
+# the image's venv; this flag is the only thing that was missing. AppConfig is
+# extra="allow", so this section is accepted even though it has no dedicated
+# schema class (uploads.py reads it via getattr with a False default).
+uploads:
+  auto_convert_documents: true
+
+# Pacgate: DEFER MCP tool loading to cut system-prompt size dramatically.
+# When tool_search is enabled, MCP tool schemas are NOT bound directly into the
+# model's context. Instead they are listed by NAME in <available-deferred-tools>
+# and the agent fetches full schemas on demand via the tool_search tool. This
+# removes ~36K tokens of MCP tool-schema text from every prompt (measured: 142
+# MCP tools = 144,845 chars). CRITICAL for local models (gemma4-12b) whose
+# context is capped at 64K — it is the single biggest lever for prompt size.
+# The sandbox tools (bash/ls/read_file/etc.) are NOT MCP tools, so they remain
+# always-bound; only the MCP servers (pacgate/firecrawl/officecli/legal) defer.
+tool_search:
+  enabled: false  # EVIDENCE (2026-09-12): deferral makes ALL models call MCP tools without promoting first -> "deferred, not promoted" loop, never reaching write_file. With tool names normalized to underscores, tools are now bound directly so the agent can use them reliably.
+
+# Persist LangGraph thread state + thread list to SQLite. Without a
+# 'checkpointer' section deer-flow falls back to InMemoryStore, so the thread
+# list + admin session reset on every restart. 'connection_string' is resolved
+# relative to the app base dir (.deer-flow), which is bind-mounted via
+# compose.bundle.yaml: ./data/deer-flow:/app/backend/.deer-flow
+checkpointer:
+  type: sqlite
+  connection_string: checkpoints.db
+
+# Unified persistence for deer-flow application data (runs/thread metadata).
+# Mounted via compose.bundle.yaml: ./data/deer-flow:/app/backend/.deer-flow
+database:
+  backend: sqlite
+  sqlite_dir: .deer-flow/data
 
 memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage

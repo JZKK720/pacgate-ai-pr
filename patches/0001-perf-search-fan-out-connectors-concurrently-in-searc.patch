@@ -1,0 +1,83 @@
+From ec5b9eb121988ca33eb43cac461347e45b3d9d91 Mon Sep 17 00:00:00 2001
+From: Developer <developer@example.com>
+Date: Wed, 2 Sep 2026 07:58:56 +0800
+Subject: [PATCH 1/4] perf(search): fan out connectors concurrently in
+ search_all
+
+Query all available legal data source connectors in parallel via
+futures::future::join_all instead of a sequential for-loop, so a slow
+external database no longer serializes the whole fan-out. Partial
+results are still returned; unavailable connectors are skipped.
+---
+ pacgate-ai/crates/pacgate-search/Cargo.toml |  1 +
+ pacgate-ai/crates/pacgate-search/src/lib.rs | 38 +++++++++++++--------
+ 2 files changed, 25 insertions(+), 14 deletions(-)
+
+diff --git a/pacgate-ai/crates/pacgate-search/Cargo.toml b/pacgate-ai/crates/pacgate-search/Cargo.toml
+index 8033fb1..00a66e3 100644
+--- a/pacgate-ai/crates/pacgate-search/Cargo.toml
++++ b/pacgate-ai/crates/pacgate-search/Cargo.toml
+@@ -9,6 +9,7 @@ serde.workspace = true
+ serde_json.workspace = true
+ reqwest.workspace = true
+ tokio.workspace = true
++futures.workspace = true
+ anyhow.workspace = true
+ thiserror.workspace = true
+ tracing.workspace = true
+diff --git a/pacgate-ai/crates/pacgate-search/src/lib.rs b/pacgate-ai/crates/pacgate-search/src/lib.rs
+index 850dd8e..c06ee65 100644
+--- a/pacgate-ai/crates/pacgate-search/src/lib.rs
++++ b/pacgate-ai/crates/pacgate-search/src/lib.rs
+@@ -196,24 +196,34 @@ impl SearchRouter {
+ 
+     /// Search all available connectors and merge results.
+     ///
+-    /// Failed connectors are logged and skipped — partial results are returned.
++    /// Connectors are queried concurrently (bounded by each connector's own
++    /// timeout) so a slow external database does not serialize the whole
++    /// fan-out. Failed connectors are logged and skipped — partial results
++    /// are returned.
+     pub async fn search_all(&self, query: &SearchQuery) -> Vec<SearchResult> {
+-        let mut all_results = Vec::new();
++        let futures = self.connectors.iter().map(|connector| {
++            let connector = Arc::clone(connector);
++            async move {
++                if !connector.is_available() {
++                    tracing::debug!(connector = connector.name(), "skipping unavailable connector");
++                    return Vec::new();
++                }
+ 
+-        for connector in &self.connectors {
+-            if !connector.is_available() {
+-                tracing::debug!(connector = connector.name(), "skipping unavailable connector");
+-                continue;
++                let results = connector.search(query).await;
++                tracing::info!(
++                    connector = connector.name(),
++                    results = results.len(),
++                    "connector returned results"
++                );
++                results
+             }
++        });
+ 
+-            let results = connector.search(query).await;
+-            tracing::info!(
+-                connector = connector.name(),
+-                results = results.len(),
+-                "connector returned results"
+-            );
+-            all_results.extend(results);
+-        }
++        let mut all_results: Vec<SearchResult> = futures::future::join_all(futures)
++            .await
++            .into_iter()
++            .flatten()
++            .collect();
+ 
+         // Sort by source_level priority (authority_verified > auxiliary_db > internal_template > model_inference)
+         all_results.sort_by(|a, b| {
+-- 
+2.55.0.windows.4
+

@@ -202,10 +202,16 @@ pub async fn kb_search(
         }
     }
 
-    // Use default tenant for now (single-tenant pilot)
-    let tenant_id = pacgate_core::TenantId(
-        uuid::Uuid::parse_str(&state.config.default_tenant).unwrap_or_else(|_| uuid::Uuid::nil()),
-    );
+    // Resolve the default tenant. PACGATE_DEFAULT_TENANT is a slug (e.g.
+    // "default-firm"), not a UUID — parsing it as a UUID yields the nil id and
+    // every RAG search returns nothing. Resolve slug → TenantId via the store.
+    let tenant_id = match state.tenant_store.get_by_slug(&state.config.default_tenant).await {
+        Ok(t) => t.id,
+        Err(_) => state.config.default_tenant
+            .parse::<uuid::Uuid>()
+            .map(pacgate_core::TenantId)
+            .unwrap_or(pacgate_core::TenantId(uuid::Uuid::nil())),
+    };
 
     let rag_store = state
         .rag

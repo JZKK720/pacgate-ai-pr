@@ -5,8 +5,24 @@
       "type": "http",
       "url": "http://openviking:1933/mcp",
       "headers": {
-        "X-API-Key": "${OPENVIKING_API_KEY}"
+        "X-API-Key": "${OPENVIKING_ROOT_API_KEY}"
       }
+    },
+    "pacgate": {
+      "enabled": true,
+      "type": "http",
+      "url": "http://pacgate-mcp:8000/mcp",
+      "description": "Query pacgate's legal RAG knowledge base and external legal database connectors."
+    },
+    "officecli": {
+      "enabled": true,
+      "type": "stdio",
+      "command": "officecli",
+      "args": ["mcp"],
+      "env": {
+        "OFFICECLI_SKIP_UPDATE": "1"
+      },
+      "description": "OfficeCLI — Word/Excel/PPT 文档自动化 (create/read/edit/render docx/xlsx/pptx). Enabled: binary baked into deer-flow-pacgate 0.1.10+; rebuild image if running <0.1.10."
     }
   }
 }

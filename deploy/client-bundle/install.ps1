@@ -66,7 +66,17 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
         $conf = Get-Content $ovTemplate -Raw
         $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
         $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
-        Add-Content -Path $envPath -Value "OPENVIKING_CONF_CONTENT=$minified"
+        # Append with an explicit leading newline: PowerShell 5.1's Add-Content
+        # glues the new line onto the last line when .env has no trailing
+        # newline, fusing e.g. OPENVIKING_API_KEY=<val> with
+        # OPENVIKING_CONF_CONTENT=<json> on one line (corrupting both).
+        $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
+        $prefix = if ($rawEnv.Length -eq 0 -or $rawEnv.EndsWith("`n")) { '' } else { "`r`n" }
+        [System.IO.File]::AppendAllText(
+            (Resolve-Path $envPath),
+            "$prefix" + "OPENVIKING_CONF_CONTENT=$minified`r`n",
+            [System.Text.UTF8Encoding]::new($false)
+        )
         Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT into .env" -ForegroundColor Green
     }
 
@@ -76,14 +86,27 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
     $dfTemplate = ".\deer-flow-extensions-config.template.json"
     $dfRendered = ".\deer-flow-extensions-config.json"
     if ((Test-Path $dfTemplate) -and -not (Test-Path $dfRendered)) {
-        if ($envVars['OPENVIKING_API_KEY'] -and $envVars['OPENVIKING_API_KEY'] -notmatch '^change-me') {
+        # The template's openviking entry uses ${OPENVIKING_ROOT_API_KEY} (the
+        # server's root key), NOT ${OPENVIKING_API_KEY}. Replacing the wrong
+        # placeholder is a no-op and leaves a literal ${...} in the rendered
+        # file, which makes openviking return 401 and rolls back the entire MCP
+        # tool load (deer-flow uses asyncio.gather). See handbook finding #2.
+        if ($envVars['OPENVIKING_ROOT_API_KEY'] -and $envVars['OPENVIKING_ROOT_API_KEY'] -notmatch '^change-me') {
             $df = Get-Content $dfTemplate -Raw
-            $df = $df.Replace('${OPENVIKING_API_KEY}', $envVars['OPENVIKING_API_KEY'])
-            Set-Content -Path $dfRendered -Value $df -NoNewline -Encoding UTF8
+            $df = $df.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
+            # Write BOM-free UTF-8. PowerShell 5.1's `Set-Content -Encoding UTF8`
+            # prepends a UTF-8 BOM, which deer-flow's JSON parser rejects
+            # ("Unexpected UTF-8 BOM"). Use .NET WriteAllText with a no-BOM
+            # UTF8Encoding so the rendered config is valid JSON.
+            [System.IO.File]::WriteAllText(
+                (Join-Path $PWD $dfRendered),
+                $df,
+                [System.Text.UTF8Encoding]::new($false)
+            )
             Write-Host "[OK] Rendered $dfRendered from template" -ForegroundColor Green
         } else {
-            Write-Host "ERROR: $dfRendered missing and OPENVIKING_API_KEY is unset or still 'change-me'." -ForegroundColor Red
-            Write-Host "  Set OPENVIKING_API_KEY in .env, then re-run. compose.prod.yaml mounts this" -ForegroundColor Yellow
+            Write-Host "ERROR: $dfRendered missing and OPENVIKING_ROOT_API_KEY is unset or still 'change-me'." -ForegroundColor Red
+            Write-Host "  Set OPENVIKING_ROOT_API_KEY in .env, then re-run. compose.prod.yaml mounts this" -ForegroundColor Yellow
             Write-Host "  file :ro, so a missing file breaks deer-flow memory recall (OV-2a)." -ForegroundColor Yellow
             exit 1
         }
@@ -112,6 +135,20 @@ Write-Host "`nStarting Pacgate-ai..." -ForegroundColor Cyan
 docker compose -f compose.prod.yaml up -d
 Write-Host "[OK] Stack running" -ForegroundColor Green
 
+# 7b. Reload nginx config if it changed. The nginx service uses the stock
+# nginx:1.27-alpine image with a BIND-MOUNTED ./nginx/default.conf, so `git
+# pull` brings in a new config but `up -d` does NOT recreate the container or
+# reload the file. Reloading makes AIPC2 pick up ingress/proxy changes (e.g.
+# the resolver + variable proxy_pass fix) without a full recreate.
+Write-Host "`nReloading nginx config..." -ForegroundColor Cyan
+docker exec pacgate-nginx nginx -t *>$null
+if ($LASTEXITCODE -eq 0) {
+    docker exec pacgate-nginx nginx -s reload
+    Write-Host "[OK] nginx config reloaded" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] nginx config test failed; leaving running config unchanged" -ForegroundColor Yellow
+}
+
 # 8. Wait for health
 Write-Host "`nWaiting for services to start..." -ForegroundColor Cyan
 Start-Sleep -Seconds 10
@@ -121,7 +158,7 @@ Write-Host "`n=== Status ===" -ForegroundColor Cyan
 docker compose -f compose.prod.yaml ps
 
 Write-Host "`n=== Pacgate-ai is running ===" -ForegroundColor Green
-Write-Host "Open browser to: http://localhost:8081" -ForegroundColor White
+Write-Host "Open browser to: http://localhost:8089" -ForegroundColor White
 Write-Host "  /          - Landing page" -ForegroundColor Gray
 Write-Host "  /api/      - Metadata API (internal)" -ForegroundColor Gray
 Write-Host "  /research/  - Legal research (deer-flow)" -ForegroundColor Gray

@@ -7,6 +7,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| `pacgate-api:0.1.3` | 2026-09-06 | Added pacgate-mcp bridge (documents/workflows MCP tools), aligned compose pins. LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides applied. |
 | `pacgate-api:0.1.2` | 2026-08-27 | **Container-networking fix**: LLM router now honors `OLLAMA_BASE_URL` (was hardcoded to `localhost:11434`, which fails inside Docker — every workflow/chat execution returned 500). Per-tenant model overrides (`tenants.config_json.model_overrides`) are now applied to chat + workflow execution. LLM errors include model name + URL for debugging. |
 | `pacgate-api:0.1.1` | 2026-08-19 | YuanDian/PkuLaw connector fixes, JWT secret removed from image ENV. |
 | `deer-flow-pacgate:0.1.0` | 2026-08-19 | Initial wrapper on bytedance deer-flow-backend. |
@@ -39,7 +40,7 @@ This document describes the target client runtime bundle. It does not reflect th
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build the Rust binary in Docker (multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 `
+docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.3 `
   -f pacgate-ai/Dockerfile `
   ./pacgate-ai
 ```
@@ -65,7 +66,7 @@ produces the `pacgate-server` binary.
 #   ENV PACGATE_API_URL=http://pacgate-api:8080
 #   CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
 
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 `
+docker build -t ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3 `
   -f deploy/deer-flow-pacgate/Dockerfile `
   .
 ```
@@ -92,11 +93,13 @@ script in the client bundle for first-run bootstrap. There is no
 
 ```powershell
 # Login (first time only)
-echo $env:GHCR_TOKEN | docker login ghcr.io -u jzkk720 --password-stdin
+echo $env:GHCR_TOKEN | docker login ghcr.io -u pacgate-ai --password-stdin
 
-# Push the two images (qm runs via qm up, not as a Docker image)
-docker push ghcr.io/jzkk720/pacgate-api:0.1.2
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+# Push the images (qm runs via qm up, not as a Docker image)
+docker push ghcr.io/pacgate-ai/pacgate-api:0.1.3
+docker push ghcr.io/pacgate-ai/pacgate-mcp:0.1.3
+docker push ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
+docker push ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0
 ```
 
 ## Part 2: Prepare the client bundle
@@ -121,7 +124,7 @@ client-bundle/
 ```yaml
 services:
   pacgate-db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: pacgate-db
     environment:
       POSTGRES_DB: pacgate
@@ -132,7 +135,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.2
+    image: ghcr.io/pacgate-ai/pacgate-api:0.1.3
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -146,7 +149,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
     container_name: deer-flow
     depends_on: [pacgate-api]
     environment:
@@ -174,7 +177,7 @@ services:
     container_name: pacgate-nginx
     depends_on: [pacgate-api, deer-flow, qm]
     ports:
-      - "8081:80"
+      - "8089:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
@@ -323,7 +326,7 @@ Write-Host "`n=== Status ===" -ForegroundColor Cyan
 docker compose -f compose.prod.yaml ps
 
 Write-Host "`n=== Pacgate-ai is running ===" -ForegroundColor Green
-Write-Host "Open browser to: http://localhost:8081" -ForegroundColor White
+Write-Host "Open browser to: http://localhost:8089" -ForegroundColor White
 Write-Host "  /research/  — Legal research (deer-flow)" -ForegroundColor Gray
 Write-Host "  /collab/   — Collaboration (qm)" -ForegroundColor Gray
 Write-Host "  /api/      — Metadata API (internal)" -ForegroundColor Gray
@@ -382,20 +385,20 @@ notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENAN
 docker compose -f compose.prod.yaml ps
 
 # Check API health
-curl http://localhost:8081/health
+curl http://localhost:8089/health
 
 # Open browser
-start http://localhost:8081
+start http://localhost:8089
 ```
 
 ### 3.4 Firewall (if attorneys connect from other machines)
 
 ```powershell
-# Open port 8081 for LAN access
-New-NetFirewallRule -DisplayName "Pacgate-ai" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow
+# Open port 8089 for LAN access
+New-NetFirewallRule -DisplayName "Pacgate-ai" -Direction Inbound -Protocol TCP -LocalPort 8089 -Action Allow
 ```
 
-Attorneys then access `http://<ai-pc-ip>:8081` from their desktops.
+Attorneys then access `http://<ai-pc-ip>:8089` from their desktops.
 
 ## Part 4: Updates
 
@@ -421,11 +424,11 @@ cd C:\pacgate
 #    deploy/qm-pacgate/Dockerfile: FROM ghcr.io/yc-software/qm/core:latest
 
 # 2. Rebuild + push
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.2.0 -f deploy/deer-flow-pacgate/Dockerfile .
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.2.0
+docker build -t ghcr.io/pacgate-ai/deer-flow-pacgate:0.2.0 -f deploy/deer-flow-pacgate/Dockerfile .
+docker push ghcr.io/pacgate-ai/deer-flow-pacgate:0.2.0
 
 # 3. Update compose.prod.yaml version pins
-#    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.0
+#    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.2.0
 
 # 4. Ship new bundle to client (or just the updated compose.prod.yaml)
 # 5. Client runs: .\install.ps1 -Update
@@ -444,7 +447,7 @@ docker compose -f compose.prod.yaml logs qm
 # Common issues:
 # - .env missing or has placeholder values
 # - Ollama not running (check: ollama list)
-# - Port 8081 already in use
+# - Port 8089 already in use
 ```
 
 ### Ollama not reachable from containers

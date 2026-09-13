@@ -65,6 +65,15 @@ async fn main() -> anyhow::Result<()> {
     run_migrations(&pool).await?;
     tracing::info!("Migrations applied");
 
+    // Run RAG migrations (creates kb_chunks + pgvector/tsvector schema).
+    // These were previously never run at startup, so /api/kb/search queried a
+    // nonexistent table and document review/generation returned no grounding.
+    // If pgvector is unavailable, log and continue so the rest of the API still
+    // boots (RAG search will return 503 rather than crash the whole server).
+    if let Err(error) = pacgate_rag::RagStore::run_migrations(&pool).await {
+        tracing::warn!(%error, "RAG migrations failed; RAG search will be unavailable");
+    }
+
     // Create stores
     let doc_store = Arc::new(FsDocumentStore::new(pool.clone(), &config.data_dir));
     let matter_store = Arc::new(MatterStore::new(pool.clone()));
@@ -84,17 +93,63 @@ async fn main() -> anyhow::Result<()> {
     // generate_docx / edit_document operate on actual matter documents.
     use pacgate_core::{KbStore, WorkflowStore};
 
-    struct StubWorkflowStore;
+    // Workflow store backed by the YAML template directory when configured.
+    // Falls back to built-in templates when WORKFLOWS_DIR is unset.
+    struct YamlWorkflowStore {
+        dir: Option<std::path::PathBuf>,
+    }
     #[async_trait::async_trait]
-    impl WorkflowStore for StubWorkflowStore {
-        async fn get_prompt(&self, _workflow_id: &str) -> pacgate_core::Result<String> {
-            Ok(String::new())
+    impl WorkflowStore for YamlWorkflowStore {
+        async fn get_prompt(&self, workflow_id: &str) -> pacgate_core::Result<String> {
+            let id = workflow_id.parse::<pacgate_core::WorkflowId>()
+                .map_err(|e| pacgate_core::PacgateError::ValidationError(
+                    format!("invalid workflow_id: {e}")))?;
+            let workflow = self.dir.as_ref()
+                .and_then(|dir| pacgate_workflow::get_workflow_all(&id, Some(dir.as_path())))
+                .or_else(|| pacgate_workflow::get_workflow(&id));
+            Ok(workflow
+                .map(|w| serde_json::to_string(&w).unwrap_or_default())
+                .unwrap_or_default())
         }
     }
 
-    struct StubKbStore;
+    // KB store backed by the real RagStore so the agent's `kb_search` tool reads
+    // the per-matter knowledge base instead of returning an empty vec.
+    struct RagKbStore {
+        rag: Arc<pacgate_rag::RagStore>,
+        tenant_id: pacgate_core::TenantId,
+    }
     #[async_trait::async_trait]
-    impl KbStore for StubKbStore {
+    impl KbStore for RagKbStore {
+        async fn search(
+            &self,
+            matter_id: &pacgate_core::MatterId,
+            query: &str,
+            top_k: u32,
+        ) -> pacgate_core::Result<Vec<pacgate_core::KbChunk>> {
+            let results = self.rag.search(
+                &self.tenant_id,
+                matter_id,
+                query,
+                top_k,
+                &pacgate_rag::SearchFilter::new(),
+            ).await.map_err(|e| pacgate_core::PacgateError::ValidationError(e.to_string()))?;
+            Ok(results.into_iter().map(|r| pacgate_core::KbChunk {
+                score: r.score,
+                // RagStore does not return the document_id; the agent uses text
+                // for context. Preserve the doc name as the source label.
+                document_id: pacgate_core::DocumentId(uuid::Uuid::nil()),
+                page: r.page.unwrap_or(0),
+                text: r.content,
+            }).collect())
+        }
+    }
+
+    // Fallback KB store used only when the RAG store is unavailable (e.g. the
+    // DB image lacks pgvector). Returns no chunks rather than erroring.
+    struct EmptyKbStore;
+    #[async_trait::async_trait]
+    impl KbStore for EmptyKbStore {
         async fn search(
             &self,
             _matter_id: &pacgate_core::MatterId,
@@ -122,14 +177,38 @@ async fn main() -> anyhow::Result<()> {
         Some(Arc::new(pacgate_rag::RagStore::new(pool.clone(), embed_svc)))
     };
 
-    let dispatcher = Arc::new(
-        ToolDispatcher::new(
-            doc_store.clone(),
-            Arc::new(StubWorkflowStore),
-            Arc::new(StubKbStore),
+    let dispatcher = {
+        // Tenant id used by the KB store and the /api/kb/search handler. The
+        // default tenant slug is a string (e.g. "default-firm") but kb_search
+        // and the RAG store need a UUID TenantId. Resolve it once here from the
+        // tenant store by slug, falling back to the literal parse for existing
+        // setups that already store a UUID in PACGATE_DEFAULT_TENANT.
+        let tenant_id = match tenant_store.get_by_slug(&config.default_tenant).await {
+            Ok(t) => t.id,
+            Err(_) => config.default_tenant.parse::<uuid::Uuid>()
+                .map(pacgate_core::TenantId)
+                .unwrap_or(pacgate_core::TenantId(uuid::Uuid::nil())),
+        };
+
+        let kb_store: Arc<dyn KbStore> = match &rag {
+            Some(rag_store) => Arc::new(RagKbStore {
+                rag: rag_store.clone(),
+                tenant_id,
+            }),
+            None => Arc::new(EmptyKbStore),
+        };
+
+        Arc::new(
+            ToolDispatcher::new(
+                doc_store.clone(),
+                Arc::new(YamlWorkflowStore {
+                    dir: config.workflows_dir.clone(),
+                }),
+                kb_store,
+            )
+            .with_search_router(search.clone()),
         )
-        .with_search_router(search.clone()),
-    );
+    };
     let agent_loop = Arc::new(AgentLoop::new(router.clone(), dispatcher.clone()));
 
     // Build application state

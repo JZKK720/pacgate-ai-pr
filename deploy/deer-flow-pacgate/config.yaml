@@ -24,6 +24,18 @@ models:
     max_tokens: 8192
     temperature: 0.1
 
+  - name: glm-5.3-flash-cloud
+    display_name: GLM 5.3 Flash (Cloud)
+    description: Fast cloud model for research and drafting. Cloud-tagged via Ollama.
+    use: langchain_openai:ChatOpenAI
+    model: glm-5.3-flash:cloud
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+    supports_thinking: true
+    stream_chunk_timeout: 120
+
   - name: qwen3.8-27b-local
     display_name: Qwen 3.8 27B (Local GPU)
     description: Local Qwen model, GPU-accelerated. No cloud dependency.
@@ -56,6 +68,46 @@ models:
 
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
+  # Pacgate: opt in to host bash for the LocalSandboxProvider (trusted local
+  # deployment). Without it the bash tool is hard-gated off.
+  allow_host_bash: true
+
+# Pacgate: expose the sandbox file/shell tools to the agent (names must match
+# the @tool() names in deerflow/sandbox/tools.py).
+tools:
+  - name: bash
+    group: sandbox
+    use: deerflow.sandbox.tools:bash_tool
+  - name: ls
+    group: sandbox
+    use: deerflow.sandbox.tools:ls_tool
+  - name: read_file
+    group: sandbox
+    use: deerflow.sandbox.tools:read_file_tool
+  - name: write_file
+    group: sandbox
+    use: deerflow.sandbox.tools:write_file_tool
+  - name: str_replace
+    group: sandbox
+    use: deerflow.sandbox.tools:str_replace_tool
+  - name: glob
+    group: sandbox
+    use: deerflow.sandbox.tools:glob_tool
+  - name: grep
+    group: sandbox
+    use: deerflow.sandbox.tools:grep_tool
+
+# Pacgate: auto-convert uploaded PDF/DOCX/PPTX/XLSX to Markdown on upload
+# (markitdown is preinstalled in the image venv).
+uploads:
+  auto_convert_documents: true
+
+# Pacgate: DEFER MCP tool loading to cut system-prompt size dramatically.
+# MCP tool schemas are NOT bound into context; listed by name and fetched on
+# demand via tool_search. Removes ~36K tokens of MCP schema from every prompt.
+# Sandbox tools stay always-bound. CRITICAL for local models capped at 64K ctx.
+tool_search:
+  enabled: true
 
 memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage

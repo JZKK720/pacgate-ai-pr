@@ -1,0 +1,5 @@
+# Machine-specific Chrome path — never commit
+puppeteer-config.json
+
+# Regenerable HTML intermediates (render_handbooks.py regenerates from .md)
+*.html

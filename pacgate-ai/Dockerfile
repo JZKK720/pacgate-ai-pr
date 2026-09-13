@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY . .
 
 # Build the API server binary
-RUN cargo build --release --bin pacgate-server
+RUN cargo build --release --bin pacgate-server && \
+    cargo build --release --bin pacgate-seed
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -27,8 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the compiled binary
+# Copy the compiled binaries
 COPY --from=builder /build/target/release/pacgate-server /usr/local/bin/pacgate-server
+COPY --from=builder /build/target/release/pacgate-seed /usr/local/bin/pacgate-seed
 
 # Copy migrations (for startup migration)
 COPY migrations /app/migrations

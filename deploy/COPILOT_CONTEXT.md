@@ -18,7 +18,7 @@ Pacgate-ai is a **privacy-first, local-first legal AI platform** for multi-tenan
 
 ```
 Target ingress topology:
-nginx :8081
+nginx :8089
 ├── /research/ → deer-flow :8001 (Python, LangGraph) → pacgate_deerflow_adapter → pacgate-api
 ├── /collab/   → qm :8765 (TypeScript, Deno)           → pacgate_qm_adapter    → pacgate-api
 └── /api/      → pacgate-api :8080 (Rust, Axum)         → pacgate-docx, pacgate-rag, pacgate-llm, pacgate-auth

@@ -31,6 +31,36 @@ desktop.ini
 # Rendered deer-flow MCP config (contains client API key)
 deploy/client-bundle/deer-flow-extensions-config.json
 
+# Deer-flow admin login credentials (per-machine, created at runtime in the
+# container's local SQLite DB; NOT in .env). Never commit.
+deploy/client-bundle/.deer-flow-credentials
+
+# Cloned upstream deer-flow source used to build the frontend image
+# (deploy/deer-flow-src/ → deploy/deer-flow-frontend-pacgate/Dockerfile →
+# ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.0).
+# Rebuild it from the git tag; never commit the source checkout.
+deploy/deer-flow-src/
+# Legacy path (older build) kept ignored to avoid accidental commits.
+deploy/client-bundle/deer-flow-src/
+
+# Runtime copy of qm-pacgate staged by setup-qm.ps1 (tracked source is deploy/qm-pacgate/)
+deploy/client-bundle/qm-pacgate/
+
 # OpenViking runtime state (client-owned, per-machine)
 deploy/client-bundle/openviking/ov.conf
 deploy/client-bundle/openviking/workspace/
+
+# deer-flow persistent state (live SQLite: admin password hash, threads,
+# checkpoints) + pre-upgrade DB backups. NEVER commit — contains credential
+# material and client chat history. This dir is the ./data/deer-flow bind mount.
+deploy/client-bundle/data/
+
+# OpenViking runtime CLI settings (per-machine, contains local state)
+deploy/client-bundle/openviking/ovcli.settings.conf
+
+# Generated build/delivery archives
+*.zip
+
+# Graphify knowledge-graph output (regenerable)
+graphify-out/
+

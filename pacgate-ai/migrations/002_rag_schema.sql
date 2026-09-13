@@ -24,5 +24,10 @@ ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector
 
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_tenant_matter ON kb_chunks(tenant_id, matter_id);
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_document ON kb_chunks(document_id);
-CREATE INDEX IF NOT EXISTS idx_kb_chunks_embedding ON kb_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- HNSW (not IVFFlat) so newly-inserted chunks are immediately searchable.
+-- IVFFlat stores fixed cluster centroids at index build time; vectors added later
+-- can be missed by `ORDER BY embedding <=> query` (approximate results), so
+-- kb_search silently skips freshly uploaded docs until the index is rebuilt.
+-- HNSW indexes new rows incrementally and returns accurate nearest neighbors.
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_embedding ON kb_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_content_tsv ON kb_chunks USING gin(content_tsv);

@@ -6,8 +6,10 @@
   "orgId": "pacgate",
 
   // The one public address of the deployment; the service URLs derive from it.
-  // Keep QM off Pacgate's host 8080 by using the 8180/8182 range locally.
-  "publicUrl": "http://localhost:8182",
+  // With the portal service enabled, this is the PORTAL front door (basePort+1
+  // = 8181): users sign in there and are proxied to web-ui/admin. Keep QM off
+  // Pacgate's host 8080 by using the 8180/8182 range locally.
+  "publicUrl": "http://localhost:8181",
 
   // Base host port for the docker target. Core binds to this port and the
   // web UI takes the next exposed slot used by the pinned QM package.
@@ -23,14 +25,21 @@
   // Optional base model id, passed to the harness (e.g. "claude-opus-4-6").
   // Omit it and the deployment uses the default model for the provider above.
   // It must be a model that provider can bill.
-  // "model": "",
+  // "model": "glm-5.3-flash:cloud",
+
+  // The base model provider. "openai" here means the OpenAI-compatible API —
+  // locally that is Ollama at MODEL_BASE_URL, billed by the dummy key
+  // OPENAI_API_KEY=ollama-local in .env (Ollama ignores the key value).
+  "modelProvider": "openai",
 
   // First-party services to run. The full set: "core" (the agent runtime and API,
   // always required), "slack" (the Slack surface, runs inside the core process),
   // "web-ui" (a browser chat UI), "admin" (the operator dashboard), "portal"
   // (the public sign-in front door), and "auth" (the built-in sign-in broker that
   // emails one-time links; drop it to sign in through an external OIDC provider).
-  "services": ["core", "web-ui"],
+  // Production-grade local topology: portal front door + auth broker (one-time
+  // sign-in links delivered to the local Mailpit SMTP catcher) + admin dashboard.
+  "services": ["core", "web-ui", "portal", "auth", "admin"],
 
   // Extra plugins to run alongside the services. A prebuilt image runs with
   // { "name": "linear", "image": "ghcr.io/you/qm-linear:1.0" }. A plugin with a
@@ -41,18 +50,31 @@
   "skills": [],
 
   // Non-secret env overrides, per service. The pi harness connects to
-  // Ollama for local model inference. MODEL_NAME selects which Ollama model
-  // to use. Model credentials (MODEL_API_KEY) go in .env, not here.
-  "env": { "core": { "HARNESS": "pi", "SANDBOX_BACKEND": "local", "MODEL_BASE_URL": "http://host.docker.internal:11434/v1", "MODEL_NAME": "deepseek-v4-flash:0731-cloud" } },
+  // Ollama for local model inference. PI_MODEL selects the model id (the pi
+  // harness reads PI_MODEL, not MODEL_NAME). Model credentials (MODEL_API_KEY)
+  // go in .env, not here.
+  // Sign-in links are delivered over SMTP to the local Mailpit catcher
+  // (plugins/mailpit). Swap SMTP_HOST/USERNAME/PASSWORD in .env to a real
+  // relay (e.g. Gmail app password) to deliver to real inboxes.
+  // NODE_ENV=development on portal/auth permits http://localhost URLs; every
+  // other security mechanism (JWT identity, one-time links, allow-list,
+  // signed source-auth) stays active.
+  "env": {
+    "core": { "HARNESS": "pi", "SANDBOX_BACKEND": "local", "MODEL_BASE_URL": "http://host.docker.internal:11434/v1", "PI_MODEL": "glm-5.3-flash:cloud", "PI_DETECT_MODEL": "glm-5.3-flash:cloud", "PI_TITLE_MODEL": "glm-5.3-flash:cloud", "PI_JUDGE_MODEL": "glm-5.3-flash:cloud", "NODE_ENV": "development" },
+    "auth": { "AUTH_EMAIL_TRANSPORT": "smtp", "SMTP_PORT": "1025", "SMTP_TLS": "none", "AUTH_BRAND_NAME": "PacGate", "NODE_ENV": "development" },
+    "portal": { "NODE_ENV": "development" },
+    "web-ui": { "NODE_ENV": "development" },
+    "admin": { "NODE_ENV": "development" }
+  },
 
   // The Fly app agents execute in. The core boots the immutable sandbox image
   // recorded by `qm sandbox publish`.
   "sandbox": { "image": "localhost:5000/pacgate-sandboxes@sha256:207a779d0d40ba0bc46c18a4139b936a5ce00dd825f0d8f389e547d1a9991ffc", "baseImage": "ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873",
     "app": "pacgate-sandboxes",
     "env": {
-      "PACGATE_API_URL": "http://host.docker.internal:8080",
+      "PACGATE_API_URL": "http://host.docker.internal:8089/pacgate",
       "OPENVIKING_URL": "http://host.docker.internal:1933"
     },
-    "secretEnv": ["PACGATE_API_EMAIL", "PACGATE_API_PASSWORD", "OPENVIKING_API_KEY", "OPENVIKING_ACCOUNT", "OPENVIKING_USER"]
+    "secretEnv": ["PACGATE_API_EMAIL", "PACGATE_API_PASSWORD", "OPENVIKING_ROOT_API_KEY", "OPENVIKING_API_KEY", "OPENVIKING_ACCOUNT", "OPENVIKING_USER", "FIRECRAWL_API_KEY"]
   }
 }

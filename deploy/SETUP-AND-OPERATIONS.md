@@ -18,7 +18,7 @@
 ```mermaid
 graph TB
     subgraph "Client AIPC Machine"
-        NGINX["nginx :8081<br/>entry point"]
+        NGINX["nginx :8089<br/>entry point"]
         API["pacgate-api :8080<br/>Rust metadata API"]
         DF["deer-flow :8001<br/>research workspace"]
         DB[("Postgres :5432<br/>metadata DB")]
@@ -60,18 +60,26 @@ graph TB
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build pacgate-api (Rust 1.94 multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.2 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.3 -f pacgate-ai/Dockerfile ./pacgate-ai
+
+# Build pacgate-mcp bridge
+docker build -t ghcr.io/pacgate-ai/pacgate-mcp:0.1.3 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
 
 # Build deer-flow wrapper
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.0 -f deploy/deer-flow-pacgate/Dockerfile .
+docker build -t ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3 -f deploy/deer-flow-pacgate/Dockerfile .
 
-# Push both
-docker push ghcr.io/jzkk720/pacgate-api:0.1.2
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+# Build deer-flow frontend (gateway URL baked in)
+.\deploy\build-frontend.ps1 -Push
+
+# Push images
+docker push ghcr.io/pacgate-ai/pacgate-api:0.1.3
+docker push ghcr.io/pacgate-ai/pacgate-mcp:0.1.3
+docker push ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
+docker push ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0
 
 # Verify pullable
-docker pull ghcr.io/jzkk720/pacgate-api:0.1.2
-docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.0
+docker pull ghcr.io/pacgate-ai/pacgate-api:0.1.3
+docker pull ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
 ```
 
 Note: qm does NOT have a Docker image — it runs via `qm up` from the
@@ -150,7 +158,7 @@ notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENAN
 Verify:
 ```powershell
 docker compose -f compose.prod.yaml ps    # all services running
-curl http://localhost:8081/health    # ok
+curl http://localhost:8089/health    # ok
 ```
 
 ### 3.4 Seed the default tenant
@@ -163,7 +171,7 @@ docker exec pacgate-db psql -U pacgate -c "INSERT INTO tenants (name, slug) VALU
 
 # Register the admin user
 $body = @{email="admin@pacgate-law.com"; password="<strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 ## 4. Installation Day 2 — qm + agent OS surface
@@ -173,7 +181,7 @@ Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -B
 ```powershell
 # 1. Register a bridge service account in pacgate-api
 $body = @{email="qm-bridge@pacgate.local"; password="<generate-strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 
 # 2. Copy qm-pacgate to the client machine
 Copy-Item -Path qm-pacgate -Destination C:\pacgate\qm-pacgate -Recurse
@@ -205,7 +213,7 @@ These are Cubecloud-internal tools installed natively on the AIPC:
 ### 4.3 Verify deer-flow research workspace
 
 ```powershell
-# Open http://localhost:8081/research/
+# Open http://localhost:8089/research/
 # Select a matter (create one first if none exist)
 # Ask: "Summarize recent force majeure case law in China"
 # Verify: response includes citations
@@ -239,12 +247,12 @@ Show the client IT admin how to:
 | Switch qm model | Edit `qm.config.jsonc` MODEL_NAME, `qm down` + `qm up` |
 | Register new user | `POST /api/auth/register` |
 | Backup database | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` |
-| Check service health | `curl http://localhost:8081/health` |
+| Check service health | `curl http://localhost:8089/health` |
 
 ### 5.2 Attorney training
 
 Walk through `deploy/USER-MANUAL.md`:
-- Demo research mode (deer-flow at `http://localhost:8081/research/`)
+- Demo research mode (deer-flow at `http://localhost:8089/research/`)
 - Demo co-working mode (qm at `http://localhost:8182`)
 - Demo document upload + workflow execution
 
@@ -257,7 +265,7 @@ Walk through `deploy/USER-MANUAL.md`:
 - [ ] Default tenant seeded in pacgate-api
 - [ ] Admin user registered
 - [ ] Bridge service account registered
-- [ ] Firewall rule for port 8081 (if LAN access needed)
+- [ ] Firewall rule for port 8089 (if LAN access needed)
 - [ ] Agent OS surface configured
 - [ ] Attorneys trained
 - [ ] `.env` backed up securely (NOT in git)
@@ -270,7 +278,7 @@ Walk through `deploy/USER-MANUAL.md`:
 1. Edit `C:\pacgate\deer-flow-config.yaml`
 2. Reorder the `models` list (first entry = default)
 3. Restart: `docker compose -f compose.prod.yaml restart deer-flow`
-4. Verify: open `http://localhost:8081/research/` and send a test message
+4. Verify: open `http://localhost:8089/research/` and send a test message
 
 ### 6.2 Switching models (qm)
 
@@ -283,7 +291,7 @@ Walk through `deploy/USER-MANUAL.md`:
 
 ```powershell
 $body = @{email="new.attorney@pacgate-law.com"; password="<temp-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8081/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 The user can now log in to both research (deer-flow) and co-working (qm).
@@ -317,8 +325,8 @@ Get-Content .env
 # Check Docker Desktop is running
 docker info
 
-# Check port 8081 is not in use
-netstat -an | findstr 8081
+# Check port 8089 is not in use
+netstat -an | findstr 8089
 
 # Check logs
 docker compose -f compose.prod.yaml logs <service>
@@ -349,13 +357,13 @@ npm exec qm -- check    # validate config
 # Check PACGATE_API_EMAIL/PASSWORD are correct
 # Test bridge login:
 #   $body = @{email="$env:PACGATE_API_EMAIL"; password="$env:PACGATE_API_PASSWORD"} | ConvertTo-Json
-#   Invoke-RestMethod -Uri "http://localhost:8081/api/auth/login" -Method POST -Body $body -ContentType "application/json"
+#   Invoke-RestMethod -Uri "http://localhost:8089/api/auth/login" -Method POST -Body $body -ContentType "application/json"
 ```
 
 ### deer-flow returns errors
 
 ```powershell
-curl http://localhost:8081/health    # check API is healthy
+curl http://localhost:8089/health    # check API is healthy
 ollama show deepseek-v4-flash:0731-cloud  # check model is valid
 docker compose -f compose.prod.yaml logs deer-flow  # check logs
 ```
@@ -366,12 +374,14 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 
 | Image | Contains | Base |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.2` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | deer-flow backend + Python adapter (~150 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
+| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | deer-flow backend + Python adapter (176 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | pacgate-api MCP bridge (10 tools) | `python:3.12-slim` |
+| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | deer-flow Next.js research UI | `node:22-alpine` |
 
 ### 8.2 Data flow
 
-1. Attorney opens `http://localhost:8081` → nginx → pacgate-api (landing)
+1. Attorney opens `http://localhost:8089` → nginx → pacgate-api (landing)
 2. Attorney goes to `/research/` → nginx → deer-flow (research workspace)
 3. deer-flow calls pacgate-api for matter memory + document storage
 4. deer-flow calls Ollama for model inference

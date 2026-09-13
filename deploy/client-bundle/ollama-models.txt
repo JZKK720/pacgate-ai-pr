@@ -18,9 +18,13 @@ nomic-embed-text:latest
 # Cloud-tagged: routed through ollama.com. Requires `ollama signin`
 # on the AIPC before install.ps1 runs, and a network path to ollama.com.
 # If the client forbids cloud routing, reorder deer-flow-config.yaml to
-# put qwen3.8-27b-local first and set qm MODEL_NAME to a local tag instead.
+# put a local model first and set qm MODEL_NAME to a local tag instead.
+# NOTE: cloud tags have no weight layers on disk (size "-"). They appear in
+# `ollama list` but never in `ollama ps`; inference routes via ollama.com.
+# The deployed deer-flow-config.yaml (client-bundle) lists these as OPTIONAL
+# choices in the model picker; the local default (gemma4-12b-local) stays first.
 deepseek-v4-flash:0731-cloud
-deepseek-v4-pro:0813-cloud
+deepseek-v4-pro:cloud
 
 # --- Alternative local models (do NOT enable for Main tier) ---
 # nemotron-3.5-lightning:30b-a3b  <- reasoning-mode, breaks workflow tiers

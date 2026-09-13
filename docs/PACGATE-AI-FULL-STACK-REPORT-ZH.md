@@ -128,7 +128,7 @@ Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip
 
 ### 7.2 数据流
 
-1. 律师打开 `http://localhost:8081` → nginx → pacgate-api（着陆页）
+1. 律师打开 `http://localhost:8089` → nginx → pacgate-api（着陆页）
 2. 律师进入 `/research/` → nginx → deer-flow（研究工作空间）
 3. deer-flow 调用 pacgate-api 获取事项记忆 + 文档存储
 4. deer-flow 调用 Ollama 进行模型推理
