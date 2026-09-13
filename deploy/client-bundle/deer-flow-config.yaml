@@ -38,16 +38,6 @@ models:
     max_tokens: 8192
     temperature: 0.1
 
-  - name: nemotron-3.5-lightning-30b-local
-    display_name: Nemotron 3.5 Lightning 30B (Local)
-    description: Local Nemotron model, long context. Good for legal reasoning and case analysis.
-    use: langchain_openai:ChatOpenAI
-    model: nemotron-3.5-lightning:30b-a3b
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 16384
-    temperature: 0.1
-
   - name: qwen3.5-9b-local
     display_name: Qwen 3.5 9B (Local)
     description: Local Qwen model.
@@ -68,11 +58,26 @@ models:
     model: nemotron-3.5-lightning:30b-a3b
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
+    max_tokens: 16384
     temperature: 0.1
     supports_thinking: true
     # Long thinking pauses on a 30B reasoning model — raise the stream chunk
     # timeout so the gateway does not drop the connection mid-thought.
+    stream_chunk_timeout: 300
+
+  # Gemma 4 26B — heavier local model (28GB on host) for complex reasoning
+  # WITHOUT cloud egress. Not the default (slower on the 16GB dGPU); pick it
+  # for long-context legal analysis that must stay fully on-device.
+  - name: gemma4-26b-local
+    display_name: Gemma 4 26B (Local)
+    description: Heavier local Gemma model (28GB). Strong reasoning, stays fully on-device. Not default (slower).
+    use: langchain_openai:ChatOpenAI
+    model: gemma4:26b-a4b-it-q8_0
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+    supports_thinking: true
     stream_chunk_timeout: 300
 
   # ── Cloud-routed models (via ollama.com / `ollama signin`) ────────────────
@@ -106,7 +111,7 @@ models:
 
   - name: glm-5.3-flash-cloud
     display_name: GLM 5.3 Flash (Cloud)
-    description: Fast cloud model for research and drafting. Cloud-tagged via Ollama.
+    description: Fast cloud model for research and drafting. VLM-capable (vision) so view_image is registered; used as the auto-routed cloud model. Cloud-tagged via Ollama.
     use: langchain_openai:ChatOpenAI
     model: glm-5.3-flash:cloud
     api_key: ollama
@@ -114,7 +119,42 @@ models:
     max_tokens: 8192
     temperature: 0.1
     supports_thinking: true
+    supports_vision: true
     stream_chunk_timeout: 120
+
+# ── Automatic local/cloud model routing ─────────────────────────────────────
+# When enabled and NO explicit model is requested, deer-flow auto-picks the
+# model per request. It routes to the cloud model when EITHER:
+#   - the conversation-history token estimate (from the run's messages)
+#     >= message_token_threshold, OR
+#   - the bound tool surface count >= tool_count_threshold.
+# Otherwise it stays on the local default (private, fast).
+#
+# The base prompt (system prompt + tool schemas) is constant (~41K tokens) no
+# matter the request, so it CANNOT distinguish simple from complex. The variable
+# signal is the conversation-history token count (message_tokens), which grows
+# with multi-step research, long tool results, etc. So:
+#   - a short chat (small history) stays LOCAL,
+#   - a long research thread (large history) routes to CLOUD.
+#
+#   enabled:            master switch. false = manual picker only.
+#   local_model:        the model used for small prompts (must be in `models:`).
+#   cloud_model:        the model used for large prompts (must be in `models:`).
+#   message_token_threshold: conversation-history tokens above which we route to cloud.
+#   tool_count_threshold:   number of bound tools above which we route to cloud.
+#                           (The tool surface is constant ~151 here, so set this
+#                           ABOVE 151 to disable the tool-count trigger, or below
+#                           to always route to cloud.)
+#
+# NOTE: cloud routing sends prompt text to ollama.com. The firm accepted this
+# for deer-flow/QM generation (decided 2026-08-30). Set enabled: false to keep
+# everything fully on-device.
+model_routing:
+  enabled: true
+  local_model: gemma4-12b-local
+  cloud_model: glm-5.3-flash-cloud
+  message_token_threshold: 20000
+  tool_count_threshold: 200
 
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider

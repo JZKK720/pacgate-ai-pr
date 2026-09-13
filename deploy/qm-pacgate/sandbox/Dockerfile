@@ -21,7 +21,10 @@ RUN /opt/agent-venv/bin/pip install --no-cache-dir markitdown
 # pandoc is the office-cli (MD->docx/html/txt); weasyprint is its PDF engine
 # (MD->pdf). python-docx + markdown give a pure-Python fallback for docx
 # generation. markitdown (PDF/DOCX/PPTX/XLSX -> MD) is already installed above.
-RUN apt-get update && apt-get install -y --no-install-recommends pandoc weasyprint \
+# fonts-noto-cjk is REQUIRED for Chinese PDF/DOCX rendering (weasyprint/pandoc
+# render blank CJK text without it).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pandoc weasyprint fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && /opt/agent-venv/bin/pip install --no-cache-dir python-docx markdown
 

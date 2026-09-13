@@ -22,7 +22,7 @@
       "env": {
         "OFFICECLI_SKIP_UPDATE": "1"
       },
-      "description": "OfficeCLI — Word/Excel/PPT 文档自动化 (create/read/edit/render docx/xlsx/pptx)"
+      "description": "OfficeCLI — Word/Excel/PPT 文档自动化 (create/read/edit/render docx/xlsx/pptx). Enabled: binary baked into deer-flow-pacgate 0.1.10+; rebuild image if running <0.1.10."
     }
   }
 }
