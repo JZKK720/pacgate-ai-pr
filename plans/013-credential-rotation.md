@@ -4,34 +4,54 @@ Priority: **P0 — do this before anything else** · Effort: **S–M** · Depend
 
 ## Status
 
-Redaction is **done and pushed to origin**. The fork push is **blocked** on
-credentials. Rotation and history purge are **outstanding**.
+Redaction is **done and pushed to origin**. The fork is a **one-click fix** (see
+below) — no credential transfer needed. Rotation and history purge are
+**outstanding**.
 
 ## Push state (verified 2026-09-16)
 
 | Location | State |
 | --- | --- |
-| Local `HEAD` (`ae42ae0`) | redacted |
+| Local `HEAD` (`af8438c`) | redacted |
 | `origin/main` (`JZKK720`) | **redacted — pushed and verified** |
-| fork `main` (`pacgate-ai`) | **STILL LIVE — push rejected** |
+| fork `main` (`pacgate-ai`) | **STILL LIVE — but fixable without credentials** |
 
-`git push` to the fork returns `[remote rejected] main -> main (permission
-denied)`. Root cause is **not** a repo setting: `git-credential-manager` holds
-credentials for **`JZKK720` only** (confirmed via `git-credential-manager github
-list`). A push to `pacgate-ai/pacgate-ai-pr` therefore authenticates as the
-wrong account.
+## Recommended fix for the fork: GitHub's Sync fork (no credentials)
 
-**To unblock — requires interactive sign-in; do not route secrets through an
-assistant:**
+`git push` to the fork fails with `permission denied` because
+`git-credential-manager` holds credentials for **`JZKK720` only** (confirmed via
+`git-credential-manager github list`). **You do not need to transfer any
+credential** — the fork is a strict ancestor of `origin/main`, so it can be
+fast-forwarded in the browser:
+
+1. Open `https://github.com/pacgate-ai/pacgate-ai-pr` (GitHub already reports
+   *"This branch is 9 commits behind JZKK720/pacgate-ai-pr:main"*, confirming
+   the fast-forward is available).
+2. Click **Sync fork → Update branch**.
+
+Verified preconditions — the sync is a clean fast-forward:
+
+| Check | Result |
+| --- | --- |
+| fork `main` is an ancestor of `origin/main` | **yes** |
+| fork has commits origin lacks (would block non-FF) | **none** |
+| all three credential files redacted at `origin/main` | **yes** |
+| workflow fix present at `origin/main` | **yes** |
+
+Then re-run `scripts/check-credential-state.ps1` — all three columns must read
+`clean`.
+
+> **Do NOT sign in to GitHub via git using the leaked password.** The value is
+> compromised; use the browser session you already have, or rotate first and
+> sign in with the new one.
+
+**Fallback** (only if you prefer git, requires interactive sign-in):
 
 ```powershell
 git credential-manager github login            # sign in as the pacgate-ai account
 git push https://github.com/pacgate-ai/pacgate-ai-pr.git main
 git credential-manager github logout JZKK720   # return to the original account
 ```
-
-Then re-run `scripts/check-credential-state.ps1` — all three columns must read
-`clean`.
 
 ## Why this is P0
 
@@ -56,7 +76,7 @@ exposure from fresh clones of `HEAD`. It does **not**:
 All three were present on both `origin/main` (`JZKK720`) and fork `main`
 (`pacgate-ai`), both public, introduced by `01a4644` (2026-08-13).
 
-## Done already (2026-09-15)
+## Done already (2026-09-15/16)
 
 - All 10 credential-bearing lines **redacted** in place; markdown tables left
   structurally intact so they still render.
@@ -67,6 +87,31 @@ All three were present on both `origin/main` (`JZKK720`) and fork `main`
   `pacgate-ai-assets` subtree previously had **no** guard at all.
 - Repo-wide re-scan returns **CLEAN** (no literal credential values in tracked
   text files).
+- Redaction pushed to `origin` and verified by reading the remote blob, not by
+  trusting the push.
+
+## ⚠️ Sequencing: do the GHCR release BEFORE the history rewrite
+
+The two outstanding items interact, and the order matters:
+
+1. **First, sync the fork** (one click, above) and **fire the GHCR release**
+   (`plans/011` / `012`). The workflow fix now lets CI go green, and this is the
+   first release carrying the `.docx` and search fixes.
+2. **Then rotate and rewrite history.**
+
+Why this order: the release publishes **image tags**, not commits. A force-push
+rewrite after the release does not invalidate published tags, so clients keep
+pulling the same images. Doing it the other way round means rebuilding and
+re-tagging a release immediately afterwards.
+
+Evidence this is safe: the currently published images carry **no**
+`org.opencontainers.image.source` label (they predate the provenance labels
+added in `48eb8c1`), so no package is bound to a specific commit. Even so,
+**verify pullability after any force-push** before relying on it:
+
+```powershell
+.\scripts\check-ghcr-pull.ps1 -Targets "pacgate-ai/pacgate-api:0.1.9","pacgate-ai/pacgate-mcp:0.1.9","pacgate-ai/deer-flow-pacgate:0.1.10","pacgate-ai/deer-flow-frontend-pacgate:0.1.11"
+```
 
 ## Step 1 — Rotate (do this first)
 

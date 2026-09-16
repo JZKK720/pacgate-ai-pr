@@ -66,16 +66,49 @@ origin tag-push, fork tag-push, and dispatch override; tag guard fires on empty.
 
 ## Choose ONE path
 
+> **Which is unblocked today?** Path **A**, and it needs no git credentials.
+> Path B still requires flipping four packages public by hand, and the fork's
+> `git push` is currently denied (see `plans/013`). If you want the release out
+> now, take A.
+
 ### Path A — keep publishing to `pacgate-ai/*`
 
 Least churn. JZKK720 remains a mirror; the fork stays the publisher.
+
+**Prerequisite:** the fork must first be synced to `origin/main`, so it carries
+the workflow fix and the credential redaction. One click, no credentials:
+
+```text
+https://github.com/pacgate-ai/pacgate-ai-pr  ->  Sync fork  ->  Update branch
+```
+
+That is a clean fast-forward (verified: the fork is a strict ancestor of
+`origin/main` and holds nothing origin lacks).
+
+Then release. `git push` of a tag needs the same fork credential that is
+currently missing, so prefer the browser/API route:
+
+**Option A1 — Actions → Run workflow (recommended, no git credentials)**
+
+```text
+https://github.com/pacgate-ai/pacgate-ai-pr/actions/workflows/build-ghcr.yml
+  ->  Run workflow
+      tag       = 0.1.12
+      namespace = (leave empty -> resolves to pacgate-ai)
+```
+
+**Option A2 — push a tag (needs fork write access)**
 
 ```powershell
 git tag v0.1.12
 git push https://github.com/pacgate-ai/pacgate-ai-pr.git v0.1.12
 ```
 
-No compose changes. Nothing else to do.
+Either way, no compose changes: the pins already read `ghcr.io/pacgate-ai/*`.
+
+Note the workflow tags **all four** images with the same tag, so a unified
+`0.1.12` also resolves the current three-way pin split (`0.1.9` / `0.1.10` /
+`0.1.11`).
 
 ### Path B — move the master to `jzkk720/*`
 
