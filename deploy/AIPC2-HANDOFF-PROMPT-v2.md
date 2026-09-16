@@ -80,8 +80,8 @@ The deer-flow PacGate layer was **reconstructed** on the latest upstream
 `pacgate-ai/deer-flow`). It is a clean layer — NOT a rebase of old patches.
 
 If you are building the deer-flow image from source (instead of pulling the
-pre-built `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0`), use the `pacgate-layer`
-branch. It contains:
+pre-built `ghcr.io/pacgate-ai/deer-flow-pacgate`, the published release), use the
+`pacgate-layer` branch. It contains:
 - 34 legal skills (`skills/public/`)
 - `pacgate_config.py` (3-axis routing + 5 hard gates)
 - `pacgate_routing_middleware.py` + `pacgate_hard_gates_middleware.py`
@@ -91,8 +91,15 @@ branch. It contains:
 Build it with:
 ```powershell
 # from the deer-flow repo (pacgate-layer branch)
-docker build -f docker/Dockerfile.pacgate -t ghcr.io/jzkk720/deer-flow-pacgate:latest .
+docker build -f docker/Dockerfile.pacgate -t ghcr.io/pacgate-ai/deer-flow-pacgate:local .
 ```
+
+> Tag it `:local`, not `:latest`. `ghcr.io/pacgate-ai/deer-flow-pacgate:latest`
+is a published release tag and the compose files pin *that*; overwriting it
+locally makes the machine's image disagree with the release and with every other
+AIPC. A local build is a scratch artifact — keep it on a tag the registry never
+serves. The `jzkk720` namespace this used to point at is the upstream/developer
+account and is only a mirror of `pacgate-ai` now; nothing should build INTO it.
 
 ## Setup steps (follow the handbook)
 
