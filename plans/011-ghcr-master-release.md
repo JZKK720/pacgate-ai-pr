@@ -1,27 +1,55 @@
 # 011 — GHCR Master Release
 
-Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **BLOCKED ON THE FORK CREDENTIAL**
+Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **RELEASED — 0.1.12 is live**
 
-Closes the two defects found in the 2026-09-15 audit
-(`deploy/GHCR-MASTER-BUILD-AUDIT.md`) and produces the first GHCR release that
-is both CI-verified and content-current with `main`.
+## Outcome (2026-09-16)
 
-## Current blocker (2026-09-16)
+**Released.** Run #8 went **green in 8m 24s** — the first successful
+`build-ghcr` run in this project's history, after 7 consecutive failures.
 
-Step 1 is **done and pushed**. The release itself is blocked on **fork push
-access**, not on the build:
+<https://github.com/pacgate-ai/pacgate-ai-pr/actions/runs/35052019314>
 
-- The workflow fix is on `main` (commits `48eb8c1`, `ae42ae0`), so a tag pushed
-  to **`origin`** would now build and verify correctly — into `ghcr.io/jzkk720/*`.
-- But the compose pins all read `ghcr.io/pacgate-ai/*`, and publishing there
-  requires tagging the **fork**, which git cannot push to: the credential store
-  holds `JZKK720` only. See `plans/013-credential-rotation.md` for the
-  account-switch steps.
+Dispatched from the fork with `tag=0.1.12`, `namespace` empty (resolves to the
+repo owner, `pacgate-ai`), at commit `212bc85`.
 
-So the release is waiting on one of: the fork-push credential, or a decision to
-move the pins to `jzkk720/*` (plan 012 path B).
+All four images published and **anonymously pullable (HTTP 200)**:
 
-## Re-verified 2026-09-16: the staleness is real
+| Image | Tag | Anonymous pull |
+| --- | --- | --- |
+| `pacgate-ai/pacgate-api` | `0.1.12` | 200 |
+| `pacgate-ai/pacgate-mcp` | `0.1.12` | 200 |
+| `pacgate-ai/deer-flow-pacgate` | `0.1.12` | 200 |
+| `pacgate-ai/deer-flow-frontend-pacgate` | `0.1.12` | 200 |
+
+### Correction: the visibility flip did NOT apply
+
+Step 3 previously warned that new packages need a **manual visibility flip**,
+because `pacgate-ai` is a user account and the `PATCH .../visibility` API 404s
+for user accounts. That warning does **not** apply here: republishing an
+existing package **name** inherits its visibility, so `0.1.12` came out public
+already. A manual flip would only be needed for a **brand-new package name**.
+
+### Both defects are fixed in the published images (verified by inspection)
+
+| Image | Check | Result |
+| --- | --- | --- |
+| `pacgate-mcp:0.1.12` | `/app/requirements.txt` | `markitdown[docx,pptx,xlsx,pdf]>=0.1.5` — was bare `markitdown`, so every `.docx` failed |
+| `pacgate-api:0.1.12` | migration 002 | `USING hnsw` — was `ivfflat`, so newly-uploaded documents were not reliably searchable |
+
+## Original blocker (now cleared)
+
+Step 1 was done and pushed, but the release was gated on **fork push access**,
+not on the build. The fork was synced via the GitHub UI (Sync fork → Update
+branch), which needed an account with write access rather than a git credential.
+See `plans/013-credential-rotation.md`.
+
+## Remaining (not release-blocking)
+
+- Update the client bundle docs and `plans/007-delivery-log.md` to reference
+  `0.1.12` instead of the old pins.
+- Namespace decision (plan 012) path B is still open.
+
+## Re-verified 2026-09-16: the staleness was real
 
 Both defects were re-confirmed by pulling the currently-pinned images:
 
