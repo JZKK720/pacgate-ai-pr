@@ -16,7 +16,11 @@ param(
     [string]$To,
 
     # Report what would change without writing.
-    [switch]$Preview
+    [switch]$Preview,
+
+    # Explicit list of versions to replace. Normally leave this empty and let
+    # the script discover them from the pin files.
+    [string[]]$From
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,11 +31,27 @@ try {
         throw "Version must look like 0.1.12 (got '$To')"
     }
 
-    # The set of versions we are replacing. Split today, hence three entries.
-    # Add to this list if another version shows up in the pins.
-    $fromVersions = @('0.1.9', '0.1.10', '0.1.11')
+    # ── Which versions are we replacing? ────────────────────────────────────
+    #
+    # DISCOVERED from the pin files, not hardcoded.
+    #
+    # This used to be a literal @('0.1.9','0.1.10','0.1.11'). That list was
+    # correct the day it was written and wrong the moment the release moved to
+    # 0.1.12 - after which every run matched nothing and the script printed
+    # "no change" for every file and exited 0. A bump that edits nothing looked
+    # exactly like a successful bump. I hit this preparing 0.1.13.
+    #
+    # Discovery fixes the cause: the pins themselves are the source of truth for
+    # what the current version is, so advancing the release cannot desynchronise
+    # the script from the files. It also still handles the split state this
+    # script was built for (api/mcp 0.1.9 while deer-flow was 0.1.10), because it
+    # collects every distinct pin version rather than assuming one.
+    $discovered = [System.Collections.Generic.HashSet[string]]::new()
+    if ($From) {
+        foreach ($f in $From) { [void]$discovered.Add($f) }
+    }
 
-    # file -> list of [regex-with-capture-of-old-version]
+    # ── file -> list of [regex-with-capture-of-old-version] ──────────────────
     $targets = [ordered]@{
         # Rust workspace version. Only the workspace-level `version =`, not deps.
         'pacgate-ai/Cargo.toml' = @(
@@ -56,13 +76,43 @@ try {
         #
         # Rewriting these would claim a capability shipped in a release where it
         # did not, which is worse than a stale pin. Leave them alone.
+        #
+        # This is why discovery scans ONLY the pin patterns below rather than
+        # grepping the repo for version-shaped strings.
 
         # Cargo.lock: only the pacgate workspace crates. Match the name line,
-        # then the version line immediately after it.
+        # then the version line immediately after it. The `pacgate` prefix in
+        # the pattern is what keeps third-party crates (which legitimately sit at
+        # 0.1.9 / 0.1.10 / 0.1.11) out of the replace.
         'pacgate-ai/Cargo.lock' = @(
             '(?ms)(^name = "pacgate[a-z0-9\-]*"\r?\nversion = ")(?<v>\d+\.\d+\.\d+)(")'
         )
     }
+
+    if (-not $From) {
+        foreach ($rel in $targets.Keys) {
+            $path = Join-Path $repoRoot $rel
+            if (-not (Test-Path -LiteralPath $path)) { continue }
+            $text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+            foreach ($pattern in $targets[$rel]) {
+                foreach ($m in [regex]::Matches($text, $pattern)) {
+                    [void]$discovered.Add($m.Groups['v'].Value)
+                }
+            }
+        }
+    }
+
+    # Never "bump" the version to itself - that would rewrite nothing and, worse,
+    # would silently report edits if any pattern matched.
+    [void]$discovered.Remove($To)
+
+    if ($discovered.Count -eq 0) {
+        throw ("Found no version pins to replace. Every pin already reads $To, " +
+               "or the pin patterns no longer match the files. Refusing to run " +
+               "and report a no-op as success.")
+    }
+
+    $fromVersions = @($discovered) | Sort-Object
 
     $totalEdits = 0
     $report = @()
