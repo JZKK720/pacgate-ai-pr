@@ -1,87 +1,91 @@
-# 015 — 0.1.14 release is BUILT but NOT PUBLISHED
+# 015 — 0.1.14 release
 
-Priority: **P1** · Status: **BLOCKED on one manual GitHub action**
+Priority: **P1** · Status: **RELEASED — all four images published and verified**
 Depends on: 012 (namespace), 014 (unattended updates)
 
-## Where things stand (2026-09-17)
+## Released (2026-09-17)
 
-Everything is bumped, committed and pushed. The images are **not published** and
-the local gates say so honestly (2 red, both reporting 404 for 0.1.14).
+Run **#19**, dispatched with `tag=0.1.14` on branch `main`.
 
 | Item | State |
 | --- | --- |
-| Version bump to 0.1.14 (25 edits / 4 files + handbook) | ✅ pushed (`04df497`) |
-| Tests de-hardcoded to derive the version | ✅ pushed |
-| **Workflow validity bug fixed** | ✅ pushed (`927bf93`) |
+| Version bump to 0.1.14 (25 edits / 4 files + qm handbook pin) | ✅ `04df497` |
+| Tests de-hardcoded to derive the version | ✅ `04df497` |
+| Workflow validity bug fixed | ✅ `927bf93` |
+| Image test no longer requires the old version | ✅ `5925857` |
 | `GHCR_MIRROR_NAMESPACE` repository variable | ✅ created (`jzkk720`) |
-| Upstream + fork in sync | ✅ `927bf93` |
-| Tag `v0.1.14` | ⚠️ exists, but on `04df497` - the commit where the workflow was invalid |
-| **Images published** | ❌ **404 on all four** |
+| Upstream + fork in sync | ✅ `5925857` |
+| **All four images at 0.1.14, publicly pullable** | ✅ **200 on all four** |
+| `:latest` in sync with the version tag | ✅ all four |
+| Binary reports `0.1.14` + revision `9cd8484` | ✅ from the real image |
 
-## The one action required
+Verified with: `verify-delivery-state.ps1` (ALL CHECKS PASSED),
+`report-ghcr-digests.ps1` (`:latest` in sync on all four),
+`test-version-marker-against-image.ps1` (5/5 against the published image),
+`run-all-checks.ps1` (**18 of 18 gates**).
 
-The tag `v0.1.14` was created on `04df497`, which is BEFORE the workflow fix.
-Pushing that tag triggered runs #16/#17/#18, and all three died immediately with:
+## How it shipped, and why not the obvious way
 
-```
-Invalid workflow file: .github/workflows/build-ghcr.yml#L1
-(Line: 322): Unrecognized named-value: 'env'
-```
+The tag `v0.1.14` was created on `04df497` — the commit where the workflow was
+**invalid** — so its push triggered runs #16/#17/#18, all of which died at parse
+time and produced nothing. That commit can never produce images.
 
-A job-level `if:` referenced the `env` context, which is not one of the
-github/needs/vars/inputs contexts available there. GitHub **rejects the whole
-file**, so `build-and-push` - which had worked for 0.1.13 - never ran. The tag
-therefore points at a commit that can never produce images.
+The plan was to move the tag, but **GitHub disables "Delete tag" for a tag with a
+published release**, so it cannot be re-pointed without deleting the release
+first. The cleaner path was taken instead: dispatch the workflow with
+`tag=0.1.14` while building from `main`. The dispatch input sets the image tag and
+the build runs from a ref that has the fix.
 
-### Do this
+That is the better mechanism anyway — it decouples "which tag to publish" from
+"which commit to build", which is exactly the split the broken tag forced.
 
-Re-point the tag to the fix (`927bf93`). GitHub cannot move a tag, so:
+## The outage this release exposed
 
-```powershell
-# 1. Delete the tag (it produced nothing; no artifacts are lost)
-git push https://github.com/pacgate-ai/pacgate-ai-pr.git :refs/tags/v0.1.14
-
-# 2. Re-create it at the fix - from a machine whose credential can write the
-#    pacgate-ai fork (this dev box authenticates as JZKK720, which is denied)
-git tag v0.1.14 927bf93
-git push https://github.com/pacgate-ai/pacgate-ai-pr.git refs/tags/v0.1.14
+```yaml
+jobs.mirror-upstream.if: ${{ env.GHCR_MIRROR_NAMESPACE != '' }}
 ```
 
-Or via the UI: Tags -> `v0.1.14` -> Delete, then Releases -> Draft a new release
--> tag `v0.1.14`, target `927bf93` -> Publish.
+`env` is **not** an available context in a job-level `if:` — only `github`,
+`needs`, `vars`, `inputs` are. GitHub rejects the entire workflow file, so
+`build-and-push` — which had worked for the 0.1.13 release — never ran at all.
 
-The tag push is the trigger, so creating it fires the build automatically.
+The blast radius is the lesson: a guard added to a **new optional job** took down
+the **existing required one**, because an unevaluable expression invalidates the
+whole pipeline rather than the single job. It was invisible locally — the file
+parses as YAML and every string-grep check found the words it looks for.
 
-### Then
+Now guarded by `check-workflow-validity.ps1` (YAML parse, job-level `if:` context
+rules, `needs:` target existence), and `test-workflow-validity-mutations.ps1`
+proves the check fails on the real outage by reverting the guard to `env`.
 
-1. Watch the run. It should build all four images (~9 min).
-2. **Flip any new package to public** in the GHCR UI - new packages default
-   PRIVATE, and a private package's only symptom is a failed anonymous pull.
-3. Verify: `pwsh -File ./scripts/verify-delivery-state.ps1` -> ALL CHECKS PASSED.
+## Building that guard found five more defects
 
-## Why the local gate suite is red right now
+All the same family — **a check reporting success because the thing it inspected
+went away**:
 
-Both failures are CORRECT and are the de-hardcoding working as intended:
+1. `test-workflow-namespace.ps1` asserted the BROKEN form (`env.`), so the fix
+   looked like a regression.
+2. A `needs:` scan that matched **zero lines**: in .NET, `$` in Multiline mode
+   matches before `\n`, not before `\r`, so with CRLF the anchor can never match.
+   It scanned nothing and passed.
+3. The mutation harness could not report its own failure: `Write-Output ''` writes
+   to the *success* stream, so callers received `@('', $False)`, and `-not` on a
+   non-empty array is always `$false` — all three mutation suites exited 0
+   regardless of failures.
+4. A coverage marker that a comment could satisfy (`/version`).
+5. `test-version-marker-against-image.ps1` required the OLD version in the
+   response body, so it reported a healthy release as broken.
 
-- `verify-delivery-state.ps1` reads the version from `Cargo.toml` (0.1.14),
-  confirms all eight compose pins and the manifest agree, and reports 404 for
-  each image. That is the true state.
-- `test-version-marker-against-image.ps1` derives its image tag from the manifest
-  and cannot pull `pacgate-ai/pacgate-api:0.1.14`.
+Two of my own mutations were also wrong rather than the check:
+`mirror-upstream:::` is **valid** YAML (it just renames the job), and a
+double-escaped regex matched nothing and surfaced as an unapplied mutation.
 
-Neither is a bug. Both turn green the moment the images publish.
+## Follow-up
 
-## The real lesson from this release
-
-The release failed because of ONE expression in a job guard, and the blast radius
-was the entire pipeline rather than the one job. Nothing local could catch it:
-the file parses as YAML, and every string-grep check found the words it looks
-for. `scripts/check-workflow-validity.ps1` now covers structural validity, and
-`scripts/test-workflow-validity-mutations.ps1` proves it fails on the real
-outage by reverting the guard to `env`.
-
-Building those two found three further bugs of the same family - a `needs:` scan
-that matched zero lines (a .NET `$`-vs-CRLF anchoring error, so it passed
-vacuously), a mutation harness that could not report its own failure (`-not` on a
-non-empty array is always `$false`), and a namespace test that asserted the
-broken form of the guard. All three are fixed and mutation-tested.
+- **The mirror job has still never actually mirrored.** `GHCR_MIRROR_PAT` is not
+  set, so `mirror-upstream` skipped with a warning. Add a PAT with
+  `write:packages` for `jzkk720`, then flip the resulting packages to public —
+  new GHCR packages default PRIVATE and the only symptom is a failed anonymous
+  pull.
+- The tag `v0.1.14` remains at `04df497` and produces nothing. Harmless but
+  misleading; deleting the release and re-pointing the tag would tidy it.
