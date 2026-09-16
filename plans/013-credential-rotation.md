@@ -118,6 +118,51 @@ added in `48eb8c1`), so no package is bound to a specific commit. Even so,
 .\scripts\check-ghcr-pull.ps1 -Targets "pacgate-ai/pacgate-api:0.1.9","pacgate-ai/pacgate-mcp:0.1.9","pacgate-ai/deer-flow-pacgate:0.1.10","pacgate-ai/deer-flow-frontend-pacgate:0.1.11"
 ```
 
+### ⚠️ The purge breaks `install.ps1 -Update` on both AIPCs (found 2026-09-16)
+
+**Status: release 0.1.13 is done, so the rewrite is now unblocked. But do NOT run
+it without reading this.**
+
+Measured blast radius (dry run, this tree):
+
+| Measure | Value |
+| --- | --- |
+| Commits rewritten | **185 of 188** (`01a4644..HEAD`) |
+| Tags invalidated | 7 local (`v0.1.3`..`v0.1.9`); the fork's tags are separate objects |
+| Repos affected | origin **and** fork — `01a4644` is an ancestor of both |
+
+The coupling nobody had noted: **plan 014 step 1 makes `-Update` run
+`git pull --ff-only`, and a force-pushed rewrite is by definition not
+fast-forwardable.** So on any machine holding an existing clone — both AIPCs —
+the sequence is:
+
+1. You force-push the rewritten history.
+2. AIPC runs `.\install.ps1 -Update`.
+3. `git pull --ff-only` fails; install.ps1 prints
+   `[WARN] Repo has diverged from origin/main - not fast-forwardable` and
+   **skips the repo refresh while continuing with the image update.**
+
+Step 3 is the designed, safe behaviour (it refuses rather than merging), and it is
+why the purge is not an emergency: the machine keeps working on its current repo
+content and still picks up new images. But it means **the repo-based half of every
+future update silently stops landing** on that machine until someone re-clones.
+That is precisely the silent-staleness class plan 014 exists to eliminate, so the
+rewrite must be paired with a re-clone of both AIPCs, not treated as a
+repo-side change that arrives by itself.
+
+Required sequence if the purge is run:
+
+1. Rotate (Step 1 below) — unchanged, and still the part that actually reduces risk.
+2. Purge + force-push both remotes.
+3. **Re-clone on AIPC1 and AIPC2**, or `git fetch && git reset --hard origin/main`
+   on each, then verify with `.\scripts\verify-delivery-state.ps1`
+   (`fork == origin` must read yes).
+4. Confirm `-Update` is fast-forwardable again on both machines.
+
+Note 3 is the step that is easy to forget, because the failure it prevents is
+invisible: nothing errors, the repo just stops moving.
+
+
 ## Step 1 — Rotate (do this first)
 
 Rotation must precede the history purge: the purge removes the values from
