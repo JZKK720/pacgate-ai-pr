@@ -25,9 +25,10 @@ delivery **and** release engineering.
 | 008 | Refine bilingual user manuals + Mermaid + PDF image support | P2 | DONE (2026-08-30) |
 | 009 | AIPC2: sync to origin/main and upgrade to v0.1.7 | P1 | DONE (2026-09-06) |
 | 010 | QM single-stack migration (`qm up` → `compose.qm.yaml`) | P2 | DONE (2026-09-06) |
-| 011 | GHCR master release | P1 | **IN PROGRESS** — CI blocker fixed; version unification outstanding |
+| 011 | GHCR master release | P1 | **DONE** — 0.1.12 live, first green build (2026-09-16) |
 | 012 | Master release: JZKK720 upstream + GHCR namespace | P1 | **AWAITING DECISION** — merge already complete; namespace path A/B/C to choose |
-| 013 | Credential rotation and history purge | **P0** | **REDACTION DONE — ROTATION OUTSTANDING** |
+| 013 | Credential rotation and history purge | **P0** | **HEAD REDACTED — ROTATION + HISTORY PURGE OUTSTANDING** |
+| 014 | Unattended AIPC updates | P1 | **READY — this is the end-goal plan** |
 
 ### Plan 007 sub-documents
 
@@ -48,9 +49,25 @@ not 007. 007 remains the stage log and Appendix A.
 ## Read order for a new executor
 
 1. `013-credential-rotation.md` — **P0**, blocks everything else.
-2. `012-master-release-namespace.md` — the namespace decision that gates releases.
-3. `011-ghcr-master-release.md` — the release steps themselves.
-4. `007-*` — per-machine delivery history and the model-override SQL.
+2. `014-unattended-aipc-updates.md` — **the end-goal**: making updates reach both
+   AIPCs without a developer on the machine. Pairs with
+   `deploy/AIPC-UPDATE-GAP-ANALYSIS.md`.
+3. `012-master-release-namespace.md` — the namespace decision that gates releases.
+4. `011-ghcr-master-release.md` — the release itself (DONE: 0.1.12 live).
+5. `007-*` — per-machine delivery history and the model-override SQL.
+
+## End-goal status (2026-09-16)
+
+> **Goal:** both AIPCs pick up upstream repo + GHCR updates and run a fully
+> functional runtime with no developer logging into each machine.
+>
+> **Status: NOT MET.** The 0.1.12 release made the *artifacts* correct, but
+> `install.ps1 -Update` cannot deliver them unattended: it never runs `git pull`,
+> the rendered config only refreshes when absent, bind-mounted patch code needs a
+> restart it does not perform, qm is outside the loop, and no staleness marker
+> exists. **9 of 16 bind mounts require a human action.**
+>
+> Closing this is plan **014**. Evidence: `deploy/AIPC-UPDATE-GAP-ANALYSIS.md`.
 
 ## Other plan corpora (not part of this sequence)
 
