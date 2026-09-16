@@ -131,16 +131,18 @@ GitHub → 你的个人资料 → Packages → `pacgate-api` → Package setting
 编译后的二进制文件和 SQL 迁移，所有密钥都在运行时通过 `.env` 注入，且安装程序
 已拥有对相同代码的完整源码访问权限。
 
-仅当 Rust 源码变更时，才在开发机上重建并推送：
+仅当 Rust 源码变更时，才在开发机上重建并推送。**标签值应从 compose 固定值中读取，
+而不要手写版本号**——此处硬编码的标签已两次过期，其中一次还把健康系统误报为故障：
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
-docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.9 -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push ghcr.io/pacgate-ai/pacgate-api:0.1.9
+$tag = (Select-String -Path deploy/client-bundle/compose.prod.yaml `
+        -Pattern 'pacgate-ai/pacgate-api:(\S+)').Matches.Groups[1].Value
+docker build -t ghcr.io/pacgate-ai/pacgate-api:$tag -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push  ghcr.io/pacgate-ai/pacgate-api:$tag
 ```
 
-然后在 `deploy/client-bundle/compose.prod.yaml` 中更新标签。实践中建议使用
-`build-ghcr.yml` 工作流（推送 `v0.1.*` 标签），以保证四个镜像版本一致——参见
+实践中建议使用 `build-ghcr.yml` 工作流，以保证四个镜像版本一致——参见
 `deploy/README-BUILD.md` 与 `plans/012-master-release-namespace.md`。
 
 **不要在 AIPC 上重建**——试点运行已发布的摘要。

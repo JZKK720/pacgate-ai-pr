@@ -132,17 +132,21 @@ GitHub → your profile → Packages → `pacgate-api` → Package settings → 
 the compiled binary and SQL migrations, every secret is injected at runtime via `.env`,
 and the installer already has full source access to the same code.
 
-Only rebuild and push if the Rust source changes, from the dev machine:
+Only rebuild and push if the Rust source changes, from the dev machine. **Take the
+tag from the compose pin rather than typing a version** — a hard-coded tag here
+has gone stale twice, and one stale copy already reported a healthy system as
+broken:
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
-docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.9 -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push ghcr.io/pacgate-ai/pacgate-api:0.1.9
+$tag = (Select-String -Path deploy/client-bundle/compose.prod.yaml `
+        -Pattern 'pacgate-ai/pacgate-api:(\S+)').Matches.Groups[1].Value
+docker build -t ghcr.io/pacgate-ai/pacgate-api:$tag -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push  ghcr.io/pacgate-ai/pacgate-api:$tag
 ```
 
-Then bump the tag in `deploy/client-bundle/compose.prod.yaml`. In practice prefer the
-`build-ghcr.yml` workflow (push a `v0.1.*` tag) so all four images stay in step — see
-`deploy/README-BUILD.md` and `plans/012-master-release-namespace.md`.
+In practice prefer the `build-ghcr.yml` workflow so all four images stay in step —
+see `deploy/README-BUILD.md` and `plans/012-master-release-namespace.md`.
 
 Do **not** rebuild on the AIPC — the pilot runs the published digests.
 
