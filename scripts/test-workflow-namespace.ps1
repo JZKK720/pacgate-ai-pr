@@ -120,7 +120,19 @@ Write-Output ''
 Assert-True ($raw -match 'GHCR_MIRROR_NAMESPACE:\s*jzkk720') 'declares the upstream mirror namespace'
 Assert-True ($raw -match 'mirror-upstream:') 'has a mirror-upstream job'
 Assert-True ($raw -match 'needs:\s*build-and-push') 'mirror runs AFTER the client build'
-Assert-True ($raw -match 'if:\s*\$\{\{\s*env\.GHCR_MIRROR_NAMESPACE != ''''\s*\}\}') 'mirror job is skipped when no mirror namespace is set'
+# The guard must be read from a context that IS available in a job-level `if:`.
+#
+# This assertion previously pinned `env.GHCR_MIRROR_NAMESPACE` - i.e. it asserted
+# THE BUG. `env` is not one of the github/needs/vars/inputs contexts a job-level
+# if: can read, so GitHub rejected the entire workflow file and every run died
+# before any job started. The 0.1.14 release produced no images because of it.
+#
+# The test passed the whole time, because it only checked that the file CONTAINED
+# that expression - not that the expression was legal. A test that locks in the
+# broken form is worse than no test: it makes the fix look like a regression.
+# Structural legality is now owned by check-workflow-validity.ps1; this assertion
+# covers the narrower property that the guard exists at all.
+Assert-True ($raw -match 'if:\s*\$\{\{\s*vars\.GHCR_MIRROR_NAMESPACE != ''''\s*\}\}') 'mirror job is skipped when no mirror namespace is set'
 Assert-True ($raw -match 'GHCR_MIRROR_PAT') 'mirror authenticates with its own PAT (GITHUB_TOKEN cannot cross namespaces)'
 
 # Retag, not rebuild. A rebuild would double CI time AND produce different

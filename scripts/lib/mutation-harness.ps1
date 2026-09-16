@@ -156,7 +156,24 @@ function Invoke-MutationSuite {
     $leftOver = @($out -split "`n" | Where-Object { $_ -match '\[FAIL\]' } | ForEach-Object { $_.Trim() })
     Check 'restored files pass the full suite' ($suiteExit -eq 0) "exit=$suiteExit; $(($leftOver -join ' | ').Trim())"
 
-    Write-Output ''
+    # Write-Host, NOT Write-Output.
+    #
+    # Write-Output writes to the SUCCESS stream, and a function's return value is
+    # the collection of everything written to that stream. So `Write-Output ''`
+    # followed by `return $false` made the caller receive @('', $False) - an array
+    # of two elements. `-not $ok` on a NON-EMPTY ARRAY is $false regardless of
+    # contents, so `if (-not $ok) { exit 1 }` never fired and EVERY mutation suite
+    # exited 0 even when mutations went undetected.
+    #
+    # Verified directly: a function that does Write-Output ''; return $false
+    # yields an Object[] of '/False', and -not on it is False.
+    #
+    # This is the same failure mode the harness exists to catch - a check that
+    # cannot fail - living inside the checker. A mutation suite that cannot report
+    # its own failure is worse than none, because it is trusted. Write-Host goes
+    # to the HOST stream, which is not captured by assignment, so the boolean
+    # return survives intact.
+    Write-Host ''
     Write-Host ("{0} passed, {1} failed" -f $script:mutPassed, $script:mutFailed)
     return ($script:mutFailed -eq 0)
 }

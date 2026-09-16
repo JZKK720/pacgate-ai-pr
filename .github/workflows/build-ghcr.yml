@@ -319,7 +319,26 @@ jobs:
     runs-on: ubuntu-latest
     # Skip entirely when no mirror namespace is configured. This also keeps the
     # workflow usable from a fork that has no PAT.
-    if: ${{ env.GHCR_MIRROR_NAMESPACE != '' }}
+    #
+    # `vars`, NOT `env`. A job-level `if:` can only read the github / needs /
+    # vars / inputs contexts, and referencing `env` there is a PARSE ERROR - not
+    # a runtime failure. That distinction is what made this bug expensive: the
+    # whole workflow file was rejected as invalid, so EVERY run died before any
+    # job started and `build-and-push` never ran at all. Runs #16, #17 and #18
+    # failed with "Invalid workflow file", and the 0.1.14 release produced no
+    # images.
+    #
+    # An expression the CI cannot evaluate silently invalidates the entire
+    # pipeline, which is the same class as the earlier bugs where a check
+    # reported success because the thing it inspected had gone away. The
+    # namespace now lives in a repository VARIABLE so this guard can read it;
+    # `vars` resolves to an empty string when unset, which is exactly the
+    # skip-when-unconfigured behaviour this line is for.
+    #
+    # The step-level references below keep using `env` deliberately - there the
+    # context IS available, and the workflow-level constant still holds the
+    # value.
+    if: ${{ vars.GHCR_MIRROR_NAMESPACE != '' }}
     permissions:
       contents: read
     steps:

@@ -23,6 +23,14 @@ $gates = @(
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
     'scripts/test-workflow-namespace.ps1'
+    # Structural validity, separate from the string-match checks above. The
+    # 0.1.14 release produced NO images because a job-level `if:` referenced the
+    # `env` context, which invalidated the entire workflow file - so every run
+    # died before any job started, including the build job that had been working.
+    # Grepping for strings cannot catch that: the bad line contains every word the
+    # other checks look for. Validity is structural, so it gets its own gate.
+    'scripts/check-workflow-validity.ps1'
+    'scripts/test-workflow-validity-mutations.ps1'
     # Runs LAST of the workflow checks, and by design it MUTATES the workflow and
     # compose files between runs, restoring each time. Kept in the gate list
     # because a suite whose assertions cannot fail reads as coverage while
