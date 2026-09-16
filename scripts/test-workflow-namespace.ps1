@@ -64,15 +64,33 @@ Assert-True ($pins.Count -eq 8 -and $wrong.Count -eq 0) `
     ("pinned='$pinned'; found $($pins.Count) pins; mismatches: " + (($wrong | ForEach-Object { "$($_.Image)@$($_.Ns)" }) -join ', '))
 
 # Stale-namespace check, made PRECISE. A blanket "the string jzkk720 must not
-# appear" is wrong: the explanatory comment legitimately names the deprecated
-# namespace to explain why the pin exists, and the first version of this
-# assertion flagged that comment. What must not exist is a jzkk720 line that
-# reads as a PUSH TARGET. So: every occurrence must be on a line that explicitly
-# marks it deprecated or explains the origin-tagging hazard.
-$jzLines = @(Get-Content -LiteralPath $wf | Select-String -Pattern 'jzkk720')
-$unexplained = @($jzLines | Where-Object { $_.Line -notmatch 'DEPRECATED|ORIGIN|deprecated' })
-Assert-True ($unexplained.Count -eq 0) 'every jzkk720 mention is marked deprecated or explains the hazard' `
-    ($unexplained | ForEach-Object { "L$($_.LineNumber): $($_.Line.Trim())" } | Select-Object -First 3)
+# appear" is wrong: the file legitimately names the upstream namespace to explain
+# the mirror and to record the tagging hazard, and the first version of this
+# assertion flagged those comments.
+#
+# The rule is about INTENT: every mention must be either (a) declared as the
+# mirror namespace, or (b) prose that marks it upstream/mirror/deprecated. A
+# mention reading as a CLIENT publish target is the thing that must not exist.
+#
+# CONTEXT IS A WINDOW, not a single line. My third attempt at this check looked
+# only at the matching line and failed on "A release therefore populates BOTH.
+# pacgate-ai is authoritative; jzkk720 gets a" + "MIRROR of the same tags" -
+# the keyword was on the WRAPPED next line. Prose wraps; the check has to read a
+# window. (Third correction to this one assertion. Each was a false positive, and
+# a checker whose false-positive rate is high is one people learn to skip.)
+$fileLines = @(Get-Content -LiteralPath $wf)
+$unexplained = @()
+for ($i = 0; $i -lt $fileLines.Count; $i++) {
+    if ($fileLines[$i] -notmatch 'jzkk720') { continue }
+    $lo = [Math]::Max(0, $i - 1)
+    $hi = [Math]::Min($fileLines.Count - 1, $i + 2)
+    $window = ($fileLines[$lo..$hi] -join ' ')
+    if ($window -notmatch 'DEPRECATED|deprecated|MIRROR|mirror|upstream|developer|ORIGIN') {
+        $unexplained += ("L{0}: {1}" -f ($i + 1), $fileLines[$i].Trim())
+    }
+}
+Assert-True ($unexplained.Count -eq 0) 'every jzkk720 mention is marked mirror/upstream/deprecated' `
+    (($unexplained | Select-Object -First 3) -join "`n         ")
 
 # Precedence order in the script must be input > pinned > owner.
 $inputIdx = $raw.IndexOf('if [ -n "$INPUT_NS" ]')
@@ -81,6 +99,43 @@ $ownerIdx = $raw.IndexOf('ns="$OWNER_NS"')
 Assert-True ($inputIdx -gt 0 -and $pinIdx -gt $inputIdx -and $ownerIdx -gt $pinIdx) `
     'precedence is input > pinned > owner (checked by position in the script)'
 
+Write-Output ''
+
+# --- mirror job: the upstream namespace -------------------------------------
+#
+# The mirror is NON-BLOCKING by design: pacgate-ai is the source of truth and a
+# mirror failure must never fail a client release. These assertions encode that,
+# because the property is easy to lose in a later edit and impossible to notice
+# from a green run.
+Write-Host '=== mirror-upstream job ===' -ForegroundColor Cyan
+Write-Output ''
+Assert-True ($raw -match 'GHCR_MIRROR_NAMESPACE:\s*jzkk720') 'declares the upstream mirror namespace'
+Assert-True ($raw -match 'mirror-upstream:') 'has a mirror-upstream job'
+Assert-True ($raw -match 'needs:\s*build-and-push') 'mirror runs AFTER the client build'
+Assert-True ($raw -match 'if:\s*\$\{\{\s*env\.GHCR_MIRROR_NAMESPACE != ''''\s*\}\}') 'mirror job is skipped when no mirror namespace is set'
+Assert-True ($raw -match 'GHCR_MIRROR_PAT') 'mirror authenticates with its own PAT (GITHUB_TOKEN cannot cross namespaces)'
+
+# Retag, not rebuild. A rebuild would double CI time AND produce different
+# digests for identical source, making the two namespaces impossible to compare.
+Assert-True ($raw -match 'imagetools create') 'mirror RETAGS rather than rebuilding'
+Assert-True ($raw -notmatch 'mirror-upstream:[\s\S]{0,4000}build-push-action') 'mirror does not invoke a build action'
+
+# The dangling-output trap: build-and-push declares no outputs, so referencing
+# needs.build-and-push.outputs.<x> resolves to an empty string silently.
+#
+# COMMENT LINES ARE EXCLUDED. The first version of this assertion flagged the
+# comment that explains the trap - the same class of false positive as the 'VAR'
+# one in audit-qm-bootstrap.ps1. A checker that reports its own documentation as a
+# defect teaches people to ignore it.
+$codeLines = @(Get-Content -LiteralPath $wf | Where-Object { $_.TrimStart() -notmatch '^#' })
+$dangling = @($codeLines | Where-Object { $_ -match 'needs\.build-and-push\.outputs\.' })
+Assert-True ($dangling.Count -eq 0) 'no reference to outputs that build-and-push does not declare' `
+    ($dangling | ForEach-Object { $_.Trim() } | Select-Object -First 2)
+
+# A mirror failure must not be able to fail the run.
+Assert-True ($raw -match 'have=0') 'mirror degrades to a warning when the PAT is absent'
+Assert-True ($raw -match '::warning::\$GHCR_MIRROR_NAMESPACE') 'a non-pullable mirror WARNs rather than erroring'
+Assert-True ($raw -notmatch 'mirror-upstream:[\s\S]{0,6000}::error::') 'the mirror job never emits a hard ::error::'
 Write-Output ''
 
 # --- behavioural checks: run the same logic as SH ---------------------------

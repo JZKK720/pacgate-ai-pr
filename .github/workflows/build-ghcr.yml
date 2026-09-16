@@ -4,7 +4,7 @@ name: Build & Push GHCR Images
 # (v0.1.x) is pushed. This keeps both AIPCs in sync from a single source of
 # truth and needs no local docker login (uses GITHUB_TOKEN).
 #
-# Images pushed (pinned namespace):
+# Images pushed (client namespace = SOURCE OF TRUTH):
 #   ghcr.io/pacgate-ai/pacgate-api:<tag>
 #   ghcr.io/pacgate-ai/pacgate-mcp:<tag>
 #   ghcr.io/pacgate-ai/deer-flow-pacgate:<tag>
@@ -14,22 +14,26 @@ name: Build & Push GHCR Images
 # `GHCR_NAMESPACE` below, and falls back to `github.repository_owner` only if that
 # is emptied. `pacgate-ai` is a USER account, not an organization.
 #
+# TWO ACCOUNTS, TWO ROLES (confirmed by the maintainer):
+#   jzkk720    - the upstream / DEVELOPER account, where the project originated
+#   pacgate-ai - the CLIENT DELIVERY account; this is what the compose files pin
+#
+# A release therefore populates BOTH. pacgate-ai is authoritative; jzkk720 gets a
+# MIRROR of the same tags so the upstream account stays populated and a developer
+# pulling from upstream is not stranded on abandoned 0.1.x tags. See the
+# `mirror-upstream` job at the bottom of this file - it is deliberately
+# NON-BLOCKING, so a mirror failure never breaks a client release.
+#
 # WHY PINNED RATHER THAN INFERRED. Deriving the owner from the repo was correct
 # by luck and wrong in principle. `secrets.GITHUB_TOKEN` can only push to the
 # namespace of the account that runs the workflow, so:
 #
-#   repo JZKK720/pacgate-ai-pr    -> ghcr.io/jzkk720/*   <- DEPRECATED, nothing pulls it
-#   repo pacgate-ai/pacgate-ai-pr -> ghcr.io/pacgate-ai/* <- what compose pins
+#   repo JZKK720/pacgate-ai-pr    -> ghcr.io/jzkk720/*   <- upstream, MIRROR only
+#   repo pacgate-ai/pacgate-ai-pr -> ghcr.io/pacgate-ai/* <- SOURCE OF TRUTH
 #
-# A `v0.1.*` tag pushed on ORIGIN therefore publishes to ghcr.io/jzkk720/*, a
-# namespace the client compose files do not reference - a release that succeeds,
-# publishes nowhere useful, and leaves clients on the old image with no error.
-# That is the failure this pin removes.
-#
-# The value lives in THIS FILE rather than in a repository variable because the
-# namespace is a property of the project, not of whichever repo happens to run
-# the workflow - so one committed constant covers origin and fork alike, is
-# reviewable in a diff, and needs no Settings access on either repo.
+# The mirror uses a separate PAT secret (`GHCR_MIRROR_PAT`) because GITHUB_TOKEN
+# cannot cross namespaces. That secret belongs in the FORK. If it is absent the
+# mirror is skipped with a warning and the client release still succeeds.
 #
 # IMPORTANT: this prefix MUST match the `image:` pins in
 # deploy/client-bundle/compose.prod.yaml and compose.bundle.yaml. If the
@@ -44,6 +48,9 @@ env:
   # The single source of truth for where a release publishes. See the NAMESPACE
   # note above before changing it.
   GHCR_NAMESPACE: pacgate-ai
+  # The upstream/developer namespace that receives a MIRROR of the same tags.
+  # Empty this to disable mirroring entirely.
+  GHCR_MIRROR_NAMESPACE: jzkk720
 
 on:
   push:
@@ -241,3 +248,140 @@ jobs:
               exit 1
             fi
           done
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Mirror the released tags into the upstream / developer namespace.
+  #
+  # THREE DESIGN DECISIONS, each deliberate:
+  #
+  # 1. NON-BLOCKING. `continue-on-error: true` and a conditional `if` mean this
+  #    job can never fail the client release. pacgate-ai is the source of truth;
+  #    the mirror is a convenience for the upstream account. A release that
+  #    reaches clients must not be held hostage to a mirror push.
+  #
+  # 2. NO REBUILD. It retags the images the build job already pushed, using
+  #    buildx with `push: true` and a source of `type=registry`. Rebuilding would
+  #    double CI time and produce DIFFERENT digests for identical source (docker
+  #    builds are not reproducible), which would make the two namespaces
+  #    impossible to compare. Retagging keeps one build and one digest.
+  #
+  # 3. SEPARATE AUTH. GITHUB_TOKEN is scoped to the repo that runs the workflow
+  #    and cannot push to another owner's namespace, so the mirror needs a PAT
+  #    (GHCR_MIRROR_PAT, write:packages for jzkk720) stored in THIS repo's
+  #    secrets. If the secret is absent, the job is skipped with a warning -
+  #    which is why the readiness check is a separate step rather than letting
+  #    the login fail.
+  mirror-upstream:
+    name: Mirror tags to upstream namespace
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    # Skip entirely when no mirror namespace is configured. This also keeps the
+    # workflow usable from a fork that has no PAT.
+    if: ${{ env.GHCR_MIRROR_NAMESPACE != '' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check mirror credentials
+        id: creds
+        env:
+          MIRROR_PAT: ${{ secrets.GHCR_MIRROR_PAT }}
+        run: |
+          if [ -z "$MIRROR_PAT" ]; then
+            echo "::warning::GHCR_MIRROR_PAT is not set - skipping the $GHCR_MIRROR_NAMESPACE mirror."
+            echo "The client release in ghcr.io/$GHCR_NAMESPACE is unaffected."
+            echo "To enable mirroring, add a PAT with write:packages for $GHCR_MIRROR_NAMESPACE"
+            echo "as the repository secret GHCR_MIRROR_PAT."
+            echo "have=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR for the mirror
+        if: steps.creds.outputs.have == '1'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ env.GHCR_MIRROR_NAMESPACE }}
+          password: ${{ secrets.GHCR_MIRROR_PAT }}
+
+      - name: Set up Docker Buildx
+        if: steps.creds.outputs.have == '1'
+        uses: docker/setup-buildx-action@v3
+
+      # Retag, do not rebuild. See decision 2 above.
+      #
+      # NOTE: the tag is resolved HERE from the event, not taken from
+      # `needs.build-and-push.outputs.tag` - that job declares no outputs, so
+      # referencing it would silently resolve to an empty string and the mirror
+      # would try to push `:latest`-only tags against a missing tag. Resolving it
+      # the same way the build job does keeps the two consistent.
+      - name: Retag client images into the upstream namespace
+        if: steps.creds.outputs.have == '1'
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          TAG="${TAG#v}"
+          if [ -z "$TAG" ]; then
+            echo "::warning::Could not resolve a tag for the mirror - skipping."
+            exit 0
+          fi
+          echo "Mirroring $GHCR_NAMESPACE -> $GHCR_MIRROR_NAMESPACE at tag $TAG"
+          for img in pacgate-api pacgate-mcp deer-flow-pacgate deer-flow-frontend-pacgate; do
+            for suffix in "$TAG" latest; do
+              echo "--- $img:$suffix"
+              docker buildx imagetools create \
+                --tag "ghcr.io/$GHCR_MIRROR_NAMESPACE/$img:$suffix" \
+                "ghcr.io/$GHCR_NAMESPACE/$img:$suffix"
+            done
+          done
+          echo "Mirror complete. $GHCR_MIRROR_NAMESPACE now carries the same tags as $GHCR_NAMESPACE."
+
+      - name: Verify the mirror is anonymously pullable
+        if: steps.creds.outputs.have == '1'
+        run: |
+          # Same trap as the main verify step: GHCR returns 404 without an
+          # OCI Accept header even for public packages.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          TAG="${TAG#v}"
+          ACCEPT="application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json"
+          for img in pacgate-api pacgate-mcp deer-flow-pacgate deer-flow-frontend-pacgate; do
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              tok=$(curl -s "https://ghcr.io/token?scope=repository:$GHCR_MIRROR_NAMESPACE/${img}:pull" | jq -r .token)
+              code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Accept: $ACCEPT" -H "Authorization: Bearer $tok" \
+                "https://ghcr.io/v2/$GHCR_MIRROR_NAMESPACE/${img}/manifests/${TAG}")
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              sleep 10
+            done
+            if [ "$ok" != "1" ]; then
+              # Non-blocking by design, but loud: a private mirror package is a
+              # real problem for anyone pulling from upstream, and it is the
+              # failure that has no other symptom.
+              echo "::warning::$GHCR_MIRROR_NAMESPACE/${img}:${TAG} is not anonymously pullable (last HTTP $code)."
+              echo "If 401: the mirrored package defaults to PRIVATE and must be flipped to public in the GHCR UI."
+            fi
+          done
+
+      - name: Mirror summary
+        if: always()
+        run: |
+          if [ "${{ steps.creds.outputs.have }}" = "1" ]; then
+            echo "### GHCR mirror" >> "$GITHUB_STEP_SUMMARY"
+            echo "Published to \`ghcr.io/$GHCR_NAMESPACE\` (source of truth) and mirrored to \`ghcr.io/$GHCR_MIRROR_NAMESPACE\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Client compose files pin \`ghcr.io/$GHCR_NAMESPACE\`. The mirror exists so the upstream" >> "$GITHUB_STEP_SUMMARY"
+            echo "developer account stays populated - nothing automated pulls from it." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### GHCR mirror skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`GHCR_MIRROR_PAT\` is not set, so \`ghcr.io/$GHCR_MIRROR_NAMESPACE\` was not updated." >> "$GITHUB_STEP_SUMMARY"
+            echo "The client release in \`ghcr.io/$GHCR_NAMESPACE\` succeeded and is unaffected." >> "$GITHUB_STEP_SUMMARY"
+          fi
