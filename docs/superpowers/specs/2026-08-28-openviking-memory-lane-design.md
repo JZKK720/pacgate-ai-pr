@@ -1,6 +1,10 @@
 # OpenViking as Pacgate's Memory Lane — Design Spec
 
-> Status: **DRAFT v2 — deep-dive verified against the OpenViking codebase (cloned 2026-08-28)**
+> Status: **SHIPPED — superseded as a plan by its own implementation.**
+> (Originally `DRAFT v2`. The lane landed as OV-1 service + OV-2a deer-flow MCP +
+> OV-3 qm bridge, and the compose stack now ships `openviking` as a fifth
+> container. Retained as the design record of *why* OpenViking owns session
+> memory while `pacgate-rag` keeps document RAG. Status corrected 2026-09-15.)
 > Date: 2026-08-28
 > Decision basis: Option B (unified context layer) scoped by Option A (split duties) — OpenViking owns conversational/session memory; pacgate-rag keeps document RAG with T1–T4 compliance filtering.
 > Related: `deploy/PLANS.md` (architecture memo), `deploy/COPILOT_CONTEXT.md` (integration principles), Plan 007 (AIPC delivery).

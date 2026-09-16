@@ -302,15 +302,29 @@ pacgate-api (Rust metadata gateway) + deer-flow (research workspace) + qm
    `admin@pacgate-law.com` and `qm-bridge@pacgate.local` via
    `POST /api/auth/register`.
 4. **Model overrides (CRITICAL — do not skip)** — run `ollama list` on this
-   machine; confirm `gemma4:12b-it-qat` and `qwen3.8:27b-mtp-q4_K_M` are
-   present (pull via `ollama pull` if missing, plus `nomic-embed-text`).
-   Then apply the Appendix A SQL template via
+   machine first. **The model choice belongs to the machine owner and to what is
+   actually present locally; do not assume any particular tier set.**
+
+   > **Correction (2026-09-15).** Earlier revisions of this step prescribed
+   > `gemma4:12b-it-qat` / `qwen3.8:27b-mtp-q4_K_M`. On AIPC #1 those tags were
+   > **never present** — ollama.com downloads were blocked on that machine — and
+   > the operator correctly substituted the on-board models
+   > (`ornith-1.5:9b` / `ornith-1.5:35b`). See the deviations table in
+   > `007-delivery-log.md`. The tiers below were a *recommendation*, not a
+   > requirement, and `ollama list` is the only authority on what to use.
+
+   Apply the Appendix A SQL template via
    `docker exec pacgate-db psql -U pacgate -f /tmp/overrides.sql`
-   (docker cp the file in) with:
-   MAIN=gemma4:12b-it-qat, MID=qwen3.8:27b-mtp-q4_K_M, LOW=gemma4:12b-it-qat,
-   TENANT_SLUG=<your PACGATE_TENANT_ID>. Casing is snake_case
-   (main/mid/low, ollama) — capitalized values silently fall back to
-   defaults.
+   (docker cp the file in) with values taken from `ollama list`:
+   MAIN=<fast non-reasoning model>, MID=<stronger batch model>,
+   LOW=<fast model>, TENANT_SLUG=<your PACGATE_TENANT_ID>.
+
+   Casing is snake_case (main/mid/low, ollama) — capitalized values silently
+   fall back to defaults.
+
+   Avoid reasoning-mode models (e.g. nemotron) on the Main tier: they emit a
+   large `reasoning` field and can stall `generate_docx` for 40+ minutes. See
+   "Third finding: workflow step-2 hang" above.
 4b. **OpenViking memory service (Stage 3.5 in the handbook)** — the compose
    stack now includes `openviking` (5th container). The installer renders
    `OPENVIKING_CONF_CONTENT` into `.env` automatically. Verify:
@@ -415,7 +429,13 @@ working tree committed with conventional-commit messages
 ## Appendix A — Tenant model override SQL template
 
 **Recommended pilot values (benchmarked 2026-08-28):**
-`<MAIN_MODEL>` = `gemma4:12b-it-qat` · `<MID_MODEL>` = `qwen3.8:27b-mtp-q4_K_M` · `<LOW_MODEL>` = `gemma4:12b-it-qat`
+`<MAIN_MODEL>` = first choice from `ollama list` (fast, non-reasoning) · `<MID_MODEL>` = stronger model for batch work · `<LOW_MODEL>` = fast model for bulk/routine tasks
+
+> **Correction (2026-09-15).** This line previously hard-coded
+> `gemma4:12b-it-qat` / `qwen3.8:27b-mtp-q4_K_M`. Those tags were not present on
+> AIPC #1 and were never used there; the operator substituted the on-board
+> models and recorded it in `007-delivery-log.md`. **`ollama list` on the target
+> machine is the authority** — fill the placeholders from it.
 
 Rationale: gemma4:12b is 5–9× faster per tool-round (13s vs 73–115s) with
 schema-valid tool calls — right for interactive chat/workflows (Main) and

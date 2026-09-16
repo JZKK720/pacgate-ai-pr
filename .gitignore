@@ -58,6 +58,54 @@ deploy/client-bundle/data/
 # OpenViking runtime CLI settings (per-machine, contains local state)
 deploy/client-bundle/openviking/ovcli.settings.conf
 
+# ── Credential hygiene (added 2026-09-15) ────────────────────────────────────
+# This repo is PUBLIC. A sweep on 2026-09-15 found three tracked files holding
+# real, working credentials (an account password, legal portal logins, and paid
+# API keys). They have been redacted, but the values remain in history and MUST
+# be rotated. See plans/013-credential-rotation.md.
+#
+# IMPORTANT — how this block is meant to work:
+#   The PRIMARY control is `scripts/detect-literal-credentials.ps1` plus the
+#   pre-commit guard `scripts/assert-no-staged-secrets.ps1`, which inspect file
+#   CONTENT. The filename globs below are only a secondary net.
+#
+#   Unanchored globs such as `*credentials*` were tried here first and caused
+#   collateral damage THREE times: they swallowed
+#   plans/013-credential-rotation.md and then
+#   scripts/{assert-no-staged-secrets,redact-exposed-credentials,
+#   detect-literal-credentials}.ps1. Keep patterns narrow, and always test a new
+#   rule with `git check-ignore -v <path>` before committing it.
+#
+# High-signal filenames only. Note gitignore negation cannot re-include a file
+# whose parent pattern already matched, so keep these patterns NARROW rather
+# than relying on `!` rules.
+OPERATOR*.md
+*credential*.json
+*credential*.yaml
+*credential*.yml
+*credentials.csv
+*credentials.txt
+*secrets.json
+*secrets.yaml
+*secrets.yml
+*密钥表*
+# Environment and key material.
+.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.npmrc
+.pypirc
+.netrc
+*_history
+.*_history
+
 # Generated build/delivery archives
 *.zip
 

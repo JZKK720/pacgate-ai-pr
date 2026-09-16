@@ -1,5 +1,12 @@
 # Plan 009 — AIPC2: sync to origin/main and upgrade live stack to v0.1.7
 
+> **Historical record (2026-09-06) — COMPLETED.** This plan is retained as the
+> record of that upgrade. It is **not** the current state: `compose.prod.yaml`
+> now pins `pacgate-api`/`pacgate-mcp` `0.1.9`, `deer-flow-pacgate` `0.1.10`,
+> and `deer-flow-frontend-pacgate` `0.1.11`. The single-stack QM migration it
+> defers is done (plan 010). Do not re-execute; use
+> `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` for installs.
+
 Date: 2026-09-06. Mode: **direct** (single machine, live Docker stack, no PR dance for deploy state).
 Validated assumptions are marked ✅ (verified this session); unverified ones ⚠️.
 
