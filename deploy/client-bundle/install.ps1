@@ -481,6 +481,21 @@ if ($Update) {
 
     if ($reported) {
         $rev = if ($revision -and $revision -ne 'unknown') { $revision.Substring(0, [Math]::Min(12, $revision.Length)) } else { 'unknown' }
+
+        # REPORT THE REVISION EVEN WHEN THE VERSION MATCHES.
+        #
+        # This is the one case the version comparison CANNOT catch, and it is not
+        # hypothetical - it is how the current release was cut. The version is
+        # baked from CARGO_PKG_VERSION, which comes from the crate manifest, while
+        # the revision comes from PAC_SOURCE_REVISION, which is the commit. If a
+        # release ships without bumping Cargo.toml, a machine running the PREVIOUS
+        # release and one running the new one both answer the same version, and
+        # that comparison says OK. The revision is the only field that differs, so
+        # it is printed here rather than buried.
+        #
+        # The install cannot resolve this on its own: knowing whether the tag
+        # implies a rebuild is a decision about the workflow (whether it bumps the
+        # manifest), and that is a repo property, not a machine property.
         if ($pinned -and $reported -ne $pinned) {
             # Pulled X, running Y. Not necessarily an error - the recreate may
             # still be in flight - but it is the exact condition that presents as
@@ -491,6 +506,14 @@ if ($Update) {
         }
         else {
             Write-Host "[OK] pacgate-api reports $reported (source revision $rev)" -ForegroundColor Green
+            if ($rev -eq 'unknown') {
+                # A missing revision means the build arg was not passed, so this
+                # machine cannot state which commit it runs. Report it as the gap
+                # it is rather than letting 'unknown' read as a value.
+                Write-Host "       NOTE: the revision is 'unknown', so this machine cannot confirm" -ForegroundColor Yellow
+                Write-Host "             WHICH commit it is running - only which version string." -ForegroundColor Yellow
+                Write-Host "             A rebuild of old source at a new tag is invisible here." -ForegroundColor Yellow
+            }
         }
     }
     else {
