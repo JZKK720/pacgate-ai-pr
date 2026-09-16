@@ -106,6 +106,11 @@ pub fn build_router(state: AppState) -> Router {
         //
         // The revision comes from an optional build arg (see the Dockerfile);
         // when it is absent this is "unknown" rather than a wrong value.
+        //
+        // This route lives on the PUBLIC router (below), which carries no auth
+        // middleware, so it is reachable without a token. Verified against the
+        // published 0.1.13 image: GET /build-info returns 200. See
+        // scripts/test-version-marker-against-image.ps1.
         .route("/build-info", get(|| async {
             axum::Json(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),

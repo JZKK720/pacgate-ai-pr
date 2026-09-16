@@ -16,6 +16,17 @@ use crate::{resolve_soul, AuthService, Claims};
 /// Auth middleware — verifies JWT and injects Claims into request extensions.
 ///
 /// Skips auth for health check and auth endpoints (login/register).
+///
+/// Note the skip list only matters for routes that carry THIS middleware. The
+/// public routes (/health, /build-info, /api/auth/*) are mounted on a separate
+/// public router that does not apply it, so they are reachable without a token
+/// regardless of this list — verified against the published 0.1.13 image.
+///
+/// I briefly added /build-info here after seeing a 401 from a live stack, and
+/// that inference was wrong: the live stack was running an OLD image
+/// (jzkk720/pacgate-api:0.1.2) that predates the route entirely, and an
+/// unknown path on that older build answered 401 rather than 404. The entry is
+/// not required, so this list is left matching the public router as it was.
 pub async fn auth_middleware(
     State(auth): State<AuthService>,
     request: Request,
