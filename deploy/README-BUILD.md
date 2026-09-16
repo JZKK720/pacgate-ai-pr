@@ -21,20 +21,69 @@ Before this change, two components were built locally and not on GHCR:
 
 ## Owner / namespace decision
 
-The repo's push remote is `fork = https://github.com/pacgate-ai/pacgate-ai-pr.git`
-(the `pacgate-ai` org), and `origin = JZKK720/pacgate-ai-pr`. The CI workflow
-(`.github/workflows/build-ghcr.yml`) publishes to
-`ghcr.io/${{ github.repository_owner }}/*`, which is **whatever org owns the
-repo that triggers the workflow**.
+The repo's push remote is `origin = JZKK720/pacgate-ai-pr` (the upstream /
+developer account) and `fork = https://github.com/pacgate-ai/pacgate-ai-pr.git`
+(the `pacgate-ai` org, used for client delivery).
 
-> **Decided 2026-09-06:** publish under **`ghcr.io/pacgate-ai/*`**. The repo
-> pushes to the `pacgate-ai` fork, and the cached `pacgate-ai` credential owns
-> that org, so `v0.1.3` tags triggered from the fork land in `pacgate-ai/*`.
-> The compose pins, build scripts, and docs all reference `ghcr.io/pacgate-ai/*`.
+> **Decided 2026-09-06:** publish under **`ghcr.io/pacgate-ai/*`**, and resolve
+> it from a **committed constant** — not from `github.repository_owner`.
+>
+> The original workflow inferred the namespace from whichever repo triggered
+> the run. That is correct on the fork and **wrong on a tag pushed from
+> `JZKK720`**, which would publish to a namespace no compose file references.
+> Nothing fails loudly in that case: the release goes green and every AIPC keeps
+> pulling the previous images. The pinned constant removes the possibility.
 
-To switch back to `jzkk720/*`, update the `image:` lines in
-`deploy/client-bundle/compose.*.yaml`, the build scripts, and this doc — and
-push the tag from the `JZKK720` repo instead.
+`GHCR_NAMESPACE: pacgate-ai` at the top of the workflow is now the single source
+of truth. Precedence is:
+
+1. the `namespace` dispatch input (deliberate override),
+2. the committed `GHCR_NAMESPACE`,
+3. `github.repository_owner` — last resort, so a fresh fork still builds.
+
+Resolving to anything other than `pacgate-ai` emits a warning naming the
+mismatch. The `scripts/test-workflow-namespace.ps1` + `-mutations.ps1` pair
+guards these properties.
+
+### Publishing to both namespaces
+
+`jzkk720` is the upstream/developer account and still holds the images the live
+AIPCs were originally deployed from, so a release now populates **both**:
+
+| Namespace | Role | How |
+|---|---|---|
+| `ghcr.io/pacgate-ai/*` | client delivery, source of truth | `build-and-push` job |
+| `ghcr.io/jzkk720/*` | upstream/developer mirror | `mirror-upstream` job |
+
+The mirror **retags** (`docker buildx imagetools create`) rather than
+rebuilding. Docker builds are not reproducible — layer tar entries carry
+mtimes — so a rebuild of identical source produces a *different digest*.
+Retagging is the only way the mirror is provably the same bytes.
+
+The mirror is deliberately **non-blocking**: a missing secret or an
+unpullable image warns, never fails the run. The client images are already
+published by that point, and a mirror problem must not read as a delivery
+failure.
+
+### Required secrets
+
+| Secret | Needed for | Required? |
+|---|---|---|
+| `GHCR_MIRROR_PAT` | PAT with `write:packages` for `jzkk720`, used by the mirror job | Optional — the mirror skips with a warning |
+| `GHCR_CLIENT_PAT` | PAT with `write:packages` for `pacgate-ai`, used by the **build** job | Optional on the `pacgate-ai` repo; **required** when running from `JZKK720` |
+
+`secrets.GITHUB_TOKEN` is issued per repository and can only push to its own
+owner's namespace. It therefore **cannot** cross into the other account no
+matter how the workflow is written — the automatic token is the default and the
+only credential needed on the client-delivery repo.
+
+> **First-publish gotcha:** new GHCR packages default to **private**. Flip each
+> mirrored package to public in the UI, or clients cannot pull it. A private
+> mirror has no other symptom than a failed anonymous pull.
+
+Note `docker login ghcr.io` is **not** part of the client install path — the
+runtime images are public by design and the on-site engineer pulls them
+anonymously.
 
 ## How to build & push
 
