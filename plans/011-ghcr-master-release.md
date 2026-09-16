@@ -1,6 +1,42 @@
 # 011 — GHCR Master Release
 
-Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **RELEASED — 0.1.12 live; 0.1.13 in flight**
+Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **RELEASED — 0.1.13 is the current master; no rebuild needed**
+
+> ## "Rebuild the masters?" — answered with evidence (2026-09-16)
+>
+> **Don't. 0.1.13 already IS the master**, and a rebuild would produce
+> byte-identical images. Four independent checks:
+>
+> 1. **Nothing that reaches an image has changed.** `git diff 32b45ea..HEAD`
+>    (the release commit to now) contains **zero production code**. The only Rust
+>    changes are +5 and +11 lines, and every one is a `//` comment — verified by
+>    filtering the diff for non-comment lines, not by reading the summary.
+> 2. **The image builds would not pick anything up anyway.** Both repo-context
+>    Dockerfiles copy narrow paths — `pacgate-adapters/python`,
+>    `deploy/deer-flow-pacgate/config.yaml`, `deploy/deer-flow-src/frontend`.
+>    None changed.
+> 3. **`:latest` already equals the version tag.** Compared manifest digests
+>    anonymously for all four: `api sha256:817a0685…`, `mcp sha256:82383117…`,
+>    `deer-flow sha256:d958ab7b…`, `frontend sha256:0c01a071…` — identical for
+>    `0.1.13` and `latest`.
+> 4. **The published binary matches HEAD's spec.** The image from `32b45ea`
+>    reports revision `32b45ea…` at `/build-info` and returns 200 — the same
+>    behaviour HEAD's source specifies.
+>
+> A version bump would cost **25 edits across 4 files** (both compose files, the
+> Cargo workspace and lockfile) to republish identical bytes, and it would move
+> the AIPC pins for nothing. The 0.1.13 release already is the merge deliverable:
+> both AIPCs pull it and the fork is level with origin.
+>
+> **One genuine gap it exposes:** the images are built from commit `32b45ea`, but
+> **no git tag records that**. Origin has 0 tags, so the release exists only as
+> image tags and the provenance lives in this document and in the binary. Worth
+> closing with a tag on `32b45ea`; it changes no image content.
+>
+> **When a rebuild WOULD be warranted:** an actual change to `pacgate-ai/`,
+> `deploy/pacgate-mcp/`, `deploy/deer-flow-pacgate/`, or
+> `deploy/deer-flow-frontend-pacgate/`, or a change to a path those Dockerfiles
+> copy. Use `git diff --stat <release-commit>..HEAD -- <those paths>` to decide.
 
 > **Follow-on release: 0.1.13 — RELEASED (run #9, 9m, all four images public).**
 >
