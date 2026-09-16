@@ -23,6 +23,11 @@ $gates = @(
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
     'scripts/test-workflow-namespace.ps1'
+    # Runs LAST of the workflow checks, and by design it MUTATES the workflow
+    # between runs (restoring each time). Kept in the gate list because a suite
+    # whose assertions cannot fail reads as coverage while providing none -
+    # which has already happened three times in this work.
+    'scripts/test-workflow-mutations.ps1'
     'scripts/audit-qm-bootstrap.ps1'
     'scripts/test-qm-sandbox-fingerprint.ps1'
     'scripts/test-version-marker.ps1'

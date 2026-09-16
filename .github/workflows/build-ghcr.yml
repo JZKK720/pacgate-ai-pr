@@ -84,11 +84,23 @@ jobs:
       #
       # Precedence: explicit dispatch input > committed GHCR_NAMESPACE > repo
       # owner. See the NAMESPACE note at the top for why the pin exists.
+      #
+      # This step ALSO picks the credential, for the same reason: since the
+      # namespace is pinned rather than inferred, a run started from the upstream
+      # repo would try to push into a namespace its own GITHUB_TOKEN cannot
+      # reach, and would fail at the push step with a bare 403. GHCR_CLIENT_PAT
+      # (write:packages for the pinned namespace) is used when present;
+      # otherwise the automatic token is used and, if the two namespaces differ,
+      # a warning says in advance that the push will be rejected.
+      #
+      # GHCR_CLIENT_PAT is OPTIONAL. On the client-delivery repo it is not
+      # needed at all - GITHUB_TOKEN already owns the pinned namespace there.
       - name: Resolve image namespace
         id: ns
         env:
           INPUT_NS: ${{ inputs.namespace }}
           OWNER_NS: ${{ github.repository_owner }}
+          CLIENT_PAT: ${{ secrets.GHCR_CLIENT_PAT }}
         run: |
           if [ -n "$INPUT_NS" ]; then
             ns="$INPUT_NS"; src="namespace dispatch input"
@@ -99,8 +111,21 @@ jobs:
           fi
           echo "prefix=ghcr.io/$ns" >> "$GITHUB_OUTPUT"
           echo "Resolved image prefix: ghcr.io/$ns  (from: $src)"
-          if [ "$src" != "namespace dispatch input" ] && [ "$ns" != "pacgate-ai" ]; then
+          if [ "$ns" != "pacgate-ai" ]; then
             echo "::warning::Publishing to ghcr.io/$ns, which is NOT the namespace the client compose files pin (ghcr.io/pacgate-ai). Clients will not see this release."
+          fi
+          # Credential. Only a PAT can push outside this repository's own
+          # namespace; GITHUB_TOKEN is scoped to the repo that issued it.
+          if [ -n "$CLIENT_PAT" ]; then
+            {
+              echo "token<<PAC_TOKEN_EOF"
+              echo "$CLIENT_PAT"
+              echo "PAC_TOKEN_EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "actor=$ns" >> "$GITHUB_OUTPUT"
+            echo "Using GHCR_CLIENT_PAT to push into ghcr.io/$ns."
+          elif [ "$ns" != "$OWNER_NS" ]; then
+            echo "::warning::Publishing to ghcr.io/$ns but no GHCR_CLIENT_PAT is set. GITHUB_TOKEN belongs to '$OWNER_NS' and cannot push into '$ns', so the push WILL be rejected with 403. Add a PAT with write:packages for '$ns' as the repository secret GHCR_CLIENT_PAT, or run this workflow from the '$ns' repository."
           fi
 
       # Compute the image tag: strip the leading 'v' from release tags so it
@@ -126,12 +151,37 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # `id` is needed so the next step can assert the login actually worked.
+      # Login is made non-fatal here so a credential problem produces a clear
+      # message instead of a raw registry 403 from whichever build step happens
+      # to reach the push first.
       - name: Log in to GHCR
+        id: login
+        continue-on-error: true
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # The resolved namespace IS the GHCR username: packages are owned by a
+          # user or org account, so the login account must be that owner. The PAT
+          # is only non-empty when one was supplied; otherwise this falls back to
+          # the automatic token, which is the correct credential on the
+          # client-delivery repo.
+          username: ${{ steps.ns.outputs.actor || github.actor }}
+          password: ${{ steps.ns.outputs.token || secrets.GITHUB_TOKEN }}
+
+      # A failed login is a HARD stop, not a warning. The alternative - carrying
+      # on and skipping the pushes - would produce a green run that published
+      # nothing, which is far worse than a red one: every downstream signal
+      # (the run badge, the step summary, "CI passed") would say the release
+      # shipped. An empty release must never look like a successful one.
+      - name: Confirm GHCR login
+        if: steps.login.outcome != 'success'
+        run: |
+          echo "::error::GHCR login failed for the resolved namespace. No images were built or pushed."
+          echo "Registry: ghcr.io"
+          echo "Account attempted: ${{ steps.ns.outputs.actor || github.actor }}"
+          echo "If the namespace differs from this repository's owner, GITHUB_TOKEN cannot be used - add a PAT with write:packages for the target owner as the repository secret GHCR_CLIENT_PAT."
+          exit 1
 
       # ── pacgate-api (Rust) ────────────────────────────────────────────────
       - name: Build & push pacgate-api

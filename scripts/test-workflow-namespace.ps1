@@ -138,6 +138,44 @@ Assert-True ($raw -match '::warning::\$GHCR_MIRROR_NAMESPACE') 'a non-pullable m
 Assert-True ($raw -notmatch 'mirror-upstream:[\s\S]{0,6000}::error::') 'the mirror job never emits a hard ::error::'
 Write-Output ''
 
+# --- the build job's own credential -----------------------------------------
+#
+# The mirror got a PAT because GITHUB_TOKEN cannot cross namespaces. The BUILD
+# job has the same constraint and did not: its login used (github.actor,
+# secrets.GITHUB_TOKEN) while the namespace was pinned to pacgate-ai, so a run
+# from the upstream repo would have pushed into a namespace its token does not
+# own and died on a bare 403.
+Write-Output '=== build-job credential ==='
+Write-Output ''
+
+Assert-True ($raw -match 'GHCR_CLIENT_PAT') 'the build job can use a PAT for the pinned namespace'
+Assert-True ($raw -match 'secrets\.GHCR_CLIENT_PAT') 'the PAT is read from a repository secret, never a literal'
+Assert-True ($raw -match 'steps\.ns\.outputs\.token \|\| secrets\.GITHUB_TOKEN') `
+    'GHCR_CLIENT_PAT is optional - it falls back to the automatic token'
+Assert-True ($raw -match 'steps\.ns\.outputs\.actor \|\| github\.actor') 'the login account follows the resolved namespace'
+
+# The empty-release trap. A build job that cannot log in must NOT continue:
+# skipping the pushes would leave every downstream signal (run badge, step
+# summary, "CI passed") asserting that a release shipped when nothing was
+# published. Same failure class as the "0 edits, exit 0" no-op.
+Assert-True ($raw -match "if:\s*steps\.login\.outcome != 'success'") 'a failed GHCR login stops the build job'
+$confirmBlock = [regex]::Match($raw, "Confirm GHCR login[\s\S]{0,900}")
+Assert-True ($confirmBlock.Success -and $confirmBlock.Value -match '::error::') 'a failed login is a hard ::error::, not a warning'
+Assert-True ($confirmBlock.Success -and $confirmBlock.Value -match 'exit 1') 'a failed login exits non-zero'
+
+# WARN in advance when the token provably cannot reach the target. This is the
+# only signal before the push 403s.
+#
+# The pattern avoids backslashes on purpose: in a PowerShell SINGLE-quoted
+# string `\` is not an escape, so a pattern ending in `\$` closes the string on
+# the backslash boundary and the regex engine gets an illegal trailing `\`.
+# Same family as the `$var:` scope-qualifier trap - quoting rules differ between
+# the two layers and the failure surfaces in the wrong one.
+$nsBlock = [regex]::Match($raw, 'Resolve image namespace[\s\S]{0,3000}')
+Assert-True ($nsBlock.Success -and [regex]::Match($nsBlock.Value, 'elif.*OWNER_NS').Success) `
+    'WARNS when the token owner differs from the pinned namespace'
+Write-Output ''
+
 # --- behavioural checks: run the same logic as SH ---------------------------
 #
 # The script is written to a FILE and mounted, not passed through `sh -c`.
@@ -146,12 +184,17 @@ Write-Output ''
 # the escaping did not survive. A temp file has no quoting surface at all - the
 # same lesson as the earlier readiness probe that died on quoting.
 function Resolve-Ns {
-    param([string]$InputNs, [string]$Pinned, [string]$Owner)
+    param([string]$InputNs, [string]$Pinned, [string]$Owner, [string]$Pat = '')
 
+    # Mirrors the workflow's `Resolve image namespace` step, including the
+    # credential branch. It is duplicated here on purpose: the point is to run
+    # the DECISION and observe it. A regex over the YAML would pass even if the
+    # branches were ordered wrong.
     $sh = @"
 INPUT_NS='$InputNs'
 GHCR_NAMESPACE='$Pinned'
 OWNER_NS='$Owner'
+CLIENT_PAT='$Pat'
 if [ -n "`$INPUT_NS" ]; then
   ns="`$INPUT_NS"; src='namespace dispatch input'
 elif [ -n "`$GHCR_NAMESPACE" ]; then
@@ -160,8 +203,15 @@ else
   ns="`$OWNER_NS"; src='repo owner (GHCR_NAMESPACE is empty)'
 fi
 warn=no
-if [ "`$src" != 'namespace dispatch input' ] && [ "`$ns" != 'pacgate-ai' ]; then warn=yes; fi
-echo "`$ns|`$src|`$warn"
+if [ "`$ns" != 'pacgate-ai' ]; then warn=yes; fi
+cred='GITHUB_TOKEN'
+cwarn=no
+if [ -n "`$CLIENT_PAT" ]; then
+  cred='GHCR_CLIENT_PAT'
+elif [ "`$ns" != "`$OWNER_NS" ]; then
+  cwarn=yes
+fi
+echo "`$ns|`$src|`$warn|`$cred|`$cwarn"
 "@
     $tmp = Join-Path $script:base "ns-$([guid]::NewGuid().ToString('N').Substring(0,6)).sh"
     # LF endings: CRLF in a mounted .sh gives 'not found' / syntax errors in sh.
@@ -170,7 +220,7 @@ echo "`$ns|`$src|`$warn"
     $out = & docker run --rm --mount "type=bind,source=$tmp,target=/t.sh,readonly" alpine:3.20 sh /t.sh 2>&1
     $line = ($out | Out-String).Trim()
     $parts = $line -split '\|'
-    return [pscustomobject]@{ Ns = $parts[0]; Src = $parts[1]; Warn = $parts[2]; Raw = $line }
+    return [pscustomobject]@{ Ns = $parts[0]; Src = $parts[1]; Warn = $parts[2]; Cred = $parts[3]; CredWarn = $parts[4]; Raw = $line }
 }
 
 $script:base = Join-Path ([System.IO.Path]::GetTempPath() -replace 'CUBECL~1', 'cubecloud-io') ('ns-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
@@ -193,6 +243,27 @@ try {
 
     $r = Resolve-Ns -InputNs '' -Pinned '' -Owner 'pacgate-ai'
     Assert-True ($r.Warn -eq 'no') 'no warning when the owner IS the pinned namespace' "got $($r.Warn)"
+
+    # THE CROSS-NAMESPACE CASE. Running on origin with the pin active: the token
+    # belongs to jzkk720, the target is pacgate-ai, so the push cannot work and
+    # the step must say so before the 403 arrives.
+    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'jzkk720'
+    Assert-True ($r.Ns -eq 'pacgate-ai') 'pinned namespace wins on the upstream repo' "got $($r.Ns)"
+    Assert-True ($r.CredWarn -eq 'yes') 'WARNS that GITHUB_TOKEN cannot reach the pinned namespace' "got $($r.CredWarn)"
+
+    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'jzkk720' -Pat 'ghp_example'
+    Assert-True ($r.Cred -eq 'GHCR_CLIENT_PAT') 'a supplied PAT is preferred over the automatic token' "got $($r.Cred)"
+    Assert-True ($r.CredWarn -eq 'no') 'no credential warning once a PAT is supplied' "got $($r.CredWarn)"
+
+    # The normal client-delivery path: owner and pin agree, no PAT anywhere.
+    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'pacgate-ai'
+    Assert-True ($r.Cred -eq 'GITHUB_TOKEN') 'the automatic token is the default credential' "got $($r.Cred)"
+    Assert-True ($r.CredWarn -eq 'no') 'no credential warning when owner and pin agree' "got $($r.CredWarn)"
+
+    # A PAT must not be used when it was never set - an empty secret must not
+    # silently become the credential (it would 401 rather than fall back).
+    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'pacgate-ai' -Pat ''
+    Assert-True ($r.Cred -eq 'GITHUB_TOKEN') 'an unset secret falls back rather than selecting an empty PAT' "got $($r.Cred)"
 }
 catch {
     Write-Host ("  [FAIL] harness error: {0}" -f $_.Exception.Message) -ForegroundColor Red
