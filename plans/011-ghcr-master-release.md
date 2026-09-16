@@ -1,18 +1,45 @@
 # 011 — GHCR Master Release
 
-Priority: **P1** · Effort: **M** · Depends on: — · Status: **READY TO EXECUTE**
+Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **BLOCKED ON THE FORK CREDENTIAL**
 
 Closes the two defects found in the 2026-09-15 audit
 (`deploy/GHCR-MASTER-BUILD-AUDIT.md`) and produces the first GHCR release that
 is both CI-verified and content-current with `main`.
+
+## Current blocker (2026-09-16)
+
+Step 1 is **done and pushed**. The release itself is blocked on **fork push
+access**, not on the build:
+
+- The workflow fix is on `main` (commits `48eb8c1`, `ae42ae0`), so a tag pushed
+  to **`origin`** would now build and verify correctly — into `ghcr.io/jzkk720/*`.
+- But the compose pins all read `ghcr.io/pacgate-ai/*`, and publishing there
+  requires tagging the **fork**, which git cannot push to: the credential store
+  holds `JZKK720` only. See `plans/013-credential-rotation.md` for the
+  account-switch steps.
+
+So the release is waiting on one of: the fork-push credential, or a decision to
+move the pins to `jzkk720/*` (plan 012 path B).
+
+## Re-verified 2026-09-16: the staleness is real
+
+Both defects were re-confirmed by pulling the currently-pinned images:
+
+| Image | Evidence | Status |
+| --- | --- | --- |
+| `pacgate-mcp:0.1.9` | `/app/requirements.txt` ships `markitdown>=0.1.5` with **no extras** | still broken — `pacgate_convert_document` fails on every `.docx` |
+| `pacgate-api:0.1.9` | migration 002 uses **`ivfflat`**, `main` uses `hnsw` | still broken — newly-uploaded documents are not reliably searchable |
+
+Both fixes (`ece697f`, `150db2c`) are in `main` and in **no published image**.
+All four current pins do resolve publicly (HTTP 200), so the install works — it
+just ships these two defects.
 
 ## Why
 
 Every `build-ghcr` run has failed (7/7) — all four image builds succeed, but the
 final verification step fails, so CI has never been a usable signal. Meanwhile
 the published `pacgate-api` and `pacgate-mcp` images predate two client-visible
-fixes. A client installing today receives a release whose document conversion
-throws on every `.docx` and whose search misses newly-uploaded documents.
+fixes.
 
 ## Decisions already settled — do not relitigate
 
