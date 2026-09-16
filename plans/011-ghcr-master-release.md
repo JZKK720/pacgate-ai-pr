@@ -38,6 +38,45 @@ Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Statu
 > `deploy/deer-flow-frontend-pacgate/`, or a change to a path those Dockerfiles
 > copy. Use `git diff --stat <release-commit>..HEAD -- <those paths>` to decide.
 
+### Rebuild executed and verified (run #10, 2026-09-16)
+
+The tag `v0.1.13` was created **on `32b45ea`** — the commit the 0.1.13 images were
+originally built from — so the tag records provenance rather than marking new
+source. Verified: `git ls-remote` returns
+`32b45ea073170e44aa6cafb88d176db0cf605b2d refs/tags/v0.1.13`.
+
+The tag push triggered run #10 (**completed successfully, 8m 52s**, `v0.1.13`).
+All four images were republished and re-verified:
+
+| Image | Digests changed? | `:latest` tracks? |
+| --- | --- | --- |
+| `pacgate-api` | yes — `817a0685…` → `00842…` | yes |
+| `pacgate-mcp` | yes — `82383117…` → `6c1ca…` | yes |
+| `deer-flow-pacgate` | yes — `d958ab7b…` → `529b1…` | yes |
+| `deer-flow-frontend-pacgate` | yes — `0c01a071…` → `4c4a5…` | yes |
+
+**The digests changing is expected and is not evidence of a different build.**
+Docker builds are not reproducible by default — layer tar entries carry mtimes —
+so a rebuild of identical source produces a different digest. The proof of what
+was built is the source revision, and the rebuilt binary carries the same
+`32b45ea` revision string and `0.1.13` version as before:
+
+```
+docker run --rm --entrypoint sh ghcr.io/pacgate-ai/pacgate-api:0.1.13 \
+  -c "grep -a -o '32b45ea073170e44aa6cafb88d176db0cf605b2d' /usr/local/bin/pacgate-server"
+32b45ea073170e44aa6cafb88d176db0cf605b2d
+```
+
+`:latest` moving in lockstep with every version tag matters: the workflow pushes
+both, and a rebuild that updated one but not the other would give anyone pulling
+`:latest` a different build. Verified with `scripts/report-ghcr-digests.ps1`,
+which compares the two digests per image and reports `sync`.
+
+**Net effect on a client:** none. Same source, same revision, still anonymously
+pullable. The gain is provenance — a git tag now names what the images were built
+from, where previously the release existed only as image tags.
+
+
 > **Follow-on release: 0.1.13 — RELEASED (run #9, 9m, all four images public).**
 >
 > The AIPCs clone the *fork* and pull from `ghcr.io/pacgate-ai/*`, so anything
