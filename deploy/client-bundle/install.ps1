@@ -1,8 +1,16 @@
 # Pacgate-ai client installer
-# Usage: .\install.ps1            (first install)
-#        .\install.ps1 -Update     (pull new images, restart)
+# Usage: .\install.ps1                (first install)
+#        .\install.ps1 -Update         (refresh repo, pull new images, restart)
+#        .\install.ps1 -Update -SkipRepoPull
+#                                      (update images only; leave the repo alone)
+#
+# -Update refreshes the repo working tree first (fast-forward only), because
+# much of the runtime is bind-mounted from the repo. See deploy/AIPC-UPDATE-GAP-ANALYSIS.md.
 
-param([switch]$Update)
+param(
+    [switch]$Update,
+    [switch]$SkipRepoPull
+)
 
 $ErrorActionPreference = "Stop"
 $DataDir = ".\data"
@@ -35,6 +43,112 @@ if (-not (Test-Path .env)) {
         Write-Host "  copy .env.example .env" -ForegroundColor Yellow
         Write-Host "  # then edit .env with your values" -ForegroundColor Yellow
         exit 1
+    }
+}
+
+# 3b. Refresh the repo working tree (updates only).
+#
+# WHY THIS EXISTS
+#   This script lives at <repo>\deploy\client-bundle, and much of the runtime is
+#   bind-mounted straight from the repo: compose image pins, workflows/*.yaml,
+#   patches/*.py, nginx/default.conf, and the config templates. Pulling images
+#   alone does NOT deliver any of those. Previously the operator had to
+#   remember a separate `git pull` first - the single most easily forgotten step
+#   in the update path, and when forgotten the machine silently keeps running old
+#   config against new images. See deploy/AIPC-UPDATE-GAP-ANALYSIS.md.
+#
+# SAFETY RULES (this touches a client machine):
+#   - NEVER proceed with a dirty tree. Refuse and name the files. No auto-stash,
+#     no reset, no checkout -- all would discard someone's work.
+#   - Fast-forward only. Never create a merge commit on a client machine.
+#   - Missing git, or a non-git checkout (tarball install), is a WARNING not a
+#     failure - the rest of the update still works.
+#
+# Runs BEFORE the config renders below, so they render from the newly pulled
+# templates rather than the stale ones.
+if ($Update -and -not $SkipRepoPull) {
+    Write-Host "`nRefreshing repo working tree..." -ForegroundColor Cyan
+
+    # $PSScriptRoot = <repo>\deploy\client-bundle  ->  repo root is two levels up
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "[WARN] git not found - cannot refresh the repo." -ForegroundColor Yellow
+        Write-Host "  Only Docker images will be updated. If this machine needs config," -ForegroundColor Yellow
+        Write-Host "  workflow, or patch changes, install Git and re-run." -ForegroundColor Yellow
+    }
+    elseif (-not (Test-Path (Join-Path $repoRoot '.git'))) {
+        Write-Host "[WARN] $repoRoot is not a git checkout - cannot refresh." -ForegroundColor Yellow
+        Write-Host "  Only Docker images will be updated." -ForegroundColor Yellow
+    }
+    else {
+        Push-Location $repoRoot
+        try {
+            # A dirty tree means someone edited files here. Do NOT touch it.
+            $dirty = git status --porcelain
+            if ($dirty) {
+                Write-Host "[WARN] Repo has local changes - skipping the repo update." -ForegroundColor Yellow
+                Write-Host "  Not modifying anything, because that could discard work. Changed files:" -ForegroundColor Yellow
+                $dirty | Select-Object -First 10 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
+                if (@($dirty).Count -gt 10) {
+                    Write-Host "    ... and $((@($dirty).Count) - 10) more" -ForegroundColor DarkYellow
+                }
+                Write-Host "  Resolve them (commit, or restore) and re-run to pick up repo updates." -ForegroundColor Yellow
+            }
+            else {
+                $before = (git rev-parse HEAD).Trim()
+
+                # Fetch first so we can decide without merging.
+                git fetch --quiet origin 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "[WARN] git fetch failed (offline?) - continuing with the current checkout." -ForegroundColor Yellow
+                }
+                else {
+                    $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+                    $remoteRef = "origin/$branch"
+
+                    $behind = 0
+                    $counts = git rev-list --left-right --count "$remoteRef...$branch" 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $counts) {
+                        $behind = [int](($counts -split '\s+')[0])
+                    }
+
+                    if ($behind -eq 0) {
+                        Write-Host "[OK] Repo already current at $($before.Substring(0,7))" -ForegroundColor Green
+                    }
+                    else {
+                        # --ff-only: refuse rather than create a merge commit. If
+                        # the local branch has diverged (commits made on the
+                        # machine), this fails loudly instead of quietly
+                        # rewriting history under the operator.
+                        git pull --ff-only --quiet origin $branch
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Host "[WARN] Repo has diverged from $remoteRef - not fast-forwardable." -ForegroundColor Yellow
+                            Write-Host "  Local commits exist that the remote does not have. Not merging." -ForegroundColor Yellow
+                            Write-Host "  The rest of the update continues; repo content stays as-is." -ForegroundColor Yellow
+                        }
+                        else {
+                            $after = (git rev-parse HEAD).Trim()
+                            Write-Host "[OK] Repo updated $($before.Substring(0,7)) -> $($after.Substring(0,7)) ($behind commit(s))" -ForegroundColor Green
+
+                            # Name what changed, so an update is never silent. This
+                            # is the same principle as the config render below.
+                            $changed = git diff --name-only "$before" "$after" 2>$null
+                            if ($changed) {
+                                Write-Host "     Files changed in this update:" -ForegroundColor DarkGray
+                                $changed | Select-Object -First 12 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
+                                if (@($changed).Count -gt 12) {
+                                    Write-Host "       ... and $((@($changed).Count) - 12) more" -ForegroundColor DarkGray
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally {
+            Pop-Location
+        }
     }
 }
 

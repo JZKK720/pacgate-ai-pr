@@ -487,13 +487,35 @@ npm exec qm -- down
 ### Update to a new version
 
 ```powershell
-cd C:\pacgate-ai-pr
-git pull
-cd deploy\client-bundle
+cd C:\pacgate-ai-pr\deploy\client-bundle
 .\install.ps1 -Update
 ```
 
-The update pulls new GHCR images and restarts containers. Data is preserved:
+`-Update` now does all of the following, so a separate `git pull` is no longer
+needed (it was the most easily forgotten step, and forgetting it silently ran
+new images against old config):
+
+| Step | What it does |
+| --- | --- |
+| 1 | Refreshes the repo working tree (fast-forward only) |
+| 2 | Re-renders the MCP config from the template, backing up any change |
+| 3 | Pulls new GHCR images |
+| 4 | Restarts the stack, and reloads nginx |
+
+**It refuses, rather than guessing, when the machine has local work:**
+
+- uncommitted changes in the repo -> the repo update is skipped, and the changed
+  files are listed. Nothing is stashed, reset, or discarded.
+- local commits the remote does not have -> it will not merge or rebase. The
+  repo stays as-is and the rest of the update continues.
+
+Use `-SkipRepoPull` if you deliberately want an image-only update:
+
+```powershell
+.\install.ps1 -Update -SkipRepoPull
+```
+
+Data is preserved across an update:
 - `./data/tenants/` (volume mount) - matters, documents, memory
 - Postgres data (named volume) - metadata database
 

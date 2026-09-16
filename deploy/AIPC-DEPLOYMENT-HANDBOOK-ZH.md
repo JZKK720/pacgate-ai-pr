@@ -476,13 +476,33 @@ npm exec qm -- down
 ### 更新到新版本
 
 ```powershell
-cd C:\pacgate-ai-pr
-git pull
-cd deploy\client-bundle
+cd C:\pacgate-ai-pr\deploy\client-bundle
 .\install.ps1 -Update
 ```
 
-更新会拉取新的 GHCR 镜像并重启容器。数据会保留：
+`-Update` 现在会自动完成以下全部工作，因此**不再需要单独执行 `git pull`**
+（那一步最容易被遗忘，而一旦遗忘，就会让新镜像配上旧配置静默运行）：
+
+| 步骤 | 作用 |
+| --- | --- |
+| 1 | 刷新仓库工作区（仅快进 fast-forward） |
+| 2 | 从模板重新渲染 MCP 配置，变更前先备份 |
+| 3 | 拉取新的 GHCR 镜像 |
+| 4 | 重启技术栈，并重载 nginx |
+
+**当机器上存在本地改动时，它会拒绝执行而不是猜测：**
+
+- 仓库有未提交改动 → 跳过仓库更新，并列出被改动的文件。**不会** stash、
+  reset 或丢弃任何内容。
+- 存在远端没有的本地提交 → 不合并、不变基。仓库保持原样，其余更新继续进行。
+
+如需仅更新镜像，可使用 `-SkipRepoPull`：
+
+```powershell
+.\install.ps1 -Update -SkipRepoPull
+```
+
+更新会保留数据：
 - `./data/tenants/`（卷挂载）— 事项、文档、记忆
 - Postgres 数据（命名卷）— 元数据数据库
 
