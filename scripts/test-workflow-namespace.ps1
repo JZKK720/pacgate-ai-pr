@@ -6,7 +6,15 @@
 # publishes a release to a namespace no client pulls from - successfully, and
 # therefore silently.
 [CmdletBinding()]
-param()
+param(
+    # Skip the docker-based behavioural section and run only the static
+    # assertions. The mutation harness needs this: it invokes this suite ~10
+    # times in a loop, and each docker run pays container startup, so the nested
+    # total blows past the caller's time budget and the run is reported as a
+    # timeout rather than as a result. The static layer is what the mutations
+    # target, and the behavioural layer still runs in the full gate suite.
+    [switch]$StaticOnly
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -150,9 +158,14 @@ Write-Output ''
 
 Assert-True ($raw -match 'GHCR_CLIENT_PAT') 'the build job can use a PAT for the pinned namespace'
 Assert-True ($raw -match 'secrets\.GHCR_CLIENT_PAT') 'the PAT is read from a repository secret, never a literal'
-Assert-True ($raw -match 'steps\.ns\.outputs\.token \|\| secrets\.GITHUB_TOKEN') `
+Assert-True ($raw -match 'secrets\.GHCR_CLIENT_PAT \|\| secrets\.GITHUB_TOKEN') `
     'GHCR_CLIENT_PAT is optional - it falls back to the automatic token'
 Assert-True ($raw -match 'steps\.ns\.outputs\.actor \|\| github\.actor') 'the login account follows the resolved namespace'
+
+# The PAT must not be routed through a step output. It works, but it copies the
+# secret into $GITHUB_OUTPUT, which is both unnecessary (login-action can select
+# it inline) and a wider surface than the alternative.
+Assert-True ($raw -notmatch 'PAC_TOKEN_EOF') 'the PAT is not copied into $GITHUB_OUTPUT'
 
 # The empty-release trap. A build job that cannot log in must NOT continue:
 # skipping the pushes would leave every downstream signal (run badge, step
@@ -166,15 +179,31 @@ Assert-True ($confirmBlock.Success -and $confirmBlock.Value -match 'exit 1') 'a 
 # WARN in advance when the token provably cannot reach the target. This is the
 # only signal before the push 403s.
 #
-# The pattern avoids backslashes on purpose: in a PowerShell SINGLE-quoted
-# string `\` is not an escape, so a pattern ending in `\$` closes the string on
-# the backslash boundary and the regex engine gets an illegal trailing `\`.
-# Same family as the `$var:` scope-qualifier trap - quoting rules differ between
-# the two layers and the failure surfaces in the wrong one.
+# Match the CONDITION, not a keyword. The first version of this assertion looked
+# for `elif.*OWNER_NS`, which happened to match only because the warning was
+# written as an `elif` at the time. Rewriting it as an `if` with a compound
+# condition - a no-op refactor - turned the assertion red against a workflow that
+# behaved identically. An assertion coupled to incidental syntax is not testing
+# the property it names, and this is the second time in this file that a check
+# failed against correct output.
+#
+# The pattern avoids backslashes on purpose: in a PowerShell SINGLE-quoted string
+# `\` is not an escape, so a pattern ending in `\$` closes the string on the
+# backslash boundary and the regex engine receives an illegal trailing `\`. Same
+# family as the `$var:` scope-qualifier trap - quoting rules differ between the
+# two layers and the failure surfaces in the wrong one.
 $nsBlock = [regex]::Match($raw, 'Resolve image namespace[\s\S]{0,3000}')
-Assert-True ($nsBlock.Success -and [regex]::Match($nsBlock.Value, 'elif.*OWNER_NS').Success) `
+Assert-True ($nsBlock.Success -and [regex]::Match($nsBlock.Value, 'ns" != "\$OWNER_NS').Success) `
     'WARNS when the token owner differs from the pinned namespace'
 Write-Output ''
+
+if ($StaticOnly) {
+    Write-Output ''
+    Write-Host '=== Results ===' -ForegroundColor Cyan
+    Write-Host ("  {0} passed, {1} failed (behavioural section skipped: -StaticOnly)" -f $passed, $failed)
+    if ($failed -gt 0) { exit 1 }
+    exit 0
+}
 
 # --- behavioural checks: run the same logic as SH ---------------------------
 #

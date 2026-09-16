@@ -85,22 +85,17 @@ jobs:
       # Precedence: explicit dispatch input > committed GHCR_NAMESPACE > repo
       # owner. See the NAMESPACE note at the top for why the pin exists.
       #
-      # This step ALSO picks the credential, for the same reason: since the
-      # namespace is pinned rather than inferred, a run started from the upstream
-      # repo would try to push into a namespace its own GITHUB_TOKEN cannot
-      # reach, and would fail at the push step with a bare 403. GHCR_CLIENT_PAT
-      # (write:packages for the pinned namespace) is used when present;
-      # otherwise the automatic token is used and, if the two namespaces differ,
-      # a warning says in advance that the push will be rejected.
-      #
-      # GHCR_CLIENT_PAT is OPTIONAL. On the client-delivery repo it is not
-      # needed at all - GITHUB_TOKEN already owns the pinned namespace there.
+      # This step ALSO reports the login ACCOUNT, because a GHCR package is owned
+      # by the account named in its path: the username for `ghcr.io/<ns>/...` is
+      # `<ns>`, not the actor who triggered the run. It deliberately does NOT
+      # handle the password - writing a secret into $GITHUB_OUTPUT and reading it
+      # back adds a step to the secret's path for no benefit, when the login step
+      # can select it inline.
       - name: Resolve image namespace
         id: ns
         env:
           INPUT_NS: ${{ inputs.namespace }}
           OWNER_NS: ${{ github.repository_owner }}
-          CLIENT_PAT: ${{ secrets.GHCR_CLIENT_PAT }}
         run: |
           if [ -n "$INPUT_NS" ]; then
             ns="$INPUT_NS"; src="namespace dispatch input"
@@ -110,21 +105,18 @@ jobs:
             ns="$OWNER_NS"; src="repo owner (GHCR_NAMESPACE is empty)"
           fi
           echo "prefix=ghcr.io/$ns" >> "$GITHUB_OUTPUT"
+          echo "actor=$ns" >> "$GITHUB_OUTPUT"
           echo "Resolved image prefix: ghcr.io/$ns  (from: $src)"
           if [ "$ns" != "pacgate-ai" ]; then
             echo "::warning::Publishing to ghcr.io/$ns, which is NOT the namespace the client compose files pin (ghcr.io/pacgate-ai). Clients will not see this release."
           fi
-          # Credential. Only a PAT can push outside this repository's own
-          # namespace; GITHUB_TOKEN is scoped to the repo that issued it.
-          if [ -n "$CLIENT_PAT" ]; then
-            {
-              echo "token<<PAC_TOKEN_EOF"
-              echo "$CLIENT_PAT"
-              echo "PAC_TOKEN_EOF"
-            } >> "$GITHUB_OUTPUT"
-            echo "actor=$ns" >> "$GITHUB_OUTPUT"
-            echo "Using GHCR_CLIENT_PAT to push into ghcr.io/$ns."
-          elif [ "$ns" != "$OWNER_NS" ]; then
+          # WARN IN ADVANCE when the credential provably cannot reach the target.
+          # Only a PAT crosses namespaces; GITHUB_TOKEN is scoped to the repo
+          # that issued it. Without this the failure is a bare 403 from whichever
+          # build step reaches the registry first, which says nothing about why.
+          # Note the automatic token IS reachable when GHCR_CLIENT_PAT is set,
+          # so this check is about the fallback only.
+          if [ "$ns" != "$OWNER_NS" ] && [ -z "${{ secrets.GHCR_CLIENT_PAT }}" ]; then
             echo "::warning::Publishing to ghcr.io/$ns but no GHCR_CLIENT_PAT is set. GITHUB_TOKEN belongs to '$OWNER_NS' and cannot push into '$ns', so the push WILL be rejected with 403. Add a PAT with write:packages for '$ns' as the repository secret GHCR_CLIENT_PAT, or run this workflow from the '$ns' repository."
           fi
 
@@ -163,11 +155,11 @@ jobs:
           registry: ghcr.io
           # The resolved namespace IS the GHCR username: packages are owned by a
           # user or org account, so the login account must be that owner. The PAT
-          # is only non-empty when one was supplied; otherwise this falls back to
-          # the automatic token, which is the correct credential on the
-          # client-delivery repo.
+          # is optional and used when supplied; on the client-delivery repository
+          # GITHUB_TOKEN already owns the pinned namespace, so the fallback is
+          # the normal path there.
           username: ${{ steps.ns.outputs.actor || github.actor }}
-          password: ${{ steps.ns.outputs.token || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_CLIENT_PAT || secrets.GITHUB_TOKEN }}
 
       # A failed login is a HARD stop, not a warning. The alternative - carrying
       # on and skipping the pushes - would produce a green run that published
