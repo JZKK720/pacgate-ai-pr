@@ -16,34 +16,39 @@ below) — no credential transfer needed. Rotation and history purge are
 | `origin/main` (`JZKK720`) | **redacted — pushed and verified** |
 | fork `main` (`pacgate-ai`) | **STILL LIVE — but fixable without credentials** |
 
-## Recommended fix for the fork: GitHub's Sync fork (no credentials)
+## Recommended fix for the fork: GitHub's Sync fork (no git credentials)
 
 `git push` to the fork fails with `permission denied` because
 `git-credential-manager` holds credentials for **`JZKK720` only** (confirmed via
-`git-credential-manager github list`). **You do not need to transfer any
-credential** — the fork is a strict ancestor of `origin/main`, so it can be
-fast-forwarded in the browser:
+`git-credential-manager github list`). **No credential needs to be transferred to
+git** — the fork is a strict ancestor of `origin/main`, so it can be
+fast-forwarded from the browser:
 
-1. Open `https://github.com/pacgate-ai/pacgate-ai-pr` (GitHub already reports
-   *"This branch is 9 commits behind JZKK720/pacgate-ai-pr:main"*, confirming
-   the fast-forward is available).
-2. Click **Sync fork → Update branch**.
+1. Sign in to GitHub **in the browser** as an account with write access to
+   `pacgate-ai/pacgate-ai-pr` (its owner is the `pacgate-ai` account).
+   *"Sync fork" is only rendered for users with write access* — it is not visible
+   signed-out, so this step is required.
+   **Use the rotated password, not the leaked one** (see Step 1).
+2. Open `https://github.com/pacgate-ai/pacgate-ai-pr`.
+   GitHub reports *"This branch is 9 commits behind JZKK720/pacgate-ai-pr:main"*.
+3. Click **Sync fork → Update branch**.
 
-Verified preconditions — the sync is a clean fast-forward:
+Verified preconditions — GitHub's own compare view states *"Able to merge. These
+branches can be automatically merged."*:
 
 | Check | Result |
 | --- | --- |
 | fork `main` is an ancestor of `origin/main` | **yes** |
 | fork has commits origin lacks (would block non-FF) | **none** |
+| GitHub compare verdict | **Able to merge** (fast-forward) |
 | all three credential files redacted at `origin/main` | **yes** |
 | workflow fix present at `origin/main` | **yes** |
 
 Then re-run `scripts/check-credential-state.ps1` — all three columns must read
 `clean`.
 
-> **Do NOT sign in to GitHub via git using the leaked password.** The value is
-> compromised; use the browser session you already have, or rotate first and
-> sign in with the new one.
+> **Do NOT sign in to git (or GitHub) using the leaked password.** The value is
+> compromised; rotate first, then sign in with the new one.
 
 **Fallback** (only if you prefer git, requires interactive sign-in):
 

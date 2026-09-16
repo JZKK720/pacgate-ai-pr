@@ -76,19 +76,20 @@ origin tag-push, fork tag-push, and dispatch override; tag guard fires on empty.
 Least churn. JZKK720 remains a mirror; the fork stays the publisher.
 
 **Prerequisite:** the fork must first be synced to `origin/main`, so it carries
-the workflow fix and the credential redaction. One click, no credentials:
+the workflow fix and the credential redaction. One click in the browser, by an
+account with write access to the fork (no git credential needed):
 
 ```text
 https://github.com/pacgate-ai/pacgate-ai-pr  ->  Sync fork  ->  Update branch
 ```
 
-That is a clean fast-forward (verified: the fork is a strict ancestor of
-`origin/main` and holds nothing origin lacks).
+That is a clean fast-forward — GitHub's compare view states *"Able to merge"*,
+and the fork is a strict ancestor of `origin/main` holding nothing origin lacks.
 
 Then release. `git push` of a tag needs the same fork credential that is
-currently missing, so prefer the browser/API route:
+currently missing, so prefer the browser route:
 
-**Option A1 — Actions → Run workflow (recommended, no git credentials)**
+**Option A1 — Actions → Run workflow (no git credentials)**
 
 ```text
 https://github.com/pacgate-ai/pacgate-ai-pr/actions/workflows/build-ghcr.yml
