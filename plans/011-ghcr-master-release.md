@@ -2,14 +2,31 @@
 
 Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **RELEASED — 0.1.12 live; 0.1.13 in flight**
 
-> **Follow-on release: 0.1.13.** The AIPCs clone the *fork* and pull from
-> `ghcr.io/pacgate-ai/*`, so anything that reaches a deployed machine needs two
-> steps: a **fork sync** (for repo-based fixes) and a **release** (for image
-> changes). 0.1.13 carries plan 014 steps 1-5. It is a one-image release: the
-> only source change is `pacgate-api` (the `/version` marker). The fork went
-> from 8 commits behind to level with origin in a single "Update branch"
-> fast-forward, then the workflow was dispatched with `tag=0.1.13` and
-> `namespace` empty (resolves to the fork owner, `pacgate-ai`).
+> **Follow-on release: 0.1.13 — RELEASED (run #9, 9m, all four images public).**
+>
+> The AIPCs clone the *fork* and pull from `ghcr.io/pacgate-ai/*`, so anything
+> that reaches a deployed machine needs two steps: a **fork sync** (for
+> repo-based fixes) and a **release** (for image changes).
+>
+> 0.1.13 carries plan 014 steps 1-5. It is a one-image release: the only source
+> change is `pacgate-api` (the `/version` marker). The fork went from 8 commits
+> behind to level with origin in a single "Update branch" fast-forward, then the
+> workflow was dispatched with `tag=0.1.13` and `namespace` empty (resolves to
+> the fork owner, `pacgate-ai`).
+>
+> | Image | 0.1.13 | Evidence |
+> | --- | --- | --- |
+> | `pacgate-ai/pacgate-api` | 200 | `grep` of the published binary found revision `32b45ea…` and version `0.1.13` |
+> | `pacgate-ai/pacgate-mcp` | 200 | — |
+> | `pacgate-ai/deer-flow-pacgate` | 200 | — |
+> | `pacgate-ai/deer-flow-frontend-pacgate` | 200 | — |
+>
+> **The build arg was verified, not assumed.** `option_env!("PAC_SOURCE_REVISION")`
+> is compile-time and would silently bake in `"unknown"` if the wiring were
+> wrong — the endpoint would still answer, just uselessly. Grepping the published
+> `pacgate-server` binary for `32b45ea073170e44aa6cafb88d176db0cf605b2d` returned
+> a match, so the revision really is in the running process.
+
 
 
 ## Outcome (2026-09-16)
