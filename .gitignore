@@ -31,6 +31,21 @@ desktop.ini
 # Rendered deer-flow MCP config (contains client API key)
 deploy/client-bundle/deer-flow-extensions-config.json
 
+# Backups the installer writes when it RE-RENDERS that config.
+#
+# Not a tidiness rule - this one breaks the update path. install.ps1 -Update
+# refuses to refresh the repo when `git status --porcelain` is non-empty, and
+# --porcelain lists UNTRACKED files too. The render in step 2 writes
+# deer-flow-extensions-config.json.bak.<timestamp> on the FIRST update after any
+# template change, so without this line that backup makes the tree dirty, and the
+# NEXT -Update silently skips the repo refresh while still pulling images. The
+# machine drifts behind on all repo content with no error.
+#
+# The glob is specific to the config's own backups; do not widen it to
+# deploy/client-bundle/*.bak.* or it would hide genuine backup files elsewhere.
+deploy/client-bundle/deer-flow-extensions-config.json.bak.*
+deploy/client-bundle/openviking/ov.conf.bak.*
+
 # Deer-flow admin login credentials (per-machine, created at runtime in the
 # container's local SQLite DB; NOT in .env). Never commit.
 deploy/client-bundle/.deer-flow-credentials

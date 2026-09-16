@@ -179,21 +179,54 @@ would propagate silent failures at machine speed across both AIPCs.
 
 ## Acceptance criteria
 
-- [ ] A machine one release behind, updated with a single command, ends up with
+Proven by `scripts/test-update-end-to-end.ps1` (28/28), which builds a REAL local
+git origin, installs v1 on a simulated AIPC, publishes v2, and runs the actual
+`install.ps1 -Update` in a child process with stub docker/ollama.
+
+- [x] A machine one release behind, updated with a single command, ends up with
       the new images **and** the new compose pins, patches, workflows, and config
-- [ ] Template changes reach an already-installed machine (test: change the
-      template, update, confirm the rendered file changed and a `.bak` exists)
-- [ ] Patch changes take effect without a manual restart
-- [ ] qm drift is either updated or clearly reported
-- [ ] `curl localhost:8089/version` reports the running tag
-- [ ] The whole update is safe to run twice in a row
-- [ ] Validated on a **fresh clone** in a temp dir, not on the dev box
+      — STEP 2: repo fast-forwards and the compose pin advances to the new
+      release in the same command
+- [x] Template changes reach an already-installed machine — STEP 2: the rendered
+      file gains `pacgate` and a `.bak` is written. This is the proven lost update
+      (`453646f`) reproduced and then fixed
+- [x] Patch changes take effect without a manual restart — covered by the
+      render/restart tests (`test-install-render.ps1`)
+- [x] qm drift is either updated or clearly reported — reported; see step 4
+- [x] `curl localhost:8089/version` reports the running tag — verified against the
+      real 0.1.13 image (`test-version-marker-against-image.ps1`)
+- [x] The whole update is safe to run twice in a row — STEP 4: no rewrite, no
+      redundant backup, byte-identical config, HEAD unchanged
+- [ ] Validated on a **fresh clone** in a temp dir, not on the dev box — the
+      end-to-end test uses a fresh temp clone, but **not yet run on a real AIPC**
+
+### A second update must still land (the sequential case)
+
+STEP 3 covers something the first version of this test missed and that no unit
+test could see: a **second** release arriving after the first update already wrote
+a config backup. The backup is untracked, `git status --porcelain` counts
+untracked files, so an unignored backup makes the tree dirty and the NEXT repo
+refresh is skipped — the machine silently stays a release behind on all repo
+content, with no error.
+
+Found by removing the `.gitignore` rule and watching the suite stay green: a test
+that could not fail. `.gitignore` now covers
+`deploy/client-bundle/deer-flow-extensions-config.json.bak.*` and the OpenViking
+equivalent, and removing either rule makes STEP 3 fail (5 assertions).
+
+Worth knowing operationally: **any** stray file in the repo directory — an editor
+swap file, a log, a scratch note — blocks the repo half of `-Update`. That is the
+correct safety behaviour (it refuses rather than discarding work) and install.ps1
+names the offending files so it is diagnosable.
 
 ## Verification
 
 ```powershell
 # Per-machine, after the change lands:
 .\scripts\audit-aipc-update-coverage.ps1     # gaps should read OK, not GAP
+
+# Everything at once (9 gates + 1 measurement):
+.\scripts\run-all-checks.ps1
 ```
 
 ## Out of scope
