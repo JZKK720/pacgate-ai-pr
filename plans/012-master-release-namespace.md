@@ -1,9 +1,55 @@
 # 012 — Master Release: JZKK720 upstream + GHCR namespace
 
 Priority: **P1** · Effort: **S** (path A) / **M** (path B) · Depends on: 011
-Status: **CI BLOCKER FIXED — namespace path awaiting owner decision**
+Status: **RESOLVED — namespace pinned, dual publish implemented, credential gap closed**
 
-## State at time of writing
+## Resolution (supersedes the "awaiting owner decision" status)
+
+Both namespaces are legitimate, and the question was never which one to pick:
+
+- `jzkk720` is the **upstream/developer** account — repo origin, and the
+  namespace holding the pre-release images the live AIPCs are running today
+  (`deer-flow-pacgate:0.1.0`, `pacgate-api:0.1.2`).
+- `pacgate-ai` is the **client-delivery** account — the fork, and what every
+  compose file pins.
+
+So a release populates both. `GHCR_NAMESPACE: pacgate-ai` is the committed
+source of truth, and a non-blocking `mirror-upstream` job retags the same bytes
+into `jzkk720` with `docker buildx imagetools create`.
+
+Three things the original analysis missed:
+
+1. **The mirror must RETAG, not rebuild.** Docker builds are not reproducible —
+   layer tar entries carry mtimes — so rebuilding identical source yields a
+   different digest. Retagging is the only way to guarantee the mirror is the
+   same bytes as the client image.
+2. **`secrets.GITHUB_TOKEN` cannot cross namespaces.** It is issued per
+   repository and can only push to its own owner's namespace, so no amount of
+   workflow restructuring makes the automatic token reach the other account.
+   Both cross-namespace paths need their own PAT: `GHCR_MIRROR_PAT` for the
+   mirror, `GHCR_CLIENT_PAT` (optional) for the build job.
+3. **The build job had the same gap.** Once the namespace is pinned rather than
+   inferred, a run started from the upstream repo tries to push into a namespace
+   its own token does not own, and dies on a bare 403. It now picks the
+   credential, warns in advance when the token provably cannot reach the target,
+   and treats a failed login as a hard stop so an empty release can never look
+   like a successful one.
+
+`scripts/test-workflow-mutations.ps1` breaks the workflow on purpose — one
+property at a time — and requires the suite to notice by name. It exists because
+three checks in this work turned out to be unfalsifiable, and a check that
+cannot fail is worse than no check: it reports as coverage.
+
+### Remaining manual steps (outside the repo)
+
+- Add `GHCR_MIRROR_PAT` (write:packages for `jzkk720`) as a fork secret, or the
+  mirror skips with a warning. `GHCR_CLIENT_PAT` is only needed for a
+  cross-namespace build.
+- New GHCR packages default to **private** on first push. Flip the mirrored
+  packages to public in the UI; a private mirror has no other symptom than a
+  failed anonymous pull.
+
+## State at time of writing (historical)
 
 - `origin/main` (`JZKK720`) and fork `main` (`pacgate-ai`) have **identical trees**
   (`1fd4531`). `origin/main` is *ahead* by the merge commit `832d84e`.
