@@ -39,6 +39,16 @@ $labelRules = @(
     @{ Name = 'md-Email';    Re = '\|\s*\*\*Email\*\*\s*\|\s*`?(?<v>[^`|\s]+)`?\s*\|' }
 )
 
+# Scanners contain credential-shaped regex literals by design. Excluded so the
+# scan does not report a permanent false positive on itself.
+$scannerFiles = @(
+    'detect-literal-credentials.ps1'
+    'redact-exposed-credentials.ps1'
+    'assert-no-staged-secrets.ps1'
+    'assert-range-no-new-secrets.ps1'
+    'check-credential-state.ps1'
+)
+
 $hits = @()
 
 foreach ($rel in $Paths) {
@@ -47,8 +57,17 @@ foreach ($rel in $Paths) {
     if (-not (Test-Path -LiteralPath $rel)) { continue }
     if ((Get-Item -LiteralPath $rel).PSIsContainer) { continue }
 
+    # Self-exclusion. The credential scanners contain credential-shaped regex
+    # literals by design; matching them would report a permanent false positive
+    # and train people to ignore this scan entirely.
+    if ($scannerFiles -contains (Split-Path $rel -Leaf)) { continue }
+
     $lines = $null
-    try { $lines = Get-Content -LiteralPath $rel -ErrorAction Stop } catch { continue }
+    # Wrap in @() to FORCE an array. Get-Content returns a bare [string] for a
+    # single-line file, and indexing that yields the first CHARACTER, not the
+    # line - which made this scan silently miss any one-line file (verified:
+    # a planted "密码：<secret>" in a 1-line file was read as just "密").
+    try { $lines = @(Get-Content -LiteralPath $rel -ErrorAction Stop) } catch { continue }
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i]
