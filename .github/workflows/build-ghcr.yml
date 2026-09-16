@@ -35,7 +35,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag to build (e.g. 0.1.12). No default on purpose, so a stale tag cannot be dispatched by accident."
+        description: "Image tag to build (e.g. the current release). No default on purpose, so a stale tag cannot be dispatched by accident."
         required: true
       namespace:
         description: "Optional GHCR owner override (jzkk720 or pacgate-ai). Empty = the repo owner that runs this workflow."

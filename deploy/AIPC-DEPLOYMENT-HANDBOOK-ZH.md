@@ -541,7 +541,7 @@ curl.exe -s http://localhost:8089/version
 ```
 
 ```json
-{"version":"0.1.12","revision":"a1b2c3d4e5f6..."}
+{"version":"<release>","revision":"<git sha>"}
 ```
 
 这里返回的是**编译进正在运行的 pacgate-api 二进制文件**的版本，以及它所基于的

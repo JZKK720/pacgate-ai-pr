@@ -29,7 +29,7 @@ then **verifies the result from the page** rather than trusting the click.
 $env:PLAYWRIGHT_BROWSERS_PATH = "$env:LOCALAPPDATA\ms-playwright"
 
 python scripts/sync-fork-via-ui.py                    # step 2
-python scripts/dispatch-release-via-ui.py --tag 0.1.12  # step 3
+python scripts/dispatch-release-via-ui.py --tag <release>  # step 3
 ```
 
 Both refuse rather than guess:

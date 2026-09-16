@@ -556,7 +556,7 @@ curl.exe -s http://localhost:8089/version
 ```
 
 ```json
-{"version":"0.1.12","revision":"a1b2c3d4e5f6..."}
+{"version":"<release>","revision":"<git sha>"}
 ```
 
 This reports the version **compiled into the running pacgate-api binary**, and
