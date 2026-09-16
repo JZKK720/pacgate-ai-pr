@@ -4,7 +4,34 @@ Priority: **P0 — do this before anything else** · Effort: **S–M** · Depend
 
 ## Status
 
-Redaction is **done**. Rotation and history purge are **outstanding**.
+Redaction is **done and pushed to origin**. The fork push is **blocked** on
+credentials. Rotation and history purge are **outstanding**.
+
+## Push state (verified 2026-09-16)
+
+| Location | State |
+| --- | --- |
+| Local `HEAD` (`ae42ae0`) | redacted |
+| `origin/main` (`JZKK720`) | **redacted — pushed and verified** |
+| fork `main` (`pacgate-ai`) | **STILL LIVE — push rejected** |
+
+`git push` to the fork returns `[remote rejected] main -> main (permission
+denied)`. Root cause is **not** a repo setting: `git-credential-manager` holds
+credentials for **`JZKK720` only** (confirmed via `git-credential-manager github
+list`). A push to `pacgate-ai/pacgate-ai-pr` therefore authenticates as the
+wrong account.
+
+**To unblock — requires interactive sign-in; do not route secrets through an
+assistant:**
+
+```powershell
+git credential-manager github login            # sign in as the pacgate-ai account
+git push https://github.com/pacgate-ai/pacgate-ai-pr.git main
+git credential-manager github logout JZKK720   # return to the original account
+```
+
+Then re-run `scripts/check-credential-state.ps1` — all three columns must read
+`clean`.
 
 ## Why this is P0
 
