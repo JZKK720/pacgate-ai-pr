@@ -141,7 +141,23 @@ try {
         Write-Host ("  body: {0}" -f $body) -ForegroundColor DarkGray
 
         # --- content ----------------------------------------------------------
-        Assert-True ($body -match '"version"\s*:\s*"0\.1\.13"') 'reports the compiled-in version'
+        #
+        # Asserted against the SAME version the image tag was derived from, not a
+        # literal. The first version of this line pinned '"version":"0.1.13"',
+        # which meant the test REQUIRED the release under test to be the OLD one.
+        # On the 0.1.14 image, whose binary correctly reports 0.1.14, it failed -
+        # so it would have reported a healthy release as broken, and the tempting
+        # fix is to edit the literal, which re-arms the same trap.
+        #
+        # The image tag is already derived from Cargo.toml above, so deriving the
+        # expected body version the same way makes the assertion self-consistent:
+        # if someone built with a stale manifest, the tag would say 0.1.14 and the
+        # binary would say something else, and this catches it.
+        $expectedVersion = ($Image -split ':')[-1]
+        Write-Host ("  expecting version {0}" -f $expectedVersion) -ForegroundColor DarkGray
+        Assert-True ($body -match ('"version"\s*:\s*"' + [regex]::Escape($expectedVersion) + '"')) `
+            'reports the compiled-in version' `
+            "image tag says $expectedVersion but the binary reported: $body"
         Assert-True ($body -match '"revision"\s*:\s*"[0-9a-f]{40}"') 'reports a real 40-hex revision (build arg reached the compiler)'
         Assert-True ($body -notmatch '"revision"\s*:\s*"unknown"') 'revision is NOT the "unknown" fallback'
 
