@@ -7,7 +7,19 @@
 # The first is what a client install depends on. The second is what makes a future
 # reader think a package is part of this stack when it is not.
 [CmdletBinding()]
-param([string]$Version = '0.1.13')
+# The default version is DERIVED from the crate manifest, not hardcoded. A
+# literal default expires at every bump and the fix is always to edit the literal,
+# which turns an inspection tool into another place a release has to be
+# remembered. Cargo.toml is the source of truth for what /version reports.
+param([string]$Version = '')
+
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
+if (-not $Version) {
+    $cargo = Get-Content pacgate-ai/Cargo.toml -Raw
+    $Version = [regex]::Match($cargo, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"').Groups['v'].Value
+    if (-not $Version) { Write-Host 'ERROR: could not read the workspace version from Cargo.toml' -ForegroundColor Red; exit 1 }
+}
 
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)

@@ -8,11 +8,17 @@
 # Note on byte-identity: Docker builds are NOT reproducible by default - layer
 # tar entries carry mtimes - so the digest WILL change across a rebuild even when
 # the source is identical. Changed digests are not evidence of a different build;
-# the source sha is what proves provenance, and the tag now points at 32b45ea.
+# the source sha is what proves provenance, and the release tag names it.
 [CmdletBinding()]
-param([string]$Version = '0.1.13')
+param([string]$Version = '')
 
 $ErrorActionPreference = 'Stop'
+if (-not $Version) {
+    Set-Location (Split-Path -Parent $PSScriptRoot)
+    $cargo = Get-Content pacgate-ai/Cargo.toml -Raw
+    $Version = [regex]::Match($cargo, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"').Groups['v'].Value
+    if (-not $Version) { Write-Host 'ERROR: could not read the workspace version from Cargo.toml' -ForegroundColor Red; exit 1 }
+}
 $images = @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow-frontend-pacgate')
 $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 
@@ -56,5 +62,5 @@ if ($bad -gt 0) {
     Write-Host ("$bad image(s) NOT pullable at $Version" -f $bad) -ForegroundColor Red
     exit 1
 }
-Write-Host 'All four images pullable anonymously. Source provenance: tag v0.1.13 -> 32b45ea.' -ForegroundColor Green
+Write-Host ("All four images pullable anonymously for {0}. Source provenance: the tag names the commit it was built from." -f $Version) -ForegroundColor Green
 exit 0

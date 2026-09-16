@@ -44,10 +44,26 @@ Write-Host ("         running image: {0}" -f $img) -ForegroundColor DarkGray
 Check 'the old-image detection matches the live image' ($img -match 'jzkk720|:0\.1\.[0-9]$') "image '$img' would not be flagged as predating the route"
 
 # 5. The PINNED version must parse out of compose, or the comparison is skipped.
+#
+# The expected value is DERIVED from the crate manifest, not hardcoded. It read
+# -eq '0.1.13' first, which went red on the 0.1.14 bump for no reason other than
+# the version moving - and the tempting fix is to re-hardcode 0.1.14, which makes
+# the check expire again at the next bump. Cargo.toml is the source of truth for
+# the version (it is what /build-info reports via CARGO_PKG_VERSION), so tying
+# the test to it means the test has nothing to re-learn.
+#
+# The CROSS-FILE assertion is the one worth having: compose and the manifest can
+# drift, and a release built WITHOUT bumping Cargo.toml would make /version report
+# the OLD string while compose pins the new one, so the staleness comparison could
+# never fire. Asserting they agree catches that at test time instead of on a
+# client machine.
+$cargoTxt = Get-Content pacgate-ai/Cargo.toml -Raw
+$manifestVersion = [regex]::Match($cargoTxt, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"').Groups['v'].Value
 $composeTxt = Get-Content deploy/client-bundle/compose.prod.yaml -Raw
 $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+)\s*$')
-Check 'compose pin parses for the comparison' ($m.Success -and $m.Groups['v'].Value -eq '0.1.13') "got '$($m.Groups['v'].Value)'"
-Write-Host ("         compose pins pacgate-api {0}" -f $m.Groups['v'].Value) -ForegroundColor DarkGray
+Check 'compose pin parses for the comparison' $m.Success 'no pinned pacgate-api version found in compose.prod.yaml'
+Check 'compose pin matches the crate manifest version' ($m.Success -and $m.Groups['v'].Value -eq $manifestVersion) "compose pins '$($m.Groups['v'].Value)' but Cargo.toml says '$manifestVersion' - /version reports the manifest value, so the staleness check could never fire"
+Write-Host ("         manifest {0}, compose pins pacgate-api {1}" -f $manifestVersion, $m.Groups['v'].Value) -ForegroundColor DarkGray
 
 Write-Output ''
 Write-Host ("{0} passed, {1} failed" -f $passed, $failed)

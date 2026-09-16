@@ -203,6 +203,39 @@ try {
         exit 1
     }
 
+    # ── The version field is only useful if the manifest moved too ──────────
+    #
+    # /version reports TWO fields from DIFFERENT sources:
+    #
+    #   version  <- env!("CARGO_PKG_VERSION")          = Cargo.toml
+    #   revision <- option_env!("PAC_SOURCE_REVISION") = the commit
+    #
+    # The staleness check on an AIPC compares only the VERSION, because that is
+    # the one it can compare against the compose pin. So if a release is tagged
+    # and built WITHOUT bumping the manifest, compose pins the new tag while the
+    # binary answers the OLD version - and a machine running the previous release
+    # and one running the new one report the SAME string, so the update check can
+    # never fire. The revision is the only field that would differ, and it is not
+    # what the installer compares.
+    #
+    # That is exactly the shape of the 0.1.13 release: Cargo.toml said 0.1.13 and
+    # the tag was v0.1.13, so the version field carried no information the tag did
+    # not already have. This check makes the coupling explicit - bumping the pins
+    # without the manifest is a hard failure rather than a silent one.
+    #
+    # Verified through the SAME pin patterns used above, so it cannot drift from
+    # what was actually rewritten.
+    $tomlPath = Join-Path $repoRoot 'pacgate-ai/Cargo.toml'
+    $tomlNow = [System.IO.File]::ReadAllText($tomlPath, [System.Text.Encoding]::UTF8)
+    $manifestNow = [regex]::Match($tomlNow, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"').Groups['v'].Value
+    if ($manifestNow -ne $To) {
+        Write-Output ''
+        Write-Output ("FAIL - the pins moved to $To but the crate manifest still says '$manifestNow'.")
+        Write-Output '  /version reports the manifest value, so the update check on an AIPC'
+        Write-Output '  could never detect this release. Bump pacgate-ai/Cargo.toml too.'
+        exit 1
+    }
+
     Write-Output "  OK: all pins now read $To."
     Write-Output ''
     Write-Output 'Next:'

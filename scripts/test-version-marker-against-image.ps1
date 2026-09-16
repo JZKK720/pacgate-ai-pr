@@ -16,8 +16,14 @@
 # 401 and this test fails on the status code.
 [CmdletBinding()]
 param(
-    # The image under test. Override to check a specific release.
-    [string]$Image = 'ghcr.io/pacgate-ai/pacgate-api:0.1.13',
+    # The image under test. Empty = the version the crate manifest declares, so a
+    # bump needs no edit here. Override to check a specific release.
+    #
+    # This was a hardcoded ':0.1.13'. It is not just a stale literal - the whole
+    # point of this test is to run against the CURRENT image, so a default that
+    # silently points at an old release would keep passing while proving nothing
+    # about what is being shipped.
+    [string]$Image = '',
     # Network to join, so pacgate-db resolves. Defaults to the live stack.
     [string]$Network = 'client-bundle_default',
     # Name of an existing container to copy DATABASE_URL from. The value is read
@@ -26,6 +32,14 @@ param(
     # this file.
     [string]$DbFrom = 'pacgate-api'
 )
+
+if (-not $Image) {
+    Set-Location (Split-Path -Parent $PSScriptRoot)
+    $cargo = Get-Content pacgate-ai/Cargo.toml -Raw
+    $v = [regex]::Match($cargo, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"').Groups['v'].Value
+    if (-not $v) { Write-Host 'ERROR: could not read the workspace version from Cargo.toml' -ForegroundColor Red; exit 1 }
+    $Image = "ghcr.io/pacgate-ai/pacgate-api:$v"
+}
 
 $ErrorActionPreference = 'Stop'
 $ctr = "pacver-test-$([guid]::NewGuid().ToString('n').Substring(0,8))"
