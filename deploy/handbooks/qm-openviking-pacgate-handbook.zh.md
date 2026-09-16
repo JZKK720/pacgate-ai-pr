@@ -36,7 +36,7 @@
 | **qm core** | 8180 | 协作引擎：运行编排、pi harness、审批 | `ghcr.io/yc-software/qm/core` |
 | **qm auth** | 内部 | 认证代理（Resend/SMTP 登录链接） | `ghcr.io/yc-software/qm/auth` |
 | **OpenViking** | 1933 | 长期记忆：结构化记忆、语义检索 | `ghcr.io/volcengine/openviking` |
-| **pacgate-api** | 8080 | 法律元数据：案件、文档、工作流、RAG | `ghcr.io/jzkk720/pacgate-api:0.1.3`（Rust） |
+| **pacgate-api** | 8080 | 法律元数据：案件、文档、工作流、RAG | `ghcr.io/pacgate-ai/pacgate-api:0.1.9`（Rust） |
 | **pacgate-nginx** | 8089 | 统一入口，`/pacgate/` 前缀 | `nginx:1.27-alpine` |
 | **Ollama** | 11434 | 本地/云路由模型 + embedding | Windows 原生 |
 

@@ -1,5 +1,11 @@
 # Pacgate AI — 全栈评估报告
 
+> **历史快照 — 请勿据此操作。**
+> 本报告为 2026-08-18 的状态记录，其中引用的镜像（`ghcr.io/jzkk720/*:0.1.0`
+> /`0.1.1`）与命名空间均已过时且多数已不存在。当前命名空间为
+> `ghcr.io/pacgate-ai/*`，当前镜像固定值见 `deploy/client-bundle/compose.prod.yaml`。
+> 需要部署时请改用 `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`。
+
 > 第一阶段试点交付准备状态
 > 版本 0.1.0 — 2026年8月18日
 > 智方云（Cubecloud Limited）

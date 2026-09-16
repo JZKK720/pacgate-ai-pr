@@ -20,7 +20,8 @@ This document describes the target client runtime bundle. It does not reflect th
 
 - Rust 1.88+ (`rustup default stable` — dependencies require 1.88+)
 - Docker Desktop with Buildx
-- GitHub CLI (`gh`) authenticated to `jzkk720` org
+- GitHub CLI (`gh`) authenticated — see `deploy/README-BUILD.md` for the
+  namespace decision (images currently publish under `ghcr.io/pacgate-ai/*`)
 - This repo cloned: `c:\Users\cubecloud-io\github-pr\pacgate-ai-pr`
 - Python 3.12+ with `graphifyy` (`pip install graphifyy`) and `openai` (`pip install openai`)
 - Ollama running locally for graphify code analysis (see "Running graphify" below)
@@ -78,7 +79,9 @@ qm does NOT run as a Docker Compose service. It runs via `qm up` from the
 (`pacgate-qm`) and skill (`pacgate-workflow`) are already checked in and
 validated (`qm check` + `qm sandbox build` pass). Use the `setup-qm.ps1`
 script in the client bundle for first-run bootstrap. There is no
-`ghcr.io/jzkk720/qm-pacgate` Docker image to build or push.
+`ghcr.io/jzkk720/qm-pacgate` Docker image to build or push — and no
+`ghcr.io/pacgate-ai/qm-pacgate` either; the image was never published under any
+namespace.
 
 ```powershell
 # deploy/qm-pacgate/Dockerfile:
@@ -161,6 +164,9 @@ services:
     restart: unless-stopped
 
   qm:
+    # NOTE: this image does not exist and was never published. qm runs via
+    # `qm up` from deploy/qm-pacgate/ (see §1.3 above), NOT as a compose service.
+    # This stanza is retained only to document the abandoned approach.
     image: ghcr.io/jzkk720/qm-pacgate:0.1.0
     container_name: qm
     depends_on: [pacgate-api]

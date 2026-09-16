@@ -125,8 +125,8 @@ graph LR
 ```mermaid
 graph TB
     subgraph Cubecloud["Cubecloud (code owner)"]
-        REPO["github.com/jzkk720/pacgate-ai<br/>(your repo)"]
-        GHCR["GHCR images<br/>pacgate-api, deer-flow-pacgate, qm-pacgate"]
+        REPO["github.com/JZKK720/pacgate-ai-pr<br/>(source; mirror: pacgate-ai/pacgate-ai-pr)"]
+        GHCR["GHCR images<br/>pacgate-api, pacgate-mcp,<br/>deer-flow-pacgate, deer-flow-frontend-pacgate<br/>(no qm image - qm runs via qm up)"]
         SCOPE["scope-assets/<br/>(your business materials)<br/>NEVER shipped to client"]
         REPO --> GHCR
     end

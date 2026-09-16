@@ -20,10 +20,10 @@
 #   .\deploy\build-frontend.ps1
 #   docker build -f deploy/deer-flow-frontend-pacgate/Dockerfile \
 #     --build-arg DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://deer-flow:8001 \
-#     -t ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.0 .
+#     -t ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0 .
 #
 # Run (compose.prod.yaml):
-#   image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.0
+#   image: ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0
 
 ARG PNPM_STORE_PATH=/root/.local/share/pnpm/store
 ARG NPM_REGISTRY

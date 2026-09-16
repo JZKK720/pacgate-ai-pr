@@ -5,7 +5,7 @@
 # so the /api/* rewrites target the pacgate backend (deer-flow:8001).
 #
 # Usage (from repo root):
-#   .\deploy\build-frontend.ps1                      # build only (tagged ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.0)
+#   .\deploy\build-frontend.ps1                      # build only (tagged ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0)
 #   .\deploy\build-frontend.ps1 -Push                # build + push to GHCR (needs docker login)
 #   .\deploy\build-frontend.ps1 -Tag 0.1.1           # custom tag
 #   .\deploy\build-frontend.ps1 -GatewayUrl http://deer-flow:8001

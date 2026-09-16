@@ -132,13 +132,20 @@ Attorneys hit machine 2's nginx → routes to deer-flow (`/research/`), qm (`/co
 
 Current repo reality: the checked-in workspace-level `compose.yaml` and `nginx/default.conf` are a docs/auth-gate stack only. The runtime topology above remains the intended deployment target until the client bundle and qm wrapper are checked in.
 
-### 5.2 GHCR images (3, all Cubecloud-owned)
+### 5.2 GHCR images (Cubecloud-owned)
+  
+  > **Corrected 2026-09-16.** This table previously listed `jzkk720/*` tags and a
+  > `qm-pacgate` image. Neither is current: images publish under
+  > **`ghcr.io/pacgate-ai/*`**, and `qm-pacgate` was **never published** — qm runs
+  > via `qm up` from `deploy/qm-pacgate/`, not as a compose image. Authoritative
+  > current pins live in `deploy/client-bundle/compose.prod.yaml`.
 
-| Image                                     | Base                                        | Contents                                | Rebuild cadence                         |
-| ----------------------------------------- | ------------------------------------------- | --------------------------------------- | --------------------------------------- |
-| `ghcr.io/jzkk720/pacgate-api:0.1.2`       | `rust:1.81` \u2192 `debian:slim`                 | Rust binary                             | When you ship a new version             |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | `ghcr.io/bytedance/deer-flow-backend:2.1.0` | deer-flow + Python adapter (~150 lines) | Quarterly or when deer-flow ships value |
-| `ghcr.io/jzkk720/qm-pacgate:0.1.0`        | `ghcr.io/yc-software/qm/core:latest`        | qm core + TS adapter (~200 lines)       | Quarterly or when qm ships value        |
+  | Image                                     | Base                                        | Contents                                | Rebuild cadence                         |
+  | ----------------------------------------- | ------------------------------------------- | --------------------------------------- | --------------------------------------- |
+  | `ghcr.io/pacgate-ai/pacgate-api`          | `rust:1.81` → `debian:slim`                 | Rust binary                             | When you ship a new version             |
+  | `ghcr.io/pacgate-ai/deer-flow-pacgate`    | `ghcr.io/bytedance/deer-flow-backend`       | deer-flow + Python adapter (~150 lines) | Quarterly or when deer-flow ships value |
+  | `ghcr.io/pacgate-ai/pacgate-mcp`          | python slim                                 | FastMCP bridge (documents/workflows)    | With pacgate-api                        |
+  | `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate` | `node:22-alpine`                     | Next.js research UI (gateway baked in)   | With deer-flow                          |
 
 **Upstream repos are never forked.** Wrapper Dockerfiles `FROM` their published images and layer adapters on top. Upgrades = bump one `FROM` line + rebuild.
 
