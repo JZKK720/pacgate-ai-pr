@@ -16,6 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the entire workspace
 COPY . .
 
+# Source revision, so the running process can report WHICH commit it is.
+#
+# An ARG, not a LABEL: the api reports this at runtime, and the whole point of
+# a staleness marker is to catch the case where the deployed tag and the running
+# binary disagree. A label can only echo what was asked for; this comes from the
+# process itself. Defaults to "unknown" rather than a wrong value when unset -
+# the Dockerfile is also built outside CI, where no SHA is known.
+ARG PAC_SOURCE_REVISION=unknown
+ENV PAC_SOURCE_REVISION=${PAC_SOURCE_REVISION}
+
 # Build the API server binary
 RUN cargo build --release --bin pacgate-server && \
     cargo build --release --bin pacgate-seed

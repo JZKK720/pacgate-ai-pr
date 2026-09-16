@@ -38,7 +38,12 @@ try {
     # docker stub: succeed, print nothing (so `ps -q` yields empty => "not running")
     Set-Content -Path (Join-Path $stubDir 'docker.cmd') -Value '@echo off`r`nexit /b 0' -Encoding ASCII
     Set-Content -Path (Join-Path $stubDir 'ollama.cmd') -Value '@echo off`r`nexit /b 0' -Encoding ASCII
-    $env:PATH = "$stubDir;$env:PATH"
+    # NOTE: this used to be `$env:PATH = "$stubDir;$env:PATH"`. That mutated the
+    # CALLER's environment, and because the terminal session is persistent the
+    # stub dir stayed on PATH after the test finished - where it shadowed the
+    # real docker.exe. A later `docker compose config --quiet` in this session
+    # then returned exit 0 having run nothing at all, which is a false pass on a
+    # real validation. The stub dir is now passed to the child process only.
 
     # ── Fixtures ────────────────────────────────────────────────────────────
     Copy-Item (Join-Path $repoRoot 'deploy/client-bundle/install.ps1') $work
@@ -57,16 +62,36 @@ try {
 
     $run = {
         param($dir)
-        Push-Location $dir
-        try {
-            # Write-Host output goes to the Information stream, which plain
-            # `2>&1` does NOT capture. Redirecting 6>&1 is required, otherwise
-            # assertions on the script's messages silently see nothing and can
-            # pass for the wrong reason.
-            $out = & pwsh -NoProfile -File (Join-Path $dir 'install.ps1') -Update 6>&1 2>&1
-            return $out
-        }
-        finally { Pop-Location }
+        # Run the child with the stub directory PREPENDED to ITS OWN PATH.
+        # Doing this explicitly (rather than mutating ours) keeps the caller's
+        # environment clean and makes the stub visible in one place.
+        #
+        # The -Command fallback matters: if PATH prepending ever fails the child
+        # would find the REAL docker and start touching real containers. Failing
+        # loudly is the only safe behaviour for a test harness.
+        $inner = @"
+Set-Location '$dir'
+`$env:PATH = '$stubDir;' + `$env:PATH
+if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) {
+    Write-Output 'HARNESS-ERROR: no docker on PATH for the child process'
+    exit 99
+}
+`$d = (Get-Command docker).Source
+if (`$d -notlike '*_stubs*') {
+    Write-Output "HARNESS-ERROR: child resolved docker to `$d, expected the stub"
+    exit 98
+}
+`$out = & (Join-Path '$dir' 'install.ps1') -Update 6>&1 2>&1
+`$out | ForEach-Object { `$_ }
+"@
+        $tmp = Join-Path $dir '_run.ps1'
+        [System.IO.File]::WriteAllText($tmp, $inner)
+        # Write-Host output goes to the Information stream, which plain `2>&1`
+        # does NOT capture. Redirecting 6>&1 is required, otherwise assertions
+        # on the script's messages silently see nothing and can pass for the
+        # wrong reason.
+        $out = & pwsh -NoProfile -File $tmp 6>&1 2>&1
+        return $out
     }
 
     $rendered = Join-Path $work 'deer-flow-extensions-config.json'

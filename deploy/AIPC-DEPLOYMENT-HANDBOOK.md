@@ -549,6 +549,25 @@ Data is preserved across an update:
 - `./data/tenants/` (volume mount) - matters, documents, memory
 - Postgres data (named volume) - metadata database
 
+#### Is this machine current? Ask it.
+
+```powershell
+curl.exe -s http://localhost:8089/version
+```
+
+```json
+{"version":"0.1.12","revision":"a1b2c3d4e5f6..."}
+```
+
+This reports the version **compiled into the running pacgate-api binary**, and
+the commit it was built from. It deliberately does not echo the compose pin or
+the image tag: those record what was *deployed*, and the failure worth catching
+is exactly the case where the deployed artifact and the running process
+disagree.
+
+Before this existed there was no way to tell a current machine from one behind -both looked identical from the outside, and the only check was to SSH in and
+read the compose file, hoping the containers matched it.
+
 ### Switch models
 
 deer-flow (research workspace):

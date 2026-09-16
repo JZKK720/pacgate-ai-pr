@@ -534,6 +534,23 @@ cd C:\pacgate-ai-pr\deploy\client-bundle
 - `./data/tenants/`（卷挂载）— 事项、文档、记忆
 - Postgres 数据（命名卷）— 元数据数据库
 
+#### 这台机器是不是最新版本？直接问它
+
+```powershell
+curl.exe -s http://localhost:8089/version
+```
+
+```json
+{"version":"0.1.12","revision":"a1b2c3d4e5f6..."}
+```
+
+这里返回的是**编译进正在运行的 pacgate-api 二进制文件**的版本，以及它所基于的
+commit。它故意不回显 compose 中的 pin 或镜像 tag：那些记录的是“曾部署了什么”，
+而真正要捕获的故障，恰恰是所部署的产物与实际运行的进程不一致。
+
+在此之前，无法区分一台最新机器和一台落后的机器 — 从外部看两者完全相同，
+唯一的办法是 SSH 进去读 compose 文件，并寄希望于容器与之相符。
+
 ### 切换模型
 
 deer-flow（研究工作空间）：

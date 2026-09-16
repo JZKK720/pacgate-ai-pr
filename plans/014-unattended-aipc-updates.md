@@ -1,6 +1,6 @@
 # 014 — Unattended AIPC Updates
 
-Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **IN PROGRESS — steps 1-3 done, step 4 drift detection done**
+Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **IN PROGRESS — steps 1-5 done; step 6 (scheduled updater) remains**
 
 **This is the end-goal plan.** 011 shipped the artifacts; this makes them reach
 both AIPCs without a developer logging in. Full evidence:
@@ -14,7 +14,7 @@ both AIPCs without a developer logging in. Full evidence:
 | 2. Render-and-compare the config | ✅ **done** — regenerates and compares every run, backs up, and NAMES what changed. Tests `scripts/test-install-render.ps1` (11/11) |
 | 3. Restart services with bind-mounted code | ✅ **done** — folded into step 2's commit (`docker compose restart deer-flow` on `-Update`) |
 | 4. Bring qm into the update path | 🟡 **partly** — sandbox drift is now DETECTED and reported on every `-Update`; the rebuild itself is deliberately left manual |
-| 5. Publish a staleness marker | ⬜ not started |
+| 5. Publish a staleness marker | ✅ **done** — `GET /version` reports the running binary's version + commit. Verified end-to-end against real containers |
 | 6. Scheduled updater | ⬜ last, deliberately |
 
 Steps 1 and 2 both had their tests validated by breaking the implementation and
@@ -43,7 +43,7 @@ whether it is current.
 | 2 | config rendered **only if absent** | template updates **never land** — proven lost update (`453646f` added `pacgate-mcp` and fixed an API key) | ✅ fixed |
 | 3 | bind-mounted `.py` needs restart, none performed | patch fixes sit on disk doing nothing | ✅ fixed |
 | 4 | qm untouched by `-Update` | 7 containers + sandbox drift independently | 🟡 sandbox drift now detected + reported; rebuild left manual by design |
-| 5 | no version/staleness marker | a behind machine looks healthy | ⬜ open |
+| 5 | no version/staleness marker | a behind machine looks healthy | ✅ fixed — `GET /version` |
 | — | two unrelated renders shared one guard | a missing OpenViking template silently skipped the deer-flow config | ✅ fixed (found while testing step 2) |
 
 ## Steps — in this order
@@ -128,6 +128,46 @@ recorded what it was built from.
 Expose the running version (image tag) on an unauthenticated route, e.g. nginx
 `/version`. Then any machine, monitor, or the operator can answer "is this
 current?" without SSH.
+
+#### Delivered
+
+`GET http://localhost:8089/version` →
+
+```json
+{"version":"0.1.12","revision":"a1b2c3d4e5f6..."}
+```
+
+`version` and `revision` come from `env!("CARGO_PKG_VERSION")` and a
+`option_env!("PAC_SOURCE_REVISION")` build arg, **compiled into the
+pacgate-api binary**. nginx proxies its `/build-info` at the public route.
+
+**Why the binary reports it and not nginx, and not the image tag.** The image
+tag and the compose pin both record what was DEPLOYED. The failure this exists
+to catch is the deployed artifact disagreeing with the process actually serving
+traffic — a machine whose containers were started from an older pull, or where
+someone edited a pin. Only something compiled into the running process can
+answer that. `revision` falls back to `unknown` rather than a wrong value when
+the build arg is absent (the Dockerfile is also built outside CI, where no SHA
+is known).
+
+**Why it lives in `default.conf` and not its own `conf.d` fragment.** I tried a
+separate `nginx/version.conf` first, so the marker would survive a client
+editing their local `default.conf` — a plausible operation that the update
+path's dirty-tree guard explicitly refuses to clobber. It does not work: a
+`location` is only valid inside a `server` block, and nginx rejected the
+fragment with `"location" directive is not allowed here`. A separate `server`
+block on another port would work but would not be reachable at the documented
+`:8089/version`. The reasoning and the rejected attempt are recorded in
+`default.conf` so nobody re-tries it.
+
+**Verification — `scripts/test-version-marker.ps1`, 6/6.** Stands up a real
+network, a stub upstream aliased exactly as `pacgate-api`, and the real nginx
+with the real `default.conf`, then requests the route. `nginx -t` would only
+have proven the file parses; the failures worth catching here are all wiring —
+the location not matching, `proxy_pass` sending `/build-info/` instead of
+`/build-info`, the upstream not resolving, or the response being cached. The
+stub returns a distinctive revision so the assertion proves the value travelled
+through nginx rather than being invented by a default.
 
 ### 6. Add a scheduled updater — **last**
 

@@ -101,6 +101,13 @@ jobs:
           context: pacgate-ai
           file: pacgate-ai/Dockerfile
           push: true
+          # Baked into the binary so GET /version can report the exact commit the
+          # running process was built from. The OCI revision label below is NOT
+          # a substitute: a label records what was deployed, and the failure this
+          # guards against is the deployed artifact disagreeing with the process
+          # actually serving traffic.
+          build-args: |
+            PAC_SOURCE_REVISION=${{ github.sha }}
           tags: |
             ${{ steps.ns.outputs.prefix }}/pacgate-api:${{ steps.tag.outputs.tag }}
             ${{ steps.ns.outputs.prefix }}/pacgate-api:latest
