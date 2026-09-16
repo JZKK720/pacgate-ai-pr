@@ -4,28 +4,46 @@ name: Build & Push GHCR Images
 # (v0.1.x) is pushed. This keeps both AIPCs in sync from a single source of
 # truth and needs no local docker login (uses GITHUB_TOKEN).
 #
-# Images pushed (default namespace):
-#   ghcr.io/jzkk720/pacgate-api:<tag>
-#   ghcr.io/jzkk720/pacgate-mcp:<tag>
-#   ghcr.io/jzkk720/deer-flow-pacgate:<tag>
-#   ghcr.io/jzkk720/deer-flow-frontend-pacgate:<tag>
+# Images pushed (pinned namespace):
+#   ghcr.io/pacgate-ai/pacgate-api:<tag>
+#   ghcr.io/pacgate-ai/pacgate-mcp:<tag>
+#   ghcr.io/pacgate-ai/deer-flow-pacgate:<tag>
+#   ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:<tag>
 #
-# NAMESPACE: the prefix defaults to `ghcr.io/${{ github.repository_owner }}`,
-# i.e. whichever account owns the repo that runs this workflow. `pacgate-ai`
-# is a USER account, not an organization.
+# NAMESPACE: the prefix is PINNED to `pacgate-ai` by the workflow-level
+# `GHCR_NAMESPACE` below, and falls back to `github.repository_owner` only if that
+# is emptied. `pacgate-ai` is a USER account, not an organization.
 #
-#   repo JZKK720/pacgate-ai-pr    -> ghcr.io/jzkk720/*
-#   repo pacgate-ai/pacgate-ai-pr -> ghcr.io/pacgate-ai/*
+# WHY PINNED RATHER THAN INFERRED. Deriving the owner from the repo was correct
+# by luck and wrong in principle. `secrets.GITHUB_TOKEN` can only push to the
+# namespace of the account that runs the workflow, so:
 #
-# `secrets.GITHUB_TOKEN` is issued per repo and can only push to that repo's
-# own namespace, so tagging the fork publishes to pacgate-ai/* and tagging
-# origin publishes to jzkk720/*. To publish somewhere else you must supply a
-# PAT with write:packages for that owner (see deploy/README-BUILD.md).
+#   repo JZKK720/pacgate-ai-pr    -> ghcr.io/jzkk720/*   <- DEPRECATED, nothing pulls it
+#   repo pacgate-ai/pacgate-ai-pr -> ghcr.io/pacgate-ai/* <- what compose pins
+#
+# A `v0.1.*` tag pushed on ORIGIN therefore publishes to ghcr.io/jzkk720/*, a
+# namespace the client compose files do not reference - a release that succeeds,
+# publishes nowhere useful, and leaves clients on the old image with no error.
+# That is the failure this pin removes.
+#
+# The value lives in THIS FILE rather than in a repository variable because the
+# namespace is a property of the project, not of whichever repo happens to run
+# the workflow - so one committed constant covers origin and fork alike, is
+# reviewable in a diff, and needs no Settings access on either repo.
 #
 # IMPORTANT: this prefix MUST match the `image:` pins in
 # deploy/client-bundle/compose.prod.yaml and compose.bundle.yaml. If the
 # workflow publishes to one namespace and compose pins the other, the client
-# install pulls nothing. Use the `namespace` dispatch input to override it.
+# install pulls nothing. Use the `namespace` dispatch input to override.
+#
+# NOTE: to publish to an owner OTHER than pacgate-ai you need a PAT with
+# write:packages for that owner; GITHUB_TOKEN cannot cross namespaces. See
+# deploy/README-BUILD.md.
+
+env:
+  # The single source of truth for where a release publishes. See the NAMESPACE
+  # note above before changing it.
+  GHCR_NAMESPACE: pacgate-ai
 
 on:
   push:
@@ -38,7 +56,7 @@ on:
         description: "Image tag to build (e.g. the current release). No default on purpose, so a stale tag cannot be dispatched by accident."
         required: true
       namespace:
-        description: "Optional GHCR owner override (jzkk720 or pacgate-ai). Empty = the repo owner that runs this workflow."
+        description: "GHCR owner override. Empty = the pinned GHCR_NAMESPACE variable (pacgate-ai). Set only to publish elsewhere deliberately - clients pin ghcr.io/pacgate-ai."
         required: false
         default: ""
 
@@ -56,13 +74,27 @@ jobs:
 
       # Resolve the effective namespace once, so the tag-push and dispatch paths
       # behave identically and every later step agrees on the prefix.
+      #
+      # Precedence: explicit dispatch input > committed GHCR_NAMESPACE > repo
+      # owner. See the NAMESPACE note at the top for why the pin exists.
       - name: Resolve image namespace
         id: ns
+        env:
+          INPUT_NS: ${{ inputs.namespace }}
+          OWNER_NS: ${{ github.repository_owner }}
         run: |
-          ns="${{ inputs.namespace }}"
-          if [ -z "$ns" ]; then ns="${{ github.repository_owner }}"; fi
+          if [ -n "$INPUT_NS" ]; then
+            ns="$INPUT_NS"; src="namespace dispatch input"
+          elif [ -n "$GHCR_NAMESPACE" ]; then
+            ns="$GHCR_NAMESPACE"; src="committed GHCR_NAMESPACE"
+          else
+            ns="$OWNER_NS"; src="repo owner (GHCR_NAMESPACE is empty)"
+          fi
           echo "prefix=ghcr.io/$ns" >> "$GITHUB_OUTPUT"
-          echo "Resolved image prefix: ghcr.io/$ns"
+          echo "Resolved image prefix: ghcr.io/$ns  (from: $src)"
+          if [ "$src" != "namespace dispatch input" ] && [ "$ns" != "pacgate-ai" ]; then
+            echo "::warning::Publishing to ghcr.io/$ns, which is NOT the namespace the client compose files pin (ghcr.io/pacgate-ai). Clients will not see this release."
+          fi
 
       # Compute the image tag: strip the leading 'v' from release tags so it
       # matches the compose pins (v0.1.3 -> 0.1.3). Manual dispatch uses the

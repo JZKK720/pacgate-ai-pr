@@ -3,9 +3,9 @@
 #
 # This script:
 #   1. Checks prerequisites (Node 24+, npm, Docker, Ollama)
-#   2. Copies qm-pacgate/ to the target directory
+#   2. Stages qm-pacgate/ into the target directory (from the tracked source)
 #   3. Generates signing secrets (openssl rand -hex 32)
-#   4. Creates .env from .env.example with generated secrets
+#   4. Creates .env with the generated secrets plus the values qm requires
 #   5. Prompts for admin email + Pacgate bridge credentials
 #   6. Validates config with `qm check`
 #   7. Builds the sandbox image with `qm sandbox build`
@@ -13,11 +13,19 @@
 # It does NOT run `qm up` — the engineer should verify config first.
 
 param(
-    [string]$QmDir = ".\qm-pacgate",
+    # Where to stage the deployment. Defaults to <bundle>\qm-pacgate.
+    [string]$QmDir,
+    # Tracked source of the deployment definition.
+    [string]$QmSourceDir,
     [string]$PacgateApiUrl = "http://localhost:8081"
 )
 
 $ErrorActionPreference = "Stop"
+
+# $PSScriptRoot = <repo>\deploy\client-bundle, so the repo root is two levels up
+# and the tracked deployment definition lives in deploy/qm-pacgate.
+if (-not $QmSourceDir) { $QmSourceDir = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'deploy/qm-pacgate' }
+if (-not $QmDir) { $QmDir = Join-Path $PSScriptRoot 'qm-pacgate' }
 
 Write-Host "=== Pacgate-ai QM Bootstrap ===" -ForegroundColor Cyan
 
@@ -45,13 +53,40 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 Write-Host "[OK] Docker detected" -ForegroundColor Green
 
-# 2. Check qm-pacgate directory
-if (-not (Test-Path $QmDir)) {
-    Write-Host "ERROR: qm-pacgate directory not found at $QmDir" -ForegroundColor Red
-    Write-Host "  Copy the qm-pacgate/ directory from the client bundle to this location." -ForegroundColor Yellow
+# 2. Stage the qm-pacgate deployment.
+#
+# THIS WAS DOCUMENTED BUT NEVER IMPLEMENTED. The header said the script "Copies
+# qm-pacgate/ to the target directory" and .gitignore described the runtime copy
+# as "staged by setup-qm.ps1" - but no Copy-Item existed, so a fresh machine hit
+# 'qm-pacgate directory not found' at the default path and the operator was told
+# to copy it by hand. The tracked source is deploy/qm-pacgate/; the runtime copy
+# lives in the (gitignored) bundle path because `qm` writes generated files into
+# its deployment directory.
+if (-not (Test-Path $QmSourceDir)) {
+    Write-Host "ERROR: qm deployment source not found at $QmSourceDir" -ForegroundColor Red
+    Write-Host "  Expected the tracked definition at <repo>\deploy\qm-pacgate." -ForegroundColor Yellow
+    Write-Host "  Pass -QmSourceDir <path> if your checkout differs." -ForegroundColor Yellow
     exit 1
 }
-Write-Host "[OK] qm-pacgate directory found" -ForegroundColor Green
+
+if (Test-Path $QmDir) {
+    # Re-staging an existing deployment must not silently discard local edits to
+    # the config, so only the tracked definition files are refreshed and .env and
+    # node_modules are left alone.
+    Write-Host "[OK] $QmDir already exists - refreshing the deployment definition" -ForegroundColor Green
+}
+else {
+    Write-Host "`nStaging qm-pacgate into $QmDir..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path $QmDir | Out-Null
+}
+
+# Copy the deployment definition, excluding anything machine-local or generated.
+# .env holds the generated secrets and must never be overwritten by a re-run.
+$exclude = @('.env', 'node_modules', '.generated')
+Get-ChildItem -LiteralPath $QmSourceDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $QmDir -Recurse -Force
+}
+Write-Host "[OK] Deployment definition staged from $QmSourceDir" -ForegroundColor Green
 
 # 3. Install dependencies
 Write-Host "`nInstalling qm dependencies..." -ForegroundColor Cyan
@@ -113,8 +148,37 @@ try {
     # 6. Create .env
     Write-Host "`nCreating .env..." -ForegroundColor Cyan
 
+    # Postgres password for the qm stack's own database. Generated, not prompted:
+    # it is internal to the deployment and never typed by a human. compose.qm.yaml
+    # has NO default for POSTGRES_PASSWORD, so an unset value substitutes an EMPTY
+    # string into DATABASE_URL and qm fails to reach its own database.
+    $pgPassword = New-SecretHex
+
+    # OpenViking credentials. Required because qm's sandbox declares them in
+    # secretEnv and compose has no default. The ROOT key matters specifically:
+    # compose notes that "/mcp authenticates with the ROOT key; the app key returns
+    # 401 there", so providing only the app key leaves the ov-* sandbox tools
+    # broken. Both are read from the main bundle's .env, which install.ps1 already
+    # generated - the qm stack talks to the SAME OpenViking instance over the host
+    # port, so the keys must match.
+    $mainEnv = Join-Path $PSScriptRoot '.env'
+    $ovRoot = ''; $ovApi = ''; $fcKey = ''
+    if (Test-Path $mainEnv) {
+        foreach ($line in (Get-Content -LiteralPath $mainEnv)) {
+            if ($line -match '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*(.+)$') { $ovRoot = $Matches[1].Trim() }
+            elseif ($line -match '^\s*OPENVIKING_API_KEY\s*=\s*(.+)$') { $ovApi = $Matches[1].Trim() }
+            elseif ($line -match '^\s*FIRECRAWL_API_KEY\s*=\s*(.+)$') { $fcKey = $Matches[1].Trim() }
+        }
+    }
+    if (-not $ovRoot) {
+        Write-Host "[WARN] OPENVIKING_ROOT_API_KEY not found in $mainEnv" -ForegroundColor Yellow
+        Write-Host "  The qm sandbox ov-* tools will return 401 until it is set." -ForegroundColor Yellow
+        Write-Host "  Run install.ps1 first, or add the key to $mainEnv and re-run." -ForegroundColor Yellow
+    }
+
     $envContent = @"
 ADMIN_GRANTS=$adminEmail
+AUTH_ALLOWED_EMAILS=$adminEmail
 ANTHROPIC_API_KEY=
 MODEL_API_KEY=ollama
 CAPABILITY_SECRET=$($secrets.CAPABILITY_SECRET)
@@ -122,6 +186,10 @@ CONNECTOR_SECRET_KEY=$($secrets.CONNECTOR_SECRET_KEY)
 CORE_SIGNING_SECRET=$($secrets.CORE_SIGNING_SECRET)
 PORTAL_IDENTITY_SECRET=$($secrets.PORTAL_IDENTITY_SECRET)
 SKILL_SIGNING_SECRET=$($secrets.SKILL_SIGNING_SECRET)
+POSTGRES_PASSWORD=$pgPassword
+OPENVIKING_ROOT_API_KEY=$ovRoot
+OPENVIKING_API_KEY=$ovApi
+FIRECRAWL_API_KEY=$fcKey
 PUBLIC_API_URL=http://localhost:8180
 PACGATE_API_EMAIL=$bridgeEmail
 PACGATE_API_PASSWORD=$plainPassword

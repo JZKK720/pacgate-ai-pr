@@ -32,6 +32,8 @@ $targets = @(
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
+    'scripts/test-workflow-namespace.ps1'
+    'scripts/audit-qm-bootstrap.ps1'
     'scripts/scheduled-update.ps1'
     'scripts/register-scheduled-update.ps1'
 )
