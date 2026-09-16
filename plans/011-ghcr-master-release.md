@@ -1,6 +1,16 @@
 # 011 — GHCR Master Release
 
-Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **RELEASED — 0.1.12 is live**
+Priority: **P1** · Effort: **M** · Depends on: 012 (namespace choice) · Status: **RELEASED — 0.1.12 live; 0.1.13 in flight**
+
+> **Follow-on release: 0.1.13.** The AIPCs clone the *fork* and pull from
+> `ghcr.io/pacgate-ai/*`, so anything that reaches a deployed machine needs two
+> steps: a **fork sync** (for repo-based fixes) and a **release** (for image
+> changes). 0.1.13 carries plan 014 steps 1-5. It is a one-image release: the
+> only source change is `pacgate-api` (the `/version` marker). The fork went
+> from 8 commits behind to level with origin in a single "Update branch"
+> fast-forward, then the workflow was dispatched with `tag=0.1.13` and
+> `namespace` empty (resolves to the fork owner, `pacgate-ai`).
+
 
 ## Outcome (2026-09-16)
 
