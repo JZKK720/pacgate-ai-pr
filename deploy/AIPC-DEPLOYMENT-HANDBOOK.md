@@ -7,8 +7,13 @@
 ## ⚠️ Significant findings (2026-09-02) — read before deploying AIPC #2
 
 These were discovered during the AIPC #1 pilot and are **already fixed in this repo**.
-AIPC #2 must pull the **updated** code (from `pacgate-ai/pacgate-ai-pr`, see Stage 1) so it
-gets these fixes, not the older `JZKK720/pacgate-ai-pr` main.
+AIPC #2 must pull the **updated** code (see Stage 1) so it gets these fixes.
+
+> **Update 2026-09-15.** Both repos are now **public** and carry **identical trees**
+> (`origin/main` = fork `main`). The earlier warning to avoid "the older
+> `JZKK720/pacgate-ai-pr` main" no longer applies — `origin/main` contains every
+> fork commit plus merge `832d84e`. Clone either. See
+> `plans/012-master-release-namespace.md`.
 
 1. **deer-flow agent could not query pacgate's legal databases.** Root cause: no tool was
    wired to pacgate-api's `/api/kb/search` (RAG) or `/api/search` (legal connectors), and the
@@ -42,9 +47,11 @@ gets these fixes, not the older `JZKK720/pacgate-ai-pr` main.
    no-secret way** to reach the web-ui directly — you must run `portal`+`auth` (Resend) or
    an external OIDC provider. `ADMIN_GRANTS` is an authorization seed, not a sign-in.
 
-6. **Git push to `JZKK720/pacgate-ai-pr` is blocked for the `pacgate-ai` account** (403,
-   needs 2FA grant). **Workaround:** the `pacgate-ai` account can create a fork and push
-   there. The fork `pacgate-ai/pacgate-ai-pr` now carries all fixes on `main`.
+6. **Git push to `JZKK720/pacgate-ai-pr` was blocked for the `pacgate-ai` account** (403,
+   needs 2FA grant). **Workaround:** the `pacgate-ai` account could fork and push there.
+   All fixes are now merged into both `main` branches, so this is historical — but note
+   the two remotes are separate publishing targets for GHCR (see
+   `plans/012-master-release-namespace.md`).
 
 ## Architecture: two identical machines
 
@@ -66,13 +73,15 @@ If you later want shared matter data across both machines, connect them with a p
 
 ## What you need before starting
 
-- GitHub access to `JZKK720/pacgate-ai-pr` (private repo) — a PAT or `gh auth login`
+- GitHub access to the source repo — either `JZKK720/pacgate-ai-pr` or
+  `pacgate-ai/pacgate-ai-pr`. Both are **public**; a plain clone needs no auth at all.
+  A PAT or `gh auth login` is only required if you intend to push.
 - Docker Desktop running on both AIPCs
 - Ollama running on both AIPCs (`install.ps1` pulls the models it needs)
 - `ollama signin` completed on each AIPC if the cloud-tagged deepseek models are in use
 - Node.js 24+ installed on both AIPCs (for qm)
 - **No `docker login ghcr.io` needed** — the Pacgate runtime images are published as
-  **public** GHCR packages (see Stage 0). Only the source repo is private.
+  **public** GHCR packages (see Stage 0).
 
 ## Stage 0: Runtime images (dev machine, already done)
 
@@ -91,10 +100,30 @@ without registry credentials. Verify before rollout:
 
 ```powershell
 # Expect HTTP 200 with no docker login. 401/403 means the package is still private.
-# (The Accept header is required — omit it and a public manifest returns 404, not 200.)
+# 404 means the tag does not exist in that namespace — usually a drift between the
+# pins in compose.prod.yaml and where the images were actually published.
+#
+# (The Accept header is REQUIRED — omit it and a public manifest returns 404, not 200.)
+#
+# This reads the four pins straight out of compose.prod.yaml, so it can never go
+# stale: previously this snippet hard-coded an old tag that had been removed, and
+# reported a healthy system as broken.
 $acc = "application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
-$t = (Invoke-RestMethod "https://ghcr.io/token?scope=repository:jzkk720/pacgate-api:pull").token
-(Invoke-WebRequest "https://ghcr.io/v2/jzkk720/pacgate-api/manifests/0.1.3" -Headers @{Authorization="Bearer $t"; Accept=$acc} -Method Head -UseBasicParsing).StatusCode
+$compose = "deploy/client-bundle/compose.prod.yaml"
+$pins = Select-String -Path $compose -Pattern "image:\s*(ghcr\.io/[^\s]+)" -AllMatches |
+        ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } |
+        Where-Object { $_ -notmatch "openviking" } | Sort-Object -Unique
+
+foreach ($pin in $pins) {
+  $repo = $pin -replace "^ghcr\.io/", ""            # owner/name:tag
+  $name = ($repo -split ":")[0]                       # owner/name
+  $tag  = ($repo -split ":")[1]
+  $t = (Invoke-RestMethod "https://ghcr.io/token?scope=repository:$name`:pull").token
+  $code = (Invoke-WebRequest -Uri "https://ghcr.io/v2/$name/manifests/$tag" `
+            -Headers @{Authorization="Bearer $t"; Accept=$acc} `
+            -Method Head -UseBasicParsing).StatusCode
+  "{0,-58} => HTTP {1}" -f $pin, $code
+}
 ```
 
 To flip it (GitHub web UI — the API route 404s for personal accounts):
@@ -107,11 +136,13 @@ Only rebuild and push if the Rust source changes, from the dev machine:
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.3 -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push ghcr.io/jzkk720/pacgate-api:0.1.3
+docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.9 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push ghcr.io/pacgate-ai/pacgate-api:0.1.9
 ```
 
-Then bump the tag in `deploy/client-bundle/compose.prod.yaml`.
+Then bump the tag in `deploy/client-bundle/compose.prod.yaml`. In practice prefer the
+`build-ghcr.yml` workflow (push a `v0.1.*` tag) so all four images stay in step — see
+`deploy/README-BUILD.md` and `plans/012-master-release-namespace.md`.
 
 Do **not** rebuild on the AIPC — the pilot runs the published digests.
 
@@ -127,10 +158,14 @@ git clone https://github.com/pacgate-ai/pacgate-ai-pr.git
 cd pacgate-ai-pr
 ```
 
-> **AIPC #2 note:** clone from the **`pacgate-ai/pacgate-ai-pr`** fork (it carries all the
-> 2026-09-02 fixes on `main`). The `pacgate-ai` account owns it, so it's writable and always
-> up to date. If you must use `JZKK720/pacgate-ai-pr`, pull the `feat/deer-flow-pacgate-mcp`
-> branch (or apply the patches in `patches/`) to get the same fixes.
+> **AIPC #2 note:** both repos are now **identical** (`origin/main` = fork `main`, each
+> carrying all fixes plus merge `832d84e`) and **both are public**, so either clone works.
+> The only difference that matters is which repo you push a release tag to — that decides
+> which GHCR namespace the images publish into. See
+> `plans/012-master-release-namespace.md`.
+>
+> Cloning needs no credentials now that the repos are public; a PAT or `gh auth login` is
+> only required to push.
 
 If the repo is private and GitHub prompts for credentials, use a personal access token or the GitHub CLI (`gh auth login`).
 

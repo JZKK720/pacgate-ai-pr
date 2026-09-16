@@ -4,16 +4,28 @@ name: Build & Push GHCR Images
 # (v0.1.x) is pushed. This keeps both AIPCs in sync from a single source of
 # truth and needs no local docker login (uses GITHUB_TOKEN).
 #
-# Images pushed:
-#   ghcr.io/pacgate-ai/pacgate-api:<tag>
-#   ghcr.io/pacgate-ai/pacgate-mcp:<tag>
-#   ghcr.io/pacgate-ai/deer-flow-pacgate:<tag>
-#   ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:<tag>
+# Images pushed (default namespace):
+#   ghcr.io/jzkk720/pacgate-api:<tag>
+#   ghcr.io/jzkk720/pacgate-mcp:<tag>
+#   ghcr.io/jzkk720/deer-flow-pacgate:<tag>
+#   ghcr.io/jzkk720/deer-flow-frontend-pacgate:<tag>
 #
-# The compose files reference ghcr.io/pacgate-ai/* (the repo owner's namespace).
-# Because this repo pushes to the `pacgate-ai` org, github.repository_owner is
-# `pacgate-ai` and images land under ghcr.io/pacgate-ai/*. See
-# deploy/README-BUILD.md for the owner/namespace decision.
+# NAMESPACE: the prefix defaults to `ghcr.io/${{ github.repository_owner }}`,
+# i.e. whichever account owns the repo that runs this workflow. `pacgate-ai`
+# is a USER account, not an organization.
+#
+#   repo JZKK720/pacgate-ai-pr    -> ghcr.io/jzkk720/*
+#   repo pacgate-ai/pacgate-ai-pr -> ghcr.io/pacgate-ai/*
+#
+# `secrets.GITHUB_TOKEN` is issued per repo and can only push to that repo's
+# own namespace, so tagging the fork publishes to pacgate-ai/* and tagging
+# origin publishes to jzkk720/*. To publish somewhere else you must supply a
+# PAT with write:packages for that owner (see deploy/README-BUILD.md).
+#
+# IMPORTANT: this prefix MUST match the `image:` pins in
+# deploy/client-bundle/compose.prod.yaml and compose.bundle.yaml. If the
+# workflow publishes to one namespace and compose pins the other, the client
+# install pulls nothing. Use the `namespace` dispatch input to override it.
 
 on:
   push:
@@ -23,12 +35,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag (e.g. 0.1.3)"
+        description: "Image tag to build (e.g. 0.1.12). No default on purpose, so a stale tag cannot be dispatched by accident."
         required: true
-        default: "0.1.3"
-
-env:
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+      namespace:
+        description: "Optional GHCR owner override (jzkk720 or pacgate-ai). Empty = the repo owner that runs this workflow."
+        required: false
+        default: ""
 
 jobs:
   build-and-push:
@@ -42,18 +54,35 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Resolve the effective namespace once, so the tag-push and dispatch paths
+      # behave identically and every later step agrees on the prefix.
+      - name: Resolve image namespace
+        id: ns
+        run: |
+          ns="${{ inputs.namespace }}"
+          if [ -z "$ns" ]; then ns="${{ github.repository_owner }}"; fi
+          echo "prefix=ghcr.io/$ns" >> "$GITHUB_OUTPUT"
+          echo "Resolved image prefix: ghcr.io/$ns"
+
       # Compute the image tag: strip the leading 'v' from release tags so it
       # matches the compose pins (v0.1.3 -> 0.1.3). Manual dispatch uses the
-      # input as-is.
+      # input as-is. An empty tag is a hard failure - without this guard the
+      # build would produce a malformed `image:` reference and fail obscurely.
       - name: Resolve image tag
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.tag }}"
           else
             ref="${{ github.ref_name }}"
-            echo "tag=${ref#v}" >> "$GITHUB_OUTPUT"
+            tag="${ref#v}"
           fi
+          if [ -z "$tag" ]; then
+            echo "::error::No image tag resolved. Pass the 'tag' input when dispatching manually."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Resolved image tag: $tag"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -73,8 +102,12 @@ jobs:
           file: pacgate-ai/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_PREFIX }}/pacgate-api:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE_PREFIX }}/pacgate-api:latest
+            ${{ steps.ns.outputs.prefix }}/pacgate-api:${{ steps.tag.outputs.tag }}
+            ${{ steps.ns.outputs.prefix }}/pacgate-api:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
       # ── pacgate-mcp (Python bridge) ──────────────────────────────────────
       - name: Build & push pacgate-mcp
@@ -84,8 +117,12 @@ jobs:
           file: deploy/pacgate-mcp/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_PREFIX }}/pacgate-mcp:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE_PREFIX }}/pacgate-mcp:latest
+            ${{ steps.ns.outputs.prefix }}/pacgate-mcp:${{ steps.tag.outputs.tag }}
+            ${{ steps.ns.outputs.prefix }}/pacgate-mcp:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
       # ── deer-flow-pacgate (backend + adapter) ────────────────────────────
       - name: Build & push deer-flow-pacgate
@@ -95,8 +132,12 @@ jobs:
           file: deploy/deer-flow-pacgate/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_PREFIX }}/deer-flow-pacgate:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE_PREFIX }}/deer-flow-pacgate:latest
+            ${{ steps.ns.outputs.prefix }}/deer-flow-pacgate:${{ steps.tag.outputs.tag }}
+            ${{ steps.ns.outputs.prefix }}/deer-flow-pacgate:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
       # ── deer-flow-frontend-pacgate (Next.js research UI) ─────────────────
       # Clone the pinned bytedance tag into deploy/deer-flow-src/frontend,
@@ -116,22 +157,48 @@ jobs:
             DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://deer-flow:8001
           push: true
           tags: |
-            ${{ env.IMAGE_PREFIX }}/deer-flow-frontend-pacgate:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE_PREFIX }}/deer-flow-frontend-pacgate:latest
+            ${{ steps.ns.outputs.prefix }}/deer-flow-frontend-pacgate:${{ steps.tag.outputs.tag }}
+            ${{ steps.ns.outputs.prefix }}/deer-flow-frontend-pacgate:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
       - name: Verify image manifest (anonymous HEAD)
         run: |
-          # GHCR can take a few seconds to propagate a freshly-pushed manifest
-          # across its registry nodes, so retry with backoff instead of racing.
+          # Two things this step must get right, both learned the hard way:
+          #
+          # 1. GHCR returns 404 for a manifest request sent WITHOUT an OCI/Docker
+          #    Accept header, even when the package is public. Omitting it made
+          #    every run of this workflow fail on a completely successful
+          #    release (7/7 runs red before this fix).
+          # 2. GHCR can take a few seconds to propagate a freshly-pushed manifest
+          #    across its registry nodes, so retry with backoff instead of racing.
+          PREFIX="${{ steps.ns.outputs.prefix }}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          ACCEPT="application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json"
+
+          echo "Verifying ghcr.io/${PREFIX#ghcr.io/}/*:$TAG"
           for img in pacgate-api pacgate-mcp deer-flow-pacgate deer-flow-frontend-pacgate; do
             ok=0
             for attempt in 1 2 3 4 5; do
-              tok=$(curl -s "https://ghcr.io/token?scope=repository:${IMAGE_PREFIX#ghcr.io/}/${img}:pull" | jq -r .token)
-              code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $tok" \
-                "https://ghcr.io/v2/${IMAGE_PREFIX#ghcr.io/}/${img}/manifests/${{ steps.tag.outputs.tag }}")
-              echo "attempt $attempt: $img:${{ steps.tag.outputs.tag }} => HTTP $code"
+              tok=$(curl -s "https://ghcr.io/token?scope=repository:${PREFIX#ghcr.io/}/${img}:pull" | jq -r .token)
+              code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Accept: $ACCEPT" \
+                -H "Authorization: Bearer $tok" \
+                "https://ghcr.io/v2/${PREFIX#ghcr.io/}/${img}/manifests/${TAG}")
+              echo "attempt $attempt: ${PREFIX#ghcr.io/}/${img}:${TAG} => HTTP $code"
               if [ "$code" = "200" ]; then ok=1; break; fi
               sleep 10
             done
-            [ "$ok" = "1" ] || exit 1
+            if [ "$ok" != "1" ]; then
+              # 404 = tag absent in this namespace (likely a namespace mismatch
+              # between this workflow and the compose pins, or the tag never
+              # reached the registry). 401 = the package is still private.
+              echo "::error::${img}:${TAG} is not anonymously pullable (last HTTP $code)."
+              echo "If 404: check that the namespace above matches the image pins in"
+              echo "deploy/client-bundle/compose.prod.yaml."
+              echo "If 401: the package exists but is private - flip it to public in the GHCR UI."
+              exit 1
+            fi
           done
