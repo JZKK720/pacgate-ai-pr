@@ -168,19 +168,92 @@ invisible: nothing errors, the repo just stops moving.
 Rotation must precede the history purge: the purge removes the values from
 history, but anyone who already cloned has them.
 
-| Credential | Action |
-| --- | --- |
-| `pacgate-ai` GitHub account password | Change it. Then review **github.com/settings/applications** and revoke every OAuth grant — the file itself warned that Tailscale and others were authorised through this account. |
-| CourtListener API token | Regenerate in the account settings. |
-| Vaquill API key | Rotate in the Vaquill dashboard. |
-| EUR-Lex / Ansvars / fyopen / chineselaw / pkulaw / qcc | Change passwords; use a password manager, never a repo file. |
+### Verified account state (2026-09-16, checked directly in the browser)
 
-Also review whether the exposed account had access that should be narrowed, and
-check for unexpected activity on the `pacgate-ai` account since 2026-08-13.
+**The security log shows no sign of misuse.** Every event is from Thailand
+(`124.120.26.84` — this operator) or Beijing (`210.12.78.25` — the firm), with
+Singapore `77.83.241.96` for the Copilot Chat app. Every login shows
+`user.new_device_used` → `two_factor_requested` → `two_factor_challenge_success`,
+i.e. **2FA was satisfied on every sign-in**. No unexplained geolocation, no
+unrecognised access. The keys were public, but nothing indicates they were used.
+
+That is a reason to stop treating this as an emergency — not a reason to skip it.
+Published keys must still be assumed compromised.
+
+**Personal access token revoked:** `pacgate-ghcr-push` (`write:packages`, created
+2026-09-13 16:43 GMT+7 from Beijing) — **now deleted**. Verified redundant before
+revoking: the release workflow authenticates with
+`secrets.GITHUB_TOKEN` (`build-ghcr.yml:95`) and greps to **zero** references to
+any PAT secret, and no script under `scripts/` reads `GHCR_PAT` /
+`PACKAGES_TOKEN` / `GITHUB_TOKEN`. It was superseded by the per-repo token that
+0.1.12/0.1.13 already use.
+
+**Authorized OAuth apps on `pacgate-ai` — 8, with usage:**
+
+| App | Last used | Note |
+| --- | --- | --- |
+| Visual Studio Code | within the last week | **in use — keep** |
+| Git Credential Manager | within the last 3 weeks | **in use — keep** |
+| Cloudflare | within the last 2 weeks | **in use — keep** |
+| Apify | never | revoke candidate |
+| Ollama | never | revoke candidate |
+| OpenRouter | never | revoke candidate |
+| Tailscale | never | grant now stale; tokens already re-issued Sep 11 |
+| FireCrawl | (token re-issued Sep 11) | keep if FireCrawl is in use |
+
+The original redaction note said "remove the OAuth grant" for every app. That is
+too blunt by half: three are actively used, and revoking *Visual Studio Code* or
+*Git Credential Manager* would break the tooling doing this work, while revoking
+Tailscale could cut remote access to the AIPCs.
+
+### ⚠️ Two things the original plan missed
+
+**(1) The API keys ARE consumed at runtime, so rotation is not purely external.**
+
+Verified wiring (names, not values):
+
+| Key | Referenced in |
+| --- | --- |
+| `COURT_LISTENER_API_KEY` | `compose.prod.yaml` (passed to pacgate-search) |
+| `VAQUILL_API_KEY` | `compose.prod.yaml`, `.env.example`, Rust (3 refs) |
+| `FYOPEN_API_KEY` | `compose.prod.yaml`, Rust (4 refs) |
+| `ANSVAR_API_KEY` | `compose.prod.yaml`, `.env.example`, Rust (1 ref) |
+| `YUANDIAN_API_KEY` / `PKULAW_API_KEY` / `QCC_API_KEY` | `compose.prod.yaml`, Rust (4 refs each) |
+| `OPENCORPORATES_API_KEY` | `compose.prod.yaml`, `.env.example`, Rust (3 refs) |
+| `FIRECRAWL_API_KEY` | `qm.config.jsonc` (sandbox `secretEnv`) |
+
+Because `compose.prod.yaml` loads all `API_KEY`-suffixed vars into the container,
+**rotating one of these means editing `.env` on every AIPC too** or that connector
+stops answering. That is a deployment step, not just account hygiene — and it is
+why rotation needs a per-machine checklist, not only dashboard visits.
+
+**(2) The real rotation burden is a shared Outlook account.**
+
+At least **seven** services authenticate with `pacgate.ai01@outlook.com`
+(sometimes as user `PacgateLaw`): courtlistener, vaquill, eur-lex, ansvar,
+fyopen, chineselaw, pkulaw, qcc. Rotating each *service* password is
+straightforward; rotating the *identity* that resets them all is the riskier
+change and should be decided deliberately. The exposure includes the account
+password and an MCP "统一密码" (a single shared password for the Chinese
+databases), so several services likely share one secret — meaning one reset may
+cover many rows.
+
+### Actions
+
+| Credential | Action | Owner |
+| --- | --- | --- |
+| `pacgate-ghcr-push` PAT | ✅ **revoked** (redundant) | done |
+| Apify / Ollama / OpenRouter OAuth grants | Revoke — never used | browser |
+| Tailscale OAuth grant | Revoke if Tailscale is not needed for AIPC access | decide |
+| `pacgate-ai` GitHub password | Change, then `git credential reject` locally | **you** — I will not touch credentials |
+| courtlistener / vaquill API tokens | Regenerate in their dashboards | **you** |
+| The 6 Chinese/overseas DB passwords | Reset via the Outlook account; use a password manager, never a repo file | **you** |
+| `.env` on each AIPC | Update the rotated connector keys | follow-up per machine |
 
 **Good news:** GHCR images are pulled **anonymously**, so neither the password
 rotation nor revoking OAuth grants affects client installs or the image
 packages. Package visibility is governed separately.
+
 
 ## Step 2 — Purge history
 
