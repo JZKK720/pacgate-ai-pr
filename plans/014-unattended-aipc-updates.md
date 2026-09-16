@@ -1,10 +1,25 @@
 # 014 — Unattended AIPC Updates
 
-Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **READY**
+Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **IN PROGRESS — steps 1 and 2 done**
 
 **This is the end-goal plan.** 011 shipped the artifacts; this makes them reach
 both AIPCs without a developer logging in. Full evidence:
 `deploy/AIPC-UPDATE-GAP-ANALYSIS.md`.
+
+## Progress (2026-09-16)
+
+| Step | Status |
+| --- | --- |
+| 1. `-Update` refreshes the repo | ✅ **done** — fast-forward only; refuses on a dirty or diverged tree; `-SkipRepoPull` to opt out. Tests `scripts/test-install-repo-pull.ps1` (13/13) |
+| 2. Render-and-compare the config | ✅ **done** — regenerates and compares every run, backs up, and NAMES what changed. Tests `scripts/test-install-render.ps1` (11/11) |
+| 3. Restart services with bind-mounted code | ✅ **done** — folded into step 2's commit (`docker compose restart deer-flow` on `-Update`) |
+| 4. Bring qm into the update path | ⬜ not started |
+| 5. Publish a staleness marker | ⬜ not started |
+| 6. Scheduled updater | ⬜ last, deliberately |
+
+Steps 1 and 2 both had their tests validated by breaking the implementation and
+confirming the tests fail — so they detect regressions rather than passing
+vacuously.
 
 ## Goal
 
@@ -22,13 +37,14 @@ whether it is current.
 
 ## The defects to close
 
-| # | Defect | Impact |
-| --- | --- | --- |
-| 1 | `-Update` never runs `git pull` | repo content (compose, patches, workflows) stays stale unless remembered |
-| 2 | config rendered **only if absent** | template updates **never land** — proven lost update (`453646f` added `pacgate-mcp` and fixed an API key) |
-| 3 | bind-mounted `.py` needs restart, none performed | patch fixes sit on disk doing nothing |
-| 4 | qm untouched by `-Update` | 7 containers + sandbox drift independently |
-| 5 | no version/staleness marker | a behind machine looks healthy |
+| # | Defect | Impact | Status |
+| --- | --- | --- | --- |
+| 1 | `-Update` never runs `git pull` | repo content (compose, patches, workflows) stays stale unless remembered | ✅ fixed |
+| 2 | config rendered **only if absent** | template updates **never land** — proven lost update (`453646f` added `pacgate-mcp` and fixed an API key) | ✅ fixed |
+| 3 | bind-mounted `.py` needs restart, none performed | patch fixes sit on disk doing nothing | ✅ fixed |
+| 4 | qm untouched by `-Update` | 7 containers + sandbox drift independently | ⬜ open |
+| 5 | no version/staleness marker | a behind machine looks healthy | ⬜ open |
+| — | two unrelated renders shared one guard | a missing OpenViking template silently skipped the deer-flow config | ✅ fixed (found while testing step 2) |
 
 ## Steps — in this order
 

@@ -28,7 +28,7 @@ delivery **and** release engineering.
 | 011 | GHCR master release | P1 | **DONE** — 0.1.12 live, first green build (2026-09-16) |
 | 012 | Master release: JZKK720 upstream + GHCR namespace | P1 | **AWAITING DECISION** — merge already complete; namespace path A/B/C to choose |
 | 013 | Credential rotation and history purge | **P0** | **HEAD REDACTED — ROTATION + HISTORY PURGE OUTSTANDING** |
-| 014 | Unattended AIPC updates | P1 | **READY — this is the end-goal plan** |
+| 014 | Unattended AIPC updates | P1 | **IN PROGRESS** — steps 1-3 done (repo refresh, render-and-compare, restart); qm + staleness marker open |
 
 ### Plan 007 sub-documents
 
