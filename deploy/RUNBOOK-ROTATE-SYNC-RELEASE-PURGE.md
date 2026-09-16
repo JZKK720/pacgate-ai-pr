@@ -18,6 +18,41 @@ agent must not hold, and step 4 is destructive and irreversible from this side.
 The tooling below exists so each step is *fast and verified*, not so it is
 unattended.
 
+### Assisted mode: you sign in, a script does the clicking
+
+For steps 2 and 3 there is a middle path that avoids moving any credential
+between accounts. You sign in to the browser by hand; a script drives the UI and
+then **verifies the result from the page** rather than trusting the click.
+
+```powershell
+# Browsers are already cached by the VS Code Playwright integration.
+$env:PLAYWRIGHT_BROWSERS_PATH = "$env:LOCALAPPDATA\ms-playwright"
+
+python scripts/sync-fork-via-ui.py                    # step 2
+python scripts/dispatch-release-via-ui.py --tag 0.1.12  # step 3
+```
+
+Both refuse rather than guess:
+
+- they verify the signed-in login and stop if it is not the fork owner
+  (GitHub only renders "Sync fork" for accounts with write access);
+- the sync script refuses to click **"Discard commits"**, which would destroy
+  fork-only work;
+- the dispatch script **reads the fork's workflow first** and refuses to dispatch
+  if the OCI `Accept` fix is absent — dispatching on an un-synced fork starts a
+  run doomed to fail at the verify step.
+
+Neither types a password, and neither reads or stores a credential.
+
+Verify the helpers themselves (signed-out pages only, changes nothing):
+
+```powershell
+python scripts/test-sync-fork-helpers.py     # 6/6 passing
+```
+
+Steps 1 and 4 remain fully manual — step 1 because secrets must not pass through
+an agent, step 4 because it is destructive.
+
 ---
 
 ## Step 1 — Rotate
