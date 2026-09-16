@@ -143,6 +143,23 @@ pins agree).
 break silently. Nothing checks the agreement. *Suggested fix: extend
 `audit-qm-bootstrap.ps1` to parse both files and assert the ports line up.*
 
+> **CLOSED.** `audit-qm-bootstrap.ps1` section 4 now parses the published ports
+> from `compose.prod.yaml` and qm's `host.docker.internal:<port>` references, and
+> asserts agreement in BOTH directions: a port qm reaches that is not published,
+> and a documented port qm stops reaching. The second is the quieter failure -
+> qm silently loses a capability. `11434` (Ollama) is explicitly carved out as
+> host-native and never asserted against compose.
+>
+> The expected set is NAMED in the script rather than derived from the config.
+> Deriving it meant the coupling could be REMOVED rather than broken - deleting
+> the `OPENVIKING_URL` line left nothing to iterate and the check stayed green. A
+> mutation test caught that; `scripts/test-qm-mutations.ps1` is the regression
+> guard.
+>
+> Not hypothetical: this dev box publishes nginx on **8081** while qm hardcodes
+> `8089`. An AIPC following the documented compose file is consistent; a
+> remapped one is not, and nothing warned.
+
 **R2 — qm is outside the update path.** `install.ps1 -Update` does not touch qm:
 it does not rebuild the sandbox, restart qm containers, or update
 `deploy/client-bundle/qm-pacgate`. The repo refresh does update the tracked
@@ -151,6 +168,34 @@ directory that nothing re-stages. So a qm config change reaching a deployed
 machine requires re-running `setup-qm.ps1`. **This is the largest remaining gap in
 the "unattended update" goal** — plan 014 covers the main stack and reports qm
 sandbox drift, but does not deliver qm changes.
+
+> **CLOSED by plan 014 step 7f.** `install.ps1 -Update` now re-stages the runtime
+> config from the tracked source, comparing CONTENT rather than mtimes (a git
+> checkout rewrites mtimes on identical bytes, which would report every file as
+> changed and bury the real one). `.env` is excluded so generated secrets
+> survive; `node_modules`, `.generated` and `*.bak.*` are excluded; runtime-only
+> files are never deleted; no container is restarted, so the R4 contention cannot
+> be triggered. Tests: `scripts/test-qm-restage.ps1` (13/13).
+>
+> The change still needs a qm restart, which is printed rather than performed.
+> That is deliberate - see R4 and the user-visible nature of the co-working
+> stack.
+
+**R6 — the drift detector inspects a different file than qm executes.**
+`qm-sandbox-fingerprint.ps1` resolves its config as
+`<repoRoot>/deploy/qm-pacgate/qm.config.jsonc` — the TRACKED file — while qm
+actually RUNS the runtime copy in `deploy/client-bundle/qm-pacgate/`. So the
+recorded `sourceFingerprint` and the pinned digest are written to one file while
+the executing config is another, and the check can report `CURRENT` while the
+config in play is an older revision.
+
+> **Mitigated, not eliminated.** Step 7f converges the two on every `-Update`, so
+> after an update they hold the same bytes and the detector's answer is
+> meaningful. But the tool still reads the tracked file, so a machine that has
+> not run `-Update` can still get a confident answer about the wrong file.
+> Recorded here rather than silently patched: pointing the tool at the runtime
+> copy would break `-Write` for a developer working in the repo, and it needs a
+> decision about which file is authoritative rather than a quick edit.
 
 **R3 — no recorded sandbox fingerprint on any machine.** `qm-sandbox-fingerprint.ps1`
 reports `NOT_RECORDED` until someone rebuilds the sandbox, repins the digest, and

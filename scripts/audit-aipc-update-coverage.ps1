@@ -44,6 +44,11 @@ function Test-Marker {
 
 # Component -> capability -> the literal marker proving install.ps1 does it.
 # Adding a capability to install.ps1 makes this row go OK automatically.
+#
+# MARKERS MUST BE SPECIFIC. 'restart deer-flow' is used for two rows on purpose -
+# one behaviour genuinely covers both - but a loose keyword like 'qm' would go OK
+# the moment the word appears in a comment, which is how a coverage table starts
+# lying. Where a capability arrived in a numbered step, the marker names the step.
 $checks = @(
     [pscustomobject]@{ Component = 'GHCR images (4)';           Needs = 'pull + recreate';                     Any = @('compose.prod.yaml pull') }
     [pscustomobject]@{ Component = 'nginx/default.conf';        Needs = 'config reload';                       Any = @('nginx -s reload') }
@@ -52,9 +57,26 @@ $checks = @(
     [pscustomobject]@{ Component = 'deer-flow-config.yaml';     Needs = 'container restart';                   Any = @('restart deer-flow') }
     [pscustomobject]@{ Component = 'extensions-config.json';    Needs = 're-render + compare';                 Any = @('RENDER-AND-COMPARE', '$dfExisting') }
     [pscustomobject]@{ Component = 'repo working tree';         Needs = 'fast-forward pull';                   Any = @('git pull --ff-only') }
-    [pscustomobject]@{ Component = 'qm stack (7 containers)';   Needs = 'update path (plan 014 step 4)';       Any = @('qm-local.ps1') }
+    # Step 7f re-stages the RUNTIME qm config from the tracked source. This is
+    # the R2 gap: setup-qm.ps1 staged it once, and nothing refreshed it
+    # afterwards, so a config change needed a manual re-run of an interactive
+    # script. It also matters because qm-sandbox-fingerprint.ps1 inspects the
+    # TRACKED file while qm runs the runtime copy - re-staging is what makes the
+    # drift detector's answer meaningful.
+    [pscustomobject]@{ Component = 'qm runtime config';         Needs = 're-stage from tracked source (7f)';   Any = @('Re-staging the qm runtime config') }
+    [pscustomobject]@{ Component = 'qm stack (7 containers)';   Needs = 'restart after a config change';       Any = @('compose.qm.yaml restart') }
     [pscustomobject]@{ Component = 'qm sandbox image';          Needs = 'drift detected (plan 014 step 4)';    Any = @('qm-sandbox-fingerprint.ps1') }
-    [pscustomobject]@{ Component = 'staleness marker';          Needs = 'version endpoint (plan 014 step 5)';  Any = @('/version') }
+    # Step 7e reads the RUNNING binary's version and compares it with the compose
+    # pin. It queries the nginx front door, so the marker is the exact URL
+    # assignment.
+    #
+    # It was the bare string '/version' first, and a mutation test caught why
+    # that is too loose: breaking the probe URL still left '/version' in the
+    # surrounding comments, so the row stayed OK while the code no longer used
+    # the endpoint. A marker that a comment can satisfy does not measure the
+    # behaviour it names - the same failure class as the checks that flagged
+    # their own explanatory comments earlier in this work.
+    [pscustomobject]@{ Component = 'staleness marker';          Needs = 'running version compared to the pin (7e)'; Any = @('$versionUrl = "http://localhost:$frontPort/version"') }
 )
 
 # Collect the report and emit it in ONE write. Mixing Write-Output with a

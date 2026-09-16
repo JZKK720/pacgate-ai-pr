@@ -410,6 +410,207 @@ if ($Update) {
     }
 }
 
+# 7e. Staleness marker: report what is ACTUALLY running, not what was pulled.
+#
+# The failure this guards against has no other symptom. `compose pull` fetches
+# new images, but the running containers keep executing the OLD ones until they
+# are recreated - and on a machine where someone has been debugging, the gap can
+# be days wide. Nothing errors; the app simply behaves like the old release. A
+# "what am I running" answer is the difference between diagnosing that in
+# seconds and a dev logging in to poke at it.
+#
+# The URL is <nginx-host-port>/version - NOT /build-info. nginx maps the clean
+# `/version` location onto pacgate-api's /build-info, and pacgate-api itself
+# publishes NO host port (`docker compose port pacgate-api` is empty), so nginx
+# is the only way in from the host. Probing /build-info at the nginx port would
+# hit the deer-flow frontend instead and return HTML, so the path matters.
+#
+# The host port is DERIVED, not assumed. compose.prod.yaml maps 8089:80, but a
+# machine can legitimately remap it (the dev box for this project runs 8081),
+# and a hardcoded 8089 would silently probe nothing and report "unreachable" on
+# a perfectly healthy install - a false alarm that trains people to ignore the
+# check. `docker compose port` answers with whatever is actually published.
+#
+# The response reports the version COMPILED INTO THE RUNNING BINARY, not the
+# image tag. Those record what was deployed, and the failure worth catching is
+# the deployed artifact disagreeing with the process actually serving traffic.
+#
+# Reports and never fails the install: an unreachable API during a restart is
+# normal, and blocking an update on a health probe would be the wrong trade.
+if ($Update) {
+    Write-Host "`nChecking the running runtime version..." -ForegroundColor Cyan
+
+    # Resolve the nginx host port. Try compose first; fall back to reading the
+    # running container, which is authoritative when an override file was used.
+    $frontPort = $null
+    try {
+        $portOut = (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim()
+        if ($portOut -match ':(\d+)\s*$') { $frontPort = $Matches[1] }
+    }
+    catch { }
+    if (-not $frontPort) {
+        try {
+            $insp = docker port pacgate-nginx 2>$null
+            foreach ($l in @($insp)) { if ($l -match ':(\d+)\s*$') { $frontPort = $Matches[1]; break } }
+        }
+        catch { }
+    }
+    if (-not $frontPort) { $frontPort = '8089' }  # documented default
+
+    $versionUrl = "http://localhost:$frontPort/version"
+
+    # Read the version compose pins, so the reported value is compared against
+    # something rather than printed with nothing to check it against.
+    $pinned = $null
+    try {
+        $composeTxt = Get-Content compose.prod.yaml -Raw
+        $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+)\s*$')
+        if ($m.Success) { $pinned = $m.Groups['v'].Value }
+    }
+    catch { }
+
+    $reported = $null
+    $revision = $null
+    foreach ($attempt in 1..3) {
+        try {
+            $resp = Invoke-RestMethod -Uri $versionUrl -Method Get -TimeoutSec 5
+            if ($resp.version) { $reported = $resp.version; $revision = $resp.revision; break }
+        }
+        catch { Start-Sleep -Seconds 3 }
+    }
+
+    if ($reported) {
+        $rev = if ($revision -and $revision -ne 'unknown') { $revision.Substring(0, [Math]::Min(12, $revision.Length)) } else { 'unknown' }
+        if ($pinned -and $reported -ne $pinned) {
+            # Pulled X, running Y. Not necessarily an error - the recreate may
+            # still be in flight - but it is the exact condition that presents as
+            # "the update did nothing".
+            Write-Host "[WARN] Running pacgate-api is $reported but compose pins $pinned." -ForegroundColor Yellow
+            Write-Host "       The container has not been recreated yet. If this persists:" -ForegroundColor Yellow
+            Write-Host "         docker compose -f compose.prod.yaml up -d --force-recreate pacgate-api" -ForegroundColor Gray
+        }
+        else {
+            Write-Host "[OK] pacgate-api reports $reported (source revision $rev)" -ForegroundColor Green
+        }
+    }
+    else {
+        # TWO distinct causes, and conflating them sends people down the wrong
+        # path. An old image predates /build-info entirely, in which case the
+        # answer is "this install is behind", not "wait for startup".
+        $img = (docker inspect pacgate-api --format '{{.Config.Image}}' 2>$null | Out-String).Trim()
+        Write-Host "[WARN] Could not read $versionUrl; skipping the staleness check." -ForegroundColor Yellow
+        if ($img -match 'jzkk720|:0\.1\.[0-9]$') {
+            Write-Host "       The running image is $img" -ForegroundColor Yellow
+            Write-Host "       This image predates /version, so it cannot report its build." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "       Expected while the stack is still starting." -ForegroundColor Yellow
+        }
+        Write-Host "       Check manually:  curl $versionUrl" -ForegroundColor Gray
+    }
+}
+
+# 7f. Re-stage the qm runtime config from the tracked source.
+#
+# R2 in deploy/qm-pacgate/INTEGRATION-MAP.md, the largest remaining gap in the
+# unattended-update goal. `setup-qm.ps1` stages deploy/qm-pacgate/ into this
+# directory, and step 1 above refreshes the TRACKED copy on every -Update. But
+# the RUNTIME copy is a different directory that nothing re-staged, so a qm
+# config change reaching a deployed machine required re-running setup-qm.ps1 by
+# hand - and that script prompts for admin email and bridge credentials, so it is
+# not something to run unattended.
+#
+# There is a second, quieter consequence. `qm-sandbox-fingerprint.ps1` reads and
+# writes the TRACKED qm.config.jsonc (its $qmDir is deploy/qm-pacgate), while qm
+# actually RUNS the runtime copy. So the drift detector can report CURRENT while
+# the config being executed is an older revision - the check inspects a different
+# file than the one in play. Re-staging converges them, which is what makes the
+# detector's answer meaningful.
+#
+# SAFE BY CONSTRUCTION:
+#   - .env is EXCLUDED, so generated secrets are never overwritten.
+#   - node_modules and .generated are excluded (machine-local, bulky, rebuildable).
+#   - *.bak.* is excluded, so backups are not copied onto themselves.
+#   - It copies FILES ONLY. No container is restarted and `qm up` is never run,
+#     so the R4 contention between `qm up` and compose.qm.yaml cannot be triggered.
+#
+# A config change needs qm restarted to take effect, and that is deliberately
+# left to the operator with the exact command printed - the same reasoning as
+# step 7d's sandbox report. An unattended restart of a client's co-working stack
+# is a worse failure than a precise instruction.
+if ($Update) {
+    $qmRuntime = Join-Path $PSScriptRoot 'qm-pacgate'
+    $qmSource = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'deploy/qm-pacgate'
+
+    if ((Test-Path $qmRuntime) -and (Test-Path $qmSource)) {
+        Write-Host "`nRe-staging the qm runtime config from the tracked source..." -ForegroundColor Cyan
+
+        $qmExclude = @('.env', 'node_modules', '.generated')
+        $changed = @()
+        $added = @()
+
+        $tracked = Get-ChildItem -LiteralPath $qmSource -Recurse -File -Force | Where-Object {
+            $rel = $_.FullName.Substring($qmSource.Length).TrimStart('\', '/')
+            $top = ($rel -split '[\\/]')[0]
+            ($qmExclude -notcontains $top) -and ($_.Name -notmatch '\.bak\.')
+        }
+
+        foreach ($f in $tracked) {
+            $rel = $f.FullName.Substring($qmSource.Length).TrimStart('\', '/')
+            $dest = Join-Path $qmRuntime $rel
+
+            $destDir = Split-Path -Parent $dest
+            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+
+            if (Test-Path $dest) {
+                # Compare CONTENT, not timestamps: a git checkout rewrites mtimes
+                # on files whose bytes are identical, which would report every
+                # file as changed on every update and bury the real change.
+                $srcHash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+                $dstHash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
+                if ($srcHash -ne $dstHash) {
+                    Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
+                    $changed += $rel
+                }
+            }
+            else {
+                Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
+                $added += $rel
+            }
+        }
+
+        if ($changed.Count -eq 0 -and $added.Count -eq 0) {
+            Write-Host "[OK] qm config already matches the tracked source" -ForegroundColor Green
+        }
+        else {
+            if ($added.Count -gt 0) {
+                Write-Host "  NEW tracked files staged: $($added -join ', ')" -ForegroundColor Yellow
+            }
+            if ($changed.Count -gt 0) {
+                Write-Host "  UPDATED (were stale on this machine): $($changed -join ', ')" -ForegroundColor Yellow
+            }
+            Write-Host "  [ACTION] qm must be restarted to pick these up. It is NOT restarted" -ForegroundColor Yellow
+            Write-Host "           automatically: an unattended restart of the co-working" -ForegroundColor Yellow
+            Write-Host "           stack is not something to do blind. To apply now:" -ForegroundColor Yellow
+            Write-Host "             cd qm-pacgate" -ForegroundColor Gray
+            Write-Host "             docker compose -f compose.qm.yaml restart" -ForegroundColor Gray
+            Write-Host "           Do NOT also run 'qm up' in the same directory - both paths" -ForegroundColor Yellow
+            Write-Host "           contend for the same volumes and network (R4)." -ForegroundColor Yellow
+        }
+
+        # Secrets are preserved by design; say so, because "re-staged" could
+        # otherwise read as "rese t".
+        if (Test-Path (Join-Path $qmRuntime '.env')) {
+            Write-Host "  (.env preserved - generated qm secrets are left untouched)" -ForegroundColor Gray
+        }
+    }
+    elseif ((Test-Path $qmRuntime) -and -not (Test-Path $qmSource)) {
+        Write-Host "`n[WARN] qm is deployed but the tracked source is missing:" -ForegroundColor Yellow
+        Write-Host "       $qmSource" -ForegroundColor Yellow
+        Write-Host "       Refusing to re-stage; the runtime config is left as it is." -ForegroundColor Yellow
+    }
+}
+
 # 8. Wait for health
 Write-Host "`nWaiting for services to start..." -ForegroundColor Cyan
 Start-Sleep -Seconds 10

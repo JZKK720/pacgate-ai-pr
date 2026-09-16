@@ -131,5 +131,104 @@ if ($resolvesSource -and $doesCopy -and $excludesEnv -and $refusesMissing) {
     Write-Host '  the header claim ("Copies qm-pacgate/ to the target directory") is now true' -ForegroundColor Green
 }
 Write-Output ''
+
+# 4. Host-port coupling: does the main stack still publish what qm expects?
+#
+# R1 in deploy/qm-pacgate/INTEGRATION-MAP.md. qm does NOT join the client-bundle
+# network - it is a separate compose stack that reaches the main stack only over
+# published HOST ports, hardcoded in qm.config.jsonc. Nothing checked that those
+# two files agreed.
+#
+# The failure is silent and confusing: change nginx's published port and qm's
+# sandbox tools keep starting, keep accepting work, and fail with a connection
+# error that points at qm rather than at the port change.
+#
+# This is not hypothetical for the dev box: it publishes nginx on 8081 while qm
+# hardcodes 8089. See the -Live note below for why this check does not flag it.
+Write-Output '=== 4. Host-port coupling (qm.config.jsonc vs compose.prod.yaml) ==='
+
+$prodCode = Get-CodeText 'deploy/client-bundle/compose.prod.yaml'
+
+# Host ports the main stack PUBLISHES: "- "<host>:<container>"" under ports:.
+# Anchored on the mapping form so an env-var default or a containerPort alone
+# does not register as a published port.
+$published = @{}
+foreach ($m in [regex]::Matches($prodCode, '(?m)^\s*-\s*"(?<host>\d+):(?<cont>\d+)"\s*$')) {
+    $published[$m.Groups['host'].Value] = $m.Groups['cont'].Value
+}
+
+# Host ports qm REACHES the main stack on, from host.docker.internal:<port>.
+$qmReaches = @()
+foreach ($m in [regex]::Matches($cfgCode, 'host\.docker\.internal:(?<p>\d+)')) {
+    $qmReaches += $m.Groups['p'].Value
+}
+$qmReaches = @($qmReaches | Select-Object -Unique | Sort-Object)
+
+Write-Host ("  main stack publishes : {0}" -f (($published.Keys | Sort-Object) -join ', '))
+Write-Host ("  qm reaches host on   : {0}" -f ($qmReaches -join ', '))
+Write-Output ''
+
+# Every port qm reaches must be one the main stack publishes, EXCEPT Ollama.
+#
+# Ollama is deliberately excluded: it runs natively on the AIPC host (the
+# installer pulls models with the host `ollama` CLI), not as a compose service,
+# so it appears in no ports: mapping and there is nothing here to check it
+# against. Asserting it would mean asserting a constant equals itself.
+$KNOWN_HOST_NATIVE = @('11434')
+
+# THE EXPECTED SET IS NAMED, not derived from the config.
+#
+# The first version only iterated over ports FOUND in qm.config.jsonc, which
+# meant the coupling could be removed rather than broken: deleting the
+# OPENVIKING_URL line entirely left nothing to iterate, so the check silently
+# stopped covering 1933 and stayed green. A mutation test caught it -
+# "removing a URL is undetectable" - and it is the same shape as an earlier bug
+# in this file, where a check reported success because the thing it inspected
+# had gone away.
+#
+# Naming the set makes BOTH directions detectable: a port that appears without
+# being published (added coupling), and a port that stops being reached
+# (removed coupling). The second is the quieter failure - qm loses a capability
+# and nothing says so.
+$EXPECTED_QM_HOST_PORTS = @('8089', '1933', '11434')
+
+$unexpected = @($qmReaches | Where-Object { $EXPECTED_QM_HOST_PORTS -notcontains $_ })
+$vanished = @($EXPECTED_QM_HOST_PORTS | Where-Object { $qmReaches -notcontains $_ })
+Assert-True ($unexpected.Count -eq 0) 'qm reaches no host port beyond the documented set' `
+    ("qm now also reaches: {0} - add it to EXPECTED_QM_HOST_PORTS only after verifying the main stack publishes it" -f ($unexpected -join ', '))
+Assert-True ($vanished.Count -eq 0) 'qm still reaches every documented host port' `
+    ("qm no longer reaches: {0} - the coupling to that service was removed or retyped, so the sandbox tools for it will fail" -f ($vanished -join ', '))
+
+foreach ($p in $qmReaches) {
+    if ($KNOWN_HOST_NATIVE -contains $p) {
+        Write-Host ("  [SKIP] {0} - host-native (Ollama), not a compose service" -f $p) -ForegroundColor DarkGray
+        continue
+    }
+    Assert-True ($published.ContainsKey($p)) `
+        "the main stack publishes host port $p, which qm reaches via host.docker.internal" `
+        ("published ports are: {0}" -f (($published.Keys | Sort-Object) -join ', '))
+}
+
+# qm's OWN ports must not collide with anything the main stack publishes, or one
+# of the two stacks fails to bind and it is ambiguous which.
+$qmOwn = @()
+$basePortMatch = [regex]::Match($cfgCode, '"basePort"\s*:\s*(?<b>\d+)')
+if ($basePortMatch.Success) {
+    $b = [int]$basePortMatch.Groups['b'].Value
+    # qm derives its services from basePort; 8180-8182 is the observed range
+    # (core/proxy/publicUrl).
+    $qmOwn = @($b, ($b + 1), ($b + 2)) | ForEach-Object { "$_" }
+}
+if ($qmOwn.Count -gt 0) {
+    Write-Host ("  qm reserves          : {0}" -f ($qmOwn -join ', '))
+    $collisions = @($qmOwn | Where-Object { $published.ContainsKey($_) })
+    Assert-True ($collisions.Count -eq 0) 'qm ports do not collide with main-stack published ports' `
+        ("collision on: {0}" -f ($collisions -join ', '))
+}
+else {
+    Assert-True $false 'qm basePort parsed from qm.config.jsonc' 'no "basePort" found - qm port reservation cannot be checked'
+}
+
+Write-Output ''
 Write-Output ("RESULT: {0} of {1} checks passed" -f $passed, ($passed + $failed))
 exit ([int]($failed -gt 0))

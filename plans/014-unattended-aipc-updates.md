@@ -1,6 +1,6 @@
 # 014 — Unattended AIPC Updates
 
-Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **COMPLETE for 1-6 — nothing left but running it on a real AIPC**
+Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **COMPLETE 1-6 — 0 of 11 components still need a human on `-Update`**
 
 **This is the end-goal plan.** 011 shipped the artifacts; this makes them reach
 both AIPCs without a developer logging in. Full evidence:
@@ -13,9 +13,56 @@ both AIPCs without a developer logging in. Full evidence:
 | 1. `-Update` refreshes the repo | ✅ **done** — fast-forward only; refuses on a dirty or diverged tree; `-SkipRepoPull` to opt out. Tests `scripts/test-install-repo-pull.ps1` (13/13) |
 | 2. Render-and-compare the config | ✅ **done** — regenerates and compares every run, backs up, and NAMES what changed. Tests `scripts/test-install-render.ps1` (11/11) |
 | 3. Restart services with bind-mounted code | ✅ **done** — folded into step 2's commit (`docker compose restart deer-flow` on `-Update`) |
-| 4. Bring qm into the update path | 🟡 **partly** — sandbox drift is now DETECTED and reported on every `-Update`; the rebuild itself is deliberately left manual |
-| 5. Publish a staleness marker | ✅ **done** — `GET /version` reports the running binary's version + commit. Verified end-to-end against real containers |
+| 4. Bring qm into the update path | ✅ **done** — sandbox drift DETECTED (7d); the runtime config is RE-STAGED from the tracked source on every `-Update` (7f); the operator gets the exact restart command. Tests `scripts/test-qm-restage.ps1` (13/13) |
+| 5. Publish a staleness marker | ✅ **done** — `GET /version` reports the running binary's version + commit, and `-Update` now READS it and compares it with the compose pin (7e). Tests `scripts/test-staleness-probe.ps1` (5/5, against the LIVE stack) |
 | 6. Scheduled updater | ✅ **done** — `scheduled-update.ps1` + `register-scheduled-update.ps1`. Tests 37/37. **Not yet registered on a real machine** |
+
+**Coverage now reads 11 of 11, 0 needing a human**
+(`scripts/audit-aipc-update-coverage.ps1`), up from 8 of 10. Both former gaps
+were closed by behaviour, not by relabelling, and the coverage table is itself
+mutation-tested so a loosened marker cannot make it lie.
+
+## What closed the two gaps
+
+**Staleness marker (step 7e).** `/version` existed but nothing consulted it, so
+the capability was reported as missing and — more importantly — nothing on a
+machine ever compared what was PULLED with what is RUNNING. `install.ps1` now
+probes `http://localhost:<nginx-port>/version` after an update and compares the
+reported version with the compose pin. The failure it catches has no other
+symptom: `compose pull` fetches images while the running containers keep
+executing the OLD ones, and nothing errors.
+
+Three details that were wrong on the first attempt and are worth keeping:
+
+- The endpoint is `/version` at the NGINX port, not `/build-info`. nginx maps
+  the clean location onto the API route, and `pacgate-api` publishes NO host port
+  at all, so nginx is the only way in from the host.
+- The host port is DERIVED (`docker compose port nginx 80`), not assumed. This
+  dev box publishes 8081 while compose declares 8089; a hardcoded port would
+  probe nothing and cry wolf on a healthy install.
+- An old image returns **401**, not 404 — an unknown path on a pre-`/build-info`
+  build hits the auth middleware. The failure branch distinguishes "this install
+  is behind" from "the stack is still starting" by inspecting the running image,
+  because conflating the two sends people down the wrong path.
+
+**qm runtime config (step 7f).** `setup-qm.ps1` staged `deploy/qm-pacgate/`
+ONCE, and nothing refreshed the runtime copy afterwards, so a qm config change
+needed a manual re-run of a script that prompts for credentials. 7f re-stages it
+on every `-Update`, comparing CONTENT (a git checkout rewrites mtimes on
+identical bytes, which would report every file changed and bury the real one).
+
+`.env` is excluded so generated secrets survive; `node_modules`, `.generated`
+and `*.bak.*` are excluded; runtime-only files are never deleted; and it copies
+FILES only, so the R4 `qm up` / `compose.qm.yaml` contention cannot be triggered.
+A config change needs a restart, which is deliberately left to the operator with
+the exact command printed — an unattended restart of a client's co-working stack
+is a worse failure than a precise instruction.
+
+There is a second reason 7f matters: `qm-sandbox-fingerprint.ps1` reads and
+writes the TRACKED `qm.config.jsonc`, while qm actually RUNS the runtime copy. The
+drift detector could therefore report CURRENT while the executing config was an
+older revision. Re-staging converges them, which is what makes its answer mean
+anything.
 
 Steps 1 and 2 both had their tests validated by breaking the implementation and
 confirming the tests fail — so they detect regressions rather than passing
@@ -42,8 +89,8 @@ whether it is current.
 | 1 | `-Update` never runs `git pull` | repo content (compose, patches, workflows) stays stale unless remembered | ✅ fixed |
 | 2 | config rendered **only if absent** | template updates **never land** — proven lost update (`453646f` added `pacgate-mcp` and fixed an API key) | ✅ fixed |
 | 3 | bind-mounted `.py` needs restart, none performed | patch fixes sit on disk doing nothing | ✅ fixed |
-| 4 | qm untouched by `-Update` | 7 containers + sandbox drift independently | 🟡 sandbox drift now detected + reported; rebuild left manual by design |
-| 5 | no version/staleness marker | a behind machine looks healthy | ✅ fixed — `GET /version` |
+| 4 | qm untouched by `-Update` | 7 containers + sandbox drift independently | ✅ fixed — sandbox drift detected (7d) AND the runtime config re-staged (7f); restart left to the operator by design |
+| 5 | no version/staleness marker | a behind machine looks healthy | ✅ fixed — `GET /version` exists AND `-Update` reads it to compare running vs pinned (7e) |
 | — | two unrelated renders shared one guard | a missing OpenViking template silently skipped the deer-flow config | ✅ fixed (found while testing step 2) |
 
 ## Steps — in this order
@@ -117,7 +164,18 @@ Two properties worth keeping if this is ever rewritten:
 
 #### Still open in step 4
 
-- The **qm stack containers** (7) are still outside `install.ps1`.
+- ~~The **qm stack containers** (7) are still outside `install.ps1`.~~ **Closed by
+  7f.** The runtime config is now re-staged on every `-Update`, and the operator
+  is given the exact restart command. The restart itself is not automated, on
+  purpose:
+  - a restart of the co-working stack is user-visible (`qm` is where staff work);
+  - R4 of INTEGRATION-MAP.md is that `qm up` and `compose.qm.yaml` contend for
+    the same volumes and network, so an automated path has to pick one and be
+    right;
+  - the config change may not be one the operator wants applied mid-session.
+
+  The gap that mattered was that the change never REACHED the machine unattended.
+  That is closed. Applying it is one printed command.
 - No machine has a recorded fingerprint yet, so every machine reads
   `NOT_RECORDED` until someone runs the rebuild + repin + `-Write` once. That is
 the honest state: we cannot claim the sandbox matches its source when nobody has
