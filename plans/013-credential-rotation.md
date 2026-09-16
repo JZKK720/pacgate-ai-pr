@@ -243,7 +243,7 @@ cover many rows.
 | Credential | Action | Owner |
 | --- | --- | --- |
 | `pacgate-ghcr-push` PAT | ✅ **revoked** (redundant) | done |
-| Apify / Ollama / OpenRouter OAuth grants | Revoke — never used | browser |
+| Apify / Ollama / OpenRouter OAuth grants | ✅ **revoked** — never used | done |
 | Tailscale OAuth grant | Revoke if Tailscale is not needed for AIPC access | decide |
 | `pacgate-ai` GitHub password | Change, then `git credential reject` locally | **you** — I will not touch credentials |
 | courtlistener / vaquill API tokens | Regenerate in their dashboards | **you** |
@@ -253,6 +253,63 @@ cover many rows.
 **Good news:** GHCR images are pulled **anonymously**, so neither the password
 rotation nor revoking OAuth grants affects client installs or the image
 packages. Package visibility is governed separately.
+
+### ⚠️ Correcting the priority: this is NOT a client-deployment blocker
+
+The user pushed back with a concrete argument — *"these are the client's private
+credentials, each implementation and deployment is different, so why rotate now?"*
+— and **the argument is right.** I had overstated the operational coupling by
+reading a comment as a requirement.
+
+What I claimed vs what the evidence shows:
+
+| Claim I made | Reality |
+| --- | --- |
+| "The API keys are consumed at runtime" | True but misleading: `env_file: .env` **tolerates** them |
+| "Rotating one means editing `.env` on every AIPC" | **Wrong.** No connector key is *required* — verified: not one appears as a bare `${VAR}` in `compose.prod.yaml`. They are named only in a comment (`compose.prod.yaml:32-34`) and loaded via `env_file` (`:35-36`) |
+| "The real burden is a shared Outlook account" | True, but it is the **firm's** account for the **firm's** research sources |
+
+**A client deployment is unaffected.** `deploy/client-bundle/.env.example`
+declares only `PACGATE_DB_PASSWORD`, `PACGATE_JWT_SECRET`, `PACGATE_TENANT_ID`,
+`PACGATE_API_EMAIL`, `PACGATE_API_PASSWORD`, `PACGATE_JWT_TOKEN`,
+`PACGATE_MATTER_ID`, `PACGATE_COOKIE_SECURE`, `GATEWAY_CORS_ORIGINS`,
+`OPENVIKING_ROOT_API_KEY`, `OPENVIKING_API_KEY` — **not one connector key.** Absent
+them, connectors report `available=false` and search falls back to free sources:
+a documented graceful degradation, not a broken install.
+
+So rotation is **internal hygiene on the firm's own paid accounts** — worth doing,
+entirely on the firm's schedule, blocking nothing.
+
+**And it is weaker than I framed it.** The security log shows 2FA satisfied on
+every sign-in and all events from Thailand (operator) or Beijing (firm). No misuse
+indicators.
+
+**One exception worth keeping distinct:** `FIRECRAWL_API_KEY` is listed in
+`qm.config.jsonc`'s sandbox `secretEnv` and is now written by `setup-qm.ps1`. That
+one **is** operationally relevant to a deployment, though still optional.
+
+### Revocation record (2026-09-16)
+
+Revoked via each app's own connection page
+(`/settings/connections/applications/<id>`), **not** the page-level "Revoke all" —
+worth noting because the app-list page exposes `Revoke` buttons that open a dialog
+reading *"revoke access for everything"*. Selecting that would have revoked all 8,
+including three in active use. The per-app page names the app explicitly
+(*"Ollama will no longer be able to access the GitHub API"*), which is the
+confirmable control.
+
+| App | Result |
+| --- | --- |
+| Apify | revoked |
+| Ollama | revoked |
+| OpenRouter | revoked |
+
+**Grants: 8 → 5.** Remaining are exactly the ones to keep: Cloudflare (used 2
+weeks ago), FireCrawl, Git Credential Manager (3 weeks — this is what authenticates
+`git push`), Tailscale (decision pending), Visual Studio Code (last week — the
+tooling). Verified afterwards that `git ls-remote` still authenticates and
+`verify-delivery-state.ps1` still passes: **nothing depended on the revoked grants.**
+
 
 
 ## Step 2 — Purge history
