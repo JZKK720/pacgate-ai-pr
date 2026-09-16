@@ -502,6 +502,34 @@ cd C:\pacgate-ai-pr\deploy\client-bundle
 .\install.ps1 -Update -SkipRepoPull
 ```
 
+#### qm 只做报告，不自动更新
+
+如果本机运行了 qm，`-Update` 还会检查其沙箱镜像是否仍与源码一致：
+
+```
+[OK] qm sandbox matches its source (38e062ec7c5c...)
+```
+
+或
+
+```
+[WARN] qm sandbox source has CHANGED since the image was pinned.
+       qm is running OLD skills and tools. Rebuild + repin:
+         cd deploy\qm-pacgate
+         npm exec qm -- sandbox build   # 然后把打印出的 digest 重新固定
+         pwsh -File ..\..\scripts\qm-sandbox-fingerprint.ps1 -Write
+```
+
+这一点很重要：qm 的智能体运行在一个**按 digest 固定**的沙箱镜像里（记录在
+`deploy/qm-pacgate/qm.config.jsonc`）。按 digest 固定本身是正确的 — 隔离边界
+就应当不可变 — 但这意味着仓库更新可以改动
+`deploy/qm-pacgate/sandbox/`，而镜像完全不变。于是智能体继续使用旧的 skills
+和 tools 运行，**任何地方都不会报错**。
+
+`-Update` 对此**只报告、不自动重建**，因为重建需要 Node 24 + npm + buildx，
+且之后必须重新固定 digest — 这属于配置变更，不应在客户机器上无人值守地执行。
+一次错误的自动重建，比一条可见的警告更糟。
+
 更新会保留数据：
 - `./data/tenants/`（卷挂载）— 事项、文档、记忆
 - Postgres 数据（命名卷）— 元数据数据库

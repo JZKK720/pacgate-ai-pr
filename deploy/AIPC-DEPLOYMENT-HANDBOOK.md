@@ -515,6 +515,36 @@ Use `-SkipRepoPull` if you deliberately want an image-only update:
 .\install.ps1 -Update -SkipRepoPull
 ```
 
+#### qm is reported, not auto-updated
+
+If qm is running on the machine, `-Update` also checks whether its sandbox image
+still matches its source:
+
+```
+[OK] qm sandbox matches its source (38e062ec7c5c...)
+```
+
+or
+
+```
+[WARN] qm sandbox source has CHANGED since the image was pinned.
+       qm is running OLD skills and tools. Rebuild + repin:
+         cd deploy\qm-pacgate
+         npm exec qm -- sandbox build   # then repin the printed digest
+         pwsh -File ..\..\scripts\qm-sandbox-fingerprint.ps1 -Write
+```
+
+This matters because qm's agent executes inside a sandbox image **pinned by
+digest** in `deploy/qm-pacgate/qm.config.jsonc`. Digest pinning is correct - the
+isolation boundary should be immutable - but it means a repo update can change
+`deploy/qm-pacgate/sandbox/` while the image stays exactly as it was. The agent
+then keeps running the old skills and tools, with no error anywhere.
+
+`-Update` **reports** this rather than rebuilding on its own, because the rebuild
+needs Node 24 + npm + buildx and the digest must be repinned afterwards - a
+config change we should not make unattended on a client machine. A wrong
+automatic rebuild is a worse failure than a visible warning.
+
 Data is preserved across an update:
 - `./data/tenants/` (volume mount) - matters, documents, memory
 - Postgres data (named volume) - metadata database

@@ -53,7 +53,7 @@ $checks = @(
     [pscustomobject]@{ Component = 'extensions-config.json';    Needs = 're-render + compare';                 Any = @('RENDER-AND-COMPARE', '$dfExisting') }
     [pscustomobject]@{ Component = 'repo working tree';         Needs = 'fast-forward pull';                   Any = @('git pull --ff-only') }
     [pscustomobject]@{ Component = 'qm stack (7 containers)';   Needs = 'update path (plan 014 step 4)';       Any = @('qm-local.ps1') }
-    [pscustomobject]@{ Component = 'qm sandbox image';          Needs = 'rebuild (plan 014 step 4)';           Any = @('sandbox build') }
+    [pscustomobject]@{ Component = 'qm sandbox image';          Needs = 'drift detected (plan 014 step 4)';    Any = @('qm-sandbox-fingerprint.ps1') }
     [pscustomobject]@{ Component = 'staleness marker';          Needs = 'version endpoint (plan 014 step 5)';  Any = @('/version') }
 )
 

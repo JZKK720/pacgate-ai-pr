@@ -361,6 +361,55 @@ if ($Update) {
     }
 }
 
+# 7d. Report qm sandbox drift.
+#
+# qm's agent executes inside a sandbox image PINNED BY DIGEST in
+# deploy/qm-pacgate/qm.config.jsonc. Digest pinning is right - the isolation
+# boundary should be immutable - but it means a repo update can change
+# deploy/qm-pacgate/sandbox/ and the pinned image stays exactly as it was:
+# the agent keeps running the OLD skills and tools, with no error. See
+# plans/014 step 4.
+#
+# This REPORTS rather than rebuilds, deliberately:
+#   - the rebuild needs Node 24 + npm + docker buildx and takes minutes;
+#   - the digest must be repinned afterwards, which is a config change we should
+#     not make unattended on a client machine;
+#   - qm may not even be deployed on this machine.
+# A wrong automatic rebuild would be a worse failure than a visible warning, so
+# this makes the drift loud and leaves the decision to the operator.
+if ($Update) {
+    $qmScript = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts/qm-sandbox-fingerprint.ps1'
+    # Only meaningful if this machine actually runs qm.
+    if ((Test-Path $qmScript) -and (docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-')) {
+        Write-Host "`nChecking qm sandbox provenance..." -ForegroundColor Cyan
+        $fpOut = & pwsh -NoProfile -File $qmScript -Json 2>&1
+        $fp = $null
+        try { $fp = ($fpOut | Out-String).Trim() | ConvertFrom-Json } catch { }
+        if ($fp) {
+            switch ($fp.state) {
+                'CURRENT' {
+                    Write-Host "[OK] qm sandbox matches its source ($($fp.fingerprint.Substring(0,12))...)" -ForegroundColor Green
+                }
+                'NOT_RECORDED' {
+                    Write-Host "[WARN] qm sandbox image is digest-pinned with no recorded source fingerprint." -ForegroundColor Yellow
+                    Write-Host "       Cannot tell whether it matches deploy/qm-pacgate/sandbox/." -ForegroundColor Yellow
+                    Write-Host "       See plans/014 step 4 for the rebuild + repin procedure." -ForegroundColor Yellow
+                }
+                'DRIFT' {
+                    Write-Host "[WARN] qm sandbox source has CHANGED since the image was pinned." -ForegroundColor Yellow
+                    Write-Host "       qm is running OLD skills and tools. Rebuild + repin:" -ForegroundColor Yellow
+                    Write-Host "         cd deploy\qm-pacgate" -ForegroundColor Gray
+                    Write-Host "         npm exec qm -- sandbox build   # then repin the printed digest" -ForegroundColor Gray
+                    Write-Host "         pwsh -File ..\..\scripts\qm-sandbox-fingerprint.ps1 -Write" -ForegroundColor Gray
+                }
+            }
+        }
+        else {
+            Write-Host "[WARN] qm sandbox check produced no parseable result; skipped." -ForegroundColor Yellow
+        }
+    }
+}
+
 # 8. Wait for health
 Write-Host "`nWaiting for services to start..." -ForegroundColor Cyan
 Start-Sleep -Seconds 10
