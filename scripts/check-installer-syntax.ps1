@@ -30,6 +30,10 @@ $targets = @(
     'scripts/audit-aipc-update-coverage.ps1'
     'scripts/test-install-render.ps1'
     'scripts/test-install-repo-pull.ps1'
+    'scripts/test-update-end-to-end.ps1'
+    'scripts/test-scheduled-update.ps1'
+    'scripts/scheduled-update.ps1'
+    'scripts/register-scheduled-update.ps1'
 )
 
 $bad = 0

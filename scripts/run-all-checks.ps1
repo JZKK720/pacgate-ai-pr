@@ -21,6 +21,7 @@ $gates = @(
     'scripts/test-install-render.ps1'
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
+    'scripts/test-scheduled-update.ps1'
     'scripts/test-qm-sandbox-fingerprint.ps1'
     'scripts/test-version-marker.ps1'
     'scripts/test-version-marker-against-image.ps1'

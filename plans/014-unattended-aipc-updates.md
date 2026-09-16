@@ -1,6 +1,6 @@
 # 014 — Unattended AIPC Updates
 
-Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **IN PROGRESS — steps 1-5 done; step 6 (scheduled updater) remains**
+Priority: **P1** · Effort: **M** · Depends on: 011 (release ✅) · Status: **COMPLETE for 1-6 — nothing left but running it on a real AIPC**
 
 **This is the end-goal plan.** 011 shipped the artifacts; this makes them reach
 both AIPCs without a developer logging in. Full evidence:
@@ -15,7 +15,7 @@ both AIPCs without a developer logging in. Full evidence:
 | 3. Restart services with bind-mounted code | ✅ **done** — folded into step 2's commit (`docker compose restart deer-flow` on `-Update`) |
 | 4. Bring qm into the update path | 🟡 **partly** — sandbox drift is now DETECTED and reported on every `-Update`; the rebuild itself is deliberately left manual |
 | 5. Publish a staleness marker | ✅ **done** — `GET /version` reports the running binary's version + commit. Verified end-to-end against real containers |
-| 6. Scheduled updater | ⬜ last, deliberately |
+| 6. Scheduled updater | ✅ **done** — `scheduled-update.ps1` + `register-scheduled-update.ps1`. Tests 37/37. **Not yet registered on a real machine** |
 
 Steps 1 and 2 both had their tests validated by breaking the implementation and
 confirming the tests fail — so they detect regressions rather than passing
@@ -176,6 +176,63 @@ Only after 1–5 are proven idempotent. A Windows scheduled task running
 
 **Do not skip ahead to this step.** Automating the update *before* fixing 1–5
 would propagate silent failures at machine speed across both AIPCs.
+
+#### Delivered
+
+`scripts/scheduled-update.ps1` (the thing the task runs) and
+`scripts/register-scheduled-update.ps1` (registers it). Tests: 37/37.
+
+**It does NOT schedule `install.ps1 -Update` directly, and that is the whole
+design.** `install.ps1` exits **0** in every one of these cases:
+
+| Condition | install.ps1 says | Real effect |
+| --- | --- | --- |
+| `Repo has local changes` | `[WARN]`, exit 0 | repo refresh **skipped** |
+| `Repo has diverged ... not fast-forwardable` | `[WARN]`, exit 0 | repo refresh **skipped** |
+| `git not found` / `not a git checkout` | `[WARN]`, exit 0 | repo refresh **skipped** |
+
+Images still pull and containers still restart, so the run looks successful. The
+machine then drifts behind on all repo content — compose pins, patches,
+workflows, nginx config — with **no error**. Scheduling `install.ps1` directly
+would reproduce exactly the silent failure this plan exists to eliminate, at
+machine speed on two machines, which is the outcome the warning above forbids.
+
+So the wrapper classifies each run:
+
+| Outcome | Meaning | Exit |
+| --- | --- | --- |
+| `SUCCESS` | everything landed | 0 |
+| `DEGRADED` | images landed, **repo did not** — a human is needed | 2 |
+| `FAILED` | the update errored | 1 |
+| `SKIPPED` | outside the maintenance window | 0 |
+
+**`DEGRADED` is the point.** It is not an error by install.ps1's standards, so
+nothing else in the system would report it. The exit code is distinct from
+`FAILED` so the Task Scheduler "Last Run Result" column separates "needs a human,
+machine still working" from "broken".
+
+Also: detection is by **pattern on output, not exit code**, because the exit code
+cannot distinguish the cases above. A maintenance window (default 22–06, wrap
+handled) avoids restarting containers while people work, `-Force` overrides it,
+and logs rotate to `KeepRuns` (default 30) so a machine nobody logs into does not
+accumulate logs until the disk fills.
+
+Every degraded reason is asserted individually, and disabling the classifier
+makes all seven DEGRADED cases fail — so the tests have real detection power
+rather than passing vacuously.
+
+#### Not done
+
+- **The task is not registered on either AIPC.** That needs an elevated shell:
+  `.\scripts\register-scheduled-update.ps1` (use `-WhatIf` first). The script
+  refuses without elevation and prints the manual registration rather than
+  failing obscurely — it cannot elevate itself, because a UAC prompt cannot be
+  answered from an automated context and routing a password through one would be
+  worse.
+- Under `SYSTEM` the task needs Docker Desktop running. Docker Desktop is a
+  per-user app, so if it is not up the run reports `FAILED` — the correct signal,
+  not a silent skip.
+
 
 ## Acceptance criteria
 
