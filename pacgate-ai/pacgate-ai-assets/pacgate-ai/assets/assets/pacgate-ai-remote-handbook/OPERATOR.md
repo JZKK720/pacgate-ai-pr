@@ -1,18 +1,30 @@
 # 🚨 OPERATOR ONLY — DO NOT COMMIT, DO NOT SHARE 🚨
 
-> **This file is gitignored.** It contains real credentials for the PacGate GitHub account that the public handbook must never see. If you are reading this on a public clone, you are reading stale or fake data.
+> **This file must never be committed.** It is meant to hold real credentials for
+> the PacGate account that the public handbook must never see.
 >
-> The published handbook uses placeholders such as `{{GITHUB_EMAIL}}` and `{{GITHUB_PASSWORD}}` so the public handbook stays safe to commit and share.
+> **Correction (2026-09-15):** an earlier version of this note claimed *"This file
+> is gitignored."* That was **false** — the file was tracked and published in a
+> public repository, and the credential values it contained must be treated as
+> **compromised and rotated**. See `plans/013-credential-rotation.md`.
+>
+> Real values are deliberately **not** stored here. Keep them in a password
+> manager, and reference them by name only.
+>
+> The published handbook uses placeholders such as `{{GITHUB_EMAIL}}` and
+> `{{GITHUB_PASSWORD}}` so the public handbook stays safe to commit and share.
 
 ---
 
-## Real PacGate GitHub credentials
+## Real PacGate credentials
+
+> ⚠️ **Not stored in this file.** Look these up in the password manager.
 
 | Field | Value |
 |---|---|
-| **Email** | `pacgate.ai01@outlook.com` |
-| **GitHub ID** | `pacgate-ai` |
-| **Password** | `Cc_Pacgate@123` |
+| **Email** | `[REDACTED - see password manager]` |
+| **GitHub ID** | `[REDACTED - see password manager]` |
+| **Password** | `[REDACTED - see password manager]` |
 
 > ⚠️ Anyone holding these three values can sign in to the PacGate GitHub organization and authorize third-party OAuth apps (Tailscale, etc.) on its behalf. Treat this file like a root password.
 
@@ -21,7 +33,7 @@
 ## How to use this file
 
 1. Read the placeholders in the published handbook (e.g. `{{GITHUB_EMAIL}}`).
-2. Look up the real value in the table above.
+2. Look up the real value in the **password manager** (not in this file).
 3. Paste it into the sign-in form.
 
 ## After first-run Tailscale auth — record the machine
