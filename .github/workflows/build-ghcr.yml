@@ -236,6 +236,20 @@ jobs:
             https://github.com/bytedance/deer-flow.git deploy/deer-flow-src
           git -C deploy/deer-flow-src sparse-checkout set frontend
 
+      # Apply the PacGate frontend source overrides (branded UI, zh-CN strings,
+      # thread hooks). build-frontend.ps1 does this locally; CI must do the
+      # same or the published image silently loses the PacGate customizations.
+      # Files are copied (not git-patched) because they contain long Chinese
+      # strings that break git-patch parsing - same mechanism as the local script.
+      # Verified 2026-09-17: published 0.1.14 had 0 pacgate-marked files in
+      # .next vs 9 in the locally-built image - this step closes that gap.
+      - name: Apply PacGate frontend source overrides
+        run: |
+          if [ ! -d deploy/frontend-patches/files ]; then
+            echo "ERROR: deploy/frontend-patches/files missing from checkout" && exit 1
+          fi
+          cp -rv deploy/frontend-patches/files/. deploy/deer-flow-src/frontend/
+
       - name: Build & push deer-flow-frontend-pacgate
         uses: docker/build-push-action@v6
         with:
