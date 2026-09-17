@@ -19,6 +19,10 @@ Before this change, two components were built locally and not on GHCR:
 | `pacgate-api` | `ghcr.io/jzkk720/pacgate-api:0.1.2` (README) / `0.1.3` (compose) | aligned to `0.1.3` |
 | `deer-flow-pacgate` | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` |
 
+> The `ghcr.io/jzkk720/*` references in the "Before" column are historical. As of
+> 2026-09-17 `jzkk720` is the **code-only** master repo for maintenance and
+> publishes **no** images. All runtime images live under `ghcr.io/pacgate-ai/*`.
+
 ## Owner / namespace decision
 
 The repo's push remote is `origin = JZKK720/pacgate-ai-pr` (the upstream /
@@ -45,41 +49,34 @@ Resolving to anything other than `pacgate-ai` emits a warning naming the
 mismatch. The `scripts/test-workflow-namespace.ps1` + `-mutations.ps1` pair
 guards these properties.
 
-### Publishing to both namespaces
+### Single namespace: pacgate-ai
 
-`jzkk720` is the upstream/developer account and still holds the images the live
-AIPCs were originally deployed from, so a release now populates **both**:
+`jzkk720` is the upstream/developer account where the project originated and is
+maintained, but it is **code-only** — it publishes no images. A release populates
+only `ghcr.io/pacgate-ai/*`, which is what both AIPCs pull:
 
 | Namespace | Role | How |
 |---|---|---|
 | `ghcr.io/pacgate-ai/*` | client delivery, source of truth | `build-and-push` job |
-| `ghcr.io/jzkk720/*` | upstream/developer mirror | `mirror-upstream` job |
 
-The mirror **retags** (`docker buildx imagetools create`) rather than
-rebuilding. Docker builds are not reproducible — layer tar entries carry
-mtimes — so a rebuild of identical source produces a *different digest*.
-Retagging is the only way the mirror is provably the same bytes.
-
-The mirror is deliberately **non-blocking**: a missing secret or an
-unpullable image warns, never fails the run. The client images are already
-published by that point, and a mirror problem must not read as a delivery
-failure.
+The `mirror-upstream` job that once copied tags to `ghcr.io/jzkk720/*` has been
+removed. Nothing automated pulls from that namespace, so the mirror was dead
+weight and a misleading "mirror never ran" state.
 
 ### Required secrets
 
 | Secret | Needed for | Required? |
 |---|---|---|
-| `GHCR_MIRROR_PAT` | PAT with `write:packages` for `jzkk720`, used by the mirror job | Optional — the mirror skips with a warning |
 | `GHCR_CLIENT_PAT` | PAT with `write:packages` for `pacgate-ai`, used by the **build** job | Optional on the `pacgate-ai` repo; **required** when running from `JZKK720` |
 
 `secrets.GITHUB_TOKEN` is issued per repository and can only push to its own
-owner's namespace. It therefore **cannot** cross into the other account no
-matter how the workflow is written — the automatic token is the default and the
-only credential needed on the client-delivery repo.
+owner's namespace. It therefore **cannot** cross into another account no matter
+how the workflow is written — the automatic token is the default and the only
+credential needed on the client-delivery repo.
 
 > **First-publish gotcha:** new GHCR packages default to **private**. Flip each
-> mirrored package to public in the UI, or clients cannot pull it. A private
-> mirror has no other symptom than a failed anonymous pull.
+> package to public in the UI, or clients cannot pull it. A private package has
+> no other symptom than a failed anonymous pull.
 
 Note `docker login ghcr.io` is **not** part of the client install path — the
 runtime images are public by design and the on-site engineer pulls them

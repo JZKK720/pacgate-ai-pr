@@ -19,26 +19,18 @@ Write-Host '=== Mutation test: workflow validity ==='
 Write-Output ''
 
 $mutations = @(
-    # THE ACTUAL OUTAGE. Reverting the guard to `env` must be caught by name.
-    @{ N = 'the job-level if: goes back to the env context (the real outage)'
-       File = $wf
-       From = "if: `${{ vars.GHCR_MIRROR_NAMESPACE != '' }}"
-       To   = "if: `${{ env.GHCR_MIRROR_NAMESPACE != '' }}"
-       Want = 'no job-level if: uses an unavailable context' }
-
-    @{ N = 'the guard is deleted entirely'
-       File = $wf
-       # SINGLE-quoted, so PowerShell passes the regex through literally. Written
-       # with doubled backslashes first, which made the pattern match nothing and
-       # was reported as an UNAPPLIED mutation rather than a false pass.
-       Rx   = '(?m)^\s+if:\s*\$\{\{\s*vars\.GHCR_MIRROR_NAMESPACE[^\r\n]*\r?\n'
-       To   = ''
-       Want = 'the mirror guard reads vars' }
-
+    # A needs: pointing at a job that does not exist must be caught by name.
+    #
+    # This INSERTS a bogus needs: rather than rewriting an existing one, because
+    # the mirror job - the only job that ever declared `needs:` - was removed on
+    # 2026-09-17 when jzkk720 became code-only. Without an insertion the
+    # 'every needs: names an existing job' check would have nothing to inspect
+    # and would pass vacuously, which is the exact failure mode this whole file
+    # exists to prevent.
     @{ N = 'a needs: points at a job that does not exist'
        File = $wf
-       From = "    needs: build-and-push"
-       To   = "    needs: build-and-push-typo"
+       From = "    runs-on: ubuntu-latest"
+       To   = "    needs: build-and-push-typo`r`n    runs-on: ubuntu-latest"
        Want = 'every needs: names an existing job' }
 
     # The FIRST attempt at this was `mirror-upstream:` -> `mirror-upstream:::`,
@@ -50,8 +42,8 @@ $mutations = @(
     # An unterminated quoted scalar is a genuine parse error.
     @{ N = 'the YAML is broken outright'
        File = $wf
-       From = "    needs: build-and-push`r`n    runs-on: ubuntu-latest"
-       To   = "    needs: build-and-push`r`n    runs-on: `"ubuntu-latest"
+       From = "    runs-on: ubuntu-latest"
+       To   = "    runs-on: `"ubuntu-latest"
        Want = 'the workflow parses as YAML' }
 )
 

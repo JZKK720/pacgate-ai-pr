@@ -89,19 +89,18 @@ $mutations = @(
        To   = '          echo "PAC_TOKEN_EOF" >> "$GITHUB_OUTPUT"'
        Want = 'the PAT is not copied into $GITHUB_OUTPUT' }
 
-    @{ N = 'the mirror rebuilds instead of retagging'
-       File = $wf
-       From = 'imagetools create'
-       To   = 'imagetools inspect'
-       Want = 'mirror RETAGS rather than rebuilding' }
+    # NOTE: two mutations were removed here on 2026-09-17, when the
+    # `mirror-upstream` job was deleted and jzkk720 became code-only. They broke
+    # `imagetools create` and `have=0` in that job, so their anchors no longer
+    # exist in the workflow. They were NOT repointed at other lines: the
+    # properties they asserted (retag-not-rebuild, degrade-to-warning) belonged
+    # to the mirror job and left with it.
 
-    @{ N = 'the mirror becomes blocking'
-       File = $wf
-       From = 'have=0'
-       To   = 'have=1'
-       Want = 'mirror degrades to a warning when the PAT is absent' }
-
-    @{ N = 'the client pin is rewritten to the mirror namespace'
+    # The compose pins must name the namespace the workflow publishes to. The
+    # original name for this mutation referenced the mirror namespace; the
+    # property it actually tests is namespace CONSISTENCY between the workflow
+    # and the compose pins, which is what a wrong pin breaks.
+    @{ N = 'a compose pin is rewritten to a non-publishing namespace'
        File = $compose
        From = 'ghcr.io/pacgate-ai/pacgate-api'
        To   = 'ghcr.io/jzkk720/pacgate-api'

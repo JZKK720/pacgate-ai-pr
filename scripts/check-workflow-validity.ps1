@@ -7,13 +7,11 @@
 # single job started. `build-and-push` - which had worked for the 0.1.13 release -
 # never ran at all.
 #
-# The cause was one expression:
-#
-#   jobs.mirror-upstream.if: ${{ env.GHCR_MIRROR_NAMESPACE != '' }}
-#
-# `env` is NOT an available context in a job-level `if:` - only github / needs /
-# vars / inputs are. GitHub reported "Unrecognized named-value: 'env'" and
-# discarded the whole file.
+# The cause was one expression in a job-level `if:` that referenced `env`, which
+# is NOT an available context there - only github / needs / vars / inputs are.
+# GitHub reported "Unrecognized named-value: 'env'" and discarded the whole file.
+# (That job has since been removed; the rule below still guards the general
+# class, so a future job cannot reintroduce it.)
 #
 # What made this expensive was the BLAST RADIUS. An expression CI cannot evaluate
 # silently invalidates the entire pipeline, so a guard added to a NEW optional job
@@ -143,22 +141,6 @@ if ($jobs.Count -gt 0) {
 else {
     Check 'job list available for the needs: check' $false 'YAML parse did not yield jobs'
 }
-
-# ── 4. The guard that caused the outage is on the SAFE context ─────────────
-#
-# Pinned explicitly. A regression here breaks EVERY job, not just the mirror, so
-# it is worth a named assertion of its own rather than relying on the general
-# context rule above.
-#
-# SINGLE-quoted pattern. Two layers of quoting are in play - PowerShell's, then
-# the regex engine's - and `$` is special to the first while `{`/`\` matter to
-# the second. Doubling the backslashes to "be safe" broke the match; writing the
-# regex literally in a single-quoted string is the form that works. Same family
-# as the $var: scope-qualifier trap: the rules differ per layer and the failure
-# surfaces in the wrong one.
-Check 'the mirror guard reads vars (env is invalid in a job-level if:)' `
-    ($raw -match 'if:\s*\$\{\{\s*vars\.GHCR_MIRROR_NAMESPACE') `
-    'the mirror-upstream guard must use vars.GHCR_MIRROR_NAMESPACE'
 
 Write-Output ''
 Write-Host ("{0} passed, {1} failed" -f $passed, $failed)
