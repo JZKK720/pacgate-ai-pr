@@ -98,8 +98,52 @@ git push fork v0.1.3
 
 The workflow `.github/workflows/build-ghcr.yml`:
 1. Builds `pacgate-api`, `pacgate-mcp`, `deer-flow-pacgate`, `deer-flow-frontend-pacgate`.
-2. Pushes each to `ghcr.io/<owner>/<image>:0.1.3` and `:latest`.
+2. Pushes each to `ghcr.io/pacgate-ai/<image>:0.1.3` and `:latest`.
 3. Verifies each manifest is publicly pullable (anonymous HEAD returns 200).
+
+#### The tag path has a failure mode - prefer dispatch
+
+**The build runs from whatever commit the tag points at.** A tag created on a
+commit where the workflow file is invalid produces nothing: the run shows
+"Invalid workflow file" and no image is published. This is not hypothetical - it
+is how the 0.1.14 release first failed, on a job-level `if:` that referenced the
+`env` context, which GitHub rejects outright and which invalidates the ENTIRE
+workflow rather than the one job.
+
+Pushing a tag can also be impossible from a given machine. `secrets.GITHUB_TOKEN`
+is scoped to its own repository, and a personal PAT is scoped to whichever
+account issued it, so a developer whose credential belongs to the upstream
+account cannot write a tag to the client fork.
+
+### Option A2 - Dispatch the workflow (recommended when the tag path is blocked)
+
+Dispatch decouples the image tag from the commit that builds it:
+
+1. Actions -> **Build & Push GHCR Images** -> **Run workflow**.
+2. **Use workflow from**: `main` (any ref with a valid workflow file).
+3. **Image tag to build**: the version to publish, e.g. `0.1.14`.
+4. Leave **GHCR owner override** empty - that resolves to the pinned
+   `pacgate-ai` namespace.
+
+The `tag` input sets what gets published; the branch selects the code. This needs
+no local credential at all, so it works from any machine that can reach the
+repository in a browser.
+
+> **Note on `git tag` vs the release form.** There is no "Create tag" button on
+> the Tags page - GitHub creates tags through the Releases form (or via git).
+> The Releases form works from an account that cannot push tags, but it creates
+> the tag at a commit of your choosing, so it still has the tag-vs-commit
+> coupling above.
+
+**Verify after either path:**
+
+```powershell
+pwsh -File .\scripts\verify-delivery-state.ps1   # pins, manifest version, GHCR 200s
+pwsh -File .\scripts\report-ghcr-digests.ps1     # :latest tracks the version tag
+```
+
+**Then flip any NEW package to public.** New GHCR packages default to PRIVATE,
+and a private package's only symptom is a failed anonymous pull on an AIPC.
 
 ### Option B — Local build & push
 

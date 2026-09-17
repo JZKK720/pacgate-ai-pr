@@ -43,6 +43,22 @@ name: Build & Push GHCR Images
 # NOTE: to publish to an owner OTHER than pacgate-ai you need a PAT with
 # write:packages for that owner; GITHUB_TOKEN cannot cross namespaces. See
 # deploy/README-BUILD.md.
+#
+# TWO WAYS TO RELEASE, and the dispatch path is usually better:
+#
+#   1. Push a `v0.1.*` tag. Simple, but the build runs from WHATEVER COMMIT THE
+#      TAG POINTS AT - so a tag created on a commit where this file is invalid
+#      produces no images at all. That is how the 0.1.14 release first failed.
+#   2. Dispatch with `tag=<version>` on a branch. The input sets the PUBLISHED
+#      tag and the branch selects the CODE, so the two cannot disagree, and it
+#      needs no local credential. It works from an account that cannot push tags
+#      to this repository, which a tag push does not.
+#
+# THE MIRROR JOB ONLY RUNS IF A REPOSITORY VARIABLE EXISTS. It is gated on
+# `vars.GHCR_MIRROR_NAMESPACE` (a job-level `if:` cannot read `env` - see below)
+# and on the secret `GHCR_MIRROR_PAT`. Neither is set by default, so on a fresh
+# fork the mirror silently skips with a warning and only the client namespace is
+# updated. Set both to populate the upstream mirror too.
 
 env:
   # The single source of truth for where a release publishes. See the NAMESPACE
