@@ -4,7 +4,7 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
 
 **中文文档：** [README-ZH.md](README-ZH.md) | [员工使用手册](docs/PACGATE-LAW-STAFF-HANDBOOK-ZH.md)
 
-## Release: v0.1.3 (2026-09-06)
+## Release: v0.1.14 (2026-09-16)
 
 - Rust metadata core: 12 crates + 4 WASM crates, smoke/agent/workflow/integration tests passing
 - 220 YAML workflow templates across 15 files
@@ -13,10 +13,10 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
 - RAG retrieval (pgvector + tsvector + Ollama embeddings, T1-T4 data level filtering) — fully on-device
 - OpenViking memory lane: ov-remember / ov-search / ov-read bridge via qm, MCP recall in deer-flow
 - Auth (JWT + argon2 + SOUL resolver middleware)
-- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.1.3` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
-- deer-flow wrapper image: `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` (public)
-- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.1.3` (public; exposes 10 MCP tools incl. documents/workflows)
-- deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.0` (public; gateway URL baked in at build time)
+- pacgate-api image: `ghcr.io/pacgate-ai/pacgate-api:0.1.14` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
+- deer-flow wrapper image: `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.14` (public)
+- pacgate-mcp bridge image: `ghcr.io/pacgate-ai/pacgate-mcp:0.1.14` (public; exposes 10 MCP tools incl. documents/workflows)
+- deer-flow frontend wrapper image: `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.14` (public; gateway URL baked in at build time)
 - qm collaboration bridge validated (Python CLI, HARNESS=pi, real Ollama)
 - Client deployment bundle checked in at `deploy/client-bundle/` — fresh-clone install path verified
 - Knowledge graph: 935 nodes, 2220 edges, 49 communities
@@ -72,14 +72,18 @@ Both AIPC machines run the full stack identically. Each machine is independently
 
 ## GHCR images
 
-Pacgate runtime images are **public** (anonymous pull verified). The source repo remains private. All images are rebuilt and pushed to GHCR on every release tag by `.github/workflows/build-ghcr.yml`, so both AIPCs stay in sync.
+Pacgate runtime images are **public** (anonymous pull verified). The source repo remains private. All images are built and pushed to GHCR by `.github/workflows/build-ghcr.yml`, so both AIPCs stay in sync.
+
+**`ghcr.io/pacgate-ai/*` is the ONLY image namespace.** `ghcr.io/jzkk720/*` is the code master repo and publishes no images - tags there are stale and mostly 404. If you find a `jzkk720` image reference, it is an older document; use the `pacgate-ai` tag from the table below.
 
 | Image | Contents | Base |
 |-------|----------|------|
-| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | pacgate-api MCP bridge (10 tools incl. documents/workflows) | `python:3.12-slim` |
-| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
-| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
+| `ghcr.io/pacgate-ai/pacgate-api:0.1.14` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.14` | pacgate-api MCP bridge (10 tools incl. documents/workflows) | `python:3.12-slim` |
+| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.14` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.14` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
+
+Every image also carries `:latest`, kept in lockstep with the version tag.
 
 qm does not use a GHCR image. It runs via `qm up` from the checked-in `deploy/qm-pacgate/` directory.
 
