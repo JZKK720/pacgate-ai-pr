@@ -73,6 +73,43 @@ function Invoke-MutationSuite {
         $snapshots[$p] = [System.IO.File]::ReadAllBytes($p)
     }
 
+    # ── CRASH SAFETY ──────────────────────────────────────────────────────────
+    #
+    # A run killed mid-mutation (Ctrl-C, a backgrounded-and-killed terminal, a
+    # hard timeout) skips the finally block, so the guarded files are left
+    # MUTATED on disk. The next run then snapshots the CORRUPTED file as its
+    # "original" and faithfully restores it to that state - silently committing
+    # the mutation as if it were the real source.
+    #
+    # That is not hypothetical. It happened on 2026-09-17: a killed run left
+    # install.ps1 with its guard reverted to the exact defect it was written to
+    # fix, and the corrupted file became local commit e4dfa94 - a commit whose
+    # message described a fix whose code was absent.
+    #
+    # So: write the pristine bytes to disk BEFORE any mutation, and delete the
+    # backups only after a clean restore. If a marker is present at startup, the
+    # previous run died; refuse to run rather than trusting the tree.
+    $backupPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.git/mutation-guard-backup'
+    if (Test-Path -LiteralPath $backupPath) {
+        throw ("A previous mutation run did not finish and may have left files mutated. " +
+               "Restore from git (git checkout -- <files>) and delete '$backupPath' before re-running. " +
+               "Refusing to snapshot a possibly-corrupted tree.")
+    }
+    New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+    $manifest = @{}
+    $i = 0
+    foreach ($p in $snapshots.Keys) {
+        $i++
+        $dest = Join-Path $backupPath ("f$i.bin")
+        [System.IO.File]::WriteAllBytes($dest, $snapshots[$p])
+        $manifest[$p] = $dest
+    }
+    $manifest | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $backupPath 'manifest.json') -Encoding UTF8
+
+    function Clear-Backup {
+        if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     function Restore-All {
         foreach ($k in $snapshots.Keys) { [System.IO.File]::WriteAllBytes($k, $snapshots[$k]) }
     }
@@ -144,6 +181,9 @@ function Invoke-MutationSuite {
     }
     finally {
         Restore-All
+        # Only AFTER a verified restore. Leaving this behind is what makes the
+        # next run refuse instead of silently re-snapshotting a mutated tree.
+        Clear-Backup
         Write-Host ''
         Write-Host 'Files restored.' -ForegroundColor DarkGray
     }

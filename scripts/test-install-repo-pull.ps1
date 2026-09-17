@@ -8,9 +8,22 @@
 #   2. up to date      -> no-op, reports "already current"
 #   3. dirty tree      -> REFUSES, changes nothing, does not discard work
 #   4. diverged        -> REFUSES to merge, keeps the local commits
+#   5. -SkipRepoPull   -> leaves the repo alone
+#   6. untracked, unrelated -> PROCEEDS (was: silently skipped the whole refresh)
+#   7. untracked, colliding -> REFUSES and names the files, preserves them
+#   8. untracked, colliding, NON-ASCII name -> same, and proves core.quotepath
 #
-# Case 3 and 4 are the ones that matter: this runs on a client machine, and a
-# careless update would destroy someone's edits or their commits.
+# Case 3, 4, 7 and 8 are the ones that matter: this runs on a client machine, and
+# a careless update would destroy someone's edits or their commits.
+#
+# CASE 4 WAS VACUOUS UNTIL 2026-09-17. The fixture ran
+#     Git $c4.Clone @('commit','--quiet','-m','local work')
+# and the Git helper joined args with ' ', so git received '-m local work' as
+# '-m local' + pathspec 'work'. The commit FAILED ('pathspec work did not match'),
+# no local commit was ever made, and the three assertions below passed by
+# re-testing the dirty-tree path - divergence was never exercised. Fixed by
+# passing each argument as its own argv entry, and the fixture now ASSERTS that
+# the local commit exists, so this cannot silently become vacuous again.
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = 'C:\Users\cubecloud-io\github-pr\pacgate-ai-pr'
@@ -37,11 +50,23 @@ function Git {
     }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'git'
-    $psi.Arguments = ($GitArgs -join ' ')
+    # EACH ARGUMENT IS ITS OWN ARGV ENTRY.
+    #
+    # The first version did `$psi.Arguments = ($GitArgs -join ' ')`, which split
+    # any argument CONTAINING A SPACE. `-m 'local work'` became '-m local' plus a
+    # pathspec 'work', the commit failed, and CASE 4's fixture silently stopped
+    # creating the divergence it claimed to test. Adding the argument to the
+    # ArgumentList collection passes it as one entry, so spaces are preserved.
+    foreach ($a in $GitArgs) { $psi.ArgumentList.Add($a) }
     $psi.WorkingDirectory = $Dir
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
+    # Decode git output as UTF-8. Without this it uses the console codepage and
+    # non-ASCII paths (this repo has Chinese-named files) come back mangled, so
+    # any comparison against them fails invisibly.
+    $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $psi.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
     $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
     $p = [System.Diagnostics.Process]::Start($psi)
     $o = $p.StandardOutput.ReadToEnd() + $p.StandardError.ReadToEnd()
@@ -156,6 +181,10 @@ try {
     'LOCAL COMMIT' | Set-Content "$($c4.Clone)\LOCAL.txt"
     $null = Git $c4.Clone @('add','-A')
     $null = Git $c4.Clone @('commit','--quiet','-m','local work')
+    # ASSERT THE FIXTURE IS REAL. Without this the case can go vacuous again and
+    # still report PASS - which is exactly what happened before.
+    $c4log = (Git $c4.Clone @('rev-list','--count','HEAD')).Trim()
+    Check 'fixture: a local commit was actually created' ([int]$c4log -ge 2) "HEAD has $c4log commit(s)"
     $localHeadBefore = (Git $c4.Clone @('rev-parse','HEAD')).Trim()
     Publish-Change $c4.Upstream 'v2'
     $out4 = Run-Installer $c4.Clone
@@ -174,7 +203,83 @@ try {
     Check 'repo NOT advanced' ($ver5.Trim() -eq 'v1') "VERSION=$($ver5.Trim())"
     Check 'no repo-refresh message' (-not ($out5 -match 'Refreshing repo'))
     Write-Host ''
+    # ── CASE 6: untracked but UNRELATED -> proceed ─────────────────
+    #
+    # The defect this guards: the old guard used a bare 'git status --porcelain',
+    # so ANY untracked file made it print 'skipping the repo update' and move
+    # only images. Workflows, patches and nginx.conf silently stayed old while
+    # the image tags advanced - a lost update with no error. Found on this dev
+    # box, which had 2 untracked files and was skipping the refresh.
+    Write-Host 'CASE 6: untracked scratch files -> refresh PROCEEDS (regression guard)'
+    $c6 = New-Clone 'untracked-ok'
+    Publish-Change $c6.Upstream 'v2'
+    'scratch notes' | Set-Content "$($c6.Clone)\scratch-notes.txt"
+    New-Item -ItemType Directory "$($c6.Clone)\scratchdir" -Force | Out-Null
+    'more' | Set-Content "$($c6.Clone)\scratchdir\note.txt"
+    # A Chinese-named untracked file too: non-ASCII paths are C-quoted by git
+    # unless core.quotepath=false, so this is the case that would break a
+    # name-comparison written without it.
+    'non-ascii' | Set-Content "$($c6.Clone)\法律素材测试.md"
+    $out6 = Run-Installer $c6.Clone
+    $ver6 = Get-Content "$($c6.Clone)\VERSION.txt" -Raw
+    Check 'repo WAS refreshed despite untracked files' ($ver6.Trim() -eq 'v2') "VERSION=$($ver6.Trim())"
+    Check 'reported the fast-forward' ($out6 -match 'Repo updated')
+    Check 'did NOT skip the repo update' (-not ($out6 -match 'skipping the repo update'))
+    Check 'announced the untracked files were kept' ($out6 -match 'untracked file\(s\) present')
+    Check 'scratch file PRESERVED' (Test-Path "$($c6.Clone)\scratch-notes.txt")
+    Check 'scratch dir PRESERVED' (Test-Path "$($c6.Clone)\scratchdir\note.txt")
+    Check 'non-ASCII untracked file PRESERVED' (Test-Path "$($c6.Clone)\法律素材测试.md")
+    Write-Host ''
 
+    # ── CASE 7: untracked COLLISION -> refuse, name, preserve ──────
+    #
+    # Only a genuine collision blocks: the incoming commit adds a path that is
+    # untracked here. Git would refuse this itself, but mid-pull and with a raw
+    # error; pre-checking gives an actionable message and skips cleanly.
+    Write-Host 'CASE 7: untracked file the update would overwrite -> REFUSES, preserves it'
+    $c7 = New-Clone 'collide'
+    # Upstream adds NEWFILE.txt; the clone already has an untracked NEWFILE.txt.
+    'upstream version' | Set-Content "$($c7.Upstream)\NEWFILE.txt"
+    $null = Git $c7.Upstream @('add','-A')
+    $null = Git $c7.Upstream @('commit','--quiet','-m','add newfile')
+    'MY UNTRACKED WORK' | Set-Content "$($c7.Clone)\NEWFILE.txt"
+    $out7 = Run-Installer $c7.Clone
+    $kept = Get-Content "$($c7.Clone)\NEWFILE.txt" -Raw
+    Check 'untracked work PRESERVED' ($kept -match 'MY UNTRACKED WORK') "got '$($kept.Trim())'"
+    # INSTALLER-SPECIFIC wording. An earlier version asserted 'would be
+    # overwritten', which ALSO matches git's own abort text ("would be
+    # overwritten by merge") - so mutating the installer's message away was
+    # invisible and the mutation went undetected. Assert on a string only the
+    # installer emits.
+    Check 'refused with the installer''s own message' ($out7 -match 'Cannot refresh the repo')
+    Check 'named the colliding file' ($out7 -match 'NEWFILE.txt')
+    Check 'did NOT fast-forward' (-not ($out7 -match 'Repo updated'))
+    Check 'told the operator what to do' ($out7 -match 'Move, rename, or commit')
+    Write-Host ''
+
+    # ── CASE 8: NON-ASCII untracked collision -> still detected ────
+    #
+    # core.quotepath is load-bearing here. Without `-c core.quotepath=false` git
+    # C-quotes the name ("\346\263\225...") and the comparison against the real
+    # path SILENTLY fails, so a Chinese-named collision would slip past the
+    # pre-check and reach git's own abort. This repo contains Chinese-named
+    # files, so it is a real case, not a curiosity.
+    #
+    # A SEPARATE case with ONLY a non-ASCII collision, because an ASCII collision
+    # alongside it would still trigger the block and mask the quotepath bug.
+    Write-Host 'CASE 8: non-ASCII untracked collision -> REFUSES, preserves it'
+    $c8 = New-Clone 'collide-nonascii'
+    $cn = '法律素材脱敏范围.md'
+    "upstream $cn" | Set-Content "$($c8.Upstream)\$cn"
+    $null = Git $c8.Upstream @('add','-A')
+    $null = Git $c8.Upstream @('commit','--quiet','-m','add non-ascii file')
+    'MY NON-ASCII LOCAL WORK' | Set-Content "$($c8.Clone)\$cn"
+    $out8 = Run-Installer $c8.Clone
+    $keptNonAscii = Get-Content "$($c8.Clone)\$cn" -Raw
+    Check 'non-ASCII untracked work PRESERVED' ($keptNonAscii -match 'MY NON-ASCII LOCAL WORK') "got '$($keptNonAscii.Trim())'"
+    Check 'non-ASCII collision WAS detected' ($out8 -match 'Cannot refresh the repo')
+    Check 'did NOT fast-forward' (-not ($out8 -match 'Repo updated'))
+    Write-Host ''
     Write-Host "RESULT: $script:pass passed, $script:fail failed" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })
 }
 finally {
@@ -182,3 +287,9 @@ finally {
 }
 
 if ($script:fail -gt 0) { exit 1 }
+# EXPLICIT exit 0. Without it the script's exit code is inherited from
+# $LASTEXITCODE, i.e. the last NATIVE command that ran - and CASE 7 deliberately
+# makes `git pull` fail (the installer refuses the collision on purpose). So a
+# fully passing suite reported exit=1 and run-all-checks marked the gate FAILED.
+# Found by reading the exit code instead of the "26 passed, 0 failed" line.
+exit 0

@@ -159,5 +159,68 @@ $coverageMutations = @(
 $ok2 = Invoke-MutationSuite -Mutations $coverageMutations -SuiteScript $coverage `
     -GuardPaths @($install)
 
-if (-not $ok -or -not $ok2) { exit 1 }
+Write-Output ''
+Write-Host '=== Mutation test: untracked-file guard ===' -ForegroundColor Cyan
+Write-Output ''
+
+# The untracked-file guard is the one that can LIE most easily, because both
+# failure directions look like success:
+#
+#   - reverting to the old bare `git status --porcelain` makes a scratch file
+#     skip the whole repo refresh. The suite would still pass if its CASE 6 did
+#     not exist, and on a real machine the ONLY symptom is "images updated, repo
+#     silently stayed old".
+#   - deleting the collision check lets the pull proceed into git's own abort.
+#
+# So both directions are mutated here, and the suite must NOTICE BY NAME.
+$repoPull = './scripts/test-install-repo-pull.ps1'
+
+$untrackedMutations = @(
+    # REVERT TO THE DEFECT. Dropping --untracked-files=no restores the old
+    # behaviour where any untracked file blocks the refresh.
+    @{ N = 'the guard counts untracked files again (the original defect)'
+       File = $install
+       Suite = $repoPull
+       From = 'git status --porcelain --untracked-files=no'
+       To   = 'git status --porcelain'
+       Want = 'did NOT skip the repo update' }
+
+    # The collision pre-check is what turns git's raw abort into an actionable
+    # message. Remove it and the refusal becomes an unexplained git error.
+    #
+    # Asserts INSTALLER-SPECIFIC wording ('Cannot refresh the repo'). An earlier
+    # version asserted 'would be overwritten', which also matches GIT's own abort
+    # text ("would be overwritten by merge"), so renaming the installer's message
+    # was invisible and this mutation went undetected - a mutation that silently
+    # does nothing is indistinguishable from a defect nothing catches.
+    # Asserts on the ASSERTION NAME, not the message text. `Want` is matched
+    # against the suite's '[FAIL] <name>' lines, so a substring of the installer's
+    # MESSAGE never matches anything - that mistake made this report as uncaught
+    # while the two failures above it showed it plainly WAS caught.
+    @{ N = 'the untracked collision pre-check is removed'
+       File = $install
+       Suite = $repoPull
+       From = 'Cannot refresh the repo:'
+       To   = 'Refreshing anyway:'
+       Want = 'refused with the installer' }
+
+    # Quotepath: without it git C-quotes non-ASCII paths and the comparison
+    # silently fails, so a Chinese-named collision would NOT be detected and the
+    # pull would reach git's own abort instead.
+    #
+    # Targets the NON-ASCII case specifically (CASE 8). If an ASCII collision
+    # also existed in that fixture the block would still fire and mask this bug,
+    # which is why the two cases are kept apart.
+    @{ N = 'the collision check loses core.quotepath=false'
+       File = $install
+       Suite = $repoPull
+       From = "git -c core.quotepath=false ls-files --others --exclude-standard"
+       To   = "git ls-files --others --exclude-standard"
+       Want = 'non-ASCII collision WAS detected' }
+)
+
+$ok3 = Invoke-MutationSuite -Mutations $untrackedMutations -SuiteScript $repoPull `
+    -GuardPaths @($install)
+
+if (-not $ok -or -not $ok2 -or -not $ok3) { exit 1 }
 exit 0
