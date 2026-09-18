@@ -8,10 +8,11 @@
 //! The vault never leaves pacgate-api. Only this module reads the mapping
 //! column; restore is an API endpoint, never an MCP tool (design 3.5).
 
+use axum::extract::{Extension, Path, State};
 use pacgate_core::{DataLevel, DocumentId, MatterId, TenantId, UserId};
 use pacgate_redact::detect;
 use pacgate_redact::MappingVersion;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::error::ApiError;
@@ -278,6 +279,214 @@ pub async fn run_job(
     })
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SanitizeRequest {
+    /// T1-T4 code. T4 forces require_human_review (policy.rs) regardless.
+    pub data_level: String,
+}
+
+pub async fn sanitize_document_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
+    Path(id): Path<String>,
+    axum::Json(req): axum::Json<SanitizeRequest>,
+) -> Result<axum::Json<JobOutcome>, ApiError> {
+    let (tenant_id, user_id) = crate::documents::claims_to_ids(&claims)?;
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+    let data_level = DataLevel::from_code(&req.data_level)
+        .ok_or_else(|| ApiError::bad_request("data_level must be T1|T2|T3|T4"))?;
+
+    let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+    let outcome =
+        run_job(&state, &tenant_id, &user_id, &doc.matter_id, &document_id, data_level).await?;
+    Ok(axum::Json(outcome))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Restore - local-only, role-gated, job-scoped, audit-logged (locked decision 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Role gate for restore (locked decision 2). Only admin/partner may
+/// re-hydrate placeholders; everything else is refused before any vault read.
+fn role_may_restore(role: &str) -> bool {
+    matches!(role, "admin" | "partner")
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreRequest {
+    pub job_id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestoreResponse {
+    pub restored: String,
+    pub job_id: String,
+}
+
+/// Local-only restore, bound to the job's mapping version (design stage 6).
+/// Refusals are explicit: unknown role, unknown job, wrong matter, version
+/// mismatch, or any unknown placeholder - the last never resolves to a guess.
+pub async fn restore_document_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
+    Path(id): Path<String>,
+    axum::Json(req): axum::Json<RestoreRequest>,
+) -> Result<axum::Json<RestoreResponse>, ApiError> {
+    let (tenant_id, user_id) = crate::documents::claims_to_ids(&claims)?;
+    if !role_may_restore(&claims.role) {
+        return Err(ApiError::unauthorized(
+            "restore requires the admin or partner role",
+        ));
+    }
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+    let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    let job_uuid = req
+        .job_id
+        .parse::<uuid::Uuid>()
+        .map_err(|e| ApiError::bad_request(format!("invalid job_id: {e}")))?;
+
+    // The job must belong to this tenant.
+    let job = sqlx::query(
+        "SELECT mapping, mapping_version FROM sanitizer_jobs \
+         WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+    )
+    .bind(job_uuid)
+    .bind(tenant_id.0)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .ok_or_else(|| ApiError::not_found("job not found"))?;
+
+    // The job row must also cover this document's matter (not just any job).
+    let ledger = sqlx::query(
+        "SELECT matter_id FROM redaction_ledger_rows \
+         WHERE job_id = $1 AND document_id = $2 LIMIT 1",
+    )
+    .bind(job_uuid)
+    .bind(document_id.0)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+    if ledger.is_none() {
+        return Err(ApiError::not_found(
+            "job has no ledger row for this document; refusing to guess",
+        ));
+    }
+    let ledger_matter: uuid::Uuid = ledger.expect("checked above").get("matter_id");
+    if ledger_matter != doc.matter_id.0 {
+        return Err(ApiError::unauthorized(
+            "job belongs to a different matter; restore is matter-scoped",
+        ));
+    }
+
+    let mapping_json: serde_json::Value = job.get("mapping");
+    let version = job.get::<i32, _>("mapping_version");
+    let mapping = pacgate_redact::Mapping::deserialize(
+        &mapping_json,
+        pacgate_redact::MappingVersion(version as u32),
+    )
+    .map_err(|e| ApiError::bad_request(format!("vault unreadable: {e}")))?;
+
+    let restored = mapping
+        .restore(&req.text, pacgate_redact::MappingVersion(version as u32))
+        .map_err(|e| ApiError::bad_request(format!("restore refused: {e}")))?;
+
+    // Audit the restore itself (locked decision 2: every restore is logged).
+    sqlx::query(
+        "INSERT INTO audit_log (tenant_id, user_id, action, resource, scope, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(tenant_id.0)
+    .bind(user_id.0)
+    .bind(AUDIT_RESTORE)
+    .bind(format!("document:{}", document_id.0))
+    .bind(format!("matter:{}", doc.matter_id.0))
+    .bind(serde_json::json!({
+        "job_id": req.job_id,
+        "restored_bytes": restored.len()
+    }))
+    .execute(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("audit write failed: {e}")))?;
+
+    Ok(axum::Json(RestoreResponse {
+        restored,
+        job_id: req.job_id,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status - the review panel feed (read-only; no vault contents)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct SanitizeStatusResponse {
+    pub document_state: String,
+    pub chunk_states: Vec<String>,
+    pub latest_job: Option<String>,
+}
+
+pub async fn sanitize_status_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<SanitizeStatusResponse>, ApiError> {
+    let (tenant_id, _) = crate::documents::claims_to_ids(&claims)?;
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+    let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    let doc_state: String =
+        sqlx::query("SELECT sanitization_state FROM documents WHERE id = $1 LIMIT 1")
+            .bind(document_id.0)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .get("sanitization_state");
+
+    let chunk_rows = sqlx::query(
+        "SELECT DISTINCT sanitization_state FROM kb_chunks \
+         WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3",
+    )
+    .bind(tenant_id.0)
+    .bind(doc.matter_id.0)
+    .bind(document_id.0)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+    let chunk_states: Vec<String> = chunk_rows
+        .iter()
+        .map(|r| r.get::<String, _>("sanitization_state"))
+        .collect();
+
+    let latest_job: Option<String> = sqlx::query(
+        "SELECT job_id FROM redaction_ledger_rows \
+         WHERE document_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(document_id.0)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map(|r| r.get::<uuid::Uuid, _>("job_id").to_string());
+
+    Ok(axum::Json(SanitizeStatusResponse {
+        document_state: doc_state,
+        chunk_states,
+        latest_job,
+    }))
+}
+
 #[cfg(test)]
 mod gate_tests {
     use super::*;
@@ -301,5 +510,13 @@ mod gate_tests {
     fn the_audit_action_names_are_stable() {
         assert_eq!(AUDIT_SANITIZE, "document.sanitize");
         assert_eq!(AUDIT_RESTORE, "document.restore");
+    }
+
+    #[test]
+    fn restore_is_role_gated_to_admin_and_partner() {
+        assert!(role_may_restore("admin"));
+        assert!(role_may_restore("partner"));
+        assert!(!role_may_restore("attorney"));
+        assert!(!role_may_restore("paralegal"));
     }
 }

@@ -48,6 +48,18 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/documents/:id/edit", put(documents::edit_document))
         .route("/api/documents/:id/extract", post(documents::extract_document_handler))
+        .route(
+            "/api/documents/:id/sanitize",
+            post(sanitize::sanitize_document_handler),
+        )
+        .route(
+            "/api/documents/:id/restore",
+            post(sanitize::restore_document_handler),
+        )
+        .route(
+            "/api/documents/:id/sanitize-status",
+            get(sanitize::sanitize_status_handler),
+        )
         .route("/api/documents/:id/accept", post(documents::accept_changes))
         // Matters
         .route("/api/matters", post(matters::create_matter))

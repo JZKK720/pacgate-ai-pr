@@ -108,6 +108,7 @@ mod tests {
             default_tenant: "test-firm".to_string(),
             workflows_dir: None,
             ocr_service_url: None,
+            ner_model_dir: None,
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -1085,6 +1086,7 @@ mod tests {
             default_tenant: "test-firm".to_string(),
             workflows_dir: None,
             ocr_service_url: None,
+            ner_model_dir: None,
         });
 
         // Build minimal state (stubs for everything)

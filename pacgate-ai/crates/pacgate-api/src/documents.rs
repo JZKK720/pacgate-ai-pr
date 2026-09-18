@@ -11,7 +11,7 @@ use sqlx::Row;
 
 use crate::{error::ApiError, state::AppState};
 
-fn claims_to_ids(claims: &Claims) -> Result<(TenantId, UserId), ApiError> {
+pub(crate) fn claims_to_ids(claims: &Claims) -> Result<(TenantId, UserId), ApiError> {
     let tenant_id: TenantId = claims
         .tenant_id
         .parse()
@@ -44,7 +44,7 @@ fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
     }
 }
 
-async fn fetch_document_for_tenant(
+pub(crate) async fn fetch_document_for_tenant(
     state: &AppState,
     tenant_id: &TenantId,
     doc_id: &DocumentId,
