@@ -46,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         max_upload_mb: 50,
         jwt_secret,
         default_tenant,
+        ocr_service_url: std::env::var("OCR_SERVICE_URL").ok().filter(|s| !s.is_empty()),
         workflows_dir,
     });
 
@@ -174,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
             ollama_url,
             embedding_model
         );
-        Some(Arc::new(pacgate_rag::RagStore::new(pool.clone(), embed_svc)))
+        Some(Arc::new(pacgate_rag::RagStore::new(pool.clone(), embed_svc.clone())))
     };
 
     let dispatcher = {
@@ -223,6 +224,7 @@ async fn main() -> anyhow::Result<()> {
         auth,
         search,
         rag,
+        embedding: embed_svc,
         db: pool,
     };
 

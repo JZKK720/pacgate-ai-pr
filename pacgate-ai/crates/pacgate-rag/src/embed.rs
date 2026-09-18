@@ -9,6 +9,7 @@ use tracing::instrument;
 
 use crate::RagError;
 
+#[derive(Clone)]
 pub struct EmbeddingService {
     client: Client,
     base_url: String,

@@ -23,6 +23,8 @@ pub struct AppState {
     /// Optional RAG store — only available when Postgres is connected.
     /// When None, the `/api/kb/search` endpoint returns 503.
     pub rag: Option<Arc<RagStore>>,
+    /// Embedding service for ingesting extracted OCR text as pending chunks.
+    pub embedding: pacgate_rag::EmbeddingService,
     pub db: sqlx::PgPool,
 }
 
@@ -66,6 +68,9 @@ pub struct AppConfig {
     /// Directory containing YAML workflow templates (optional).
     /// When set, the API merges built-in + YAML workflows.
     pub workflows_dir: Option<std::path::PathBuf>,
+    /// Base URL of ocr-service, e.g. http://ocr-service:8100. None disables
+    /// extraction (fail closed: extract_document errors rather than guessing).
+    pub ocr_service_url: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -76,6 +81,7 @@ impl Default for AppConfig {
             jwt_secret: "change-me-in-production".to_string(),
             default_tenant: "default-firm".to_string(),
             workflows_dir: None,
+            ocr_service_url: None,
         }
     }
 }

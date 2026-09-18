@@ -2,6 +2,7 @@
 
 mod auth;
 mod chat;
+mod extract;
 mod documents;
 mod error;
 mod matters;

@@ -42,6 +42,7 @@ chrono.workspace = true
 dotenvy.workspace = true
 config.workspace = true
 bytes.workspace = true
+reqwest.workspace        = true
 
 [dev-dependencies]
 # tower with util feature for ServiceExt::oneshot in integration tests
