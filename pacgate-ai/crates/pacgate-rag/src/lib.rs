@@ -414,6 +414,14 @@ impl RagStore {
                 .await
                 .map_err(|e| RagError::Migration(e.to_string()))?;
 
+            // Migration 006 adds document_spans. Without it, span persistence
+            // fails and v2 pixel redaction has no coordinates to work from.
+            let spans_sql = include_str!("../../../migrations/006_document_spans.sql");
+            sqlx::raw_sql(spans_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
             Ok::<(), RagError>(())
         }
         .await;
@@ -427,7 +435,7 @@ impl RagStore {
         result?;
 
         tracing::info!(
-            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state)"
+            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans)"
         );
         Ok(())
     }
