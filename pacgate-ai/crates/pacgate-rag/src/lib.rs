@@ -14,6 +14,7 @@ use pacgate_core::{DataLevel, Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 
+pub mod identity;
 pub mod embed;
 pub mod ingest;
 
@@ -449,6 +450,9 @@ pub enum RagError {
 
     #[error("chunking error: {0}")]
     Chunking(String),
+
+    #[error("scope mismatch: {0}")]
+    Scope(String),
 }
 
 impl From<sqlx::Error> for RagError {
