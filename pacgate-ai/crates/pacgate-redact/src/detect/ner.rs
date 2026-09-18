@@ -176,11 +176,15 @@ impl NerDetector {
         // encoder lives under `bert.*`. BertModel::load strips that prefix
         // itself, so the head must be read from the top-level VarBuilder.
         // Shapes verified from the checkpoint header: [9,768] weight, [9] bias.
+        // torch nn.Linear computes x @ W.T, so transpose to [768,9] here —
+        // otherwise the matmul in detect() hits a shape mismatch.
         let head_weight = vb
             .get((9, 768), "classifier.weight")
             .map_err(|e| {
                 RedactError::Internal(format!("checkpoint lacks classifier.weight: {e}"))
-            })?;
+            })?
+            .t()
+            .map_err(|e| RedactError::Internal(format!("head weight transpose failed: {e}")))?;
         let head_bias = vb
             .get(9, "classifier.bias")
             .map_err(|e| {
@@ -209,9 +213,12 @@ impl Detector for NerDetector {
         }
         // BERT context limit; long documents are processed in windows.
         const MAX_TOKENS: usize = 500; // 512 slots minus [CLS]/[SEP]
+        // add_special_tokens=true is REQUIRED: BERT expects [CLS] text [SEP].
+        // Without it the hidden states shift by one position and every
+        // prediction degrades (locations mis-span, person names never fire).
         let encoding = self
             .tokenizer
-            .encode_char_offsets(text, false)
+            .encode_char_offsets(text, true)
             .map_err(|e| RedactError::Internal(format!("tokenization failed: {e}")))?;
         let ids: Vec<u32> = encoding.get_ids().to_vec();
         if ids.len() > MAX_TOKENS + 2 {
@@ -247,13 +254,24 @@ impl Detector for NerDetector {
             .map_err(|e| RedactError::Internal(format!("BERT forward failed: {e}")))?;
 
         // Token-classification head: sequence_output [1, seq, 768] -> logits
-        // [1, seq, num_labels] via classifier.weight/bias.
-        let logits = sequence_output
+        // [1, seq, num_labels] via classifier.weight/bias. candle matmul
+        // requires matching ranks, so flatten to [seq, 768], apply the linear
+        // head, and reshape back to [1, seq, num_labels].
+        let (batch, seq, hidden) = sequence_output
+            .dims3()
+            .map_err(|e| RedactError::Internal(format!("unexpected forward output shape: {e}")))?;
+        let flat = sequence_output
+            .reshape((batch * seq, hidden))
+            .map_err(|e| RedactError::Internal(format!("head flatten failed: {e}")))?;
+        let logits = flat
             .matmul(&self.head_weight)
             .map_err(|e| RedactError::Internal(format!("head matmul failed: {e}")))?;
         let logits = logits
             .broadcast_add(&self.head_bias)
             .map_err(|e| RedactError::Internal(format!("head bias failed: {e}")))?;
+        let logits = logits
+            .reshape((batch, seq, 9))
+            .map_err(|e| RedactError::Internal(format!("head reshape failed: {e}")))?;
         let argmax = logits
             .argmax(candle_core::D::Minus1)
             .map_err(|e| RedactError::Internal(format!("argmax failed: {e}")))?;
@@ -265,6 +283,30 @@ impl Detector for NerDetector {
 
         // BIO decode: tokens (skip specials), byte offsets from the encoding.
         let offsets = encoding.get_offsets();
+        // The tokenizer reports CHAR offsets (verified via NER_DEBUG: CJK text
+        // yields (i, i+1) per token), but Match offsets are BYTE offsets.
+        // Convert with a char-index -> byte-index table. For pure-ASCII text
+        // the tables are identical and this is a no-op.
+        let char_to_byte: Vec<usize> = {
+            let mut t = Vec::with_capacity(text.chars().count() + 1);
+            let mut b = 0usize;
+            t.push(0);
+            for ch in text.chars() {
+                b += ch.len_utf8();
+                t.push(b);
+            }
+            t
+        };
+        let to_byte = |idx: usize| -> usize {
+            char_to_byte
+                .get(idx)
+                .copied()
+                .unwrap_or(char_to_byte[char_to_byte.len() - 1])
+        };
+        let offsets: Vec<(usize, usize)> = offsets
+            .iter()
+            .map(|(s, e)| (to_byte(*s), to_byte(*e)))
+            .collect();
         let tokens: Vec<String> = encoding.get_tokens().to_vec();
         let mut matches: Vec<Match> = Vec::new();
         let mut cur: Option<(EntityType, usize)> = None; // (entity, start byte)
@@ -293,14 +335,15 @@ impl Detector for NerDetector {
         let mut open_end: usize = 0;
         for (i, &pred) in preds.iter().enumerate() {
             let Some(mapped) = self.labels.slots.get(pred as usize).copied().flatten() else {
-                flush(&mut cur, offsets[i].1, text, &mut matches);
+                // O prediction: the open entity ends where this token begins.
+                flush(&mut cur, offsets[i].0, text, &mut matches);
                 continue;
             };
             let (is_begin, entity) = mapped;
             let token = tokens.get(i).map(|s| s.as_str()).unwrap_or("");
             // Skip special tokens entirely.
             if token == "[CLS]" || token == "[SEP]" || token == "[PAD]" {
-                flush(&mut cur, offsets[i].1, text, &mut matches);
+                flush(&mut cur, offsets[i].0, text, &mut matches);
                 continue;
             }
             match (is_begin, cur) {
