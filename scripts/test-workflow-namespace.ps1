@@ -134,6 +134,33 @@ Assert-True ($confirmBlock.Success -and $confirmBlock.Value -match 'exit 1') 'a 
 $nsBlock = [regex]::Match($raw, 'Resolve image namespace[\s\S]{0,3000}')
 Assert-True ($nsBlock.Success -and [regex]::Match($nsBlock.Value, 'ns_lc" != "\$owner_lc').Success) `
     'WARNS when the token owner differs from the pinned namespace'
+
+# --- the frontend-overrides step must survive ---------------------------------
+#
+# This is a CLIENT-VISIBLE BRANDING DEFECT, not a nicety. The workflow clones
+# upstream deer-flow and builds it directly; without this step the published
+# frontend image silently loses the PacGate customizations (branded UI, zh-CN
+# strings, thread hooks). It shipped broken that way in 0.1.13 AND 0.1.14 and
+# nothing failed - the image builds, runs and serves, just unbranded.
+#
+# It exists only on the FORK (d22ef48) and had to be hand forward-ported to this
+# repo, so it is exactly the kind of step a later edit drops without noticing.
+# Verified by measurement, not inspection: published 0.1.14 had 0
+# pacgate-marked files in .next vs 9 in the locally-built image.
+$frontendBlock = [regex]::Match($raw, 'Clone deer-flow frontend source[\s\S]{0,2500}')
+Assert-True ($frontendBlock.Success -and `
+             [regex]::Match($frontendBlock.Value, 'Apply PacGate frontend source overrides').Success) `
+    'the frontend build applies the PacGate source overrides (else the image ships unbranded)'
+Assert-True ($frontendBlock.Success -and `
+             [regex]::Match($frontendBlock.Value, 'cp -rv deploy/frontend-patches/files/\.').Success) `
+    'the overrides are actually COPIED into the cloned frontend (the step, not just its name)'
+# Ordering matters: copying before the clone, or after the build, silently does
+# nothing while the step name still reads correctly in a diff.
+$cloneIdx = $raw.IndexOf('Clone deer-flow frontend source')
+$applyIdx = $raw.IndexOf('Apply PacGate frontend source overrides')
+$buildIdx = $raw.IndexOf('Build & push deer-flow-frontend-pacgate')
+Assert-True ($cloneIdx -gt 0 -and $applyIdx -gt $cloneIdx -and $buildIdx -gt $applyIdx) `
+    'the overrides are applied AFTER the clone and BEFORE the frontend build'
 # Assert the PROPERTY (both sides are lowercased before comparing), not the
 # exact `tr` invocation. An earlier version of this check spelled out the tr
 # arguments and failed on a correct workflow, because the quoting inside
