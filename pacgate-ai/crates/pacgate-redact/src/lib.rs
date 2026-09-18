@@ -10,6 +10,8 @@ pub mod detect;
 pub mod entity;
 pub mod placeholder;
 pub mod mapping;
+pub mod replace;
+pub use replace::{AppliedRedaction, Redaction, Redactor};
 pub use mapping::{JobId, Mapping, MappingVersion};
 pub use placeholder::PlaceholderAllocator;
 pub use entity::{EntityType, PlaceholderPolicy, Tier};
