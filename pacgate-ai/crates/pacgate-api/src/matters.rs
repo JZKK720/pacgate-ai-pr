@@ -48,6 +48,47 @@ fn default_matter_memory() -> serde_json::Value {
     })
 }
 
+/// Read the `revision` counter out of a matter-memory object.
+///
+/// Absent, negative or non-numeric all read as 0. That is the fail-closed
+/// choice for a *missing* value, and it matches a brand-new matter whose file
+/// has never been written.
+fn memory_revision(memory: &serde_json::Value) -> u64 {
+    memory
+        .get("revision")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+/// Enforce optimistic concurrency on a memory write.
+///
+/// `expected` is the revision the caller believes it is updating, or `None`
+/// for an unconditional write.
+///
+/// Two deliberate decisions, both recorded because they are judgement calls
+/// rather than derivable:
+///
+/// 1. `None` is ALLOWED. Requiring `If-Match` would break the existing
+///    deer-flow adapter, which does not send one. The fix for the silent-loss
+///    defect must not itself break a working integration, so the stricter
+///    behaviour is opt-in per caller. Task 4 makes the adapter opt in.
+/// 2. A claim that matches neither the current revision nor the past is a
+///    conflict, not a fast-forward. A caller claiming revision 99 against
+///    revision 5 is confused, and guessing which of the two is right is how
+///    data gets lost.
+fn check_revision(current: &serde_json::Value, expected: Option<u64>) -> Result<(), ApiError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let actual = memory_revision(current);
+    if expected == actual {
+        return Ok(());
+    }
+    Err(ApiError::conflict(format!(
+        "matter memory revision mismatch: file is at {}, caller expected {}",
+        actual, expected
+    )))
+}
 pub async fn create_matter(
     State(state):      State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -223,4 +264,57 @@ pub async fn list_matter_documents(
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Json(docs))
+}
+
+#[cfg(test)]
+mod memory_concurrency_tests {
+    use super::*;
+
+    #[test]
+    fn revision_defaults_to_zero_when_absent_or_unusable() {
+        assert_eq!(memory_revision(&serde_json::json!({})), 0);
+        assert_eq!(memory_revision(&serde_json::json!({"revision": 7})), 7);
+        assert_eq!(memory_revision(&serde_json::json!({"revision": "nope"})), 0);
+        assert_eq!(memory_revision(&serde_json::json!({"revision": -3})), 0);
+    }
+
+    #[test]
+    fn an_unconditional_write_is_allowed() {
+        // Backwards compatibility: an existing caller that sends no If-Match
+        // must keep working. Deliberate, not an oversight - see the plan.
+        let current = serde_json::json!({"revision": 5});
+        assert!(check_revision(&current, None).is_ok());
+    }
+
+    #[test]
+    fn a_matching_revision_is_allowed() {
+        let current = serde_json::json!({"revision": 5});
+        assert!(check_revision(&current, Some(5)).is_ok());
+    }
+
+    #[test]
+    fn a_stale_revision_is_a_conflict() {
+        let current = serde_json::json!({"revision": 5});
+        let err = check_revision(&current, Some(4)).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn a_future_revision_is_also_a_conflict() {
+        // A caller claiming a revision that does not exist is confused, not
+        // ahead. Treating it as a conflict is the fail-closed choice.
+        let current = serde_json::json!({"revision": 5});
+        assert_eq!(
+            check_revision(&current, Some(99)).unwrap_err().status,
+            axum::http::StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn a_new_matter_with_no_file_conflicts_only_on_a_non_zero_claim() {
+        // No file means revision 0. If-Match: 0 is correct; anything else is stale.
+        let current = default_matter_memory();
+        assert!(check_revision(&current, Some(0)).is_ok());
+        assert!(check_revision(&current, Some(1)).is_err());
+    }
 }
