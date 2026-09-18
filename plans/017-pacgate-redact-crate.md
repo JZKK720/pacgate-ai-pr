@@ -30,6 +30,29 @@ Copied verbatim from the spec and repo conventions. Every task's requirements im
 - **No credentials:** no secret, token, password or key may appear in source, test fixtures, or commit messages.
 ---
 
+## Environment note (verified 2026-09-18, before running any step)
+
+**`cargo` is installed but is NOT on PATH on this machine.** Every `Run:` line
+below is written as `cargo test ...` for readability. Run it as:
+
+```
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p pacgate-redact
+```
+
+Verified working: `cargo 1.94.1`, the workspace resolves 16 members, and
+`cargo check -p pacgate-tenant` succeeds in ~17s. So this plan IS locally
+verifiable - do not defer it to CI.
+
+Two other environment facts that affect execution:
+
+- **`pytest` is not installed** in `.venv` (only `python` 3.12.10 is). This plan
+  is pure Rust so it does not matter here; plan 018 has a Python step and uses
+  `unittest` instead.
+- **Run cargo from `pacgate-ai/`**, not the repo root. The workspace manifest is
+  `pacgate-ai/Cargo.toml`; running from the root finds no workspace.
+
+---
+
 ### Task 1: Crate scaffold, error type and core span types
 
 **Files:**
