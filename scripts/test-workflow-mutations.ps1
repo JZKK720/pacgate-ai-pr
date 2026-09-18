@@ -105,10 +105,19 @@ $mutations = @(
     # original name for this mutation referenced the mirror namespace; the
     # property it actually tests is namespace CONSISTENCY between the workflow
     # and the compose pins, which is what a wrong pin breaks.
+    #
+    # DIRECTION MATTERS, and it had to be inverted when the authority moved.
+    # This mutation rewrites a CORRECT pin INTO a non-publishing namespace, so
+    # the anchor must name the CURRENT correct value (jzkk720). It previously
+    # anchored on `ghcr.io/pacgate-ai/pacgate-api` - which after the repin no
+    # longer exists in compose, so the mutation could not APPLY. A mutation that
+    # cannot apply is indistinguishable from a defect that cannot be detected:
+    # it would have reported "FAIL: mutation applied" while the consistency check
+    # it names went untested.
     @{ N = 'a compose pin is rewritten to a non-publishing namespace'
        File = $compose
-       From = 'ghcr.io/pacgate-ai/pacgate-api'
-       To   = 'ghcr.io/jzkk720/pacgate-api'
+       From = 'ghcr.io/jzkk720/pacgate-api'
+       To   = 'ghcr.io/pacgate-ai/pacgate-api'
        Want = 'all 8 pins (4 images x 2 compose files) use the workflow namespace' }
 )
 
