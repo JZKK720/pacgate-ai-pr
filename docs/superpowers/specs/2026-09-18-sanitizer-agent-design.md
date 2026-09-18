@@ -224,6 +224,65 @@ action against the pacgate-api vault. It is not exposed as an MCP tool to any
 deer-flow agent, so no chat turn can re-hydrate placeholders. This is the
 mechanism behind section 6.3s "no auto-restore in deliverables" requirement.
 
+### 3.6 The memory lanes are egress paths, and were missing from this design
+
+Section 3.5 covered `kb_chunks`. It omitted the three *other* persistence lanes,
+each of which is an independent egress path for sensitive material. This section
+closes that gap. Verified against the repo, not assumed.
+
+| Lane | Store | Identity mapping | Written by |
+|---|---|---|---|
+| RAG retrieval | `kb_chunks` (pgvector, T1-T4) | `tenant_id` + `matter_id` columns | pacgate-api |
+| Matter memory | `tenants/{t}/matters/{m}/memory.json` on the `DATA_DIR` volume | filesystem path only | pacgate-api `POST /api/matters/:id/memory` |
+| Long-term conversational memory | **OpenViking** (separate container, port 1933, AGPL-3.0 side-car) | `TenantId` -> `X-OpenViking-Account`, `MatterId` -> peer, `UserId` -> `X-OpenViking-User` | deer-flow and qm, over MCP HTTP |
+| Evidence / audit | `audit_log` (Postgres) | `tenant_id`, `user_id` | pacgate-api |
+
+**The gap that matters: OpenViking is written by deer-flow directly.** The
+`mcpServers` block in `deer-flow-extensions-config.template.json` points at
+`http://openviking:1933/mcp`, so deer-flow holds its own credential and calls the
+memory tools itself. pacgate-api is **not** in that path. This inverts the
+assumption section 3.5 rests on: sanitized-before-index is not automatic for this
+lane, because nothing in pacgate-redact or pacgate-api observes the write.
+
+```
+kb_chunks          : sanitize -> pacgate-api write -> CHAT RETRIEVES   (gated)
+matter memory.json : sanitize -> pacgate-api write                     (gated)
+openviking         : deer-flow -> OpenViking MCP directly      (NOT GATED - the hole)
+audit_log          : pacgate-api append                                (append-only)
+```
+
+Three consequences the earlier draft did not state:
+
+1. **Extraction requires an LLM.** OpenViking hard-fails without a working VLM
+   config (verified earlier: provider `ollama`, model `gemma4:12b-it-qat` via
+   `host.docker.internal:11434`). Memory writes therefore send content to a model,
+   so this lane is an inference egress path as well as a storage one.
+2. **It is a persistent store, not a cache.** Anything written survives the
+   session, so an unsanitized write is not transient.
+3. **Its own boundary rule already exists and this design must respect it:**
+   OpenViking holds *conversational context only* - decisions, preferences,
+   session summaries. Matter documents and T1-T4 content belong in pacgate-rag.
+   A sanitizer that pushed document text into OpenViking would violate an
+   already-agreed boundary, not merely this design.
+
+**Resolution, and it is a gate rather than a rewrite.** Do not stop deer-flow
+writing memory. Make the lane inherit the boundary by making the *inputs* clean:
+
+- A chat turn over material that passed through sanitization composes from
+  sanitized chunks, so what it summarises is already redacted. The section 10
+  gap-1 egress gate then covers the summarisation call itself.
+- The gate must be widened from "logs and traces" to name OpenViking explicitly:
+  it is a third-party store with its own retention, outside pacgate-api and
+  outside this repo backup and purge path.
+- Nothing from the vault or `placeholder_map` may ever reach this lane. Restore
+  stays client-side and matters-scoped (section 3.5).
+
+**One further distinction worth recording, because it is a real exposure:** the
+OpenViking peer is keyed on `MatterId`, so isolation is per **matter**, whereas
+T1 is a **firm-wide** shared tier. Two matters therefore cannot share T1 material
+through this lane even when sharing it would be correct. Accept that as a
+limitation; do not try to fix it here.
+
 ## 4. Pipeline - six stages, fail-closed
 
 ```
@@ -274,6 +333,68 @@ T1-T4 as found:
 | extraction BBox storage | companion to `kb_chunks` (has `page`, lacks spatial data). Enables §7 pixel redaction in v2 and span-level review in v1 |
 | `placeholder_map` | **job-scoped, ephemeral + audited**. Never reused across matters (§6.2 enforced structurally) |
 | `redaction_ledger` | pre/post artifact SHA-256 + redaction record (adopted from Philter's ledger pattern) |
+
+### 5.1 What must be added to the existing spine (and nothing else)
+
+Sections 3.5 and 3.6 established that there are **four** stores. The table below
+states, per store, whether this design adds anything. The governing rule: an
+existing store absorbs the metadata, and no parallel spine is created.
+
+| Store | Add? | What, exactly |
+|---|---|---|
+| `kb_chunks` | **yes, one column** | `sanitization_state` - see the enum below |
+| `documents` | **yes, one column** | `sanitization_state` - a document-level rollup, so a listing can show status without touching `kb_chunks` |
+| `matter memory.json` | **no schema** | It is a free-form JSON object; a `sanitization` key is written into it by convention. No migration, and old files stay valid |
+| OpenViking | **no** | Not ours to change (AGPL-3.0 side-car; unmodified-over-HTTP is the license-safe pattern). Its `MatterId` peer mapping already carries the isolation key this design needs |
+| `audit_log` | **no** | Already `action` + `resource` + `scope` + `metadata JSONB`. A redaction is an audit row, not a new table |
+
+The one shared enum, written as a TEXT code the same way `data_level` already is:
+
+```
+pending    extracted, not yet sanitized          <- the default, and the safe one
+sanitized  a job produced a Block-free verdict   <- ledger must exist and verify
+blocked    a job ran and the verdict was Block   <- must never reach any egress
+never      out of scope for sanitization (e.g. T1 template)  <- explicit, not a guess
+```
+
+**`pending` is the default, and that is the safety property.** A row that was
+never processed reads as `pending`, not as `sanitized`, so a new ingestion path
+that forgets to set the column fails closed. A default of `sanitized` would make
+forgetting indistinguishable from success - the same failure class as the
+`bump-release-version` bug recorded in repo memory (0 edits, exit 0, looks
+identical to done).
+
+**Why a column rather than the `redaction_ledger` alone.** The ledger is the
+evidence; the column is the *index*. `pacgate_kb_search` must be able to exclude
+non-sanitized rows in the same query that applies its existing `max_data_level`
+filter, without a join to a ledger table on the hot path. A ledger with no
+column, or a column with no ledger, both leave the gate unenforceable.
+
+**Two indexes, mirroring how `data_level` is already indexed:**
+
+```sql
+-- migration 005_sanitization_state.sql
+ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS sanitization_state TEXT DEFAULT 'pending';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS sanitization_state TEXT DEFAULT 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_sanitization
+    ON kb_chunks (tenant_id, matter_id, sanitization_state);
+CREATE INDEX IF NOT EXISTS idx_documents_sanitization
+    ON documents (tenant_id, matter_id, sanitization_state);
+```
+
+**The gate this enables, stated as a contract rather than a convention:**
+
+```
+pacgate_kb_search  ->  AND sanitization_state = 'sanitized'   (always, not a parameter)
+openviking write   ->  refuse if the source turn read any row that was not 'sanitized'
+export / download  ->  refuse if the document is not 'sanitized'
+```
+
+Not a caller-supplied option. If it were a parameter, Hyrum Law guarantees
+somebody would eventually pass the wrong value, and the failure would be a silent
+disclosure rather than an error. It is a property of the connection, not a
+request field.
 
 ## 6. Error handling
 
@@ -333,6 +454,22 @@ requires the *combination-risk detector* (§9); it does not require an adversari
    needs measurement, not assumption.
 2. Whether extraction BBox merits its own table or columns on `kb_chunks`.
 3. Restore authorisation model: role-gated, per-job token, or both.
+
+4. **Which store is authoritative for `sanitization_state` when the two
+   disagree.** `kb_chunks` is per-chunk and `documents` is per-document rollup,
+   so a partial job (some chunks sanitized, some not) has no defined meaning yet.
+   Options: treat any `pending` chunk as making the document `pending` (safe,
+   but one straggler blocks a whole document); or forbid partial jobs outright by
+   making sanitization atomic per document (simpler, but fails a huge document).
+   This must be settled before plan 3 writes the migration, because it decides
+   whether `sanitization_state` on `documents` is derived or authoritative.
+5. **Whether the OpenViking write gate is enforceable at all.** deer-flow holds
+   its own OpenViking credential and calls the MCP endpoint directly (section 3.6),
+   so pacgate-api cannot intercept that call. Either (a) accept that the lane is
+   gated only by clean inputs, and record that as a known limitation, or (b) route
+   memory writes through pacgate-mcp so the gate becomes enforceable. Option (b)
+   is stronger but changes a working integration, so it should be a deliberate
+   choice rather than a side effect of this design.
 
 ## 10. Client-spec requirements vs. genuine gaps
 
