@@ -2260,6 +2260,7 @@ dependencies = [
  "pacgate-llm",
  "pacgate-persona",
  "pacgate-rag",
+ "pacgate-redact",
  "pacgate-search",
  "pacgate-tenant",
  "pacgate-workflow",
