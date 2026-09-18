@@ -222,6 +222,23 @@ pub async fn download_document(
 
     fetch_document_for_tenant(&state, &tenant_id, &doc_id).await?;
 
+    // Egress gate (design 5.1): export/download refuses anything that is not
+    // 'sanitized' or explicitly 'never'. 'pending' is the default state, so a
+    // document nobody sanitized cannot leave through the download path.
+    let doc_state: String = sqlx::query(
+        "SELECT sanitization_state FROM documents WHERE id = $1 LIMIT 1",
+    )
+    .bind(doc_id.0)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .get("sanitization_state");
+    if doc_state != "sanitized" && doc_state != "never" {
+        return Err(ApiError::conflict(format!(
+            "document is '{doc_state}'; download requires sanitization (or explicit 'never')"
+        )));
+    }
+
     let (doc, bytes) = state
         .doc_store
         .download_bytes(&doc_id, query.version)

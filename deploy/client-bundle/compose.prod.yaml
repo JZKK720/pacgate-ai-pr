@@ -20,6 +20,10 @@ services:
     image: ghcr.io/jzkk720/pacgate-api:0.1.14
     container_name: pacgate-api
     depends_on: [pacgate-db]
+    # Sanitization gate note (design 5.1): OpenViking memory writes are
+    # deer-flow -> openviking direct (not gated by pacgate-api). Accepted as a
+    # documented limitation - the lane holds conversational context only, and
+    # the gate inherits via sanitized chunk inputs. Do not "fix" silently.
     environment:
       DATABASE_URL: postgres://pacgate:${PACGATE_DB_PASSWORD}@pacgate-db:5432/pacgate
       DATA_DIR: /data/tenants
