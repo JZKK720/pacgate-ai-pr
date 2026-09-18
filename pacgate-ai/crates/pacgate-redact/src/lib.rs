@@ -14,6 +14,8 @@ pub mod replace;
 pub mod verify;
 pub mod ledger;
 pub mod policy;
+pub mod pipeline;
+pub use pipeline::{SanitizeOutcome, Sanitizer};
 pub use policy::{decide, PolicyDecision};
 pub use ledger::RedactionLedger;
 pub use verify::{verify, Verdict, Verification};

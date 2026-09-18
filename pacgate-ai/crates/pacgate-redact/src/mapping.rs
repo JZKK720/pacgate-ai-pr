@@ -106,7 +106,7 @@ impl Mapping {
 
         // Longest-first so [PERSON_10] is not clobbered by [PERSON_1].
         let mut keys: Vec<&String> = self.entries.keys().collect();
-        keys.sort_by(|a, b| b.len().cmp(&a.len()));
+        keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
 
         let mut out = text.to_string();
         for k in keys {

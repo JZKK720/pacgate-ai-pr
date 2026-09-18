@@ -21,13 +21,21 @@ use crate::entity::{EntityType, PlaceholderPolicy};
 /// (spec 6.2 映射隔离).
 #[derive(Debug, Default)]
 pub struct PlaceholderAllocator {
+    /// Job-scoped prefix, so two jobs never mint the same placeholder name.
+    prefix: String,
     /// (entity, exact original) -> placeholder
     assigned: HashMap<(EntityType, String), String>,
 }
 
 impl PlaceholderAllocator {
-    pub fn new() -> Self {
-        Self::default()
+    /// `prefix` makes placeholder names globally unambiguous: two jobs
+    /// sanitizing the same value mint different tokens, so one job's mapping
+    /// can never silently resolve another job's text (spec 6.2).
+    pub fn new(prefix: &str) -> Self {
+        Self {
+            prefix: prefix.to_string(),
+            assigned: HashMap::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -47,7 +55,9 @@ impl PlaceholderAllocator {
 
         let index = self.assigned.len() + 1;
         let placeholder = match entity.policy() {
-            PlaceholderPolicy::Opaque => format!("[{}_{}]", entity.code(), index),
+            PlaceholderPolicy::Opaque => {
+                format!("[{}_{}_{}]", entity.code(), self.prefix, index)
+            }
             PlaceholderPolicy::FormatPreserving => format_preserving(entity, original, index),
             PlaceholderPolicy::Remove => String::new(),
         };
@@ -125,7 +135,7 @@ fn luhn_check_digit(body: &str) -> char {
         sum += d;
         double = !double;
     }
-    let check = (10 - (sum % 10)) % 10;
+    let check = if sum.is_multiple_of(10) { 0 } else { 10 - (sum % 10) };
     std::char::from_digit(check, 10).unwrap_or('0')
 }
 
@@ -136,7 +146,7 @@ mod tests {
 
     #[test]
     fn same_value_gets_the_same_placeholder() {
-        let mut a = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
         let first = a.allocate(EntityType::PersonName, "张三");
         let second = a.allocate(EntityType::PersonName, "张三");
         assert_eq!(first, second, "spec 6.1 requires consistent placeholders");
@@ -145,7 +155,7 @@ mod tests {
     #[test]
     fn similar_but_distinct_values_do_not_merge() {
         // Spec 9: 名称相似的不同主体 must not be merged.
-        let mut a = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
         let one = a.allocate(EntityType::PersonName, "张三");
         let two = a.allocate(EntityType::PersonName, "张峰");
         assert_ne!(one, two);
@@ -153,7 +163,7 @@ mod tests {
 
     #[test]
     fn different_entities_get_distinct_placeholder_namespaces() {
-        let mut a = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
         let person = a.allocate(EntityType::PersonName, "甲");
         let org = a.allocate(EntityType::OrgName, "甲");
         assert_ne!(person, org);
@@ -163,7 +173,7 @@ mod tests {
 
     #[test]
     fn opaque_placeholders_do_not_leak_length_or_script() {
-        let mut a = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
         let p = a.allocate(EntityType::PersonName, "张三丰");
         assert!(!p.contains('3'));
         assert!(!p.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
@@ -171,7 +181,7 @@ mod tests {
 
     #[test]
     fn format_preserving_placeholder_keeps_shape_and_validates() {
-        let mut a = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
         let p = a.allocate(EntityType::BankCard, "4111111111111111");
         assert_eq!(p.len(), 16, "a downstream parser must still see 16 digits");
         assert!(p.chars().all(|c| c.is_ascii_digit()));
@@ -183,8 +193,8 @@ mod tests {
 
     #[test]
     fn allocator_is_deterministic_across_instances_for_the_same_order() {
-        let mut a = PlaceholderAllocator::new();
-        let mut b = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
+        let mut b = PlaceholderAllocator::new("JOB1");
         assert_eq!(
             a.allocate(EntityType::PersonName, "甲"),
             b.allocate(EntityType::PersonName, "甲")
@@ -193,7 +203,7 @@ mod tests {
 
     #[test]
     fn entries_reports_the_mapping_for_the_ledger() {
-        let mut a = PlaceholderAllocator::new();
+        let mut a = PlaceholderAllocator::new("JOB1");
         a.allocate(EntityType::PersonName, "甲");
         a.allocate(EntityType::OrgName, "乙");
         assert_eq!(a.len(), 2);

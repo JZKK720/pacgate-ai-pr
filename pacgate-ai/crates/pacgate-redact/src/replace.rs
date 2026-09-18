@@ -39,8 +39,10 @@ pub struct Redactor {
 }
 
 impl Redactor {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(job_prefix: &str) -> Self {
+        Self {
+            allocator: PlaceholderAllocator::new(job_prefix),
+        }
     }
 
     /// Access the allocator, so the caller can persist the mapping.
@@ -130,7 +132,7 @@ mod tests {
     fn replaces_a_single_span_and_keeps_surrounding_text() {
         let text = "身份证 11010519491231002X 已核对";
         let matches = vec![m(10, 28, EntityType::CnResidentId, "11010519491231002X")];
-        let out = Redactor::new().redact(text, &matches).unwrap();
+        let out = Redactor::new("JOB").redact(text, &matches).unwrap();
         assert!(!out.text.contains("11010519491231002X"));
         assert!(out.text.starts_with("身份证 "));
         assert!(out.text.ends_with(" 已核对"));
@@ -141,7 +143,7 @@ mod tests {
     fn a_removed_entity_leaves_no_placeholder_behind() {
         let text = "token=abcdef123456";
         let matches = vec![m(6, 18, EntityType::Credential, "abcdef123456")];
-        let out = Redactor::new().redact(text, &matches).unwrap();
+        let out = Redactor::new("JOB").redact(text, &matches).unwrap();
         assert!(!out.text.contains("abcdef123456"));
         assert!(!out.text.contains('['), "credentials are removed, not placeholdered");
     }
@@ -153,7 +155,7 @@ mod tests {
             m(0, 6, EntityType::PersonName, "张三"),
             m(9, 15, EntityType::PersonName, "张三"),
         ];
-        let out = Redactor::new().redact(text, &matches).unwrap();
+        let out = Redactor::new("JOB").redact(text, &matches).unwrap();
         assert_eq!(out.applied[0].placeholder, out.applied[1].placeholder);
     }
 
@@ -164,7 +166,7 @@ mod tests {
         let start = text.find('张').unwrap();
         let end = start + "张三".len();
         let matches = vec![m(start, end, EntityType::PersonName, "张三")];
-        let out = Redactor::new().redact(text, &matches).unwrap();
+        let out = Redactor::new("JOB").redact(text, &matches).unwrap();
         assert!(out.text.starts_with("姓名"));
         assert!(out.text.ends_with("，电话13812345678。"));
     }
@@ -173,7 +175,7 @@ mod tests {
     fn out_of_range_offsets_error_rather_than_panic() {
         let text = "短";
         let matches = vec![m(0, 999, EntityType::PersonName, "x")];
-        let err = Redactor::new().redact(text, &matches).unwrap_err();
+        let err = Redactor::new("JOB").redact(text, &matches).unwrap_err();
         assert!(err.is_fatal());
     }
 
@@ -182,7 +184,7 @@ mod tests {
         let text = "张三";
         // Offset 1 is inside the first character's UTF-8 sequence.
         let matches = vec![m(0, 1, EntityType::PersonName, "x")];
-        assert!(Redactor::new().redact(text, &matches).is_err());
+        assert!(Redactor::new("JOB").redact(text, &matches).is_err());
     }
 
     #[test]
@@ -192,13 +194,13 @@ mod tests {
             m(0, 10, EntityType::PersonName, "aaaaaaaaaa"),
             m(5, 15, EntityType::OrgName, "aaaaaaaaaa"),
         ];
-        let err = Redactor::new().redact(text, &matches).unwrap_err();
+        let err = Redactor::new("JOB").redact(text, &matches).unwrap_err();
         assert!(err.is_fatal(), "an overlapping set must not be applied silently");
     }
 
     #[test]
     fn no_matches_returns_the_original_text() {
-        let out = Redactor::new().redact("没有敏感信息", &[]).unwrap();
+        let out = Redactor::new("JOB").redact("没有敏感信息", &[]).unwrap();
         assert_eq!(out.text, "没有敏感信息");
         assert!(out.applied.is_empty());
     }
