@@ -26,9 +26,15 @@ delivery **and** release engineering.
 | 009 | AIPC2: sync to origin/main and upgrade to v0.1.7 | P1 | DONE (2026-09-06) |
 | 010 | QM single-stack migration (`qm up` → `compose.qm.yaml`) | P2 | DONE (2026-09-06) |
 | 011 | GHCR master release | P1 | **DONE** — 0.1.12 live, first green build (2026-09-16) |
-| 012 | Master release: JZKK720 upstream + GHCR namespace | P1 | **AWAITING DECISION** — merge already complete; namespace path A/B/C to choose |
-| 013 | Credential rotation and history purge | **P0** | **HEAD REDACTED — ROTATION + HISTORY PURGE OUTSTANDING** |
-| 014 | Unattended AIPC updates | P1 | **IN PROGRESS** — steps 1-3 done (repo refresh, render-and-compare, restart); qm + staleness marker open |
+| 012 | Master release: JZKK720 upstream + GHCR namespace | P1 | **RESOLVED** — namespace pinned, dual publish implemented; `GHCR_MIRROR_PAT` still unset (mirror never ran) |
+| 013 | Credential rotation and history purge | **P0** | **REDACTION PUSHED — ROTATION + HISTORY PURGE OUTSTANDING** (rotation is internal hygiene, not a deployment blocker) |
+| 014 | Unattended AIPC updates | P1 | **DONE (code) 11/11 coverage, 37/37 tests** — scheduled updater not yet registered on a real machine |
+| 015 | Release 0.1.14 | P1 | **DONE** — all 4 images live, 18/18 gates, run #19 (2026-09-17) |
+| 016 | jzkk720 master build | P1 | DONE |
+| 017 | pacgate-redact crate | P1 | DONE |
+| 018 | Memory lane hardening | P2 | DONE |
+| 019 | OCR service + Tier 2-4 NER | P1 | **DONE** — 10 commits, E2E green, NER real-weights proof (2026-09-18) |
+| 020 | Sanitize jobs, vault, gates, MCP tools | P1 | **DONE** — job API + restore + download gate + MCP tools (2026-09-19) |
 
 ### Plan 007 sub-documents
 
