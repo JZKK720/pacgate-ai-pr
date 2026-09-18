@@ -1839,6 +1839,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacgate-redact"
+version = "0.1.14"
+dependencies = [
+ "anyhow",
+ "once_cell",
+ "pacgate-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tracing",
+ "unicode-normalization",
+ "uuid",
+]
+
+[[package]]
 name = "pacgate-rule-engine"
 version = "0.1.14"
 dependencies = [
