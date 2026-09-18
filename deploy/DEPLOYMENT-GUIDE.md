@@ -3,6 +3,18 @@
 > For Cubecloud engineers deploying to client AI PCs
 > Phase 1 — two-machine pilot
 
+> **VERIFIED AGAINST 0.1.14 (2026-09-18).** The pins in this guide were reset
+> from the 0.1.3 era, when the namespace was `ghcr.io/pacgate-ai/*`. The release
+> authority is now **`ghcr.io/jzkk720/*`** and every pin is `0.1.14`.
+>
+> One pin had genuinely rotted: `deer-flow-frontend-pacgate:0.1.0` returns **404**
+> to an anonymous pull, so an engineer copying the old compose example would have
+> hit a failed pull with no indication why.
+>
+> **Prefer `deploy/client-bundle/README-client.md` and `install.ps1`.** They are
+> the automated path and the single source of truth. This guide documents only
+> the manual build-and-push steps, which is how it drifted 11 versions behind.
+
 ## Version history
 
 | Version | Date | Changes |
@@ -21,7 +33,7 @@ This document describes the target client runtime bundle. It does not reflect th
 - Rust 1.88+ (`rustup default stable` — dependencies require 1.88+)
 - Docker Desktop with Buildx
 - GitHub CLI (`gh`) authenticated — see `deploy/README-BUILD.md` for the
-  namespace decision (images currently publish under `ghcr.io/pacgate-ai/*`)
+  namespace decision (images publish under `ghcr.io/jzkk720/*`)
 - This repo cloned: `c:\Users\cubecloud-io\github-pr\pacgate-ai-pr`
 - Python 3.12+ with `graphifyy` (`pip install graphifyy`) and `openai` (`pip install openai`)
 - Ollama running locally for graphify code analysis (see "Running graphify" below)
@@ -41,7 +53,7 @@ This document describes the target client runtime bundle. It does not reflect th
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build the Rust binary in Docker (multi-stage)
-docker build -t ghcr.io/pacgate-ai/pacgate-api:0.1.3 `
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.14 `
   -f pacgate-ai/Dockerfile `
   ./pacgate-ai
 ```
@@ -67,7 +79,7 @@ produces the `pacgate-server` binary.
 #   ENV PACGATE_API_URL=http://pacgate-api:8080
 #   CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
 
-docker build -t ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3 `
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.14 `
   -f deploy/deer-flow-pacgate/Dockerfile `
   .
 ```
@@ -99,10 +111,10 @@ namespace.
 echo $env:GHCR_TOKEN | docker login ghcr.io -u pacgate-ai --password-stdin
 
 # Push the images (qm runs via qm up, not as a Docker image)
-docker push ghcr.io/pacgate-ai/pacgate-api:0.1.3
-docker push ghcr.io/pacgate-ai/pacgate-mcp:0.1.3
-docker push ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
-docker push ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0
+docker push ghcr.io/jzkk720/pacgate-api:0.1.14
+docker push ghcr.io/jzkk720/pacgate-mcp:0.1.14
+docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.14
+docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.14
 ```
 
 ## Part 2: Prepare the client bundle
@@ -138,7 +150,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/pacgate-ai/pacgate-api:0.1.3
+    image: ghcr.io/jzkk720/pacgate-api:0.1.14
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -152,7 +164,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.14
     container_name: deer-flow
     depends_on: [pacgate-api]
     environment:
@@ -430,11 +442,11 @@ cd C:\pacgate
 #    deploy/qm-pacgate/Dockerfile: FROM ghcr.io/yc-software/qm/core:latest
 
 # 2. Rebuild + push
-docker build -t ghcr.io/pacgate-ai/deer-flow-pacgate:0.2.0 -f deploy/deer-flow-pacgate/Dockerfile .
-docker push ghcr.io/pacgate-ai/deer-flow-pacgate:0.2.0
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.15 -f deploy/deer-flow-pacgate/Dockerfile .
+docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.15
 
 # 3. Update compose.prod.yaml version pins
-#    image: ghcr.io/pacgate-ai/deer-flow-pacgate:0.2.0
+#    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.15
 
 # 4. Ship new bundle to client (or just the updated compose.prod.yaml)
 # 5. Client runs: .\install.ps1 -Update
