@@ -396,6 +396,98 @@ somebody would eventually pass the wrong value, and the failure would be a silen
 disclosure rather than an error. It is a property of the connection, not a
 request field.
 
+### 5.2 The memory interface contract (the seam between the two stores)
+
+The two matter-memory functions and OpenViking are three different systems. This
+section fixes the contract between them, because the seam is where the defects are.
+
+**The two Rust functions, as they exist today** (`pacgate-ai/crates/pacgate-api/src/matters.rs`,
+routes `GET`/`POST /api/matters/:id/memory`):
+
+```rust
+// L32-38 - the only storage locator
+fn matter_memory_path(data_dir: &Path, tenant_id: &TenantId, matter_id: &MatterId) -> PathBuf
+    => pacgate_tenant::matter_dir(data_dir, tenant_id, matter_id).join("memory.json")
+
+// L140-167 - returns default_matter_memory() if the file is absent; no auth on content
+pub async fn get_matter_memory(State, Extension(claims), Path(id))
+    -> Result<Json<serde_json::Value>, ApiError>
+
+// L169-202 - rejects a non-object body, then overwrites the file wholesale
+pub async fn save_matter_memory(State, Extension(claims), Path(id), Json(memory))
+    -> Result<Json<serde_json::Value>, ApiError>
+```
+
+Shared schema, declared in `default_matter_memory()` and therefore load-bearing:
+
+```
+{ version: "2.0", revision: 0, lastUpdated: "", user: {}, history: {}, facts: [] }
+```
+
+**Defect 1 - `save` is last-write-wins with a declared but unused revision.**
+`revision` is emitted by the default and never read or enforced by the save path,
+and the handler replaces the whole file. Two concurrent writers therefore lose
+one update silently. For legal work the loser may be the only record of a
+decision. **Contract fix:** `POST` must accept an optional `If-Match: <revision>`
+and return `409 Conflict` when it does not match, incrementing `revision` on every
+successful write. That is the same semantics `kb_chunks` gets from its own
+versioning, applied to a file that currently has none.
+
+**Defect 2 - the write path has no sanitization gate.** The file is written by
+deer-flow through `PacgateMemoryStorage.save()`
+(`pacgate-adapters/python/pacgate_deerflow_adapter/storage.py`), which POSTs
+whatever the agent hands it straight to this endpoint. Nothing inspects it first.
+So this lane is not "sanitize then store"; it is "store whatever was passed".
+**Contract fix:** the write must be refused unless the caller presents a
+`sanitization_state` that is `sanitized` or `never`, exactly as section 5.1
+requires of `kb_chunks`. This is the one place the two functions need to change
+behaviour rather than gain a field.
+
+**Defect 3 - the same adapter writes documents into the spine unguarded.**
+`PacgateArtifactStore.write_artifact()` uploads to `/api/documents` and creates a
+new version. That is the *ingestion* path for the very rows `kb_chunks` indexes.
+It is currently unprotected, so `sanitization_state` must default to `pending`
+there too - which is exactly why section 5.1 makes `pending` the default rather
+than `sanitized`.
+
+#### The OpenViking contract
+
+```
+endpoint   http://openviking:1933/mcp        (streamable HTTP, inside the compose network)
+auth       X-API-Key from OPENVIKING_ROOT_API_KEY; template uses ${...}, live config gitignored
+identity   TenantId  -> X-OpenViking-Account
+           MatterId  -> peer          (server-side isolation, verified)
+           UserId    -> X-OpenViking-User
+callers    deer-flow (direct, credential in the extension config) and qm (via the ov-* bridge)
+storage    persistent - survives the session; own retention, outside our purge path
+extraction requires a working VLM, so a write is also an inference call
+```
+
+**One-Version Rule applied here.** `account`/`user`/`peer` is not `tenant`/`matter`,
+so the mapping is ours to maintain. It must stay a single translation defined once,
+not re-derived per caller. deer-flow and qm currently each reach OpenViking by their
+own route; that is two chances to disagree. The mapping belongs in one place and
+both callers should consume it, otherwise adding a third caller means a third
+derivation and a silent isolation gap.
+
+#### What must bind, and where
+
+| Value | Authoritative source | Reaches |
+|---|---|---|
+| `tenant_id` | JWT claim, parsed by `claims_to_ids` | `kb_chunks`, `documents`, `audit_log`, memory file path, `X-OpenViking-Account` |
+| `matter_id` | URL path, parsed to `MatterId` | same five, plus `X-OpenViking-*` peer |
+| `user_id` | JWT claim `sub` | `documents.owner_id`, `audit_log.user_id`, `X-OpenViking-User` |
+| `data_level` | `kb_chunks` column (T1-T4) | already enforced by `kb_search` |
+| `sanitization_state` | `kb_chunks` + `documents` (new) | must be enforced at every read and at the memory write |
+| `mapping_version` | job record (design section 5) | ledger, restore refusal |
+
+**The invariant worth stating plainly:** `tenant_id` and `matter_id` are the only
+values that appear in *every* store. Nothing enforces that they stay consistent
+across the file path, the SQL columns and the OpenViking headers. A mismatch between
+the filesystem-path copy and the SQL-column copy would produce an isolation failure
+that no single-store check can catch. If this design adds one defensive measure
+beyond the sanitization gate, it should be a cross-store consistency assertion on
+those two values - not more per-store validation.
 ## 6. Error handling
 
 | Condition | Behaviour |
@@ -556,3 +648,10 @@ a restorable local mapping is **de-identification (去标识化), not anonymisat
 6. **New crate, new service; reuse the metadata spine** - do not duplicate
    `documents`, `kb_chunks`, `audit_log`, or the T1-T4 taxonomy.
 7. **Fail closed everywhere** - unparseable, erroring, or unverifiable ⇒ BLOCK.
+8. **One identifier mapping, defined once** - `tenant`/`matter`/`user` to
+   OpenViking `account`/`peer`/`user` is ours to maintain and must not be
+   re-derived per caller (section 5.2). Two callers today, three chances to
+   disagree tomorrow.
+9. **`sanitization_state` defaults to `pending`, never `sanitized`** - the
+   default is the safety property, because a path that forgets to set it must
+   fail closed rather than look successful (section 5.1).
