@@ -274,3 +274,21 @@ $tok = Invoke-RestMethod "https://ghcr.io/token?scope=repository:pacgate-ai/pacg
 Invoke-WebRequest -Uri "https://ghcr.io/v2/pacgate-ai/pacgate-mcp/manifests/0.1.3" `
   -Method Head -Headers @{Accept="application/vnd.oci.image.index.v1+json"; Authorization="Bearer $($tok.token)"}
 ```
+
+## OCR service (plan 019)
+
+`deploy/ocr-service/` builds `ocr-service:local` - a FastAPI wrapper around
+PaddleOCR that rasterizes PDFs (poppler) and returns per-text-element spans
+with page coordinates. Fail-closed: any page failure sets `incomplete=true`.
+
+Build + end-to-end proof:
+
+```powershell
+docker build -f deploy/ocr-service/Dockerfile -t ocr-service:local deploy/ocr-service
+powershell -ExecutionPolicy Bypass -File scripts/test-ocr-extraction.ps1
+```
+
+The proof posts a PNG containing an ID-card-shaped string and asserts text,
+span coordinates, and `incomplete=false`. Persistence through pacgate-api
+(`POST /api/documents/:id/extract` -> `document_spans` + pending `kb_chunks`)
+needs a running pacgate-db; verify manually per deploy handbook.
