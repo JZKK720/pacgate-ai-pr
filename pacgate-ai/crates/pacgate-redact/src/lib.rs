@@ -12,6 +12,8 @@ pub mod placeholder;
 pub mod mapping;
 pub mod replace;
 pub mod verify;
+pub mod ledger;
+pub use ledger::RedactionLedger;
 pub use verify::{verify, Verdict, Verification};
 pub use replace::{AppliedRedaction, Redaction, Redactor};
 pub use mapping::{JobId, Mapping, MappingVersion};
