@@ -1,4 +1,4 @@
-# Sanitizer E2E: upload -> extract -> sanitize -> verify -> gate -> restore.
+﻿# Sanitizer E2E: upload -> extract -> sanitize -> verify -> gate -> restore.
 # Mirrors scripts/test-ocr-extraction.ps1 conventions (PASS/FAIL lines).
 # Boots fresh test containers; never touches the live pacgate-api/deer-flow.
 # Usage: powershell -File scripts/test-sanitizer-e2e.ps1
@@ -9,9 +9,24 @@ function Check($name, $cond) {
 }
 
 Write-Output "== building fixture =="
-$fixture = Join-Path $env:TEMP 'pacgate-sanitizer-e2e.txt'
-$content = "委托人张三，身份证 11010519491231002X，电话 13812345678，联系 a@b.com。"
-[System.IO.File]::WriteAllText($fixture, $content, [System.Text.UTF8Encoding]::new($false))
+# PDF fixture via the ocr container's PIL. ocr-service is a perception lane:
+# it rasterises PDFs and reads images, but a born-digital .txt is v2 (Docling)
+# per design phasing - a txt would land on PaddleOCR and fail to parse.
+$fixture = Join-Path $env:TEMP 'pacgate-san-e2e.pdf'
+# Regenerate every run so a stale fixture never masks a regression.
+if (Test-Path $fixture) { Remove-Item $fixture -Force }
+docker run --rm -v "${env:TEMP}:/fix" --entrypoint python3 ocr-service:local -c "from PIL import Image, ImageDraw, ImageFont
+img = Image.new('RGB',(900,300),'white')
+d = ImageDraw.Draw(img)
+font = ImageFont.load_default()
+# Bare identifiers on separate lines. A label glued to digits ('ID1101...') has
+# no word boundary before the digits, and the Tier-1 rules are deliberately
+# boundary-anchored - a glued label reads as part of a longer token, which is
+# the correct strictness for real documents. Standalone values are the
+# boundary-safe rendering OCR preserves reliably.
+d.text((16,100),'11010519491231002X',fill='black',font=font)
+d.text((16,150),'13812345678',fill='black',font=font)
+img.save('/fix/pacgate-san-e2e.pdf','PDF',resolution=100)" 2>&1 | Out-Null
 Check "fixture written" (Test-Path $fixture)
 
 docker rm -f pacgate-ocr-e2e, pacgate-api-e2e 2>$null | Out-Null
@@ -52,11 +67,11 @@ try {
 } catch { }
 Check "attorney user usable" ($null -ne $attorneyLogin)
 
-# 5. Upload a text document carrying the identifiers.
+# 5. Upload the PDF carrying the identifiers.
 $fileBytes = [System.IO.File]::ReadAllBytes($fixture)
 $ms = New-Object System.IO.MemoryStream; $bw = New-Object System.IO.BinaryWriter($ms)
 $boundary = "----psb$([System.Guid]::NewGuid().ToString('N'))"
-$bw.Write([System.Text.Encoding]::ASCII.GetBytes("--$boundary`r`nContent-Disposition: form-data; name=`"matter_id`"`r`n`r`n$($matter.id)`r`n--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"case.txt`"`r`nContent-Type: text/plain`r`n`r`n"))
+$bw.Write([System.Text.Encoding]::ASCII.GetBytes("--$boundary`r`nContent-Disposition: form-data; name=`"matter_id`"`r`n`r`n$($matter.id)`r`n--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"case.pdf`"`r`nContent-Type: application/pdf`r`n`r`n"))
 $bw.Write($fileBytes); $bw.Write([System.Text.Encoding]::ASCII.GetBytes("`r`n--$boundary--`r`n")); $bw.Flush()
 $up = Invoke-RestMethod -Uri "http://127.0.0.1:8090/api/documents" -Method Post -Headers $hdr -ContentType "multipart/form-data; boundary=$boundary" -Body $ms.ToArray()
 Check "upload ok" ($null -ne $up.id)
