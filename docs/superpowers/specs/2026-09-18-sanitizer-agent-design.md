@@ -180,6 +180,50 @@ app/workspace/agents/[agent_name]/chats/[thread_id]/  ← agent (AgentThread typ
 detections, the placeholder mapping, the egress verdict, and the restore control.
 It never holds the vault and never performs the redaction.
 
+### 3.5 How the sanitized artifact joins the deer-flow chat workflow
+
+The sanitizer is not a side-quest that produces a file someone manually moves.
+The sanitized artifact **is what enters the retrieval index**, which is what makes
+the egress guarantee structural rather than a matter of operator discipline.
+
+```
+per-job sanitize
+  sanitized text + verdict
+        |
+        v
+  matter-scoped write-back            (sanitized text only - never the mapping)
+        |
+        +--> kb_chunks + embedding     <-- THIS is what general chat retrieves
+        |
+        +--> sanitized artifact store  (returned to client, exportable)
+
+mapping + vault  -->  pacgate-api ONLY       (unreachable from deer-flow)
+```
+
+**Why this ordering matters.** General chat, contract review, due-diligence and
+research agents all retrieve through `pacgate_kb_search`. If sanitized text is
+what was embedded, then every one of those workflows inherits the redaction
+boundary automatically. No downstream agent needs to know redaction exists, and
+no prompt-level discipline is load-bearing.
+
+**The two lanes, and which one a user picks:**
+
+| Lane | Entry point | When |
+|---|---|---|
+| Chat-native | general chat + `pacgate_kb_search` over already-sanitized chunks | the common case - bulk-ingested material, per-job questions |
+| Dedicated | the `sanitizer` agent workspace (3.4) | a new document must be sanitized *now*, or a verdict needs adjudication |
+
+**The reverse trip is blocked by construction.** A chat reply is composed from
+sanitized chunks, so its inputs are already clean. The response-side gate (section 10,
+gap 1) still scans the composed reply, because a model can synthesise an
+identifier from sanitized fragments - but that gate is a backstop over a clean
+input, not the primary control.
+
+**Restore never reaches chat.** `pacgate_restore` is a client-side operator
+action against the pacgate-api vault. It is not exposed as an MCP tool to any
+deer-flow agent, so no chat turn can re-hydrate placeholders. This is the
+mechanism behind section 6.3s "no auto-restore in deliverables" requirement.
+
 ## 4. Pipeline - six stages, fail-closed
 
 ```
