@@ -213,3 +213,55 @@ public and pullable - a safe instant fallback. Task 4's packages are additive.
     look identical anonymously.
   - A --dry-run push can report success for a ref that does not exist.
   - Deleting repository variables hits a 2FA wall. Flag it for the user.
+
+
+docs(plan-016): record the transient release gap and the now-clean fork
+
+Two things that must be on the record before the maintainer syncs the fork.
+
+1. THE FORK IS NOW A CLEAN FAST-FORWARD TARGET. It was not before this work.
+   pacgate-ai is a TRUE FORK of JZKK720/pacgate-ai-pr (fork=true, parent and
+   source both JZKK720/pacgate-ai-pr). It held d22ef48, which origin lacked, so
+   the two trees had diverged in BOTH directions. GitHub's only offer in that
+   state is "Discard N commits" - destructive. The content was forward-ported in
+   c87a75d and the fork merged in 45b210a so its commit is now an ANCESTOR.
+
+     fork   0cd785e -> 7 behind, 0 ahead, ancestor of origin/main
+     Sync fork is now a plain fast-forward that discards nothing.
+
+   The merge is content-neutral: both sides added the identical 14-line step
+   relative to merge base 0d065f9, and the step count in the file is verified
+   to be exactly 1 afterwards (not 2) - the specific risk of merging a change
+   already applied.
+
+2. THERE IS A TRANSIENT RELEASE GAP, and it should be stated rather than
+   discovered. Flipping GHCR_NAMESPACE to jzkk720 applies GLOBALLY, so a release
+   dispatched from the FORK now also targets jzkk720 and hits the same
+   permission_denied. Until access to the jzkk720 packages is granted, NO
+   release can ship from either repo.
+
+     Impact: release only. Clients are unaffected - all four
+     ghcr.io/pacgate-ai/*:0.1.14 images remain PUBLIC (verified 200), and the
+     compose pins are untouched, so every install and update keeps working.
+     Escape hatch if an urgent release is needed before then: dispatch with the
+     `namespace` input set to pacgate-ai, which the workflow routes through the
+     old target (the precedence is input > pinned > owner).
+
+Unblocking options, both user actions:
+   A. Add a PAT with write:packages as repo secret GHCR_RELEASE_PAT on JZKK720.
+      The workflow prefers it and falls back to GITHUB_TOKEN. Conservative.
+   B. Delete the two UNLINKED packages (pacgate-api, deer-flow-pacgate) in the
+      GHCR UI, then re-run. A package created by a workflow is auto-linked, so
+      GITHUB_TOKEN can write the replacement. Nothing pins their tags (0.1.0-
+      0.1.2, superseded), but deletion is IRREVERSIBLE and needs approval.
+
+Note on B and the fork: if the deletion route is taken, the fork is ALSO the
+right place to build from, because its packages are already workflow-linked to
+pacgate-ai/pacgate-ai-pr. That does not by itself confer jzkk720 access, but it
+removes a different failure class.
+
+Verified at this commit: workflow YAML parses, structural validity 5/5,
+17 namespace assertions pass, the frontend-overrides step is guarded three ways
+(exists / actually copies / correct order), fork ancestor-check confirmed.
+The one remaining test failure is the 8-pin consistency check, which is the
+invariant working correctly until the repin that must FOLLOW the package flips.
