@@ -234,6 +234,21 @@ impl RagStore {
     /// The params are `Some(String)` when the filter is active, `None` otherwise.
     /// When active, the SQL appends `AND c.jurisdiction = $N` / `AND c.source_level = $N`
     /// and inlines `AND c.data_level IN (...)` for max_data_level.
+    /// Test-visible wrapper around `build_filtered_sql`.
+    ///
+    /// Exists so the gate can be asserted without a live Postgres. The real
+    /// function stays private; this only forwards.
+    #[cfg(test)]
+    pub(crate) fn build_filtered_sql_for_test(
+        base_sql: &str,
+        filter: &SearchFilter,
+        jur_param_num: &str,
+        sl_param_num: &str,
+    ) -> (String, Option<String>, Option<String>) {
+        Self::build_filtered_sql(base_sql, filter, jur_param_num, sl_param_num)
+    }
+
+    /// Build SQL with optional jurisdiction, source_level, and data_level filter clauses.
     fn build_filtered_sql(
         base_sql: &str,
         filter: &SearchFilter,
@@ -276,6 +291,18 @@ impl RagStore {
                 .join(", ");
             sql.push_str(&format!(" AND c.data_level IN ({})", in_list));
         }
+
+        // ─── The sanitization gate ────────────────────────────────────────────
+        // Unconditional, and deliberately a literal rather than a bind
+        // parameter. Design section 5.1: the gate is a property of the
+        // connection, not a request field. If it were a parameter, a caller
+        // could pass any value, and a wrong one would be a silent disclosure
+        // rather than an error.
+        //
+        // 'never' is included because it is an explicit out-of-scope marker
+        // (e.g. a T1 shared template), which is a decision someone made rather
+        // than a row nobody processed.
+        sql.push_str(" AND c.sanitization_state IN ('sanitized', 'never')");
 
         sql.push_str(" ORDER BY ");
         // For semantic search, order by embedding distance; for keyword, by score
@@ -433,5 +460,72 @@ impl From<sqlx::Error> for RagError {
 impl From<pacgate_core::PacgateError> for RagError {
     fn from(e: pacgate_core::PacgateError) -> Self {
         RagError::Database(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    const BASE_SEMANTIC: &str =
+        "SELECT c.id, 1 - (c.embedding <=> $3::vector) AS score FROM kb_chunks c WHERE c.tenant_id = $1 AND c.matter_id = $2";
+    const BASE_KEYWORD: &str =
+        "SELECT c.id, ts_rank(c.content_tsv, plainto_tsquery($3)) AS score FROM kb_chunks c WHERE c.tenant_id = $1 AND c.matter_id = $2";
+
+    #[test]
+    fn the_gate_is_present_with_an_empty_filter() {
+        let filter = SearchFilter::new();
+        let (sql, _, _) = RagStore::build_filtered_sql_for_test(BASE_SEMANTIC, &filter, "$5", "$6");
+        assert!(
+            sql.contains("c.sanitization_state = 'sanitized'")
+                || sql.contains("c.sanitization_state IN ('sanitized'"),
+            "the gate must apply with no filter set: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_gate_is_present_on_the_keyword_path_too() {
+        let filter = SearchFilter::new();
+        let (sql, _, _) = RagStore::build_filtered_sql_for_test(BASE_KEYWORD, &filter, "$5", "$6");
+        assert!(
+            sql.contains("sanitization_state"),
+            "the gate must apply on the keyword path: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_gate_is_present_alongside_every_other_filter() {
+        let filter = SearchFilter::new()
+            .with_max_data_level(DataLevel::T3ProjectSpecific)
+            .with_jurisdiction(Jurisdiction::ChinaMainland);
+        let (sql, _, _) = RagStore::build_filtered_sql_for_test(BASE_SEMANTIC, &filter, "$5", "$6");
+        assert!(sql.contains("sanitization_state"), "{sql}");
+        assert!(sql.contains("c.data_level IN ("), "{sql}");
+    }
+
+    #[test]
+    fn the_gate_precedes_order_by_and_limit() {
+        let filter = SearchFilter::new();
+        let (sql, _, _) = RagStore::build_filtered_sql_for_test(BASE_SEMANTIC, &filter, "$5", "$6");
+        let gate = sql.find("sanitization_state").expect("gate present");
+        let order = sql.find("ORDER BY").expect("order by present");
+        let limit = sql.find("LIMIT").expect("limit present");
+        assert!(
+            gate < order,
+            "gate must be in the WHERE clause, not after ORDER BY"
+        );
+        assert!(order < limit, "ORDER BY must precede LIMIT");
+    }
+
+    #[test]
+    fn the_gate_is_not_a_parameter() {
+        // A bind placeholder would let a caller pass a different value.
+        // The gate must be a literal.
+        let filter = SearchFilter::new();
+        let (sql, _, _) = RagStore::build_filtered_sql_for_test(BASE_SEMANTIC, &filter, "$5", "$6");
+        assert!(
+            !sql.contains("sanitization_state = $"),
+            "the gate must not be caller-supplied: {sql}"
+        );
     }
 }
