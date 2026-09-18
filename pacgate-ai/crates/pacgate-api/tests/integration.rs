@@ -107,6 +107,7 @@ mod tests {
             jwt_secret: "test-secret-key".to_string(),
             default_tenant: "test-firm".to_string(),
             workflows_dir: None,
+            ocr_service_url: None,
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -234,6 +235,10 @@ mod tests {
             auth,
             search: Arc::new(pacgate_search::default_router()),
             rag: None,
+            embedding: pacgate_rag::EmbeddingService::new(
+            		"http://127.0.0.1:1",
+            		"nomic-embed-text",
+            		),
             db: pool,
         };
 
@@ -1079,6 +1084,7 @@ mod tests {
             jwt_secret: "test-secret-key".to_string(),
             default_tenant: "test-firm".to_string(),
             workflows_dir: None,
+            ocr_service_url: None,
         });
 
         // Build minimal state (stubs for everything)
@@ -1182,6 +1188,10 @@ mod tests {
             auth: Arc::new(pacgate_auth::AuthService::new("test-secret", pool.clone())),
             search: Arc::new(pacgate_search::default_router()),
             rag: None,
+            embedding: pacgate_rag::EmbeddingService::new(
+            		"http://127.0.0.1:1",
+            		"nomic-embed-text",
+            		),
             db: pool,
         };
 

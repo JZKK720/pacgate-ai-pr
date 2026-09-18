@@ -103,9 +103,16 @@ pub async fn extract_document(
         });
     }
 
-    // Cache miss: read the file bytes and call ocr-service.
-    let bytes = std::fs::read(&storage_path)
-        .map_err(|e| ApiError::internal(format!("failed to read stored document: {e}")))?;
+    // Cache miss: read the file bytes and call ocr-service. storage_path is
+    // stored relative to DATA_DIR (same convention as FsDocumentStore::abs_path).
+    let abs_path = std::path::Path::new(&state.config.data_dir).join(&storage_path);
+    let bytes = std::fs::read(&abs_path)
+        .map_err(|e| {
+            ApiError::internal(format!(
+                "failed to read stored document {}: {e}",
+                abs_path.display()
+            ))
+        })?;
 
     let ocr_url = state
         .config
