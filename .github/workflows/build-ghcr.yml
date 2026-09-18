@@ -4,38 +4,52 @@ name: Build & Push GHCR Images
 # (v0.1.x) is pushed. This keeps both AIPCs in sync from a single source of
 # truth and needs no local docker login (uses GITHUB_TOKEN).
 #
-# Images pushed (client namespace = SOURCE OF TRUTH):
-#   ghcr.io/pacgate-ai/pacgate-api:<tag>
-#   ghcr.io/pacgate-ai/pacgate-mcp:<tag>
-#   ghcr.io/pacgate-ai/deer-flow-pacgate:<tag>
-#   ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:<tag>
+# Images pushed (release authority = SOURCE OF TRUTH):
+#   ghcr.io/jzkk720/pacgate-api:<tag>
+#   ghcr.io/jzkk720/pacgate-mcp:<tag>
+#   ghcr.io/jzkk720/deer-flow-pacgate:<tag>
+#   ghcr.io/jzkk720/deer-flow-frontend-pacgate:<tag>
 #
-# NAMESPACE: the prefix is PINNED to `pacgate-ai` by the workflow-level
+# NAMESPACE: the prefix is PINNED to `jzkk720` by the workflow-level
 # `GHCR_NAMESPACE` below, and falls back to `github.repository_owner` only if that
-# is emptied. `pacgate-ai` is a USER account, not an organization.
+# is emptied. `jzkk720` is a USER account, not an organization.
 #
-# ONE ACCOUNT, ONE ROLE (confirmed by the maintainer):
-#   pacgate-ai - the CLIENT DELIVERY account; this is what the compose files pin
-#   jzkk720    - the CODE-ONLY master repo for maintenance; publishes NO images
+# ONE ACCOUNT, ONE ROLE (restated by the maintainer, 2026-09-18):
+#   jzkk720    - the RELEASE AUTHORITY. Code master AND image namespace.
+#   pacgate-ai - a READ-ONLY MIRROR of the same commits. Publishes NO images.
 #
-# A release populates ONLY pacgate-ai. jzkk720 is the upstream codebase where the
-# project originated and is maintained, but it is not an image namespace - the
-# mirror job that once copied tags there has been removed. Nothing pulls images
-# from ghcr.io/jzkk720/*.
+# A release populates ONLY jzkk720. Nothing in this project pulls images from
+# ghcr.io/pacgate-ai/* any more. This supersedes the 2026-09-17 model, which had
+# the roles the other way round and removed a mirror job - see
+# plans/016-jzkk720-master-build.md for why it was inverted.
 #
 # WHY PINNED RATHER THAN INFERRED. Deriving the owner from the repo was correct
 # by luck and wrong in principle. `secrets.GITHUB_TOKEN` can only push to the
-# namespace of the account that runs the workflow, so this workflow must run from
-# the pacgate-ai repository (or supply GHCR_CLIENT_PAT) to publish there.
+# namespace of the account that runs the workflow, so pinning makes the target
+# explicit: a run from the WRONG repo now fails loudly instead of quietly
+# publishing to a namespace no compose file looks at.
+#
+# The release runs from THIS repo (JZKK720), so the pinned namespace and the
+# token's owner MATCH. The normal `GITHUB_TOKEN` with `permissions: packages:
+# write` is therefore sufficient - no PAT is needed for the primary path.
+# GHCR_RELEASE_PAT exists only as an escape hatch for a deliberately
+# cross-namespace run.
 #
 # IMPORTANT: this prefix MUST match the `image:` pins in
 # deploy/client-bundle/compose.prod.yaml and compose.bundle.yaml. If the
 # workflow publishes to one namespace and compose pins the other, the client
 # install pulls nothing. Use the `namespace` dispatch input to override.
 #
-# NOTE: to publish to an owner OTHER than pacgate-ai you need a PAT with
+# NOTE: to publish to an owner OTHER than jzkk720 you need a PAT with
 # write:packages for that owner; GITHUB_TOKEN cannot cross namespaces. See
-# deploy/README-BUILD.md.
+# deploy/README-BUILD.md. The normal release does NOT need one - the pinned
+# namespace and this repo's owner are both jzkk720.
+#
+# CAREFUL WHEN REPLACING THE STRING `pacgate-ai`. It appears in two unrelated
+# roles in this file:
+#   1. the GHCR namespace the client used to pull from (now `jzkk720`)
+#   2. the BUILD CONTEXT path `pacgate-ai/Dockerfile` - a directory in THIS repo
+#      holding the Rust workspace. It is not a registry path. Do not change it.
 #
 # TWO WAYS TO RELEASE, and the dispatch path is usually better:
 #
@@ -49,8 +63,9 @@ name: Build & Push GHCR Images
 
 env:
   # The single source of truth for where a release publishes. See the NAMESPACE
-  # note above before changing it.
-  GHCR_NAMESPACE: pacgate-ai
+  # note above before changing it. JZKK720 is the release authority; pacgate-ai
+  # is a read-only mirror, and every compose pin must match this value.
+  GHCR_NAMESPACE: jzkk720
 
 on:
   push:
@@ -63,7 +78,7 @@ on:
         description: "Image tag to build (e.g. the current release). No default on purpose, so a stale tag cannot be dispatched by accident."
         required: true
       namespace:
-        description: "GHCR owner override. Empty = the pinned GHCR_NAMESPACE variable (pacgate-ai). Set only to publish elsewhere deliberately - clients pin ghcr.io/pacgate-ai."
+        description: "GHCR owner override. Empty = the pinned GHCR_NAMESPACE variable (jzkk720). Set only to publish elsewhere deliberately - clients pin ghcr.io/jzkk720."
         required: false
         default: ""
 
@@ -107,17 +122,31 @@ jobs:
           echo "prefix=ghcr.io/$ns" >> "$GITHUB_OUTPUT"
           echo "actor=$ns" >> "$GITHUB_OUTPUT"
           echo "Resolved image prefix: ghcr.io/$ns  (from: $src)"
-          if [ "$ns" != "pacgate-ai" ]; then
-            echo "::warning::Publishing to ghcr.io/$ns, which is NOT the namespace the client compose files pin (ghcr.io/pacgate-ai). Clients will not see this release."
+
+          # GHCR usernames are CASE-INSENSITIVE, but a shell string compare is
+          # not. `github.repository_owner` preserves the account's real
+          # capitalization (JZKK720), while registry paths are lowercase
+          # (ghcr.io/jzkk720). Comparing them raw reports a mismatch that does
+          # not exist, and emits a warning about a 403 that will not happen -
+          # which trains the reader to ignore the warning that DOES matter.
+          ns_lc=$(printf '%s' "$ns" | tr '[:upper:]' '[:lower:]')
+          owner_lc=$(printf '%s' "$OWNER_NS" | tr '[:upper:]' '[:lower:]')
+
+          if [ "$ns_lc" != "jzkk720" ]; then
+            echo "::warning::Publishing to ghcr.io/$ns, which is NOT the namespace the client compose files pin (ghcr.io/jzkk720). Clients will not see this release."
           fi
           # WARN IN ADVANCE when the credential provably cannot reach the target.
           # Only a PAT crosses namespaces; GITHUB_TOKEN is scoped to the repo
           # that issued it. Without this the failure is a bare 403 from whichever
           # build step reaches the registry first, which says nothing about why.
-          # Note the automatic token IS reachable when GHCR_CLIENT_PAT is set,
-          # so this check is about the fallback only.
-          if [ "$ns" != "$OWNER_NS" ] && [ -z "${{ secrets.GHCR_CLIENT_PAT }}" ]; then
-            echo "::warning::Publishing to ghcr.io/$ns but no GHCR_CLIENT_PAT is set. GITHUB_TOKEN belongs to '$OWNER_NS' and cannot push into '$ns', so the push WILL be rejected with 403. Add a PAT with write:packages for '$ns' as the repository secret GHCR_CLIENT_PAT, or run this workflow from the '$ns' repository."
+          #
+          # On the PRIMARY path this never fires: the pinned namespace is jzkk720
+          # and the release runs from JZKK720, so ns == OWNER_NS. It only fires
+          # when someone overrides the namespace to a different owner.
+          #
+          # Compared case-insensitively - see the ns_lc/owner_lc note above.
+          if [ "$ns_lc" != "$owner_lc" ] && [ -z "${{ secrets.GHCR_RELEASE_PAT }}" ]; then
+            echo "::warning::Publishing to ghcr.io/$ns but no GHCR_RELEASE_PAT is set. GITHUB_TOKEN belongs to '$OWNER_NS' and cannot push into '$ns', so the push WILL be rejected with 403. Add a PAT with write:packages for '$ns' as the repository secret GHCR_RELEASE_PAT, or run this workflow from the '$ns' repository."
           fi
 
       # Compute the image tag: strip the leading 'v' from release tags so it
@@ -159,7 +188,7 @@ jobs:
           # GITHUB_TOKEN already owns the pinned namespace, so the fallback is
           # the normal path there.
           username: ${{ steps.ns.outputs.actor || github.actor }}
-          password: ${{ secrets.GHCR_CLIENT_PAT || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_RELEASE_PAT || secrets.GITHUB_TOKEN }}
 
       # A failed login is a HARD stop, not a warning. The alternative - carrying
       # on and skipping the pushes - would produce a green run that published
@@ -172,7 +201,7 @@ jobs:
           echo "::error::GHCR login failed for the resolved namespace. No images were built or pushed."
           echo "Registry: ghcr.io"
           echo "Account attempted: ${{ steps.ns.outputs.actor || github.actor }}"
-          echo "If the namespace differs from this repository's owner, GITHUB_TOKEN cannot be used - add a PAT with write:packages for the target owner as the repository secret GHCR_CLIENT_PAT."
+            echo "If the namespace differs from this repository's owner, GITHUB_TOKEN cannot be used - add a PAT with write:packages for the target owner as the repository secret GHCR_RELEASE_PAT."
           exit 1
 
       # ── pacgate-api (Rust) ────────────────────────────────────────────────

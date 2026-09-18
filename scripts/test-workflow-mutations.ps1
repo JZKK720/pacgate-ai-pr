@@ -53,35 +53,40 @@ $mutations = @(
     # broken, not the check.
     @{ N = 'the failed login does not exit'
        File = $wf
-       Rx = '(secret GHCR_CLIENT_PAT\.[^\n]*)\r?\n\s*exit 1'
+       Rx = '(secret GHCR_RELEASE_PAT\.[^\n]*)\r?\n\s*exit 1'
        To = '$1'
        Want = 'a failed login exits non-zero' }
 
-    @{ N = 'GHCR_CLIENT_PAT is no longer consulted'
+    @{ N = 'GHCR_RELEASE_PAT is no longer consulted'
        File = $wf
-       From = 'secrets.GHCR_CLIENT_PAT || secrets.GITHUB_TOKEN'
+       From = 'secrets.GHCR_RELEASE_PAT || secrets.GITHUB_TOKEN'
        To   = 'secrets.GITHUB_TOKEN'
-       Want = 'GHCR_CLIENT_PAT is optional - it falls back to the automatic token' }
+       Want = 'GHCR_RELEASE_PAT is optional - it falls back to the automatic token' }
 
     @{ N = 'the namespace pin is removed'
        File = $wf
-       From = "  GHCR_NAMESPACE: pacgate-ai`r`n"
+       From = "  GHCR_NAMESPACE: jzkk720`r`n"
        To   = ''
        Want = 'workflow declares the pinned GHCR_NAMESPACE constant' }
 
     @{ N = 'the credential warning is removed'
        # SINGLE backslashes: in a PowerShell single-quoted string they are
        # literal, so the regex engine receives what is written here.
+       #
+       # The comparison is on the LOWERCASED pair (ns_lc/owner_lc), so that is
+       # what the anchor must match. Anchoring on the old raw `$ns != $OWNER_NS`
+       # would leave this mutation unapplied - and a mutation that cannot apply
+       # is indistinguishable from a defect that cannot be detected.
        File = $wf
-       Rx   = 'if \[ "\$ns" != "\$OWNER_NS" \][^\n]*\r?\n'
+       Rx   = 'if \[ "\$ns_lc" != "\$owner_lc" \][^\n]*\r?\n'
        To   = ''
        Want = 'WARNS when the token owner differs from the pinned namespace' }
 
     @{ N = 'the PAT is routed through a step output'
        File = $wf
-       From = '          password: ${{ secrets.GHCR_CLIENT_PAT || secrets.GITHUB_TOKEN }}'
+       From = '          password: ${{ secrets.GHCR_RELEASE_PAT || secrets.GITHUB_TOKEN }}'
        To   = '          password: ${{ steps.ns.outputs.token }}'
-       Want = 'GHCR_CLIENT_PAT is optional - it falls back to the automatic token' }
+       Want = 'GHCR_RELEASE_PAT is optional - it falls back to the automatic token' }
 
     @{ N = 'the PAT is copied into $GITHUB_OUTPUT'
        File = $wf

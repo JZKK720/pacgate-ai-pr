@@ -40,7 +40,7 @@ Write-Output ''
 # --- structural checks: the workflow must actually reference the pin ---------
 $raw = Get-Content -LiteralPath $wf -Raw
 
-Assert-True ($raw -match 'GHCR_NAMESPACE:\s*pacgate-ai') 'workflow declares the pinned GHCR_NAMESPACE constant'
+Assert-True ($raw -match 'GHCR_NAMESPACE:\s*jzkk720') 'workflow declares the pinned GHCR_NAMESPACE constant'
 Assert-True ($raw -match '\$GHCR_NAMESPACE') 'the step reads the committed constant'
 Assert-True ($raw -match '::warning::Publishing to ghcr\.io') 'warns when resolving to a non-pinned namespace'
 
@@ -82,17 +82,17 @@ Write-Output ''
 
 # --- the build job's own credential -----------------------------------------
 #
-# GITHUB_TOKEN cannot cross namespaces. The BUILD job's login uses
-# (github.actor, secrets.GITHUB_TOKEN) while the namespace is pinned to
-# pacgate-ai, so a run from the upstream repo would push into a namespace its
-# token does not own and die on a bare 403. GHCR_CLIENT_PAT is the escape hatch.
+# GITHUB_TOKEN cannot cross namespaces. On the PRIMARY path this is irrelevant:
+# the namespace is pinned to jzkk720 and the release runs from JZKK720, so the
+# pinned namespace and the token's owner MATCH and the automatic token suffices.
+# GHCR_RELEASE_PAT is the escape hatch for a deliberately cross-namespace run.
 Write-Output '=== build-job credential ==='
 Write-Output ''
 
-Assert-True ($raw -match 'GHCR_CLIENT_PAT') 'the build job can use a PAT for the pinned namespace'
-Assert-True ($raw -match 'secrets\.GHCR_CLIENT_PAT') 'the PAT is read from a repository secret, never a literal'
-Assert-True ($raw -match 'secrets\.GHCR_CLIENT_PAT \|\| secrets\.GITHUB_TOKEN') `
-    'GHCR_CLIENT_PAT is optional - it falls back to the automatic token'
+Assert-True ($raw -match 'GHCR_RELEASE_PAT') 'the build job can use a PAT for a cross-namespace target'
+Assert-True ($raw -match 'secrets\.GHCR_RELEASE_PAT') 'the PAT is read from a repository secret, never a literal'
+Assert-True ($raw -match 'secrets\.GHCR_RELEASE_PAT \|\| secrets\.GITHUB_TOKEN') `
+    'GHCR_RELEASE_PAT is optional - it falls back to the automatic token'
 Assert-True ($raw -match 'steps\.ns\.outputs\.actor \|\| github\.actor') 'the login account follows the resolved namespace'
 
 # The PAT must not be routed through a step output. It works, but it copies the
@@ -125,9 +125,26 @@ Assert-True ($confirmBlock.Success -and $confirmBlock.Value -match 'exit 1') 'a 
 # backslash boundary and the regex engine receives an illegal trailing `\`. Same
 # family as the `$var:` scope-qualifier trap - quoting rules differ between the
 # two layers and the failure surfaces in the wrong one.
+#
+# The comparison is on the LOWERCASED variables (ns_lc vs owner_lc), not the raw
+# ones: GHCR usernames are case-insensitive while a shell compare is not, and the
+# owner keeps its real capitalization (JZKK720 vs ghcr.io/jzkk720). Asserting on
+# the raw names would require the workflow to keep a comparison that produces a
+# false 403 warning.
 $nsBlock = [regex]::Match($raw, 'Resolve image namespace[\s\S]{0,3000}')
-Assert-True ($nsBlock.Success -and [regex]::Match($nsBlock.Value, 'ns" != "\$OWNER_NS').Success) `
+Assert-True ($nsBlock.Success -and [regex]::Match($nsBlock.Value, 'ns_lc" != "\$owner_lc').Success) `
     'WARNS when the token owner differs from the pinned namespace'
+# Assert the PROPERTY (both sides are lowercased before comparing), not the
+# exact `tr` invocation. An earlier version of this check spelled out the tr
+# arguments and failed on a correct workflow, because the quoting inside
+# `tr '[:upper:]' '[:lower:]'` does not lay out the way it looks when read as a
+# pattern - the space between the two quoted sets is not adjacent to what the
+# eye expects. Matching the two variable NAMES is unambiguous and survives a
+# rewrite of the lowercasing itself.
+Assert-True ($nsBlock.Success -and
+             [regex]::Match($nsBlock.Value, 'ns_lc=\$\(.*lower').Success -and
+             [regex]::Match($nsBlock.Value, 'owner_lc=\$\(.*lower').Success) `
+    'the owner/namespace compare is case-insensitive (GHCR usernames are)'
 Write-Output ''
 
 if ($StaticOnly) {
@@ -164,13 +181,15 @@ elif [ -n "`$GHCR_NAMESPACE" ]; then
 else
   ns="`$OWNER_NS"; src='repo owner (GHCR_NAMESPACE is empty)'
 fi
+ns_lc=`$(printf '%s' "`$ns" | tr '[:upper:]' '[:lower:]')
+owner_lc=`$(printf '%s' "`$OWNER_NS" | tr '[:upper:]' '[:lower:]')
 warn=no
-if [ "`$ns" != 'pacgate-ai' ]; then warn=yes; fi
+if [ "`$ns_lc" != 'jzkk720' ]; then warn=yes; fi
 cred='GITHUB_TOKEN'
 cwarn=no
 if [ -n "`$CLIENT_PAT" ]; then
-  cred='GHCR_CLIENT_PAT'
-elif [ "`$ns" != "`$OWNER_NS" ]; then
+  cred='GHCR_RELEASE_PAT'
+elif [ "`$ns_lc" != "`$owner_lc" ]; then
   cwarn=yes
 fi
 echo "`$ns|`$src|`$warn|`$cred|`$cwarn"
@@ -191,33 +210,54 @@ New-Item -ItemType Directory -Force -Path $script:base | Out-Null
 try {
     $r = Resolve-Ns -InputNs 'pacgate-ai' -Pinned 'something-else' -Owner 'jzkk720'
     Assert-True ($r.Ns -eq 'pacgate-ai') 'explicit input wins' "got $($r.Ns)"
-    Assert-True ($r.Warn -eq 'no') 'no warning for an explicit input' "got $($r.Warn)"
+    Assert-True ($r.Warn -eq 'yes') 'WARNS for an explicit input off the release authority' "got $($r.Warn)"
 
-    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'jzkk720'
-    Assert-True ($r.Ns -eq 'pacgate-ai') 'committed constant wins over the owner' "got $($r.Ns)"
+    # THE PRIMARY PATH, and the one that must never warn: pinned jzkk720, run
+    # from JZKK720, no PAT. The namespace and the token owner agree, so the
+    # automatic token suffices. This is what every normal release does.
+    $r = Resolve-Ns -InputNs '' -Pinned 'jzkk720' -Owner 'jzkk720'
+    Assert-True ($r.Ns -eq 'jzkk720') 'the pinned release authority is used' "got $($r.Ns)"
+    Assert-True ($r.Warn -eq 'no') 'no warning on the primary path' "got $($r.Warn)"
+    Assert-True ($r.Cred -eq 'GITHUB_TOKEN') 'the automatic token is sufficient same-owner' "got $($r.Cred)"
+    Assert-True ($r.CredWarn -eq 'no') 'no credential warning same-owner' "got $($r.CredWarn)"
+
+    $r = Resolve-Ns -InputNs '' -Pinned 'jzkk720' -Owner 'jzkk720'
     Assert-True ($r.Src -like 'committed*') 'reports the constant as the source' "got $($r.Src)"
 
-    # THE CASE THAT MATTERS: pin unset, workflow running on origin. Previously
-    # this silently published to the deprecated namespace.
+    # CASE MATTERS, AND IT BIT US. github.repository_owner preserves the account's
+    # real capitalization: this repo's owner is `JZKK720`, while every registry
+    # path is lowercase (`ghcr.io/jzkk720`). A raw string compare reported a
+    # mismatch that does not exist and warned about a 403 that would not happen -
+    # training the reader to ignore the warning that DOES matter. GHCR is
+    # case-insensitive, so the compare must be too.
+    $r = Resolve-Ns -InputNs '' -Pinned 'jzkk720' -Owner 'JZKK720'
+    Assert-True ($r.Ns -eq 'jzkk720') 'the pin still resolves when the owner is capitalized' "got $($r.Ns)"
+    Assert-True ($r.Warn -eq 'no') 'no namespace warning for a capitalized same-owner' "got $($r.Warn)"
+    Assert-True ($r.CredWarn -eq 'no') 'NO FALSE 403 WARNING when the owner differs only in case' "got $($r.CredWarn)"
+
+    # Pin unset: falls back to the owner. On JZKK720 that still lands correctly,
+    # but it is no longer the intended path - the pin is what makes it explicit.
     $r = Resolve-Ns -InputNs '' -Pinned '' -Owner 'jzkk720'
     Assert-True ($r.Ns -eq 'jzkk720') 'unset pin falls back to the owner' "got $($r.Ns)"
-    Assert-True ($r.Warn -eq 'yes') 'WARNS when publishing to a namespace clients do not pin' "got $($r.Warn)"
+    Assert-True ($r.Warn -eq 'no') 'falling back to jzkk720 does not warn' "got $($r.Warn)"
 
+    # The mirror repo must WARN: it is no longer a publish target.
     $r = Resolve-Ns -InputNs '' -Pinned '' -Owner 'pacgate-ai'
-    Assert-True ($r.Warn -eq 'no') 'no warning when the owner IS the pinned namespace' "got $($r.Warn)"
+    Assert-True ($r.Warn -eq 'yes') 'WARNS when publishing somewhere clients do not pin' "got $($r.Warn)"
 
-    # THE CROSS-NAMESPACE CASE. Running on origin with the pin active: the token
-    # belongs to jzkk720, the target is pacgate-ai, so the push cannot work and
-    # the step must say so before the 403 arrives.
-    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'jzkk720'
-    Assert-True ($r.Ns -eq 'pacgate-ai') 'pinned namespace wins on the upstream repo' "got $($r.Ns)"
-    Assert-True ($r.CredWarn -eq 'yes') 'WARNS that GITHUB_TOKEN cannot reach the pinned namespace' "got $($r.CredWarn)"
+    # THE CROSS-NAMESPACE CASE. If someone overrides the namespace to a different
+    # owner, the token belongs to one account and the target is another, so the
+    # push cannot work and the step must say so before the 403 arrives.
+    $r = Resolve-Ns -InputNs 'pacgate-ai' -Pinned 'jzkk720' -Owner 'jzkk720'
+    Assert-True ($r.Ns -eq 'pacgate-ai') 'an explicit override wins over the pin' "got $($r.Ns)"
+    Assert-True ($r.CredWarn -eq 'yes') 'WARNS that GITHUB_TOKEN cannot reach the overridden namespace' "got $($r.CredWarn)"
 
-    $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'jzkk720' -Pat 'ghp_example'
-    Assert-True ($r.Cred -eq 'GHCR_CLIENT_PAT') 'a supplied PAT is preferred over the automatic token' "got $($r.Cred)"
+    $r = Resolve-Ns -InputNs 'pacgate-ai' -Pinned 'jzkk720' -Owner 'jzkk720' -Pat 'ghp_example'
+    Assert-True ($r.Cred -eq 'GHCR_RELEASE_PAT') 'a supplied PAT is preferred over the automatic token' "got $($r.Cred)"
     Assert-True ($r.CredWarn -eq 'no') 'no credential warning once a PAT is supplied' "got $($r.CredWarn)"
 
-    # The normal client-delivery path: owner and pin agree, no PAT anywhere.
+    # A non-jzkk720 namespace with its matching owner: credential is fine, but the
+    # namespace warning still fires because clients do not pin it.
     $r = Resolve-Ns -InputNs '' -Pinned 'pacgate-ai' -Owner 'pacgate-ai'
     Assert-True ($r.Cred -eq 'GITHUB_TOKEN') 'the automatic token is the default credential' "got $($r.Cred)"
     Assert-True ($r.CredWarn -eq 'no') 'no credential warning when owner and pin agree' "got $($r.CredWarn)"
