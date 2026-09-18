@@ -131,3 +131,4 @@ graphify-out/
 # Credential carriers (incident 2026-09-16) - never track
 pacgate-ai/**/pacgate-ai-remote-handbook/OPERATOR.md
 pacgate-ai/**/MCP*/
+.e2e-ner-model/
