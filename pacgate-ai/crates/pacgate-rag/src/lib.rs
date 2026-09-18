@@ -376,6 +376,16 @@ impl RagStore {
                 .await
                 .map_err(|e| RagError::Migration(e.to_string()))?;
 
+
+            // Migration 005 adds sanitization_state to kb_chunks. Without it,
+            // every search gate that filters on the column errors out.
+            let sanitization_sql =
+                include_str!("../../../migrations/005_sanitization_state.sql");
+            sqlx::raw_sql(sanitization_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
             Ok::<(), RagError>(())
         }
         .await;
@@ -388,7 +398,9 @@ impl RagStore {
 
         result?;
 
-        tracing::info!("RAG migrations applied (002_schema + 003_enrichment + 004_data_level)");
+        tracing::info!(
+            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state)"
+        );
         Ok(())
     }
 }
