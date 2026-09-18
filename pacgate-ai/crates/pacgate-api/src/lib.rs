@@ -6,6 +6,7 @@ mod extract;
 mod documents;
 mod error;
 mod matters;
+mod sanitize;
 mod search;
 mod state;
 mod workflows;

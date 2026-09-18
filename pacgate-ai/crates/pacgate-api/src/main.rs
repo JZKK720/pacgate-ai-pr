@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_secret,
         default_tenant,
         ocr_service_url: std::env::var("OCR_SERVICE_URL").ok().filter(|s| !s.is_empty()),
+        ner_model_dir: std::env::var("PACGATE_NER_MODEL_DIR").ok().filter(|s| !s.is_empty()),
         workflows_dir,
     });
 

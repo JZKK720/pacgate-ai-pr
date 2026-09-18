@@ -21,6 +21,7 @@ pacgate-auth = { path = "../pacgate-auth" }
 pacgate-workflow = { path = "../pacgate-workflow" }
 pacgate-persona = { path = "../pacgate-persona" }
 pacgate-rag = { path = "../pacgate-rag" }
+pacgate-redact = { path = "../pacgate-redact" }
 pacgate-search = { path = "../pacgate-search" }
 serde.workspace = true
 serde_json.workspace = true

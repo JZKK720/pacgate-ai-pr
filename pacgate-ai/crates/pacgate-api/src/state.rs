@@ -71,6 +71,9 @@ pub struct AppConfig {
     /// Base URL of ocr-service, e.g. http://ocr-service:8100. None disables
     /// extraction (fail closed: extract_document errors rather than guessing).
     pub ocr_service_url: Option<String>,
+    /// Directory with the local NER weights (config.json, model.safetensors,
+    /// vocab.txt). None runs Tier-1 rules only; Some-but-broken fails the job.
+    pub ner_model_dir: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -82,6 +85,7 @@ impl Default for AppConfig {
             default_tenant: "default-firm".to_string(),
             workflows_dir: None,
             ocr_service_url: None,
+            ner_model_dir: None,
         }
     }
 }

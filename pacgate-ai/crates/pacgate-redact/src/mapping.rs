@@ -116,6 +116,98 @@ impl Mapping {
         }
         Ok(out)
     }
+
+    /// JSON for the vault row (`sanitizer_jobs.mapping` JSONB). Shape:
+    /// `{"entries": [{"placeholder", "entity", "original"}], "job_id", "version"}`.
+    /// The original values NEVER leave pacgate-api; this is storage, not egress.
+    pub fn serialize(&self) -> serde_json::Value {
+        let entries: Vec<serde_json::Value> = self
+            .entries
+            .iter()
+            .map(|(ph, (entity, original))| {
+                serde_json::json!({
+                    "placeholder": ph,
+                    "entity": entity.code(),
+                    "original": original,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "job_id": self.job_id.0.to_string(),
+            "version": self.version.0,
+            "entries": entries,
+        })
+    }
+
+    /// Rebuild a mapping from its serialized form. Unknown entity codes are
+    /// refused (never guessed), so a partial vault is visible rather than
+    /// silently mis-restoring.
+    pub fn deserialize(
+        value: &serde_json::Value,
+        expected_version: MappingVersion,
+    ) -> RedactResult<Self> {
+        let version = value
+            .get("version")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| {
+                RedactError::InvalidInput("mapping json lacks version".to_string())
+            })?;
+        if version != expected_version.0 as u64 {
+            return Err(RedactError::InvalidInput(format!(
+                "mapping version mismatch: stored v{version}, expected v{}",
+                expected_version.0
+            )));
+        }
+        let job_id_str = value
+            .get("job_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                RedactError::InvalidInput("mapping json lacks job_id".to_string())
+            })?;
+        let job_id = JobId(job_id_str.parse().map_err(|e| {
+            RedactError::InvalidInput(format!("mapping json job_id invalid: {e}"))
+        })?);
+        let mut entries = HashMap::new();
+        for e in value
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                RedactError::InvalidInput("mapping json lacks entries".to_string())
+            })?
+        {
+            let placeholder = e
+                .get("placeholder")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    RedactError::InvalidInput("entry lacks placeholder".to_string())
+                })?
+                .to_string();
+            let entity_code = e
+                .get("entity")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    RedactError::InvalidInput("entry lacks entity".to_string())
+                })?;
+            let entity = EntityType::from_code(entity_code).ok_or_else(|| {
+                RedactError::InvalidInput(format!(
+                    "unknown entity code {entity_code}: refusing to guess"
+                ))
+            })?;
+            let original = e
+                .get("original")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    RedactError::InvalidInput("entry lacks original".to_string())
+                })?
+                .to_string();
+            entries.insert(placeholder, (entity, original.to_string()));
+        }
+        Ok(Self {
+            job_id,
+            version: expected_version,
+            entries,
+        })
+    }
 }
 
 /// Find `[UPPER_TOKEN]` shapes for unknown-placeholder detection.
@@ -157,6 +249,38 @@ mod tests {
         m.insert("[PERSON_1]", "张三");
         m.insert("[ORG_1]", "智方云");
         m
+    }
+
+    #[test]
+    fn a_mapping_survives_a_json_round_trip() {
+        let mut m = Mapping::new(MappingVersion(1));
+        m.insert_typed("[PERSON_ABC123_1]", EntityType::PersonName, "张三");
+        m.insert_typed("[ORG_ABC123_2]", EntityType::OrgName, "智方云");
+        let json = m.serialize();
+        let back = Mapping::deserialize(&json, MappingVersion(1)).expect("round trip");
+        assert_eq!(back.entry_count(), 2);
+        let restored = back
+            .restore("[PERSON_ABC123_1] 与 [ORG_ABC123_2] 签约", MappingVersion(1))
+            .unwrap();
+        assert_eq!(restored, "张三 与 智方云 签约");
+    }
+
+    #[test]
+    fn deserialize_refuses_an_unknown_entity_code_rather_than_guessing() {
+        let mut m = Mapping::new(MappingVersion(1));
+        m.insert_typed("[PERSON_X_1]", EntityType::PersonName, "张三");
+        let mut json = m.serialize();
+        json["entries"][0]["entity"] = serde_json::json!("NOT_A_REAL_CODE");
+        let err = Mapping::deserialize(&json, MappingVersion(1)).unwrap_err();
+        assert!(err.to_string().contains("unknown entity code"));
+    }
+
+    #[test]
+    fn deserialize_refuses_a_version_mismatch() {
+        let m = sample();
+        let json = m.serialize();
+        let err = Mapping::deserialize(&json, MappingVersion(99)).unwrap_err();
+        assert!(err.to_string().contains("version mismatch"));
     }
 
     #[test]
