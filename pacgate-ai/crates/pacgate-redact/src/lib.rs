@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub mod checksum;
 pub mod detect;
 pub mod entity;
+pub mod placeholder;
+pub use placeholder::PlaceholderAllocator;
 pub use entity::{EntityType, PlaceholderPolicy, Tier};
 
 /// Errors from detection, redaction or verification.
