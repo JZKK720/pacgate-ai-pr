@@ -1,5 +1,6 @@
 //! Detection layer. Deterministic rules first; models are additive.
 
+pub mod noise;
 pub mod rules;
 
 pub use rules::TierOneDetector;
