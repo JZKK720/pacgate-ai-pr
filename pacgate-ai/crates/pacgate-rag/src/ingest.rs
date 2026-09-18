@@ -15,6 +15,27 @@ use crate::{EmbeddingService, RagError};
 const MIN_CHUNK_SIZE: usize = 500;
 const MAX_CHUNK_SIZE: usize = 1500;
 
+/// Ingest sets `sanitization_state` explicitly rather than leaning on the
+/// column default. If a future migration changed the default, ingest behaviour
+/// would change silently - and the direction of that change would decide
+/// whether unsanitized text becomes retrievable.
+const INSERT_CHUNK_SQL: &str = "\
+    INSERT INTO kb_chunks \
+        (tenant_id, matter_id, document_id, chunk_index, content, embedding, jurisdiction, source_level, data_level, sanitization_state) \
+    VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9, 'pending')";
+
+/// Promote a document's pending chunks after a job produced a clean verdict.
+///
+/// Scoped to one document on purpose: a sanitization job covers one document
+/// version, so a wider UPDATE could promote chunks nobody examined. The
+/// `= 'pending'` guard makes it idempotent and, more importantly, prevents a
+/// `blocked` row from ever being promoted by a later successful run on a
+/// different document.
+const MARK_SANITIZED_SQL: &str = "\
+    UPDATE kb_chunks SET sanitization_state = 'sanitized' \
+    WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
+      AND sanitization_state = 'pending'";
+
 pub struct ChunkIngestor {
     db: PgPool,
     embedding: EmbeddingService,
@@ -101,10 +122,7 @@ impl ChunkIngestor {
                     .join(",")
             );
 
-            sqlx::query(
-                "INSERT INTO kb_chunks (tenant_id, matter_id, document_id, chunk_index, content, embedding, jurisdiction, source_level, data_level)
-                 VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9)",
-            )
+            sqlx::query(INSERT_CHUNK_SQL)
             .bind(tenant_id.0)
             .bind(matter_id.0)
             .bind(doc_id.0)
@@ -131,6 +149,30 @@ impl ChunkIngestor {
             .execute(&self.db)
             .await?;
         Ok(())
+    }
+
+    /// Promote this document's `pending` chunks to `sanitized`.
+    ///
+    /// Returns the number of rows changed. Called by the sanitizer (plan 3)
+    /// only after a job has produced a `Verdict::Pass` and sealed a ledger row.
+    /// The caller is responsible for that ordering; this method does not check
+    /// for a ledger, because doing so would couple ingestion to the ledger
+    /// schema.
+    pub async fn mark_sanitized(
+        &self,
+        tenant_id: &TenantId,
+        matter_id: &MatterId,
+        document_id: &DocumentId,
+    ) -> Result<u64, RagError> {
+        let result = sqlx::query(MARK_SANITIZED_SQL)
+            .bind(tenant_id.0)
+            .bind(matter_id.0)
+            .bind(document_id.0)
+            .execute(&self.db)
+            .await
+            .map_err(|e| RagError::Database(e.to_string()))?;
+
+        Ok(result.rows_affected())
     }
 
     /// Split text into chunks of ~500-1500 characters at paragraph boundaries.
@@ -209,5 +251,46 @@ impl ChunkIngestor {
         }
 
         sentences
+    }
+}
+
+#[cfg(test)]
+mod sanitization_state_tests {
+    use super::*;
+
+    #[test]
+    fn a_new_chunk_defaults_to_pending() {
+        // The ingest SQL must name the column explicitly. Relying on the
+        // column default would mean a future ALTER changing the default
+        // silently changes ingest behaviour.
+        assert!(
+            INSERT_CHUNK_SQL.contains("sanitization_state"),
+            "ingest must set sanitization_state explicitly"
+        );
+        assert!(
+            INSERT_CHUNK_SQL.contains("'pending'"),
+            "a newly ingested chunk is pending, never sanitized"
+        );
+    }
+
+    #[test]
+    fn ingest_never_claims_sanitized() {
+        assert!(
+            !INSERT_CHUNK_SQL.contains("'sanitized'"),
+            "ingestion cannot know a document is sanitized; only a job can say that"
+        );
+    }
+
+    #[test]
+    fn the_promote_statement_targets_only_pending_rows() {
+        assert!(MARK_SANITIZED_SQL.contains("sanitization_state = 'pending'"));
+        assert!(MARK_SANITIZED_SQL.contains("SET sanitization_state = 'sanitized'"));
+    }
+
+    #[test]
+    fn the_promote_statement_stays_within_one_document() {
+        assert!(MARK_SANITIZED_SQL.contains("document_id = $3"));
+        assert!(MARK_SANITIZED_SQL.contains("tenant_id = $1"));
+        assert!(MARK_SANITIZED_SQL.contains("matter_id = $2"));
     }
 }
