@@ -422,6 +422,15 @@ impl RagStore {
                 .await
                 .map_err(|e| RagError::Migration(e.to_string()))?;
 
+            // Migration 007 adds the sanitizer job + ledger tables. Without it,
+            // the job API (plan 020) has nowhere to persist the vault or the
+            // redaction evidence.
+            let sanitizer_sql = include_str!("../../../migrations/007_sanitizer_jobs.sql");
+            sqlx::raw_sql(sanitizer_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
             Ok::<(), RagError>(())
         }
         .await;
@@ -435,7 +444,7 @@ impl RagStore {
         result?;
 
         tracing::info!(
-            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans)"
+            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans + 007_sanitizer_jobs)"
         );
         Ok(())
     }
