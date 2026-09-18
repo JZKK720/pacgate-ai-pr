@@ -139,6 +139,29 @@ pub async fn get_document(
     Ok(Json(fetch_document_for_tenant(&state, &tenant_id, &doc_id).await?))
 }
 
+pub async fn extract_document_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::extract::ExtractedDocument>, ApiError> {
+    let (tenant_id, _) = claims_to_ids(&claims)?;
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+
+    // The document's matter scopes the call; fetch it to enforce the tenant
+    // boundary before extracting.
+    let doc = fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+    let extracted = crate::extract::extract_document(
+        &state,
+        &tenant_id,
+        &doc.matter_id,
+        &document_id,
+    )
+    .await?;
+    Ok(Json(extracted))
+}
+
 pub async fn delete_document(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
