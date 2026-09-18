@@ -89,6 +89,12 @@ web-sys = { version = "0.3", features = ["Window"] }
 # Embeddings / vectors
 hf-hub = "0.3"
 
+# Local NER inference (plan 019 T6; shibing624/bert4ner-base-chinese, Apache-2.0)
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = "0.21"
+
 # Config / env
 config = "0.14"
 dotenvy = "0.15"
