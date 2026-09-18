@@ -265,3 +265,78 @@ Verified at this commit: workflow YAML parses, structural validity 5/5,
 (exists / actually copies / correct order), fork ancestor-check confirmed.
 The one remaining test failure is the 8-pin consistency check, which is the
 invariant working correctly until the repin that must FOLLOW the package flips.
+
+## EXECUTION LOG (2026-09-18) - the release is LIVE, one flip short
+
+### How the images were published (no PAT needed)
+
+The stored credential on the dev box has `write:packages`, and a registry-side
+retag works from it:
+
+    docker buildx imagetools create --tag ghcr.io/jzkk720/<img>:0.1.14 \
+                                       ghcr.io/pacgate-ai/<img>:0.1.14
+
+So the workflow's `denied: permission_denied: write_package` is about the JOB's
+repo-scoped GITHUB_TOKEN, not about the account lacking a permission. The PAT
+remains the right fix for the WORKFLOW path; it was not needed to publish.
+
+### What is on jzkk720 now, content-verified
+
+    pacgate-api:0.1.14                 public    hnsw (not ivfflat)      OK
+    deer-flow-pacgate:0.1.14           public    ok                      OK
+    pacgate-mcp:0.1.14                 PRIVATE   markitdown[docx,...]    FLIP
+    deer-flow-frontend-pacgate:0.1.14  PRIVATE   BRANDED (12 hits)       FLIP
+
+The two public ones inherited visibility from the pre-existing packages. The
+two new ones defaulted private, as GHCR does for a first push.
+
+### The frontend was built locally, deliberately
+
+`deploy/build-frontend.ps1 -Tag 0.1.14` applied all 5 overrides and produced a
+branded image, verified at **12 pacgate hits** under /app/frontend. It was then
+tagged and pushed to jzkk720. This was chosen over a retag because the
+`pacgate-ai` frontend at 0.1.14 is UNBRANDED - see the trap below.
+
+### TRAP: /app/.next does not exist
+
+The Dockerfile does `COPY deploy/deer-flow-src/frontend ./frontend`, so the
+output is at **/app/frontend/.next**. A check against /app/.next returns 0 for
+every image and reads as a branding failure when the image is fine. Measure at
+/app/frontend. Expected count for a correct build: 12.
+
+### TRAP: 0.1.15 is mislabelled - do not pin it
+
+Built from commit 0cd785e, whose Cargo.toml says `version = "0.1.14"`, so the
+binary answers 0.1.14 while the tag says 0.1.15. The AIPC update check compares
+the RUNNING version against the compose pin, so pinning 0.1.15 makes the "up to
+date" check fire wrongly forever. Its frontend IS branded (12 hits), which is
+what proved the overrides mechanism works - that is its only use.
+
+### Leftover junk tags (harmless, uncleaned)
+
+jzkk720/pacgate-api also carries `connectivity-test`,
+`connectivity-test-delete` and `tmp-del` from probing. All three point at the
+SAME correct content as 0.1.14, so nothing is wrong; they are just untidy. They
+could not be removed: the registry returns 405 on tag delete and the GitHub API
+version-delete returns 403 with this token's scopes. Needs `delete:packages` or
+the GHCR UI. Do not retry.
+
+### BLOCKING: the visibility flip is UI-only
+
+`PATCH /user/packages/container/<n>` and the `/users/jzkk720/...` form both
+return 404 for personal-account packages even with write:packages. The browser
+must be signed in as **JZKK720** - a signed-in-as-`pacgate-ai` browser gets a
+404 on `users/JZKK720/packages/.../settings` and cannot even see the package.
+
+Required, by hand, to finish:
+  1. Flip `pacgate-mcp` -> Public
+  2. Flip `deer-flow-frontend-pacgate` -> Public
+  3. Confirm all four anonymous 200:
+       .\scripts\check-ghcr-pull.ps1 -Targets `
+         "jzkk720/pacgate-api:0.1.14","jzkk720/pacgate-mcp:0.1.14", `
+         "jzkk720/deer-flow-pacgate:0.1.14","jzkk720/deer-flow-frontend-pacgate:0.1.14"
+
+ONLY THEN repin the 8 compose pins (Task 5). Repinning before both are public
+breaks the client install for the mcp and frontend images specifically.
+
+Do NOT repin 0.1.15.
