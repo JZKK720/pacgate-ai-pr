@@ -18,6 +18,16 @@ from deerflow.agents.memory.storage import MemoryStorage
 from .client import PacgateApiClient
 
 
+class MatterMemoryConflict(Exception):
+    """Raised when a matter-memory write is rejected as stale (HTTP 409).
+
+    Deliberately NOT swallowed into a generic failure. A conflict means another
+    writer changed the memory since this process read it; silently retrying
+    would discard their update, and silently ignoring the error would discard
+    this one. The caller must decide.
+    """
+
+
 class PacgateMemoryStorage(MemoryStorage):
     """Memory storage backed by pacgate-api (per-matter knowledge base)."""
 
@@ -32,14 +42,21 @@ class PacgateMemoryStorage(MemoryStorage):
         self.matter_id = os.environ.get("PACGATE_MATTER_ID")
         if not self.matter_id:
             raise ValueError("PacgateMemoryStorage requires PACGATE_MATTER_ID")
+        # The revision last observed. None means "never read", which sends no
+        # If-Match and therefore keeps the unconditional write path working.
+        self._revision: int | None = None
 
     def load(
         self, agent_name: str | None = None, *, user_id: str | None = None
     ) -> dict[str, Any]:
-        """Load memory from pacgate-api."""
+        """Load memory from pacgate-api, remembering the revision read."""
         resp = self.client.get(f"/api/matters/{self.matter_id}/memory")
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        if isinstance(data, dict):
+            revision = data.get("revision", 0)
+            self._revision = revision if isinstance(revision, int) else 0
+        return data
 
     def reload(
         self, agent_name: str | None = None, *, user_id: str | None = None
@@ -54,11 +71,28 @@ class PacgateMemoryStorage(MemoryStorage):
         *,
         user_id: str | None = None,
     ) -> bool:
-        """Save memory to pacgate-api."""
+        """Save memory to pacgate-api, guarding against a lost update.
+
+        Sends If-Match when a revision is known. On 409, raises
+        MatterMemoryConflict and forgets the revision, so a caller that chooses
+        to retry must reload first rather than replaying the stale value.
+        """
+        headers: dict[str, str] = {}
+        if self._revision is not None:
+            headers["If-Match"] = str(self._revision)
+
         resp = self.client.post(
             f"/api/matters/{self.matter_id}/memory",
             json=memory_data,
+            headers=headers,
         )
+
+        if resp.status_code == 409:
+            self._revision = None
+            raise MatterMemoryConflict(
+                f"matter memory was modified concurrently: {resp.text}"
+            )
+
         resp.raise_for_status()
         return True
 
