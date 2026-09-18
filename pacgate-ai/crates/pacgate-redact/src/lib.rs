@@ -13,6 +13,8 @@ pub mod mapping;
 pub mod replace;
 pub mod verify;
 pub mod ledger;
+pub mod policy;
+pub use policy::{decide, PolicyDecision};
 pub use ledger::RedactionLedger;
 pub use verify::{verify, Verdict, Verification};
 pub use replace::{AppliedRedaction, Redaction, Redactor};
