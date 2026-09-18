@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub mod checksum;
 pub mod detect;
 pub mod entity;
+pub use entity::{EntityType, PlaceholderPolicy, Tier};
 
 /// Errors from detection, redaction or verification.
 ///
