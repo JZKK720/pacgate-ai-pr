@@ -12,6 +12,85 @@ machines can drift. The goal is: **every runtime image is published to GHCR, and
 
 Before this change, two components were built locally and not on GHCR:
 
+> **SUPERSEDED 2026-09-18 (plan 016).** The roles below were INVERTED by the
+> maintainer: `jzkk720` is now the **release authority** for both the code and
+> the images, and `pacgate-ai` is a **read-only mirror**. Everything from here
+> to the end of the "Owner / namespace decision" section describes the
+> 2026-09-17 model and is kept for history. The current model is in the next
+> section.
+
+## Release authority: jzkk720 (current)
+
+| Account | Role | Publishes images? |
+|---|---|---|
+| `JZKK720` | **release authority** — code master AND image namespace | **YES** |
+| `pacgate-ai` | read-only mirror of the same commits | no |
+
+`GHCR_NAMESPACE: jzkk720` at the top of the workflow is the single source of
+truth, and **every compose pin must match it**. If the workflow publishes to one
+namespace and compose pins another, the client install pulls nothing and no
+error is raised anywhere — that invariant is what `test-workflow-namespace.ps1`
+exists to protect.
+
+### Publishing without a PAT (the normal path)
+
+The release runs from the `JZKK720` repo, so the pinned namespace and the token's
+owner are the SAME account and the ordinary `GITHUB_TOKEN` is expected to
+suffice. **Verified 2026-09-18, and it does not:**
+
+    ERROR: failed to push ghcr.io/jzkk720/pacgate-api:0.1.14
+    denied: permission_denied: write_package
+
+Login succeeds and the job declares `packages: write`, so this is not a scope
+problem — it is package **ownership**. Two `jzkk720` packages predate the repo
+and are **not linked** to it (`GET /users/jzkk720/packages/container/<n>` shows an
+empty `repository` field), while the fork's equivalents ARE linked to
+`pacgate-ai/pacgate-ai-pr`. A package created BY a workflow gets that link; one
+created by a manual `docker push` does not.
+
+So the workflow path **needs `GHCR_RELEASE_PAT`** (a PAT with `write:packages`).
+There is no GITHUB_TOKEN route to the unlinked packages.
+
+### Publishing from a workstation (no PAT, no workflow)
+
+The dev box's stored credential carries `write:packages`, and a registry-side
+retag works from it — this is how 0.1.14 was published to `jzkk720`:
+
+```powershell
+docker buildx imagetools create --tag ghcr.io/jzkk720/<img>:0.1.14 `
+                                   ghcr.io/pacgate-ai/<img>:0.1.14
+```
+
+Retag rather than rebuild: Docker builds are not reproducible (layer tars carry
+mtimes), so a rebuild of identical source yields a DIFFERENT digest.
+
+### Two traps that cost real cycles
+
+1. **New GHCR packages are PRIVATE by default.** The only symptom is a failed
+   *anonymous* pull; nothing errors at build time. The flip is **UI-only** for
+   personal accounts — the REST `PATCH .../visibility` returns 404 even with
+   `write:packages`. Use the package's settings page while signed in as the
+   OWNING account (a session signed in as a different account 404s, and so does
+a signed-out one).
+2. **`pacgate-ai` appears in TWO unrelated roles.** It is the old image
+   namespace AND the build-context directory `pacgate-ai/Dockerfile` (the Rust
+   workspace in this repo). Never blind-replace the string; anchor on the image
+   names.
+
+### Required secrets
+
+| Secret | Needed for | Required? |
+|---|---|---|
+| `GHCR_RELEASE_PAT` | PAT with `write:packages` for the release namespace; used by the build job | **Required** from `JZKK720` — the automatic token cannot write the unlinked packages |
+| `GITHUB_TOKEN` | all other repo operations | automatic |
+
+> There is no `GHCR_CLIENT_PAT` any more; the secret was renamed to
+> `GHCR_RELEASE_PAT` to match its purpose.
+
+### Historical: the 2026-09-17 single-namespace model (superseded)
+
+Kept because the reasoning below is what was true at the time.
+
 | Component | Before | After |
 |---|---|---|
 | `pacgate-mcp` | built from `../pacgate-mcp` per machine | `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` |
@@ -20,10 +99,11 @@ Before this change, two components were built locally and not on GHCR:
 | `deer-flow-pacgate` | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.0` | `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` |
 
 > The `ghcr.io/jzkk720/*` references in the "Before" column are historical. As of
-> 2026-09-17 `jzkk720` is the **code-only** master repo for maintenance and
-> publishes **no** images. All runtime images live under `ghcr.io/pacgate-ai/*`.
+> 2026-09-17 `jzkk720` was declared the **code-only** master repo publishing **no**
+> images. **That was reversed on 2026-09-18** — `jzkk720` is the release
+> authority and every runtime image now lives under `ghcr.io/jzkk720/*`.
 
-## Owner / namespace decision
+## Historical: owner / namespace decision (superseded)
 
 The repo's push remote is `origin = JZKK720/pacgate-ai-pr` (the upstream /
 developer account) and `fork = https://github.com/pacgate-ai/pacgate-ai-pr.git`
@@ -38,18 +118,24 @@ developer account) and `fork = https://github.com/pacgate-ai/pacgate-ai-pr.git`
 > Nothing fails loudly in that case: the release goes green and every AIPC keeps
 > pulling the previous images. The pinned constant removes the possibility.
 
-`GHCR_NAMESPACE: pacgate-ai` at the top of the workflow is now the single source
-of truth. Precedence is:
+`GHCR_NAMESPACE` at the top of the workflow is the single source of truth.
+Precedence is:
 
 1. the `namespace` dispatch input (deliberate override),
 2. the committed `GHCR_NAMESPACE`,
 3. `github.repository_owner` — last resort, so a fresh fork still builds.
 
-Resolving to anything other than `pacgate-ai` emits a warning naming the
+Resolving to anything other than the pinned namespace emits a warning naming the
 mismatch. The `scripts/test-workflow-namespace.ps1` + `-mutations.ps1` pair
 guards these properties.
 
-### Single namespace: pacgate-ai
+> The owner and the namespace are compared CASE-INSENSITIVELY: GHCR usernames
+> are case-insensitive, but a shell comparison is not, and
+> `github.repository_owner` preserves the account's real capitalization
+> (`JZKK720`) while registry paths are lowercase (`ghcr.io/jzkk720`). Comparing
+them raw emitted a warning about a 403 that would never happen.
+
+### Historical: single namespace pacgate-ai (superseded)
 
 `jzkk720` is the upstream/developer account where the project originated and is
 maintained, but it is **code-only** — it publishes no images. A release populates
@@ -63,7 +149,7 @@ The `mirror-upstream` job that once copied tags to `ghcr.io/jzkk720/*` has been
 removed. Nothing automated pulls from that namespace, so the mirror was dead
 weight and a misleading "mirror never ran" state.
 
-### Required secrets
+### Historical: required secrets under that model
 
 | Secret | Needed for | Required? |
 |---|---|---|

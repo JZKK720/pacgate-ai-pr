@@ -1,7 +1,22 @@
 # Design: Remove the jzkk720 image mirror — jzkk720 becomes code-only
 
+> **SUPERSEDED 2026-09-18 by `plans/016-jzkk720-master-build.md`.**
+>
+> This design proposed the OPPOSITE model to the one now in force, and it was
+> implemented in `e3413d3`. On 2026-09-18 the maintainer restated the roles:
+> **`jzkk720` is the release authority for both the code and the images**, and
+> `pacgate-ai` is a **read-only mirror**. `GHCR_NAMESPACE` is pinned to
+> `jzkk720`, all 8 compose pins were repointed, and all four
+> `ghcr.io/jzkk720/*:0.1.14` images are public and anonymously pullable.
+>
+> Do NOT act on the instructions below. This document is kept because it records
+> what was decided on 2026-09-17 and why — and because one of its findings still
+> holds: the mirror job never ran (`GHCR_MIRROR_PAT` was unset), which is worth
+> remembering now that `jzkk720` is again the publish target rather than a
+> mirror *of* one.
+
 **Date:** 2026-09-17
-**Status:** Approved
+**Status:** SUPERSEDED (was: Approved)
 **Author:** Copilot (autonomous, user unavailable — decision flagged)
 
 ## Problem
