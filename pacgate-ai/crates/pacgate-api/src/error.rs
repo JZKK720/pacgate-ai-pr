@@ -26,6 +26,14 @@ impl ApiError {
     pub fn unauthorized(msg: impl Into<String>) -> Self {
         Self { status: StatusCode::UNAUTHORIZED, code: "unauthorized", message: msg.into() }
     }
+
+    /// 409 Conflict - the caller view of the resource is stale.
+    ///
+    /// Used for optimistic concurrency on matter memory: the caller presents
+    /// the revision it read, and a mismatch means somebody else wrote first.
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self { status: StatusCode::CONFLICT, code: "conflict", message: msg.into() }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -52,5 +60,26 @@ impl From<pacgate_core::PacgateError> for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         Self::internal(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflict_is_409_with_a_stable_code() {
+        let e = ApiError::conflict("revision mismatch");
+        assert_eq!(e.status, StatusCode::CONFLICT);
+        assert_eq!(e.code, "conflict");
+        assert_eq!(e.message, "revision mismatch");
+    }
+
+    #[test]
+    fn existing_constructors_keep_their_codes() {
+        assert_eq!(ApiError::bad_request("x").code, "bad_request");
+        assert_eq!(ApiError::not_found("x").code, "not_found");
+        assert_eq!(ApiError::internal("x").code, "internal_error");
+        assert_eq!(ApiError::unauthorized("x").code, "unauthorized");
     }
 }
