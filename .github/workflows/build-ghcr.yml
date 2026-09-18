@@ -201,7 +201,7 @@ jobs:
           echo "::error::GHCR login failed for the resolved namespace. No images were built or pushed."
           echo "Registry: ghcr.io"
           echo "Account attempted: ${{ steps.ns.outputs.actor || github.actor }}"
-            echo "If the namespace differs from this repository's owner, GITHUB_TOKEN cannot be used - add a PAT with write:packages for the target owner as the repository secret GHCR_RELEASE_PAT."
+          echo "If the namespace differs from this repository's owner, GITHUB_TOKEN cannot be used - add a PAT with write:packages for the target owner as the repository secret GHCR_RELEASE_PAT."
           exit 1
 
       # ── pacgate-api (Rust) ────────────────────────────────────────────────
