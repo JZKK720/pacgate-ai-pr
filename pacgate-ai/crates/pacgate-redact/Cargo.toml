@@ -1,0 +1,19 @@
+[package]
+name = "pacgate-redact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pacgate-core     = { path = "../pacgate-core" }
+regex.workspace  = true
+serde.workspace  = true
+serde_json.workspace = true
+thiserror.workspace  = true
+uuid.workspace   = true
+tracing.workspace = true
+once_cell.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true

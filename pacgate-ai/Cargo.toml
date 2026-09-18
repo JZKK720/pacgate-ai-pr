@@ -12,6 +12,7 @@ members = [
     "crates/pacgate-template",
     "crates/pacgate-tenant",
     "crates/pacgate-auth",
+    "crates/pacgate-redact",
     "wasm-crates/pacgate-doc-validator",
     "wasm-crates/pacgate-rule-engine",
     "wasm-crates/pacgate-citation-check",
@@ -96,6 +97,7 @@ dotenvy = "0.15"
 base64 = "0.22"
 hex = "0.4"
 sha2 = "0.10"
+unicode-normalization = "0.1"
 regex = "1"
 once_cell = "1"
 async-trait = "0.1"
