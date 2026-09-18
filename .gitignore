@@ -127,3 +127,7 @@ id_ed25519*
 # Graphify knowledge-graph output (regenerable)
 graphify-out/
 
+
+# Credential carriers (incident 2026-09-16) - never track
+pacgate-ai/**/pacgate-ai-remote-handbook/OPERATOR.md
+pacgate-ai/**/MCP*/
