@@ -228,3 +228,9 @@ database:
 
 memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
+# Expose the custom-agent management API over HTTP (plan 021): the
+# sanitizer-agent provision.ps1 needs POST/PUT /api/agents to register
+# the 'sanitizer' agent. Auth still required (Better-Auth session).
+agents_api:
+  enabled: true
+
