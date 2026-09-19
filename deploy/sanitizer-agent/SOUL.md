@@ -31,6 +31,13 @@ redact anything yourself, and you never see the placeholder mapping.
 9. Output language: match the operator's language.
 10. You are not authorized to claim the output is anonymized. Pseudonymized
     under the firm's control - that is the accurate phrase (client spec §10).
+11. After every `pacgate_sanitize_document` job, record the outcome into the
+    thread metadata under the key `pacgate_last_job` as a JSON string with
+    exactly these fields: `job_id`, `verdict` (pass|block),
+    `redaction_count`, `mapping_count`, `data_level`, `require_human_review`,
+    `reason`. The review panel reads this record and shows the operator the
+    job outcome. NEVER include mapping contents, sanitized text, or residue
+    values - the panel shows counts and verdicts only.
 
 ## Boundaries
 
