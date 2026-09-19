@@ -45,7 +45,14 @@ $csrfHeaders = @{ }
 if ($csrf) { $csrfHeaders['X-CSRF-Token'] = $csrf.Value }
 
 $soul = Get-Content -Raw (Join-Path $PSScriptRoot 'SOUL.md')
-$description = 'Client-identity sanitizer: redacts party/project identifiers before cloud analysis. Review surface only - the mapping stays sealed.'
+# The agents gallery card shows this single string in both UI locales -
+# deer-flow's agent model has one description field and no per-locale split,
+# so the string carries EN + ZH lines for bilingual parity. The ZH line is
+# built from escaped codepoints so this file stays ASCII-only (PS 5.1 parses
+# non-BOM files as ANSI and garbles non-ASCII literals).
+$descEn = 'Client-identity sanitizer: redacts party/project identifiers before cloud analysis. Review surface only - the mapping stays sealed.'
+$descZh = -join [char[]](0x5BA2,0x6237,0x8EAB,0x4EFD,0x8131,0x654F,0xFF1A,0x4E91,0x7AEF,0x5206,0x6790,0x524D,0x5BF9,0x5F53,0x4E8B,0x65B9,0x002F,0x9879,0x76EE,0x6807,0x8BC6,0x7B26,0x8131,0x654F,0x3002,0x4EC5,0x5BA1,0x67E5,0x754C,0x9762,0x0020,0x002D,0x0020,0x6620,0x5C04,0x5C01,0x5B58,0x5728,0x672C,0x673A,0x3002)
+$description = "$descEn`n$descZh"
 
 $body = @{
     name        = 'sanitizer'
@@ -56,17 +63,26 @@ $body = @{
     soul        = [string]$soul
 } | ConvertTo-Json -Depth 4
 
-# deer-flow's agent create returns 400 when the name exists; use update then.
+# deer-flow's agent create returns 400/409 when the name exists; use update then.
 $existing = Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -WebSession $session -Headers $csrfHeaders -TimeoutSec 10 -ErrorAction SilentlyContinue
 $hasSanitizer = $false
 if ($existing -and $existing.agents) {
-    $hasSanitizer = ($existing.agents | Where-Object { $_.name -eq 'sanitizer' }).Count -gt 0
+    # @() wraps the Where-Object OUTPUT: on PS 5.1 a single PSCustomObject has
+    # NO Count property (null), so the unwrapped form reads as "not present"
+    # and the script wrongly POSTs into a 409. The array subexpression makes
+    # .Count always numeric. (Found live: PS 5.1 child run POSTed into 409.)
+    $matches = @($existing.agents | Where-Object { $_.name -eq 'sanitizer' })
+    $hasSanitizer = $matches.Count -gt 0
 }
 
 if ($hasSanitizer) {
-    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents/sanitizer" -Method Put -WebSession $session -Headers $csrfHeaders -Body $body -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    # PS 5.1 sends a string -Body as ANSI (system codepage), which garbles the
+    # ZH description. A byte array is passed through verbatim as UTF-8.
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents/sanitizer" -Method Put -WebSession $session -Headers $csrfHeaders -Body $bodyBytes -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     Write-Output 'OK: sanitizer agent updated'
 } else {
-    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -Method Post -WebSession $session -Headers $csrfHeaders -Body $body -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -Method Post -WebSession $session -Headers $csrfHeaders -Body $bodyBytes -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     Write-Output 'OK: sanitizer agent created'
 }
