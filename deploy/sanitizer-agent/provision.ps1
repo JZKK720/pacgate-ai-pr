@@ -50,7 +50,10 @@ $description = 'Client-identity sanitizer: redacts party/project identifiers bef
 $body = @{
     name        = 'sanitizer'
     description = $description
-    soul        = $soul
+    # [string] cast: PS 5.1's ConvertTo-Json can serialize a raw Get-Content
+    # string as an object wrapper {"value": "..."} - the API requires a plain
+    # string for `soul`.
+    soul        = [string]$soul
 } | ConvertTo-Json -Depth 4
 
 # deer-flow's agent create returns 400 when the name exists; use update then.
