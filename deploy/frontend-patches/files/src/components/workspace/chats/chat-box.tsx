@@ -20,6 +20,7 @@ import {
 } from "../artifacts";
 import { SanitizerReviewPanel } from "../sanitizer-review";
 import { useThread } from "../messages/context";
+import { useThreadMetadata } from "@/core/threads/hooks";
 
 const CLOSE_MODE = { chat: 70, review: 30, artifacts: 0 };
 const OPEN_MODE = { chat: 50, review: 25, artifacts: 25 };
@@ -35,13 +36,19 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
 
   // REVIEW panel gate (plan 021): only the sanitizer agent workspace mounts
   // it. The document id arrives via thread metadata the agent sets through
-  // its tools; absent means the no-document state.
+  // its tools; absent means the no-document state. useThreadMetadata fetches
+  // the Thread object server-side shape (AgentThread) whose `metadata` is the
+  // LangGraph thread metadata - the stream handle in useThread() does not
+  // expose it.
   const isSanitizerWorkspace = pathname.startsWith(
     "/workspace/agents/sanitizer",
   );
+  const { data: threadMeta } = useThreadMetadata(
+    isSanitizerWorkspace ? threadId : null,
+  );
   const pacgateDocumentId =
-    isSanitizerWorkspace && thread.metadata?.pacgate_document_id
-      ? String(thread.metadata.pacgate_document_id)
+    isSanitizerWorkspace && threadMeta?.metadata?.pacgate_document_id
+      ? String(threadMeta.metadata.pacgate_document_id)
       : null;
 
   const {
