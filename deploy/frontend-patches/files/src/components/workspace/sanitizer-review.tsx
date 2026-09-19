@@ -82,8 +82,8 @@ export function SanitizerReviewPanel({
                   {t.sanitizer.chunkStates}
                 </span>
                 <span className="flex flex-wrap justify-end gap-1">
-                  {status.chunk_states.map((s) => (
-                    <Badge key={s} variant="outline" className="text-xs">
+                  {status.chunk_states.map((s, i) => (
+                    <Badge key={`${s}-${i}`} variant="outline" className="text-xs">
                       {t.sanitizer.states[s as keyof typeof t.sanitizer.states] ?? s}
                     </Badge>
                   ))}
