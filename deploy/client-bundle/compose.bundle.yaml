@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.15
+    image: ghcr.io/jzkk720/pacgate-api:0.1.16
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -37,6 +37,8 @@ services:
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Plan 019/021: the extraction lane (cached per document version, fail-closed).
+      OCR_SERVICE_URL: http://ocr-service:8100
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
@@ -50,7 +52,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.15
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.16
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -122,7 +124,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.15
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.16
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     environment:
@@ -134,7 +136,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.15
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.16
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -144,6 +146,17 @@ services:
       PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
       PACGATE_MCP_PORT: "8000"
       PACGATE_MCP_TIMEOUT: "60"
+    restart: unless-stopped
+
+  # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
+  # The ~1.5GB PaddleOCR model downloads on FIRST EXTRACTION, not at build.
+  ocr-service:
+    image: ghcr.io/jzkk720/ocr-service:0.1.16
+    container_name: ocr-service
+    environment:
+      # Python logging rejects lowercase level names.
+      OCR_LOG_LEVEL: INFO
+      OCR_USE_GPU: "0"
     restart: unless-stopped
 
   openviking:

@@ -241,6 +241,27 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
+      # ── ocr-service (PaddleOCR perception lane) ──────────────────────────
+      # Plan 019's extraction service. Shipped as a first-class release image
+      # from 0.1.16: the OCR surface is a user-facing feature (standalone
+      # pacgate_ocr_document MCP tool + enabled compose service), so the
+      # perception lane must be part of every release, not a dev-box side
+      # build. The ~1.5GB model download happens on FIRST EXTRACTION, not at
+      # image build or container start, so the image itself stays small.
+      - name: Build & push ocr-service
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/ocr-service
+          file: deploy/ocr-service/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ns.outputs.prefix }}/ocr-service:${{ steps.tag.outputs.tag }}
+            ${{ steps.ns.outputs.prefix }}/ocr-service:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
+
       # ── deer-flow-pacgate (backend + adapter) ────────────────────────────
       - name: Build & push deer-flow-pacgate
         uses: docker/build-push-action@v6
@@ -310,7 +331,7 @@ jobs:
           ACCEPT="application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json"
 
           echo "Verifying ghcr.io/${PREFIX#ghcr.io/}/*:$TAG"
-          for img in pacgate-api pacgate-mcp deer-flow-pacgate deer-flow-frontend-pacgate; do
+          for img in pacgate-api pacgate-mcp ocr-service deer-flow-pacgate deer-flow-frontend-pacgate; do
             ok=0
             for attempt in 1 2 3 4 5; do
               tok=$(curl -s "https://ghcr.io/token?scope=repository:${PREFIX#ghcr.io/}/${img}:pull" | jq -r .token)
