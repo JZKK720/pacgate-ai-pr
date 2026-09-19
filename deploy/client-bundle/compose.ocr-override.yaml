@@ -1,0 +1,38 @@
+# Dev-box override: enable the plan 019 OCR pipeline on the local stack.
+#
+# NOT for client deployment. The tracked compose.prod.yaml keeps ocr-service
+# commented out (a ~1.5GB PaddleOCR model download on upgrade of existing
+# AIPCs is gated behind the 0.1.15 release decision). This override brings the
+# pipeline up on THIS dev machine so the surface can be exercised e2e.
+#
+# It also swaps pacgate-api to the plan020-test build, because the published
+# 0.1.14 image has NO OCR plumbing (no OCR_SERVICE_URL consumer, migrations
+# stop at 004). plan020-test carries migrations 001-007 and the extract.rs
+# OCR client. Both images exist locally; nothing is pulled from GHCR.
+#
+# Usage:
+#   docker compose -f compose.prod.yaml -f compose.ocr-override.yaml up -d
+#
+# Rollback:
+#   docker compose -f compose.prod.yaml -f compose.ocr-override.yaml down
+#   docker compose -f compose.prod.yaml up -d
+#   docker rmi ghcr.io/jzkk720/pacgate-api:0.1.14   # remove the retag shadow
+#
+# CAUTION: the ocr-service block below RETAGS the local pacgate-api image so
+# the tracked compose keeps resolving; see the x- note at the bottom.
+
+services:
+  pacgate-api:
+    image: pacgate-api:plan020-test
+    environment:
+      # Wire the OCR service. The API calls POST {url}/extract (extract.rs);
+      # no scheme/path suffix needed here - just scheme://host:port.
+      OCR_SERVICE_URL: http://ocr-service:8100
+
+  ocr-service:
+    image: ocr-service:local
+    container_name: ocr-service
+    environment:
+      OCR_USE_GPU: "0"
+      OCR_LOG_LEVEL: INFO
+    restart: unless-stopped
