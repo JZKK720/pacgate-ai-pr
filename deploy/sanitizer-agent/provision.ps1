@@ -33,6 +33,17 @@ if ($login.StatusCode -ne 200) {
     Write-Error "deer-flow login failed (HTTP $($login.StatusCode))."
 }
 
+if ($login.StatusCode -ne 200) {
+    Write-Error "deer-flow login failed (HTTP $($login.StatusCode))."
+}
+
+# CSRF double-submit: the login response sets a csrf_token cookie; every
+# state-changing call (POST/PUT) must echo it back in the X-CSRF-Token header
+# or the gateway answers 403 "CSRF token missing".
+$csrf = $session.Cookies.GetCookies($DeerFlowUrl) | Where-Object { $_.Name -eq 'csrf_token' } | Select-Object -First 1
+$csrfHeaders = @{ }
+if ($csrf) { $csrfHeaders['X-CSRF-Token'] = $csrf.Value }
+
 $soul = Get-Content -Raw (Join-Path $PSScriptRoot 'SOUL.md')
 $description = 'Client-identity sanitizer: redacts party/project identifiers before cloud analysis. Review surface only - the mapping stays sealed.'
 
@@ -43,16 +54,16 @@ $body = @{
 } | ConvertTo-Json -Depth 4
 
 # deer-flow's agent create returns 400 when the name exists; use update then.
-$existing = Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -WebSession $session -TimeoutSec 10 -ErrorAction SilentlyContinue
+$existing = Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -WebSession $session -Headers $csrfHeaders -TimeoutSec 10 -ErrorAction SilentlyContinue
 $hasSanitizer = $false
 if ($existing -and $existing.agents) {
     $hasSanitizer = ($existing.agents | Where-Object { $_.name -eq 'sanitizer' }).Count -gt 0
 }
 
 if ($hasSanitizer) {
-    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents/sanitizer" -Method Put -WebSession $session -Body $body -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents/sanitizer" -Method Put -WebSession $session -Headers $csrfHeaders -Body $body -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     Write-Output 'OK: sanitizer agent updated'
 } else {
-    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -Method Post -WebSession $session -Body $body -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod -Uri "$DeerFlowUrl/api/agents" -Method Post -WebSession $session -Headers $csrfHeaders -Body $body -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     Write-Output 'OK: sanitizer agent created'
 }
