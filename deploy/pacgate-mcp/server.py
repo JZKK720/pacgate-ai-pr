@@ -29,6 +29,10 @@ Exposed tools:
     pacgate_ocr_document      — run OCR extraction on a stored document
                                (POST /api/documents/:id/extract) - standalone,
                                NOT gated by the sanitizer pipeline
+    pacgate_ocr_batch         — OCR every document in a matter, capped by
+                               PACGATE_OCR_BATCH_PAGE_LIMIT (default 200
+                               pages per run; the tool stops at the cap and
+                               reports the remaining budget)
     pacgate_list_workflows    — list workflow templates
                                (GET /api/workflows?category=&search=)
     pacgate_get_workflow      — get a workflow template's steps
@@ -500,6 +504,101 @@ def pacgate_ocr_document(document_id: str) -> str:
     resp = client.post(f"/api/documents/{document_id}/extract", json={})
     _handle_error(resp)
     return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+# Bulk-OCR page cap (per tool invocation). Server-side enforced so an agent
+# cannot run away with an unbounded job: the loop stops at the cap, reports
+# what was processed, and the operator calls again to continue (already-
+# extracted documents are cache hits, so a re-run after a cap-stop only pays
+# for the remaining pages).
+OCR_BATCH_PAGE_LIMIT_DEFAULT = 200
+
+
+def _batch_page_limit() -> int:
+    raw = os.environ.get("PACGATE_OCR_BATCH_PAGE_LIMIT", "")
+    try:
+        value = int(raw) if raw else OCR_BATCH_PAGE_LIMIT_DEFAULT
+    except ValueError:
+        return OCR_BATCH_PAGE_LIMIT_DEFAULT
+    return max(1, value)
+
+
+@mcp.tool()
+def pacgate_ocr_batch(matter_id: str, max_pages: int | None = None) -> str:
+    """Run OCR extraction over every document in a matter (bulk lane).
+
+    Loops pacgate_ocr_document across the matter's document list, oldest
+    first. Each document's extraction is cached per version, so re-running
+    the batch after an interruption only pays for the remaining documents.
+
+    PAGE CAP: the run stops once the total extracted pages reach the cap -
+    PACGATE_OCR_BATCH_PAGE_LIMIT (default 200) or the max_pages argument,
+    whichever is smaller. This bounds a single tool invocation to roughly
+    2 minutes of OCR work at the observed ~600ms/page, well inside the
+    MCP request timeout. The response reports pages_used, pages_remaining,
+    and every document processed, so the caller can continue with another
+    batch call until pages_remaining reaches 0.
+
+    Args:
+        matter_id: The UUID of the matter whose documents to process.
+        max_pages: Optional smaller cap for this run (cannot raise above the
+            server limit).
+
+    Returns: { matter_id, processed: [{document_id, name, pages, spans,
+    incomplete, status}], pages_used, pages_remaining, cap }.
+    """
+    client = get_client()
+    cap = min(_batch_page_limit(), max_pages) if max_pages else _batch_page_limit()
+
+    listing = client.get(f"/api/matters/{matter_id}/documents")
+    _handle_error(listing)
+    documents = listing.json()
+
+    processed = []
+    pages_used = 0
+    stopped_at_cap = False
+    for doc in documents:
+        document_id = doc["id"]
+        # Cached extractions are free - check status first so a re-run does
+        # not burn page budget re-counting already-extracted pages.
+        try:
+            resp = client.post(f"/api/documents/{document_id}/extract", json={})
+            _handle_error(resp)
+            outcome = resp.json()
+        except RuntimeError as e:
+            processed.append(
+                {"document_id": document_id, "name": doc.get("name"), "status": "failed", "error": str(e)[:200]}
+            )
+            continue
+        pages_used += int(outcome.get("pages", 0))
+        processed.append(
+            {
+                "document_id": document_id,
+                "name": doc.get("name"),
+                "status": "extracted" if not outcome.get("incomplete") else "incomplete",
+                "pages": outcome.get("pages"),
+                "spans": len(outcome.get("spans", [])),
+                "text_chars": len(outcome.get("text", "")),
+            }
+        )
+        if pages_used >= cap:
+            break
+
+    remaining_docs = len(documents) - len(processed)
+    return json.dumps(
+        {
+            "matter_id": matter_id,
+            "cap": cap,
+            "pages_used": pages_used,
+            "pages_remaining": max(cap - pages_used, 0),
+            "processed_count": len(processed),
+            "documents_remaining_in_matter": max(remaining_docs, 0),
+            "note": "Cache makes a continuation free for already-extracted documents; call again to continue past the cap." if pages_used >= cap else None,
+            "processed": processed,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @mcp.tool()
