@@ -36,6 +36,7 @@ delivery **and** release engineering.
 | 019 | OCR service + Tier 2-4 NER | P1 | **DONE** — 10 commits, E2E green, NER real-weights proof (2026-09-18) |
 | 020 | Sanitize jobs, vault, gates, MCP tools | P1 | **DONE** — job API + restore + download gate + MCP tools (2026-09-19) |
 | 021 | Sanitizer agent + review panel | P1 | **DONE** — SOUL + provisioning + review panel in agent chat (2026-09-19) |
+| 022 | Review panel redesign (document identity + job outcome) | P2 | **DONE** — DESIGN.md + doc-identity panel + job outcome via thread metadata (2026-09-19) |
 
 ### Plan 007 sub-documents
 
