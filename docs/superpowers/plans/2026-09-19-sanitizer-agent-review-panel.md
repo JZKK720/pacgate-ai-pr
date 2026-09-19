@@ -590,20 +590,29 @@ In `en-US.ts`, after the `agents: { ... },` block, insert:
 
 - [ ] **Step 3: Chinese strings**
 
-In `zh-CN.ts`, after the `agents: { ... },` block, insert (protect CJK typography - these lines use full-width punctuation deliberately):
+In `zh-CN.ts`, after the `agents: { ... },` block, insert. These are UI strings for the Chinese locale - the client firm operates in Chinese, so the product surface must be Chinese (bilingual parity is a hard repo rule). Each line below is glossed with its English meaning in a comment so the plan reads clearly; the comments are NOT part of the file content.
 
 ```ts
   // Sanitizer review panel (plan 021)
   sanitizer: {
+    // "Sanitization review"
     title: "脱敏审查",
+    // "No document selected. Ask the agent to sanitize a document and reference it by id."
     noDocument: "尚未选择文档。请让智能体按文档 ID 对材料执行脱敏。",
+    // "This document has not been sanitized yet."
     notSanitized: "该文档尚未进行脱敏处理。",
+    // "Egress state"
     egressState: "出站状态",
+    // "Chunk states"
     chunkStates: "分块状态",
+    // "Latest job"
     latestJob: "最近任务",
+    // "Blocked: verification found residue. In human review, this document cannot leave the machine."
     blockedNote: "已拦截：校验发现残留。在人工处理前，该文档无法离开本机。",
+    // "Display only. The placeholder mapping stays sealed in pacgate-api and never leaves; restore is an operator action outside this workspace."
     reviewNote:
       "仅作审查展示。占位符映射保存在 pacgate-api 中不会外泄；还原是本工作区之外的管理员操作。",
+    // state labels: "Pending" / "Sanitized" / "Blocked" / "Not applicable"
     states: {
       pending: "待处理",
       sanitized: "已脱敏",
@@ -612,6 +621,8 @@ In `zh-CN.ts`, after the `agents: { ... },` block, insert (protect CJK typograph
     },
   },
 ```
+
+The full-width punctuation (。) in the Chinese strings is deliberate: it is correct Chinese typography, and the repo rule protects it - do not replace with ASCII periods. The English glosses above are for reading this plan only.
 
 - [ ] **Step 4: Verify types compile against both locales**
 
