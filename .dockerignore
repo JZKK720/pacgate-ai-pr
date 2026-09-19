@@ -1,0 +1,24 @@
+# Docker build context exclusions for pacgate-ai.
+#
+# Why this exists: the frontend image Dockerfile
+# (deploy/deer-flow-frontend-pacgate/Dockerfile) COPYs
+# deploy/deer-flow-src/frontend from the build context (repo root). That
+# gitignored clone accumulates node_modules from local typecheck/build
+# proof runs; when present it ships into the image and pnpm install aborts
+# with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY. CI never hits this
+# (fresh clone has no node_modules) but every local build after a local
+# tsc run does.
+#
+# Scope is deliberately narrow: only the gitignored source clones and
+# their build outputs. Nothing tracked is excluded.
+
+# deer-flow source clone (gitignored, created by build-frontend.ps1)
+deploy/deer-flow-src/frontend/node_modules
+deploy/deer-flow-src/frontend/.next
+deploy/deer-flow-src/frontend/.turbo
+deploy/deer-flow-src/frontend/coverage
+deploy/deer-flow-src/frontend/test-results
+deploy/deer-flow-src/frontend/playwright-report
+
+# Rust build artifacts (never needed in any image build context)
+pacgate-ai/target
