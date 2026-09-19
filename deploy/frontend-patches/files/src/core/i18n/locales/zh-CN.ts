@@ -232,17 +232,21 @@ export const zhCN: Translations = {
     backToGallery: "返回 Gallery",
   },
 
-  // Sanitizer review panel (plan 021)
+  // Sanitizer review panel (plan 022)
   sanitizer: {
     title: "脱敏审查",
     noDocument: "尚未选择文档。请让智能体按文档 ID 对材料执行脱敏。",
     notSanitized: "该文档尚未进行脱敏处理。",
+    loadFailed: "无法加载审查状态。请检查 pacgate-api 是否可达。",
+    docHeader: "文档",
+    docMetaLine: "{format} · 第{version}版",
     egressState: "出站状态",
+    verdictPass: "校验通过。脱敏文本可提交云端分析。",
+    verdictBlock: "已拦截。在人工处理前，该文档无法离开本机。",
+    redacted: "已脱敏 {count} 处标识符",
+    mappingSealed: "占位符映射保存在 pacgate-api 中，不会外泄。",
+    humanReviewFlag: "任何出站操作前需人工复核。",
     chunkStates: "分块状态",
-    latestJob: "最近任务",
-    blockedNote: "已拦截：校验发现残留。在人工处理前，该文档无法离开本机。",
-    reviewNote:
-      "仅作审查展示。占位符映射保存在 pacgate-api 中不会外泄；还原是本工作区之外的管理员操作。",
     // state labels: "Pending" / "Sanitized" / "Blocked" / "Not applicable"
     states: {
       pending: "待处理",

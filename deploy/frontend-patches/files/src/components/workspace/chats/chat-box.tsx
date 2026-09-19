@@ -21,6 +21,7 @@ import {
 import { SanitizerReviewPanel } from "../sanitizer-review";
 import { useThread } from "../messages/context";
 import { useThreadMetadata } from "@/core/threads/hooks";
+import { readLastJobFromMetadata } from "@/core/sanitizer/job-meta";
 
 const CLOSE_MODE = { chat: 70, review: 30, artifacts: 0 };
 const OPEN_MODE = { chat: 50, review: 25, artifacts: 25 };
@@ -50,6 +51,9 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
     isSanitizerWorkspace && threadMeta?.metadata?.pacgate_document_id
       ? String(threadMeta.metadata.pacgate_document_id)
       : null;
+  // Plan 022 forward-fix: the panel receives the parsed job summary as a
+  // prop; Task 4 refines this wiring and covers it in E2E.
+  const lastJob = readLastJobFromMetadata(threadMeta?.metadata ?? undefined);
 
   const {
     artifacts,
@@ -200,7 +204,10 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
         id="review"
       >
         <div className="h-full overflow-y-auto p-4">
-          <SanitizerReviewPanel documentId={pacgateDocumentId} />
+          <SanitizerReviewPanel
+            documentId={pacgateDocumentId}
+            lastJob={lastJob}
+          />
         </div>
       </ResizablePanel>
     </ResizablePanelGroup>

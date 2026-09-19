@@ -244,19 +244,25 @@ export const enUS: Translations = {
     backToGallery: "Back to Gallery",
   },
 
-  // Sanitizer review panel (plan 021)
+  // Sanitizer review panel (plan 022)
   sanitizer: {
     title: "Sanitization review",
     noDocument:
       "No document selected. Ask the agent to sanitize a document and reference it by id.",
     notSanitized: "This document has not been sanitized yet.",
+    loadFailed:
+      "Could not load the review status. Check that pacgate-api is reachable.",
+    docHeader: "Document",
+    docMetaLine: "{format} · v{version}",
     egressState: "Egress state",
+    verdictPass:
+      "Verification passed. The sanitized text is cleared for cloud analysis.",
+    verdictBlock:
+      "Blocked. This document cannot leave the machine until a human decides.",
+    redacted: "{count} identifier(s) redacted",
+    mappingSealed: "The placeholder mapping stays sealed in pacgate-api.",
+    humanReviewFlag: "Human review required before any egress.",
     chunkStates: "Chunk states",
-    latestJob: "Latest job",
-    blockedNote:
-      "Blocked: verification found residue. This document cannot leave the machine until a human decides.",
-    reviewNote:
-      "Review surface only. The placeholder mapping stays sealed in pacgate-api; restore is an operator action outside this workspace.",
     states: {
       pending: "Pending",
       sanitized: "Sanitized",

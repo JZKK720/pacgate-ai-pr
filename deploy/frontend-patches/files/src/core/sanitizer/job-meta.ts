@@ -1,4 +1,12 @@
 /**
+ * Thread-metadata key under which the sanitizer agent records the id of the
+ * document it is working on. This is the single definition site for the
+ * metadata seam (plan 022): consumers import the constant from this module
+ * or the `@/core/sanitizer` barrel and never redeclare the literal.
+ */
+export const PACGATE_DOC_METADATA_KEY = "pacgate_document_id";
+
+/**
  * The sanitizer agent records each job's outcome into thread metadata under
  * this key as a JSON string. The panel parses it tolerantly: the agent's
  * metadata is untrusted input, and a malformed entry must degrade to "no job
