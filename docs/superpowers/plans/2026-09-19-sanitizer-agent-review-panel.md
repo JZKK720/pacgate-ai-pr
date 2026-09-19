@@ -189,7 +189,8 @@ git commit -m "feat(frontend): pacgate review proxy route + review-enabled env o
 
 **Interfaces:**
 - Consumes: `GET /api/pacgate/documents/:id/sanitize-status` (Task 1), `POST /api/pacgate/documents/:id/sanitize` NOT exposed here (the agent sanitizes through MCP tools, not the panel).
-- Produces: `useSanitizeStatus(documentId)` -> `{ status: SanitizeStatusResponse | null, isLoading, error }`, `useSanitizerEnabled()` -> boolean (from the env override). Types mirror the Rust response exactly: `{ document_state: string; chunk_states: string[]; latest_job: string | null }`.
+- Produces: `useSanitizeStatus(documentId)` -> `{ status: SanitizeStatusResponse | null, isLoading, error }`. Types mirror the Rust response exactly: `{ document_state: string; chunk_states: string[]; latest_job: string | null }`.
+- Ruling (2026-09-19, pre-flight): the originally listed `useSanitizerEnabled()` was struck - no downstream task consumes it (Task 5 gates by pathname), and the env flag's consumer is compose wiring. Adding an unused hook would be dead code.
 
 - [ ] **Step 1: Write the types**
 
