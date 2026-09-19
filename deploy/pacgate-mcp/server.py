@@ -26,6 +26,9 @@ Exposed tools:
                                (GET /api/documents/:id/download + markitdown)
     pacgate_upload_document   — upload a generated artifact back to a matter
                                (POST /api/documents)
+    pacgate_ocr_document      — run OCR extraction on a stored document
+                               (POST /api/documents/:id/extract) - standalone,
+                               NOT gated by the sanitizer pipeline
     pacgate_list_workflows    — list workflow templates
                                (GET /api/workflows?category=&search=)
     pacgate_get_workflow      — get a workflow template's steps
@@ -475,6 +478,28 @@ def pacgate_convert_document(
         ensure_ascii=False,
         indent=2,
     )
+
+
+@mcp.tool()
+def pacgate_ocr_document(document_id: str) -> str:
+    """Run OCR extraction on a stored document (standalone, no sanitization).
+
+    Turns a document (PDF, scan, image) into plain text + positional spans
+    through the local PaddleOCR service, cached per document version. This is
+    the plain perception lane: no redaction runs, no verdict is produced, and
+    the result carries no sanitization state change. Use pacgate_sanitize_document
+    instead when the text will leave the machine.
+
+    Args:
+        document_id: The UUID of the stored document to extract.
+
+    Returns: { text, pages, spans[], engine, incomplete }. incomplete=True
+    means at least one page failed to parse - treat the text as partial.
+    """
+    client = get_client()
+    resp = client.post(f"/api/documents/{document_id}/extract", json={})
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
