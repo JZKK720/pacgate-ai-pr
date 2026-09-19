@@ -54,8 +54,8 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
     isSanitizerWorkspace && threadMeta?.metadata?.[PACGATE_DOC_METADATA_KEY]
       ? String(threadMeta.metadata[PACGATE_DOC_METADATA_KEY])
       : null;
-  // Plan 022 forward-fix: the panel receives the parsed job summary as a
-  // prop; Task 4 refines this wiring and covers it in E2E.
+  // Plan 022: the sanitizer agent records each job's outcome into thread
+  // metadata; the panel renders it as the job-outcome block.
   const lastJob = readLastJobFromMetadata(threadMeta?.metadata ?? undefined);
 
   const {
