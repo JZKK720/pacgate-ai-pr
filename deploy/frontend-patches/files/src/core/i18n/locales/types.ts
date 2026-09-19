@@ -167,6 +167,24 @@ export interface Translations {
     backToGallery: string;
   };
 
+  // Sanitizer review panel (plan 021)
+  sanitizer: {
+    title: string;
+    noDocument: string;
+    notSanitized: string;
+    egressState: string;
+    chunkStates: string;
+    latestJob: string;
+    blockedNote: string;
+    reviewNote: string;
+    states: {
+      pending: string;
+      sanitized: string;
+      blocked: string;
+      never: string;
+    };
+  };
+
   // Breadcrumb
   breadcrumb: {
     workspace: string;
