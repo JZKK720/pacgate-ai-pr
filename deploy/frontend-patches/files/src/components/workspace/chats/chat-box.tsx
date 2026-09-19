@@ -21,7 +21,10 @@ import {
 import { SanitizerReviewPanel } from "../sanitizer-review";
 import { useThread } from "../messages/context";
 import { useThreadMetadata } from "@/core/threads/hooks";
-import { readLastJobFromMetadata } from "@/core/sanitizer/job-meta";
+import {
+  PACGATE_DOC_METADATA_KEY,
+  readLastJobFromMetadata,
+} from "@/core/sanitizer";
 
 const CLOSE_MODE = { chat: 70, review: 30, artifacts: 0 };
 const OPEN_MODE = { chat: 50, review: 25, artifacts: 25 };
@@ -48,8 +51,8 @@ const ChatBox: React.FC<{ children: React.ReactNode; threadId: string }> = ({
     isSanitizerWorkspace ? threadId : null,
   );
   const pacgateDocumentId =
-    isSanitizerWorkspace && threadMeta?.metadata?.pacgate_document_id
-      ? String(threadMeta.metadata.pacgate_document_id)
+    isSanitizerWorkspace && threadMeta?.metadata?.[PACGATE_DOC_METADATA_KEY]
+      ? String(threadMeta.metadata[PACGATE_DOC_METADATA_KEY])
       : null;
   // Plan 022 forward-fix: the panel receives the parsed job summary as a
   // prop; Task 4 refines this wiring and covers it in E2E.
