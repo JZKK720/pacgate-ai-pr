@@ -23,3 +23,12 @@ export type EgressState =
   | "sanitized"
   | "blocked"
   | "never";
+
+/** Fields the panel reads from the spine's Document (pacgate-core lib.rs:248). */
+export interface DocumentMeta {
+  id: string;
+  matter_id: string;
+  name: string;
+  format: string;
+  version: number;
+}

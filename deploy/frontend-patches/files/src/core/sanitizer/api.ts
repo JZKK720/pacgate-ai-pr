@@ -1,7 +1,7 @@
 import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 
-import type { SanitizeStatusResponse } from "./types";
+import type { DocumentMeta, SanitizeStatusResponse } from "./types";
 
 /**
  * Read one document's sanitization status through the pacgate proxy route.
@@ -25,4 +25,26 @@ export async function fetchSanitizeStatus(
     );
   }
   return response.json() as Promise<SanitizeStatusResponse>;
+}
+
+/**
+ * Read one document's identity (name, format, version, matter) through the
+ * same pacgate proxy route. A 404 means the document is not registered yet
+ * and resolves to `null`; 5xx is a real failure and must surface.
+ */
+export async function fetchDocumentMeta(
+  documentId: string,
+): Promise<DocumentMeta | null> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/pacgate/documents/${encodeURIComponent(documentId)}`,
+  );
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Failed to load document metadata: ${response.statusText}`,
+    );
+  }
+  return response.json() as Promise<DocumentMeta>;
 }

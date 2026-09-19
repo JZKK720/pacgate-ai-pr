@@ -16,7 +16,7 @@ rs.mock("@/core/config", () => ({
   getBackendBaseURL: () => "",
 }));
 
-import { fetchSanitizeStatus } from "@/core/sanitizer/api";
+import { fetchDocumentMeta, fetchSanitizeStatus } from "@/core/sanitizer/api";
 import { fetch as fetcher } from "@/core/api/fetcher";
 
 const mockedFetch = rs.mocked(fetcher);
@@ -62,5 +62,47 @@ describe("fetchSanitizeStatus", () => {
   test("throws on 500 (a silent failure would hide a gate problem)", async () => {
     mockedFetch.mockResolvedValueOnce(jsonResponse(500, { detail: "boom" }));
     await expect(fetchSanitizeStatus("doc-1")).rejects.toThrow();
+  });
+});
+
+describe("fetchDocumentMeta", () => {
+  test("returns the document payload on 200", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, {
+        id: "doc-1",
+        matter_id: "m-9",
+        name: "complaint.docx",
+        format: "docx",
+        version: 3,
+      }),
+    );
+    const doc = await fetchDocumentMeta("doc-1");
+    expect(doc).toEqual({
+      id: "doc-1",
+      matter_id: "m-9",
+      name: "complaint.docx",
+      format: "docx",
+      version: 3,
+    });
+  });
+
+  test("returns null on 404 rather than throwing (not-yet-existing doc is normal)", async () => {
+    mockedFetch.mockResolvedValueOnce(jsonResponse(404, { detail: "not found" }));
+    const doc = await fetchDocumentMeta("doc-1");
+    expect(doc).toBeNull();
+  });
+
+  test("throws on 500 (a silent failure would hide a gate problem)", async () => {
+    mockedFetch.mockResolvedValueOnce(jsonResponse(500, { detail: "boom" }));
+    await expect(fetchDocumentMeta("doc-1")).rejects.toThrow();
+  });
+
+  test("fetches the identity path, never the status route", async () => {
+    mockedFetch.mockResolvedValueOnce(jsonResponse(200, { id: "doc-1" }));
+    await fetchDocumentMeta("doc-1");
+    expect(mockedFetch.mock.calls[0]![0]).toContain(
+      "/api/pacgate/documents/doc-1",
+    );
+    expect(mockedFetch.mock.calls[0]![0]).not.toContain("/sanitize-status");
   });
 });
