@@ -17,7 +17,9 @@ export function useSanitizeStatus(documentId: string | null | undefined) {
 
 /**
  * Read one document's identity. Shares the status hook's conventions:
- * disabled without an id, no refetch on window focus, null before it exists.
+ * disabled without an id, null before it exists. Identity fields are
+ * immutable per document version, so focus-refetching (the QueryClient
+ * default this hook inherits) is a no-op cost-wise and harmless.
  */
 export function useDocumentMeta(documentId: string | null | undefined) {
   const { data, isLoading, error } = useQuery({
