@@ -58,12 +58,16 @@ try {
             '(?m)^(version\s*=\s*")(?<v>\d+\.\d+\.\d+)(")'
         )
 
-        # Compose pins: every ghcr.io/pacgate-ai/<image>:<version>
+        # Compose pins: every ghcr.io/jzkk720/<image>:<version>.
+        # Plan 016 inverted the publish model - jzkk720 is the release
+        # authority and every compose file pins jzkk720. The old regex here
+        # targeted pacgate-ai/* and matched nothing, so a bump found no
+        # compose pins at all.
         'deploy/client-bundle/compose.prod.yaml' = @(
-            '(ghcr\.io/pacgate-ai/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
         'deploy/client-bundle/compose.bundle.yaml' = @(
-            '(ghcr\.io/pacgate-ai/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
 
         # NOTE: the following files are deliberately NOT bumped. They contain
@@ -179,10 +183,10 @@ try {
         $stale += "  Cargo.toml workspace version is $($m.Groups[1].Value), expected $To"
     }
 
-    # 2. Compose - every ghcr.io/pacgate-ai/<img>:<ver> must equal $To.
+    # 2. Compose - every ghcr.io/jzkk720/<img>:<ver> must equal $To.
     foreach ($cf in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
         $text = Get-Content (Join-Path $repoRoot $cf) -Raw
-        foreach ($mm in [regex]::Matches($text, 'ghcr\.io/pacgate-ai/[a-z0-9\-]+:(?<v>\d+\.\d+\.\d+)')) {
+        foreach ($mm in [regex]::Matches($text, 'ghcr\.io/jzkk720/[a-z0-9\-]+:(?<v>\d+\.\d+\.\d+)')) {
             if ($mm.Groups['v'].Value -ne $To) {
                 $stale += "  $cf has pin $($mm.Value), expected $To"
             }
