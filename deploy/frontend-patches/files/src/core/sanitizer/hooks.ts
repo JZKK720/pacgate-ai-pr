@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchSanitizeStatus } from "./api";
 
 /**
- * Poll one document's sanitize status. Refetches on window focus so the
+ * Read one document's sanitize status. Refetches on window focus so the
  * panel tracks jobs the sanitizer agent runs in other threads.
  */
 export function useSanitizeStatus(documentId: string | null | undefined) {
