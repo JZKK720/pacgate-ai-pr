@@ -32,3 +32,14 @@ export interface DocumentMeta {
   format: string;
   version: number;
 }
+
+/** What the panel may show about the latest sanitize job. Counts only - never mapping contents. */
+export interface LastJobSummary {
+  jobId: string;
+  verdict: "pass" | "block";
+  redactionCount: number;
+  mappingCount: number;
+  dataLevel: string;
+  requireHumanReview: boolean;
+  reason: string;
+}
