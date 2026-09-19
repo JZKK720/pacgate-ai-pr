@@ -121,6 +121,13 @@ services:
       DEER_FLOW_INTERNAL_GATEWAY_BASE_URL: http://deer-flow:8001
       DEER_FLOW_TRUSTED_ORIGINS: http://localhost:8089,http://localhost:8090,http://localhost:3000
       BETTER_AUTH_SECRET: ${PACGATE_JWT_SECRET}
+      # Sanitizer review panel (plan 021). The panel is mounted only in the
+      # sanitizer agent workspace; this flag keeps it compiled out elsewhere.
+      NEXT_PUBLIC_PACGATE_REVIEW_ENABLED: "true"
+      # The Next.js server process needs the pacgate-api base URL + a service
+      # JWT for the /api/pacgate proxy route (server-to-server, not browser).
+      PACGATE_API_URL: http://pacgate-api:8080
+      PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
     restart: unless-stopped
 
   pacgate-mcp:

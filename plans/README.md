@@ -35,6 +35,7 @@ delivery **and** release engineering.
 | 018 | Memory lane hardening | P2 | DONE |
 | 019 | OCR service + Tier 2-4 NER | P1 | **DONE** — 10 commits, E2E green, NER real-weights proof (2026-09-18) |
 | 020 | Sanitize jobs, vault, gates, MCP tools | P1 | **DONE** — job API + restore + download gate + MCP tools (2026-09-19) |
+| 021 | Sanitizer agent + review panel | P1 | **DONE** — SOUL + provisioning + review panel in agent chat (2026-09-19) |
 
 ### Plan 007 sub-documents
 
