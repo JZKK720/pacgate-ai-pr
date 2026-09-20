@@ -15,6 +15,7 @@ pub use error::ApiError;
 pub use state::{AppConfig, AppState};
 
 use axum::{
+    extract::DefaultBodyLimit,
     middleware,
     routing::{delete, get, post, put},
     Router,
@@ -103,7 +104,16 @@ pub fn build_router(state: AppState) -> Router {
             (*state.auth).clone(),
             pacgate_auth::auth_middleware,
         ))
-        .layer(middleware::from_fn(pacgate_auth::soul_resolver_middleware));
+        .layer(middleware::from_fn(pacgate_auth::soul_resolver_middleware))
+        // Transport-level body cap. Axum's silent default is 2 MB, which
+        // aborts oversized multipart uploads with a broken pipe BEFORE the
+        // in-handler check (max_upload_mb, 50 MB) ever runs - the handler
+        // never sees the request. Raise the transport cap above the
+        // handler's own limit so the deliberate 50 MB check governs.
+        // 64 MB = 50 MB file + multipart overhead headroom.
+        .layer(DefaultBodyLimit::max(
+            ((state.config.max_upload_mb + 14) * 1024 * 1024) as usize,
+        ));
 
     Router::new()
         // Health (no auth)

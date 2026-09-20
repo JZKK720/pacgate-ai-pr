@@ -1,0 +1,23 @@
+# Docker build context exclusions for the pacgate-ai folder.
+#
+# The API image build uses context = pacgate-ai (build-ghcr.yml: context:
+# pacgate-ai, file: pacgate-ai/Dockerfile). This .dockerignore is read
+# RELATIVE TO THE CONTEXT, so paths here are relative to pacgate-ai/.
+#
+# target/ alone is ~24 GB on this dev box; without this exclusion the
+# context transfer alone takes 5+ minutes and can exhaust disk.
+#
+# NOTE: wasm-crates must stay IN the context - the workspace Cargo.toml
+# lists them as members, and cargo refuses to build when a member's
+# manifest is missing (verified: excluding wasm-crates/ breaks
+# `cargo build --release` with "failed to load manifest for workspace
+# member /build/wasm-crates/pacgate-doc-validator").
+
+# Rust build artifacts (never needed in any image build context)
+target/
+
+# Local analysis outputs (graphify graph cache, not needed by the image)
+graphify-out/
+
+# Design assets (large binary assets, not needed by the API image)
+pacgate-ai-assets/
