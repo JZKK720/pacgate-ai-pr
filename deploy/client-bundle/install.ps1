@@ -379,6 +379,87 @@ if (Test-Path $dfTemplate) {
         }
     }
 
+# 4c. Derive GATEWAY_CORS_ORIGINS (browser sign-in/register gate).
+#
+# The gateway rejects auth POSTs whose Origin header is not in this list
+# (csrf_middleware is_allowed_auth_origin). Browsers ALWAYS send Origin on
+# POST, so a user browsing http://<machine-host>:8089 gets 403 "Cross-site
+# auth request denied." on EVERY sign-in and registration attempt when the
+# list is localhost-only - the compose default. Verified 2026-09-20:
+#   POST /api/v1/auth/login/local with Origin http://192.168.8.88:8089 -> 403
+#   same POST with Origin http://localhost:8089 -> 401 (gate passed)
+# The same-origin escape does NOT work behind our ingress chain (nginx ->
+# Next.js rewrite -> gateway): Next.js rewrites Host to the gateway's
+# authority, so the gateway can never see the browser's LAN host.
+#
+# This step auto-derives the machine's own browser origins and appends them
+# to .env when the operator has not set GATEWAY_CORS_ORIGINS. Existing
+# values are NEVER overwritten - a machine whose operator deliberately set
+# the list keeps it; a localhost-only value earns a loud warning instead.
+$gwCors = if ($envVars.ContainsKey('GATEWAY_CORS_ORIGINS')) { $envVars['GATEWAY_CORS_ORIGINS'] } else { $null }
+if ([string]::IsNullOrWhiteSpace($gwCors)) {
+    # Derive this machine's browser origins. The browser may reach the
+    # ingress via ANY of: hostname, every non-loopback IPv4, or localhost.
+    # Each is http://<host>:<nginx-host-port>. The port must be DERIVED
+    # (docker compose port nginx 80), not hardcoded - this dev box publishes
+    # 8081 while compose declares 8089, and an AIPC may have either.
+    $corsPort = $null
+    try {
+        $corsPortOut = (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim()
+        if ($corsPortOut -match ':(\d+)\s*$') { $corsPort = $Matches[1] }
+    } catch { $corsPort = $null }
+    if (-not $corsPort) { $corsPort = '8089' }
+
+    $corsHosts = New-Object System.Collections.Generic.List[string]
+    $corsHosts.Add('localhost')
+    try { $corsHosts.Add(([System.Net.Dns]::GetHostName()).ToLower()) } catch { }
+    try {
+        $lanIps = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+            Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } |
+            ForEach-Object { $_.GetIPProperties().UnicastAddresses } |
+            Where-Object { $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
+            ForEach-Object { $_.Address.ToString() } |
+            Where-Object { $_ -notmatch '^(127\.|169\.254\.)' }
+        foreach ($ip in $lanIps) { if (-not $corsHosts.Contains($ip)) { $corsHosts.Add($ip) } }
+    } catch { }
+
+    $derivedOrigins = ($corsHosts | ForEach-Object { "http://$_`:$corsPort" }) -join ','
+    # Compose reads ${GATEWAY_CORS_ORIGINS:-...} - the value must be SET in
+    # .env so it overrides the compose default, which is localhost-only.
+    $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
+    $prefix = if ($rawEnv.Length -eq 0 -or $rawEnv.EndsWith("`n")) { '' } else { "`r`n" }
+    [System.IO.File]::AppendAllText(
+        (Resolve-Path $envPath),
+        "$prefix" + "GATEWAY_CORS_ORIGINS=$derivedOrigins`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $envVars['GATEWAY_CORS_ORIGINS'] = $derivedOrigins
+    Write-Host "[OK] Derived GATEWAY_CORS_ORIGINS for this machine: $derivedOrigins" -ForegroundColor Green
+    Write-Host "     Browser sign-in/register now accepts this machine's hostname and LAN IP." -ForegroundColor Gray
+    if ($corsPort -ne '8089') {
+        Write-Host "     NOTE: the ingress port is $corsPort (not the default 8089); origins use it." -ForegroundColor Gray
+    }
+}
+else {
+    $corsSet = $gwCors.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    $onlyLocal = ($corsSet.Count -gt 0) -and -not ($corsSet | Where-Object { $_ -notmatch '^http://(localhost|127\.0\.0\.1)' })
+    if ($onlyLocal) {
+        # Loud, specific, actionable: this exact value produces the 403 that
+        # looks like a broken auth service. The check cannot auto-fix it -
+        # an operator who SET the value may be deliberately restricting access.
+        Write-Host "[WARN] GATEWAY_CORS_ORIGINS is localhost-only ($gwCors)." -ForegroundColor Yellow
+        Write-Host "       Users browsing http://<machine-host>:8089 will get 403 on sign-in" -ForegroundColor Yellow
+        Write-Host "       and registration ('Cross-site auth request denied.')." -ForegroundColor Yellow
+        Write-Host "       Fix: add this machine's browser origin to .env, e.g." -ForegroundColor Yellow
+        $fixHost = try { [System.Net.Dns]::GetHostName().ToLower() } catch { '<machine-host>' }
+        Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,$gwCors" -ForegroundColor Gray
+        Write-Host "       then re-run this script." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "[OK] GATEWAY_CORS_ORIGINS set: $gwCors" -ForegroundColor Green
+    }
+}
+
 # 5. Pull models (first install only)
 if (-not $Update) {
     Write-Host "`nPulling Ollama models (this takes a while on first run)..." -ForegroundColor Cyan
