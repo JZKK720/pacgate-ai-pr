@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.16
+    image: ghcr.io/jzkk720/pacgate-api:0.1.17
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.16
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.17
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -124,7 +124,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.16
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.17
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     environment:
@@ -136,7 +136,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.16
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.17
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -151,7 +151,7 @@ services:
   # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
   # The ~1.5GB PaddleOCR model downloads on FIRST EXTRACTION, not at build.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.1.16
+    image: ghcr.io/jzkk720/ocr-service:0.1.17
     container_name: ocr-service
     environment:
       # Python logging rejects lowercase level names.

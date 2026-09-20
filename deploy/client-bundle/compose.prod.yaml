@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.16
+    image: ghcr.io/jzkk720/pacgate-api:0.1.17
     container_name: pacgate-api
     depends_on: [pacgate-db]
     # Sanitization gate note (design 5.1): OpenViking memory writes are
@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.16
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.17
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -117,7 +117,7 @@ services:
   # correct without a runtime patch. Published to GHCR by the build-ghcr.yml
   # workflow; pushed on every release tag so both AIPCs stay in sync.
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.16
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.17
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     ports:
@@ -136,7 +136,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.16
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.17
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -153,7 +153,7 @@ services:
   # downloaded on FIRST EXTRACTION (not at build or start), so image pulls
   # stay small and the cost lands on the first OCR-using session.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.1.16
+    image: ghcr.io/jzkk720/ocr-service:0.1.17
     container_name: ocr-service
     environment:
       # Python logging rejects lowercase level names.
