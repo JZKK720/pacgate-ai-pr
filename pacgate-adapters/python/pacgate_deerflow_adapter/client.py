@@ -37,8 +37,9 @@ class PacgateApiClient:
             headers["Authorization"] = f"Bearer {self.jwt_token}"
         return headers
 
-    def get(self, path: str) -> httpx.Response:
-        return self._client.get(f"{self.base_url}{path}", headers=self._headers())
+    def get(self, path: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        merged = {**self._headers(), **(headers or {})}
+        return self._client.get(f"{self.base_url}{path}", headers=merged)
 
     def login(self, email: str, password: str) -> str:
         resp = self._client.post(
@@ -52,15 +53,27 @@ class PacgateApiClient:
             raise ValueError("pacgate-api login did not return a token")
         return token
 
-    def post(self, path: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        return self._client.post(
-            f"{self.base_url}{path}", json=json, headers=self._headers()
-        )
+    def post(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        # headers: extra per-call headers (e.g. If-Match from the memory
+        # adapter's revision guard), merged OVER the auth/Content-Type base.
+        # Missing this kwarg made every PacgateMemoryStorage.save() raise
+        # TypeError and silently fail the whole memory update.
+        merged = {**self._headers(), **(headers or {})}
+        return self._client.post(f"{self.base_url}{path}", json=json, headers=merged)
 
-    def put(self, path: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        return self._client.put(
-            f"{self.base_url}{path}", json=json, headers=self._headers()
-        )
+    def put(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        merged = {**self._headers(), **(headers or {})}
+        return self._client.put(f"{self.base_url}{path}", json=json, headers=merged)
 
     def delete(self, path: str) -> httpx.Response:
         return self._client.delete(f"{self.base_url}{path}", headers=self._headers())
