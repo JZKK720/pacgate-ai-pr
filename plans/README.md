@@ -65,18 +65,36 @@ not 007. 007 remains the stage log and Appendix A.
 4. `011-ghcr-master-release.md` — the release itself (DONE: 0.1.12 live).
 5. `007-*` — per-machine delivery history and the model-override SQL.
 
-## End-goal status (2026-09-16)
+## End-goal status (updated 2026-09-21; was written 2026-09-16)
 
 > **Goal:** both AIPCs pick up upstream repo + GHCR updates and run a fully
 > functional runtime with no developer logging into each machine.
 >
-> **Status: NOT MET.** The 0.1.12 release made the *artifacts* correct, but
-> `install.ps1 -Update` cannot deliver them unattended: it never runs `git pull`,
-> the rendered config only refreshes when absent, bind-mounted patch code needs a
-> restart it does not perform, qm is outside the loop, and no staleness marker
-> exists. **9 of 16 bind mounts require a human action.**
+> **Status: CODE-COMPLETE, NOT YET OPERATIONAL — 1 of 2 machines needs the last
+> step.** The 2026-09-16 assessment above is superseded: plan 014 closed the
+> mechanism gaps, and `scripts/audit-aipc-update-coverage.ps1` now reports
+> **11 of 11 components covered by `install.ps1 -Update`, 0 needing a human**
+> (repo fast-forward pull, render-and-compare, explicit `restart deer-flow`,
+> qm runtime re-staging, qm sandbox drift detection, and the `/version`
+> staleness marker all present).
 >
-> Closing this is plan **014**. Evidence: `deploy/AIPC-UPDATE-GAP-ANALYSIS.md`.
+> **What remains is deliberately last: the scheduled task.**
+> `scripts/register-scheduled-update.ps1` is **not registered on either machine**
+> and needs an elevated shell to install. Until it runs, updates still require a
+> human to invoke `install.ps1 -Update` — so the goal is met in *mechanism* but
+> not in *operation*.
+>
+> The original 2026-09-16 defect analysis (below, retained) is still worth
+> reading for the failure modes it documents — especially the PROVEN SILENT LOST
+> UPDATE, which is why step 2 became render-and-compare.
+>
+> > **[SUPERSEDED 2026-09-16 text]** `install.ps1 -Update` cannot deliver them
+> > unattended: it never runs `git pull`, the rendered config only refreshes when
+> > absent, bind-mounted patch code needs a restart it does not perform, qm is
+> > outside the loop, and no staleness marker exists. **9 of 16 bind mounts
+> > require a human action.**
+> >
+> > Closing this is plan **014**. Evidence: `deploy/AIPC-UPDATE-GAP-ANALYSIS.md`.
 
 ## Other plan corpora (not part of this sequence)
 
