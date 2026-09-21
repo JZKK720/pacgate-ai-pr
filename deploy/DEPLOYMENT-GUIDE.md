@@ -68,14 +68,16 @@ produces the `pacgate-server` binary.
 ```powershell
 # Create the wrapper Dockerfile
 # deploy/deer-flow-pacgate/Dockerfile:
-#   FROM ghcr.io/bytedance/deer-flow-backend:2.1.0
+#   FROM ghcr.io/bytedance/deer-flow-backend@sha256:e7c503a803c99a039e08da61359932877a9e0d0196799429698244117338af13
 #   COPY pacgate-adapters/python /app/adapters
 #   RUN pip install --no-cache-dir /app/adapters
-#   # Install the Pacgate adapter package, then opt in from DeerFlow config.yaml:
+#   # Install the Pacgate adapter package, then opt in from DeerFlow config.yaml.
+#   # NOTE: this is the v2.0.0 schema we currently run. Upstream 2.1.0 replaces
+#   # memory.storage_class with memory.manager_class + memory.backend_config and
+#   # moves the base class; see deploy/MULTI-USER-ARCHITECTURE-PLAN.md and
+#   # plans/023-deer-flow-2.1-upgrade.md before changing this.
 #   # memory:
-#   #   manager_class: deermem
-#   #   backend_config:
-#   #     storage_class: pacgate_deerflow_adapter.storage:PacgateMemoryStorage
+#   #   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
 #   ENV PACGATE_API_URL=http://pacgate-api:8080
 #   CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
 
@@ -96,12 +98,14 @@ script in the client bundle for first-run bootstrap. There is no
 namespace.
 
 ```powershell
-# deploy/qm-pacgate/Dockerfile:
-#   FROM ghcr.io/yc-software/qm/core:latest
-#   COPY pacgate-adapters/typescript /app/adapters
-#   ENV PACGATE_API_URL=http://pacgate-api:8080
-#   ENV PACGATE_TENANT_ID=default-firm
-#   CMD ["node", "src/index.ts"]
+# There is NO wrapper Dockerfile for qm. qm runs from the PUBLISHED upstream
+# images pinned by digest in deploy/qm-pacgate/qm.config.jsonc / compose.qm.yaml
+# (ghcr.io/yc-software/qm/{core,web-ui,portal,auth,admin}). The Pacgate side is
+# not an image: it is the sandbox layer (deploy/qm-pacgate/sandbox/{skills,tools})
+# mounted in at /layer. See QM-BRINGUP-RUNBOOK.md for the compose bring-up.
+#
+# The pacgate-adapters/typescript package is consumed by the sandbox tool, not
+# by a qm image.
 ```
 
 ### 1.4 Push to GHCR
@@ -110,10 +114,12 @@ namespace.
 # Login (first time only)
 echo $env:GHCR_TOKEN | docker login ghcr.io -u pacgate-ai --password-stdin
 
-# Push the images (qm runs via qm up, not as a Docker image)
-docker push ghcr.io/jzkk720/pacgate-api:0.1.14
-docker push ghcr.io/jzkk720/pacgate-mcp:0.1.14
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.14
+# Push the images (qm runs via docker compose, not as a Docker image)
+# Version comes from pacgate-ai/Cargo.toml (currently 0.1.17) - do not hand-type it;
+# scripts/bump-release-version.ps1 updates all four pin surfaces together.
+docker push ghcr.io/jzkk720/pacgate-api:<version>
+docker push ghcr.io/jzkk720/pacgate-mcp:<version>
+docker push ghcr.io/jzkk720/deer-flow-pacgate:<version>
 docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.14
 ```
 
@@ -438,14 +444,22 @@ cd C:\pacgate
 
 ```powershell
 # 1. Update wrapper Dockerfile FROM lines
-#    deploy/deer-flow-pacgate/Dockerfile: FROM ghcr.io/bytedance/deer-flow-backend:2.2.0
-#    deploy/qm-pacgate/Dockerfile: FROM ghcr.io/yc-software/qm/core:latest
-
+#    deploy/deer-flow-pacgate/Dockerfile: FROM ghcr.io/bytedance/deer-flow-backend@sha256:<new-digest>
+#    (pin the DIGEST, not a tag - the base image is currently pinned by digest.
+#     Check what tags exist before using one: `docker buildx imagetools inspect`.
+#     Note `2.1.0` / `v2.1.0` / `v2.2.0` do NOT exist as of 2026-09-21; only
+#     v2.0.0 and v2.1.0-rc0 do. There is no deploy/qm-pacgate/Dockerfile in this
+#     repo - qm runs from published upstream images via qm.config.jsonc.)
+#
 # 2. Rebuild + push
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.15 -f deploy/deer-flow-pacgate/Dockerfile .
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.15
+#    (use the version from pacgate-ai/Cargo.toml - currently 0.1.17 - rather than
+#     hand-typing it; scripts/bump-release-version.ps1 derives it from the pins)
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:<version> -f deploy/deer-flow-pacgate/Dockerfile .
+docker push ghcr.io/jzkk720/deer-flow-pacgate:<version>
 
-# 3. Update compose.prod.yaml version pins
+# 3. Update compose.prod.yaml version pins (and Cargo.toml/Cargo.lock;
+#    scripts/bump-release-version.ps1 does all four surfaces and refuses to
+#    finish if the pins moved but Cargo.toml did not)
 #    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.15
 
 # 4. Ship new bundle to client (or just the updated compose.prod.yaml)
