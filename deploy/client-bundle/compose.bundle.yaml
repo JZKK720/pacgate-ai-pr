@@ -90,6 +90,9 @@ services:
       # response and enrich the upload listing with markdown metadata + original
       # filename, so clients can read/analyze converted docs reliably.
       - ./patches/deer-flow-uploads.py:/app/backend/app/gateway/routers/uploads.py:ro
+      # Pacgate: gate self-registration (mirrors upstream 2.1.0 auth.local.allow_registration)
+      - ./patches/deer-flow-auth.py:/app/backend/app/gateway/routers/auth.py:ro
+      - ./patches/deer-flow-auth-errors.py:/app/backend/app/gateway/auth/errors.py:ro
       # Pacgate: require `description` on write_file/str_replace in the agent
       # system prompt, so the model never drops a required arg and loops on
       # "description: Field required".
