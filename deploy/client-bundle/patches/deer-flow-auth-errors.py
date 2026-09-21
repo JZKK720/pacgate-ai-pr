@@ -25,6 +25,10 @@ class AuthErrorCode(StrEnum):
     # with the auth.local.allow_registration gate (#4311). Keep the value string
     # identical to upstream's so the 2.1.0 upgrade can drop this whole patch.
     REGISTRATION_DISABLED = "registration_disabled"
+    # Pacgate: no upstream equivalent. Returned by POST /initialize when the
+    # opt-in PACGATE_SETUP_TOKEN gate is armed and the caller's token is missing
+    # or wrong. See the _current_setup_token block in deer-flow-auth.py.
+    SETUP_TOKEN_REQUIRED = "setup_token_required"
 
 
 class TokenError(StrEnum):

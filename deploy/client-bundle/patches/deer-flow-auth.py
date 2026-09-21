@@ -1,8 +1,10 @@
 """Authentication endpoints."""
 
 import asyncio
+import hmac
 import logging
 import os
+import secrets
 import time
 from ipaddress import ip_address, ip_network
 
@@ -85,6 +87,83 @@ def _local_registration_enabled() -> bool:
             exc_info=True,
         )
         return True
+
+
+# ── Pacgate: first-admin bootstrap token ──────────────────────────────────
+#
+# WHY: `/initialize` creates the FIRST admin and is necessarily PUBLIC — it has
+# to work before any account exists. Its only guard was `admin_count > 0`. On an
+# already-initialised box that is sufficient (409). On a FRESHLY INSTALLED AIPC
+# it is not: no admin exists yet, so whoever reaches the URL first becomes admin.
+# Gating `/register` did NOT close this; they are separate endpoints.
+#
+# WHY NOT reuse auth.local.allow_registration: that key is the REGISTRATION
+# policy. Reusing it would make a fresh install un-initialisable (no admin, and
+# no way to create one) whenever registration is closed — which is exactly the
+# configuration we ship. Bootstrap and registration need separate controls.
+#
+# DESIGN: OPT-IN, switched by the PACGATE_SETUP_TOKEN environment variable.
+#
+#   PACGATE_SETUP_TOKEN set   -> /initialize requires it (403 without).
+#   PACGATE_SETUP_TOKEN unset -> behaviour is UNCHANGED (public initialize).
+#
+# WHY OPT-IN RATHER THAN ALWAYS-ON:
+# The first-run setup wizard that calls /initialize lives in the UPSTREAM
+# frontend, which this repo does not vendor (deploy/frontend-patches/files/ holds
+# only 16 overlay files and none of them touch auth). Verified against the built
+# image: `grep -rl 'auth/initialize' /app/frontend/.next` DOES match. So a
+# frontend that cannot send a token would be unable to create the first admin on
+# a fresh install — trading one bootstrap failure for another.
+#
+# Enabling this properly needs a matching frontend field, i.e. a frontend image
+# rebuild. Until then this ships OFF by default, so nothing regresses, and the
+# operator can turn it on for a deployment where the wizard is not in use.
+#
+# HOW TO ENABLE (no image rebuild needed):
+#   1. set PACGATE_SETUP_TOKEN in the deer-flow environment, e.g. in .env:
+#        PACGATE_SETUP_TOKEN=$(openssl rand -hex 16)
+#   2. create the first admin by calling the API directly, passing the token:
+#        curl -X POST .../api/v1/auth/initialize \
+#          -H 'Content-Type: application/json' \
+#          -d '{"email":"...","password":"...","setup_token":"<token>"}'
+#      (or send it as the X-Pacgate-Setup-Token header)
+#   The token is NEVER returned by /setup-status — exposing it there would hand it
+#   to the same anonymous caller it is meant to exclude.
+#
+# FAIL-CLOSED once enabled: a missing/wrong token is 403. This deliberately
+# differs from `_local_registration_enabled`, which fails OPEN on a malformed
+# config. Failing open there preserves an existing deployment's behaviour;
+# failing open HERE would leave the admin account claimable, which is the bug.
+_SETUP_TOKEN_LOGGED: set[str] = set()
+
+
+def _current_setup_token() -> str | None:
+    """The token /initialize requires, or None when the gate is disabled."""
+    configured = os.environ.get("PACGATE_SETUP_TOKEN", "").strip()
+    if configured:
+        return configured
+
+    # No explicit token and the opt-in switch is off -> gate disabled.
+    # PACGATE_GENERATE_SETUP_TOKEN=1 generates one and logs it, for an operator
+    # who wants the gate without inventing a value themselves. It is a separate
+    # switch so that merely having the variable unset never silently arms it.
+    if os.environ.get("PACGATE_GENERATE_SETUP_TOKEN", "").strip() not in ("1", "true", "yes"):
+        return None
+
+    token = _GENERATED_SETUP_TOKEN
+    if token not in _SETUP_TOKEN_LOGGED:
+        _SETUP_TOKEN_LOGGED.add(token)
+        # warning, not info: this is operator-actionable and must survive a
+        # default log level. Printed once per process to avoid log spam.
+        logger.warning(
+            "PACGATE SETUP TOKEN: %s  -- required by POST /api/v1/auth/initialize "
+            "to create the first admin. Read it from the container logs.",
+            token,
+        )
+    return token
+
+
+_GENERATED_SETUP_TOKEN = secrets.token_urlsafe(24)
 
 
 # ── Request/Response Models ──────────────────────────────────────────────
@@ -540,6 +619,11 @@ class InitializeAdminRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=8)
+    # Required: the one-time bootstrap token (see _current_setup_token).
+    # Optional in the SCHEMA so a missing token reaches the handler and gets a
+    # clear 403 rather than a generic 422 validation error — the operator sees
+    # "token required" instead of guessing which field is malformed.
+    setup_token: str | None = None
 
     _strong_password = field_validator("password")(classmethod(lambda cls, v: _validate_strong_password(v)))
 
@@ -551,9 +635,37 @@ async def initialize_admin(request: Request, response: Response, body: Initializ
     Only callable when no admin exists. Returns 409 Conflict if an admin
     already exists.
 
+    Pacgate: requires the one-time bootstrap token. Without this, a freshly
+    installed AIPC could be claimed by whoever reached this URL first — see the
+    _current_setup_token block above for why this is separate from
+    auth.local.allow_registration.
+
     On success, the admin account is created with ``needs_setup=False`` and
     the session cookie is set.
     """
+    # 403 BEFORE the admin_count probe, so an already-initialised deployment
+    # does not leak "there is/is not an admin" to an unauthenticated caller that
+    # has no token. The token is the cheaper and more fundamental check.
+    #
+    # When the gate is disabled (_current_setup_token() is None) behaviour is
+    # byte-for-byte the pre-patch behaviour: the endpoint stays public and the
+    # admin_count check below is the only guard.
+    required_token = _current_setup_token()
+    if required_token is not None:
+        supplied = body.setup_token or request.headers.get("X-Pacgate-Setup-Token", "")
+        if not supplied or not hmac.compare_digest(supplied, required_token):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=AuthErrorResponse(
+                    code=AuthErrorCode.SETUP_TOKEN_REQUIRED,
+                    message=(
+                        "A valid setup token is required to create the first admin. "
+                        "Read it from the deer-flow container log (search for "
+                        "'PACGATE SETUP TOKEN'), or use the PACGATE_SETUP_TOKEN value."
+                    ),
+                ).model_dump(),
+            )
+
     admin_count = await get_local_provider().count_admin_users()
     if admin_count > 0:
         raise HTTPException(
