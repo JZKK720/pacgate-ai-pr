@@ -37,6 +37,7 @@ delivery **and** release engineering.
 | 020 | Sanitize jobs, vault, gates, MCP tools | P1 | **DONE** — job API + restore + download gate + MCP tools (2026-09-19) |
 | 021 | Sanitizer agent + review panel | P1 | **DONE** — SOUL + provisioning + review panel in agent chat (2026-09-19) |
 | 022 | Review panel redesign (document identity + job outcome) | P2 | **DONE** — DESIGN.md + doc-identity panel + job outcome via thread metadata (2026-09-19) |
+| 023 | deer-flow 2.1 upgrade (prepare now, execute at GA) | P2 | **PREP IN PROGRESS** — patch stack inventoried (386 lines our delta vs 7,153 upstream); blocked on upstream `v2.1.0` GA. Evidence: `deploy/DEER-FLOW-UPSTREAM-DRIFT-ASSESSMENT-2026-09-21.md` |
 
 ### Plan 007 sub-documents
 
