@@ -85,15 +85,30 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 ## Stage 0：运行时镜像（开发机，已完成）
 
-运行时已发布到 GHCR，AIPC 上无需重建：
+运行时已发布到 GHCR，AIPC 上无需重建。
+
+**当前版本（应拉取的版本）：**
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | 已发布。修复 0.1.1 的容器网络 bug（LLM 路由器遵循 `OLLAMA_BASE_URL`，应用按租户的模型覆盖）。 |
-| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | 已发布。向 deer-flow 暴露 10 个 MCP 工具（RAG 检索、连接器检索、文档、工作流模板、工作流执行）。 |
-| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | 已发布。上游 deer-flow 后端的精简包装；未更改。 |
-| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | 已发布。Next.js 检索界面，构建时烘焙 `DEER_FLOW_INTERNAL_GATEWAY_BASE_URL`（无需运行时补丁）。 |
+| `ghcr.io/jzkk720/pacgate-api:0.1.17` | 已发布，公开。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.17` | 已发布，公开。向 deer-flow 暴露 10 个 MCP 工具。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.17` | 已发布，公开。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.17` | 已发布，公开。 |
+| `ghcr.io/jzkk720/ocr-service:0.1.17` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
+
+> 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
+> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*:0.1.17` 镜像匿名拉取均返回 HTTP 200。
+
+**历史发布表（保留以追溯，已被取代）：**
+
+| 镜像 | 状态 |
+|---|---|
+| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | 当时已发布。修复 0.1.1 的容器网络 bug。 |
+| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | 当时已发布。 |
+| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | 当时已发布。 |
+| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | **从未发布——返回 404。** 请勿使用。 |
 
 **所有 Pacgate 包必须在 GHCR 上设置为公开可见**，以便 AIPC 无需注册表凭据即可拉取。
 上线前验证：
@@ -136,10 +151,14 @@ GitHub → 你的个人资料 → Packages → `pacgate-api` → Package setting
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
+# 模式已改为当前命名空间（jzkk720）。旧写法匹配 'pacgate-ai/pacgate-api'，
+# 在 compose.prod.yaml 中已无任何匹配行，$tag 会为空，导致下面的构建/推送
+# 静默使用空标签。
 $tag = (Select-String -Path deploy/client-bundle/compose.prod.yaml `
-        -Pattern 'pacgate-ai/pacgate-api:(\S+)').Matches.Groups[1].Value
-docker build -t ghcr.io/pacgate-ai/pacgate-api:$tag -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push  ghcr.io/pacgate-ai/pacgate-api:$tag
+        -Pattern 'jzkk720/pacgate-api:(\S+)').Matches.Groups[1].Value
+if (-not $tag) { throw 'could not read the image tag from compose.prod.yaml' }
+docker build -t ghcr.io/jzkk720/pacgate-api:$tag -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push  ghcr.io/jzkk720/pacgate-api:$tag
 ```
 
 实践中建议使用 `build-ghcr.yml` 工作流，以保证四个镜像版本一致——参见

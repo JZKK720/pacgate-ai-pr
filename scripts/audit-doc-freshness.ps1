@@ -25,7 +25,20 @@
 
 [CmdletBinding()]
 param(
-    [string[]]$Docs = @('deploy/DEPLOYMENT-GUIDE.md'),
+    # SCOPE: the client-facing docs, not just the deployment guide. Scoping this
+    # to one file is why the guard read GREEN while README.md/README-ZH.md and the
+    # two handbooks still advertised the superseded `pacgate-ai` namespace at
+    # 0.1.0/0.1.3/0.1.14 - one of those tags does not exist at all. A guard that
+    # cannot see a file cannot fail on it.
+    [string[]]$Docs = @(
+        'deploy/DEPLOYMENT-GUIDE.md',
+        'README.md',
+        'README-ZH.md',
+        'deploy/AIPC-DEPLOYMENT-HANDBOOK.md',
+        'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md',
+        'deploy/SETUP-AND-OPERATIONS.md',
+        'deploy/SETUP-AND-OPERATIONS-ZH.md'
+    ),
     [string]$Compose = 'deploy/client-bundle/compose.prod.yaml',
     [switch]$SkipRemote
 )
@@ -124,6 +137,87 @@ if ($SkipRemote) {
             }
         }
         if ($checked -eq 0) { Write-Host "  ($doc names no build-input tags)" -ForegroundColor DarkGray }
+    }
+}
+
+# ── 6. namespace consistency ─────────────────────────────────────────────
+#
+# WHY THIS CHECK EXISTS - the previous five could not catch the bug they were
+# meant to catch. README.md declared `ghcr.io/pacgate-ai/*` to be "the ONLY image
+# namespace" and said `jzkk720` "publishes no images - mostly 404", which is the
+# exact INVERSE of the truth and was misdirecting clients. None of the checks
+# above flagged it:
+#   * check 3 only asserts the doc mentions the current VERSION (0.1.17). The
+#     README still mentioned 0.1.17 elsewhere, so it passed.
+#   * check 5 only asserts referenced tags RESOLVE. `pacgate-ai/pacgate-api:0.1.3`
+#     genuinely still resolves - it is just superseded - so it passed too.
+# "A stale-but-working reference" is invisible to both. Only a namespace check
+# sees it.
+#
+# The expected namespace is DERIVED from the compose pins (see the pattern note
+# above: the semver tag is what excludes the digest-pinned third-party image).
+# A doc may legitimately name the legacy namespace while describing HISTORY, so
+# references within +/-3 lines of a history marker are exempt - the same
+# close-proximity exemption idiom used by check 5 for non-existence claims.
+Write-Host ''
+Write-Host '=== 6. image namespace consistency ===' -ForegroundColor Cyan
+
+$expectedNs = [regex]::Match($composeText,
+    'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/[a-z0-9\-]+:\d+\.\d+\.\d+').Groups['ns'].Value
+if (-not $expectedNs) {
+    Fail 'cannot derive the expected image namespace from the compose pins'
+} else {
+    Pass "expected namespace derived from compose: $expectedNs"
+    # BILINGUAL BY NECESSITY. Every other pattern in this file is English-only,
+    # and on this repo that is a bug: README-ZH.md, AIPC-DEPLOYMENT-HANDBOOK-ZH.md
+    # and SETUP-AND-OPERATIONS-ZH.md are real, maintained surfaces. A header
+    # reading "历史发布表（保留以追溯，已被取代）" (historical, superseded) matched
+    # nothing in an English-only marker set, so four deliberately-historical rows
+    # were reported as stale. Same class of mistake as the CJK credential
+    # encoding bug: assuming ASCII where the data is not ASCII.
+    $historyMark = '(?i)(histor|legacy|superseded|deprecat|previous|renamed|plan 016|no longer|corrected 20|never published|not published|does not exist|do not exist|the \d+\.\d+\.\d+ era|when the namespace was|历史|已被取代|从未发布|不再发布|已弃用|追溯)'
+    # Third-party namespaces are legitimate and never "stale". Keep this list
+    # explicit rather than inferring it: a silent allowlist is how a check stops
+    # checking. `v2` is NOT a namespace - it is the registry API path in URLs like
+    # https://ghcr.io/v2/<repo>/manifests/<ref>, and it was a false positive
+    # until this exclusion was added.
+    $thirdParty = @('volcengine', 'bytedance', 'yc-software', 'v2')
+    foreach ($doc in $Docs) {
+        if (-not (Test-Path $doc)) { continue }
+        $lines = @(Get-Content $doc)
+        # SECTION STATE, not line proximity.
+        #
+        # A proximity window was tried first and was WRONG in both directions: at
+        # +/-3 and +/-6 it flagged my own deliberately-historical table rows, and
+        # at +/-8 it reached DOWN into the adjacent "Historical release table"
+        # heading and exempted genuine staleness in the current table sitting just
+        # above it. The two tables are adjacent, so no window can separate them.
+        #
+        # Instead: entering a heading that names history opens an exempt section,
+        # and the next heading closes it. That is what "historical" actually means
+        # in a document - a span of lines, not a radius.
+        $headingRe = '^(#{1,6}\s|\*\*[^*]+\*\*\s*$|>\s*\*\*)'
+        $inHistory = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            # A line that NAMES history is itself a historical statement, so it is
+            # exempt and it opens an exempt section. Checking this BEFORE the
+            # heading test matters: my own correction notes are bold blockquotes
+            # like "**`ghcr.io/jzkk720/*` is the ONLY ... `pacgate-ai` is a legacy
+            # mirror**" which contain inline asterisks and so never matched the
+            # `\*\*[^*]+\*\*\s*$` heading shape - they were reported as stale
+            # while saying the opposite.
+            if ($lines[$i] -match $historyMark) { $inHistory = $true; continue }
+            if ($lines[$i] -match $headingRe) { $inHistory = $false; continue }
+            if ($inHistory) { continue }
+
+            $found = @([regex]::Matches($lines[$i], 'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/') |
+                       ForEach-Object { $_.Groups['ns'].Value } |
+                       Where-Object { $_ -ne $expectedNs -and $thirdParty -notcontains $_ } |
+                       Select-Object -Unique)
+            if ($found.Count -eq 0) { continue }
+
+            Fail "$doc L$($i+1): names '$($found -join ', ')', expected '$expectedNs' (pins use it). Put it under a heading that names history if this is deliberate."
+        }
     }
 }
 

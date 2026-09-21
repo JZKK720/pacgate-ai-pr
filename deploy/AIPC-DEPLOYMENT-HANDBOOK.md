@@ -85,15 +85,34 @@ If you later want shared matter data across both machines, connect them with a p
 
 ## Stage 0: Runtime images (dev machine, already done)
 
-The runtime is published on GHCR and needs no rebuild on the AIPC:
+The runtime is published on GHCR and needs no rebuild on the AIPC.
+
+**Current versions (the ones to pull):**
 
 | Image | Status |
 |---|---|
-| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | Published. Fixes the 0.1.1 container-networking bug (LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides applied). |
-| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | Published. Exposes 10 MCP tools to deer-flow (RAG search, connector search, documents, workflow templates, workflow execution). |
-| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | Published. Thin wrapper on the upstream deer-flow backend; unchanged. |
-| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | Published. Next.js research UI with `DEER_FLOW_INTERNAL_GATEWAY_BASE_URL` baked in (no runtime patch needed). |
+| `ghcr.io/jzkk720/pacgate-api:0.1.17` | Published, public. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.17` | Published, public. Exposes 10 MCP tools to deer-flow. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.17` | Published, public. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.17` | Published, public. |
+| `ghcr.io/jzkk720/ocr-service:0.1.17` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
+
+> Namespace and version corrected 2026-09-22. This table previously listed
+> `ghcr.io/pacgate-ai/*` at 0.1.0/0.1.3. `pacgate-ai` is the legacy mirror; the
+> live namespace is `jzkk720` and publishing moved there in plan 016. The old
+> `pacgate-ai/...-frontend-pacgate:0.1.0` row was also labelled "Published" while
+> returning **404** - it never resolved. All five `jzkk720/*:0.1.17` images return
+> HTTP 200 anonymously.
+
+**Historical release table (retained for provenance, superseded):**
+
+| Image | Status |
+|---|---|
+| `ghcr.io/pacgate-ai/pacgate-api:0.1.3` | Published at the time. Fixed the 0.1.1 container-networking bug. |
+| `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` | Published at the time. |
+| `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` | Published at the time. |
+| `ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0` | **Never published - 404.** Do not use. |
 
 **All Pacgate packages must be set to public visibility on GHCR** so an AIPC can pull
 without registry credentials. Verify before rollout:
@@ -139,10 +158,14 @@ broken:
 
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
+# Pattern reads the CURRENT namespace (jzkk720). The old form matched
+# 'pacgate-ai/pacgate-api' and no longer matches any line in compose.prod.yaml,
+# so $tag came back EMPTY and the build/push below silently used a blank tag.
 $tag = (Select-String -Path deploy/client-bundle/compose.prod.yaml `
-        -Pattern 'pacgate-ai/pacgate-api:(\S+)').Matches.Groups[1].Value
-docker build -t ghcr.io/pacgate-ai/pacgate-api:$tag -f pacgate-ai/Dockerfile ./pacgate-ai
-docker push  ghcr.io/pacgate-ai/pacgate-api:$tag
+        -Pattern 'jzkk720/pacgate-api:(\S+)').Matches.Groups[1].Value
+if (-not $tag) { throw 'could not read the image tag from compose.prod.yaml' }
+docker build -t ghcr.io/jzkk720/pacgate-api:$tag -f pacgate-ai/Dockerfile ./pacgate-ai
+docker push  ghcr.io/jzkk720/pacgate-api:$tag
 ```
 
 In practice prefer the `build-ghcr.yml` workflow so all four images stay in step —
