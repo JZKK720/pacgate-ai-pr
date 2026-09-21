@@ -61,30 +61,98 @@ patch was built on:
 | --- | --- | --- | --- |
 | `deer-flow-sync.py` | +76/-2 | **Upstream bug workaround.** Upstream calls `asyncio.run()` per sync tool call, creating a new event loop per MCP tool call; the MCP session pool keys by `(server, scope_key)` + owning loop, so parallel calls on different loops evict each other and cancel the subprocess spawn, hanging the run. Our patch runs every sync coroutine on one shared background loop. | **STILL NEEDED** — verified upstream `v2.1.0` still calls `asyncio.run` per call and has no shared loop |
 | `deer-flow-thread-runs.py` | +8/-2 | Default `multitask_strategy` from `reject` to `interrupt`, so a new message during a long run cancels the stale run instead of returning 409. Frontend never sends the field. | likely still needed; re-check the 2.1.0 default |
-| `deer-flow-uploads.py` | +17/-2 | Markdown-companion metadata (`markdown_file`/`markdown_path`/`virtual_path`/`artifact_url`) + `original_filename` persistence in the listing; symlink-safe write helper import | partially superseded — 2.1.0 landed its own symlink fixes (#5611/#5578/#5547); re-check before keeping |
+| `deer-flow-uploads.py` | +17/-2 | Markdown-companion metadata (`markdown_file`/`markdown_path`/`virtual_path`/`artifact_url`) + `original_filename` persistence in the listing; symlink-safe write helper import | keep — the symlink fixes in our listing/write path are ours; 2.1.0's #5547 does NOT touch `delete_file_safe` (see 1.4). Our delete guard is additive +52/-0 |
 | `deer-flow-prompt.py` | +34/-1 | Agent prompt content (pacgate/citation/legal behaviour) | keep, but this is the file that needs the most upstream merge care |
 | `deer-flow-worker.py` | +59/-0 | Run-worker behaviour additions | keep; largest upstream churn in the set (2,906 lines) |
 | `deer-flow-agent.py` | +80/-3 | Lead-agent factory additions | keep; 1,013 lines upstream churn |
 | `deer-flow-artifacts.py` | +64/-38 | Artifact route additions | keep; the 38 deletions need inspection at rebase |
 | `langchain-mcp-tools.py` | 579-line file | MCP tool adapter — doubled server-name prefix + tool binding | rebase against the vendored package INSIDE the target image |
 
-### 1.3 Decide the memory adapter contract — DECISION NEEDED
+### 1.3 Memory adapter contract — DECIDED (2026-09-22)
 
-2.1.0 replaces top-level `memory.storage_class` with `memory.manager_class` +
-`memory.backend_config`, moves the base class to
-`.../backends/deermem/deermem/core/storage.py`, and requires `__init__(config)`.
-`PacgateMemoryStorage.__init__` is currently no-arg.
+**Decision: migrate `PacgateMemoryStorage` to the 2.1.0 `MemoryManager` contract.
+Do not adopt the official OpenViking backend.** Reasons and evidence below; the
+earlier framing of this section ("moves the base class, requires `__init__(config)`")
+was reading the upstream doc's paraphrase and understated the change.
 
-This is the one item that is design work rather than a rebase. It should be
-settled **before** GA so the bump is not blocked on it. The per-matter lane was
-fixed on 2026-09-20 and has a regression test
-(`pacgate-adapters/python/tests/test_memory_revision.py`) to protect.
+**What breaks is bigger than an `__init__` signature.** 2.1.0 DELETES
+`deerflow/agents/memory/storage.py` and replaces it with
+`deerflow/agents/memory/manager.py` + `backends/<name>/`. Our
+`from deerflow.agents.memory.storage import MemoryStorage` fails at import, so
+this is a hard break, not a deprecation. Our `load`/`reload`/`save` methods go
+with it: `MemoryStorage` no longer exists at all.
+
+**The 2.1.0 contract, read from the code rather than the docs:**
+
+- `MemoryManager` is a **Pydantic `BaseModel`** whose metaclass derives from
+  `ABCMeta`, so unimplemented `@abstractmethod`s raise `TypeError` at
+  instantiation. Three tier-1 methods are abstract and a backend must implement
+  them or it will not construct:
+  - `add(thread_id, messages, *, agent_name, user_id, trace_id) -> None`
+  - `get_context(user_id, ...)` — returns the text injected into the prompt
+  - `from_config(cls, backend_config, *, mode, **host_hooks) -> MemoryManager`
+- The data flow is therefore different, not renamed: `add` is fed raw
+  conversation **messages** and is described as debounced/asynchronous, while
+  `get_context` returns injectable text. Our adapter is a `load()`/`save()`
+  document store. This mapping is the actual design work.
+- Resolution accepts **either** a registered short name **or a dotted import
+  path** (`pkg.mod:Cls` or `pkg.mod.Cls`) — see `_resolve_manager_class`. That is
+  why this migration is additive in the image: **no backend folder has to be
+  baked into deer-flow**, the adapter stays pip-installed and
+  `manager_class: pacgate_deerflow_adapter.storage:PacgateMemoryManager` reaches
+  it. It also **fails loud** rather than falling back to DeerMem, deliberately,
+  because silently routing persistent memory to the wrong store is worse than
+  refusing to start. Expect a hard startup error on a bad value, not a warning.
+- `from_config` is called INSTEAD of the constructor, so the no-arg
+  `__init__` question is moot: the entry point becomes a classmethod taking
+  `backend_config`.
+
+**Why not the official OpenViking backend.** 2.1.0 ships
+`backends/openviking/` (verified present in `v2.1.0-rc0`), and we already run
+OpenViking, so adopting it is tempting and would delete a whole adapter. Rejected
+because it relocates firm memory out of `pacgate-api`. The per-matter lane,
+`PACGATE_MATTER_ID`, the revision/`If-Match` conflict semantics that
+`MatterMemoryConflict` exists to surface, and the matter-scoped isolation the
+product sells all live on our side. Moving the store would make upstream a
+dependency of the client's matter-isolation guarantee. Revisit only as an
+explicit product decision, not as an upgrade convenience.
+
+**Carry-forward risk to check at rebase.** Our adapter sits at the same import
+path our *patch* does. `deer-flow-sync.py` overrides
+`deerflow/tools/sync.py` and reaches memory through the package that 2.1.0
+restructures. The bind-mount path itself (`.../deerflow/tools/sync.py`) survives,
+which is why `audit-deer-flow-patches.ps1` reports exit 0 — it checks bind-mount
+targets, not the imports inside them. Re-checking this is a §2.5 item, since the
+audit cannot see it.
+
+**Sequencing.** The migration itself must wait for GA: writing it against `rc0`
+would be re-derived when rc0 moves, and rc0 is still taking ~17 commits/day. What
+is settled now is the direction and the entry-point shape. The per-matter lane
+regression test (`pacgate-adapters/python/tests/test_memory_revision.py`) is the
+guard to keep green through the migration.
 
 ### 1.4 Independent, ship-now items (no bump required)
 
-- **Delete-symlink hardening.** `v2.0.0`'s `delete_file_safe` does
-  `(base_dir / filename).resolve()` then `unlink()`, so it follows a symlink;
-  2.1.0 makes symlinks 404 (#5547). Self-contained fix on the current base.
+- **Delete-symlink hardening — DONE (2026-09-22).** Shipped on the current base in
+  `48f5a3b` with `scripts/test-upload-symlink-guard.ps1`. Two corrections to the
+  text that was here:
+
+  1. The original claimed the hole covers a host file — "so a symlink at the
+     upload name still resolves to the file it points at". Probed against the real
+     function, that case is ALREADY refused: the traversal check compares the
+     resolved path against the base and raises `PathTraversalError`. Not an
+     exposure. What actually remained is narrower: a symlink pointing at a
+     **sibling file inside the same uploads dir** resolves within the base, passes
+     validation, and IS deleted under the link's name. Intra-thread misreporting,
+     not a host-file escape.
+
+  2. "2.1.0 makes symlinks 404 (#5547)" is **not** true of the code. rc0's
+     `delete_file_safe` and `validate_path_traversal` are byte-identical to
+     `v2.0.0` (verified by diffing the extracted bodies: "no differences"), and
+     rc0's new `lstat`/`S_ISREG` guard sits in `validate_upload_destination`
+     (upload destinations) and `_make_file_sandbox_writable`, neither of which runs
+     on the delete path. So this guard is OURS to carry forward BY HAND at the
+     rebase. Do not assume the rebase covers it; re-run the gate and keep it.
 - **`deploy/DEPLOYMENT-GUIDE.md`.** Sections 1.2 and line 441 reference
   `FROM ...:2.1.0` and `:2.2.0`; neither tag exists on GHCR (verified MISS). The
   example also shows the 2.1.0 memory schema we do not run. Plan 004 claimed this

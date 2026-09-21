@@ -167,9 +167,32 @@ We are partially covered on the write and delete paths. Our mounted
 `deer-flow-uploads.py` imports `open_upload_file_no_symlink` and uses it for
 streamed writes, and our delete path routes through `delete_file_safe`. But
 `delete_file_safe` in the `v2.0.0` manager does `(base_dir / filename).resolve()`
-and then `unlink()`. It resolves first, then unlinks the target, so a symlink at
-the upload name still resolves to the file it points at. Upstream's 2.1.0 fix
-makes symlinks return 404 instead. That specific hole is still ours.
+and then `unlink()`. It resolves first, then unlinks the target.
+
+**Correction, measured 2026-09-22.** Two claims in the paragraph above were
+wrong, and the probing that disproved them also changed the fix:
+
+- "a symlink at the upload name still resolves to the file it points at" — true
+  of the code path, false about the consequence. Probed against the real
+  function: a symlink pointing OUTSIDE the uploads dir is **already refused**,
+  because the traversal check compares the resolved path against the base and
+  raises `PathTraversalError`. There is no host-file escape today. What remained
+  was narrower — a symlink to a **sibling file inside the same uploads dir**
+  resolves within the base, passes validation, and is deleted under the link's
+  name. The caller is told "Deleted link.pdf" while another file is destroyed.
+  Intra-thread misreporting, not an unauthenticated door.
+- "Upstream's 2.1.0 fix makes symlinks return 404 instead" — **not true of the
+  code.** `delete_file_safe` and `validate_path_traversal` are BYTE-IDENTICAL
+  between `v2.0.0` and `v2.1.0-rc0` (verified by diffing the extracted bodies:
+  "no differences"), and rc0's new `lstat`/`S_ISREG` guard is in
+  `validate_upload_destination` (upload destinations) and
+  `_make_file_sandbox_writable`, neither of which runs on the delete path. #5547
+  was cited from the release notes rather than from the diff.
+
+So this was never a bump-blocking item and the bump would not have fixed it.
+It is closed on the current base instead: `48f5a3b`, additive +52/-0 in
+`deer-flow-uploads.py`, with `scripts/test-upload-symlink-guard.ps1` proving it
+fires. It must be carried forward BY HAND at the rebase.
 
 The exposure is bounded: it requires a sandbox process that can write into the
 thread's uploads directory, and the delete route is authenticated per thread. It
@@ -234,9 +257,9 @@ upgrade track that starts now. Concretely:
 
 **This week, cheap and additive (no image change):**
 
-1. Close the delete-symlink gap in `patches/deer-flow-uploads.py` independently
-   of the bump, since it is a self-contained hardening fix we can ship on the
-   current base.
+1. ~~Close the delete-symlink gap in `patches/deer-flow-uploads.py`~~ **DONE
+   (`48f5a3b`).** Note the gap was narrower than section 3 describes, and the
+   bump would not have closed it — see the correction in section 3.
 2. Fix `deploy/DEPLOYMENT-GUIDE.md` so the documented wrapper example matches the
    pinned digest and the `storage_class` schema we actually run, and replace the
    non-existent `2.1.0` / `v2.2.0` tag references with the digest we build on.
