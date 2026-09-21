@@ -391,6 +391,53 @@ async def list_uploaded_files(thread_id: str, request: Request) -> UploadListRes
     return UploadListResponse(**result)
 
 
+def _reject_symlinked_upload(uploads_dir: Path, filename: str) -> None:
+    """Refuse to delete through a symlink planted in the uploads directory.
+
+    Upload dirs are mounted into local sandboxes by design, so a sandbox process
+    can leave a symlink at an upload filename. ``delete_file_safe`` resolves the
+    path BEFORE validating it, so it is the resolved TARGET that gets unlinked.
+
+    Measured against the real v2.0.0 function (2026-09-22), not assumed:
+
+      - a link pointing OUTSIDE the uploads dir is already refused, because the
+        traversal check compares the resolved path against the base and raises.
+        That case is NOT an exposure.
+      - a link pointing at a SIBLING file INSIDE the same uploads dir passes
+        that check and IS deleted, under the link's name. The caller is told
+        "Deleted link.pdf" while a different file is destroyed.
+
+    So the residual issue is intra-thread misreporting, not a host-file escape.
+    Upstream 2.1.0-rc0 does NOT fix it: ``delete_file_safe`` and
+    ``validate_path_traversal`` are byte-identical there, and rc0's new
+    ``lstat``/``S_ISREG`` guard is applied to upload DESTINATIONS, not deletes.
+    This guard is therefore ours, not a rebase of an upstream fix, and it is
+    expected to be carried forward by hand at the 2.1 rebase.
+
+    A symlink is never legitimate in this directory: uploads are written through
+    ``open_upload_file_no_symlink``, which already refuses to write through one,
+    and ``_make_file_sandbox_writable`` already skips chmod on one. This is the
+    third case of the same rule.
+
+    404 rather than 400: the name does not resolve to a deletable file, which is
+    the answer a missing file already gets. Traversal inputs are deliberately
+    left to ``delete_file_safe`` so its existing 400 contract is unchanged.
+    """
+    candidate = Path(uploads_dir) / filename
+    try:
+        if Path(uploads_dir).resolve() != candidate.parent.resolve():
+            return
+        st = os.lstat(candidate)
+    except FileNotFoundError:
+        return
+    except OSError:
+        # An unusual filesystem error here must not invent a new failure mode;
+        # delete_file_safe remains the authority on whether this is deletable.
+        return
+    if stat.S_ISLNK(st.st_mode):
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+
 @router.delete("/{filename}")
 @require_permission("threads", "delete", owner_check=True, require_existing=True)
 async def delete_uploaded_file(thread_id: str, filename: str, request: Request) -> dict:
@@ -399,6 +446,11 @@ async def delete_uploaded_file(thread_id: str, filename: str, request: Request) 
         uploads_dir = get_uploads_dir(thread_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # MUST stay outside the try below: that block ends in `except Exception`,
+    # which would convert this HTTPException(404) into a 500 and hide the refusal.
+    _reject_symlinked_upload(uploads_dir, filename)
+
     try:
         return delete_file_safe(uploads_dir, filename, convertible_extensions=CONVERTIBLE_EXTENSIONS)
     except FileNotFoundError:
