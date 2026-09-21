@@ -169,8 +169,39 @@ $out2 = & curl.exe -s -o - -w "`nHTTP_STATUS:%{http_code}" `
     --data 'username=nobody@pacgateprobe.com&password=definitely-wrong-password' 2>&1
 $t2 = ($out2 | Out-String)
 $code2 = if ($t2 -match 'HTTP_STATUS:(\d+)') { $Matches[1] } else { 'none' }
-# 401 = credential check reached (good). 403 here would mean the gate leaked into login.
-Check ":$port0 POST /login/local (bad creds, form) == 401, NOT 403" ($code2 -eq '401') "got $code2 - 422 means wrong body shape, 403 means the gate leaked into login"
+
+# WHAT THIS ASSERTS, and what it must NOT assert.
+#
+# The point is only that the registration gate did not LEAK into the sign-in
+# path. That is proven by the request reaching the credential check at all.
+#
+#   401 = credential check reached, rejected the bad password   -> PASS
+#   429 = _check_rate_limit() engaged (see deer-flow-auth.py
+#         _MAX_LOGIN_ATTEMPTS / _LOCKOUT_SECONDS). The login handler runs
+#         _check_rate_limit() BEFORE verifying credentials, so a 429 also
+#         proves the sign-in path was reached and not blocked by the gate.
+#         It is a SUCCESS for this assertion, not a failure.
+#   403 = the gate leaked into login                              -> FAIL
+#   422 = wrong body shape (JSON instead of form)                 -> test defect
+#
+# A prior version asserted `-eq '401'` exactly. That false-failed whenever the
+# limiter was engaged - including when a real user mistypes their password
+# twice (the limit is reached after 5 failures, 5-minute lockout, per-IP).
+# Observed 2026-09-22: repeated bad-credential probes pushed the probe IP to
+# 429 and the suite reported "GATE MISSING OR BROKEN" on a healthy gate.
+# A test that reads green-but-flaky as a security failure trains people to
+# ignore it, so 429 is accepted here explicitly.
+$okLogin = ($code2 -eq '401') -or ($code2 -eq '429')
+Check ":$port0 POST /login/local (bad creds, form) == 401 or 429, NOT 403" $okLogin `
+      "got $code2 - 403 means the gate leaked into login; 422 means wrong body shape; 429 means the login rate limiter engaged (still proves the path was reached)"
+if ($code2 -eq '429') {
+    # NOTE: do not try to interpolate the Python constants here. The patch's
+    # names happen to look like PowerShell variables, but "$_MAX_LOGIN_ATTEMPTS"
+    # resolves to the automatic variable $_ plus literal text, so it renders
+    # empty. Reference them as plain text.
+    Write-Host "  note: this probe IP is currently rate-limited (deer-flow-auth.py:" -ForegroundColor DarkGray
+    Write-Host "        _MAX_LOGIN_ATTEMPTS / _LOCKOUT_SECONDS = 300). Not a failure." -ForegroundColor DarkGray
+}
 
 # ── Result ──────────────────────────────────────────────────────────────────
 Write-Host ''
