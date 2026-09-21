@@ -17,7 +17,7 @@
   },
   "vlm": {
     "provider": "ollama",
-    "model": "gemma4:12b-it-q8_0",
+    "model": "gemma4:12b-it-qat",
     "api_base": "http://host.docker.internal:11434",
     "api_key": "ollama",
     "max_tokens": 8192,

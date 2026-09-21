@@ -29,3 +29,20 @@ deepseek-v4-pro:cloud
 # --- Alternative local models (do NOT enable for Main tier) ---
 # nemotron-3.5-lightning:30b-a3b  <- reasoning-mode, breaks workflow tiers
 # gemma4:26b-a4b-it-qat           <- heavier than AIPC NPU budget for Main
+
+# --- deer-flow model-picker options (NOT defaults, NOT workflow tiers) ---
+# Added 2026-09-21: deer-flow-config.yaml offers these in the model picker, and
+# they were installed by hand on both AIPCs, but they were absent from this list.
+# That left the two artifacts inconsistent: a run works TODAY because the weights
+# exist, but any rebuild or re-image relying on install.ps1 alone would come up
+# without them and the agent would fail at runtime with `model '<tag>' not found`
+# (ollama returns HTTP 404, with no fallback). scripts/audit-model-tags.ps1 guards
+# this class of drift.
+#
+# COST: ~53 GB of extra pre-pull (ornith-1.5:9b 6.6 GB, ornith-1.5:35b 22 GB,
+# nemotron 25 GB). If that is unwanted on the client machines, the correct
+# alternative is to REMOVE/commented-out the matching entries in
+# deer-flow-config.yaml - do not simply delete these lines, or the drift returns.
+ornith-1.5:9b
+ornith-1.5:35b
+nemotron-3.5-lightning:30b-a3b
