@@ -16,7 +16,7 @@ integration overrides upstream code in two ways:
 
 | Mechanism | Scale | Rebase shape |
 | --- | --- | --- |
-| Backend: 7 whole-file bind-mounts over upstream modules | **386 lines of our delta** vs **7,153 lines of upstream churn** in those files | 3-way merge per file |
+| Backend: 7 whole-file bind-mounts over upstream modules | **438 lines of our delta** vs **7,153 lines of upstream churn** in those files | 3-way merge per file |
 | Backend: 1 bind-mount over a vendored package in the image venv | 579-line file | rebase inside the image |
 | Frontend: 17 files copied over cloned source | locale file alone would delete 1,127 upstream lines | re-derive each overlay |
 
@@ -36,8 +36,14 @@ reverts upstream code.
   rebase-break signal; a bind-mount onto a missing path means our code is
   silently absent at runtime)
 
-Current output against `v2.1.0-rc0`: all seven paths exist, 386 lines of our
+Current output against `v2.1.0-rc0`: all seven paths exist, 438 lines of our
 delta, 7,153 lines of upstream churn. Exit 0.
+
+  NOTE (2026-09-22): this was 386 until commit `48f5a3b` added the delete-symlink
+  guard (+52). The number is not a fixed property of the stack - it MOVES with any
+  patch edit, and every edit must be reflected in the table in 1.2 because 2.1
+  uses that table as a merge-correctness oracle. Re-run the audit and update the
+  table after ANY change to a patch file.
 
 The script is proven to fail: a mutated upstream path is caught and exits 1, and
 a bad ref throws up front rather than reporting everything missing. Do not
@@ -48,7 +54,7 @@ seven paths missing while claiming the upgrade would break the runtime.
 Encoding is checked too. An earlier version read the base blob through a
 PowerShell string, which mis-decoded the UTF-8 em-dashes in these files and
 inflated the totals to 527 lines. With the blob redirected to a file and
-`[Console]::OutputEncoding` pinned, the same measurement gives **386 lines**, and
+`[Console]::OutputEncoding` pinned, the same measurement gives **438 lines**, and
 the two methods now agree. A mis-decode here would have overstated the rebase by
 roughly 30%.
 
@@ -61,7 +67,7 @@ patch was built on:
 | --- | --- | --- | --- |
 | `deer-flow-sync.py` | +76/-2 | **Upstream bug workaround.** Upstream calls `asyncio.run()` per sync tool call, creating a new event loop per MCP tool call; the MCP session pool keys by `(server, scope_key)` + owning loop, so parallel calls on different loops evict each other and cancel the subprocess spawn, hanging the run. Our patch runs every sync coroutine on one shared background loop. | **STILL NEEDED** — verified upstream `v2.1.0` still calls `asyncio.run` per call and has no shared loop |
 | `deer-flow-thread-runs.py` | +8/-2 | Default `multitask_strategy` from `reject` to `interrupt`, so a new message during a long run cancels the stale run instead of returning 409. Frontend never sends the field. | likely still needed; re-check the 2.1.0 default |
-| `deer-flow-uploads.py` | +17/-2 | Markdown-companion metadata (`markdown_file`/`markdown_path`/`virtual_path`/`artifact_url`) + `original_filename` persistence in the listing; symlink-safe write helper import | keep — the symlink fixes in our listing/write path are ours; 2.1.0's #5547 does NOT touch `delete_file_safe` (see 1.4). Our delete guard is additive +52/-0 |
+| `deer-flow-uploads.py` | +69/-2 | Markdown-companion metadata (`markdown_file`/`markdown_path`/`virtual_path`/`artifact_url`) + `original_filename` persistence in the listing; symlink-safe write helper import | keep — the symlink fixes in our listing/write path are ours; 2.1.0's #5547 does NOT touch `delete_file_safe` (see 1.4). Our delete guard is additive +52/-0 |
 | `deer-flow-prompt.py` | +34/-1 | Agent prompt content (pacgate/citation/legal behaviour) | keep, but this is the file that needs the most upstream merge care |
 | `deer-flow-worker.py` | +59/-0 | Run-worker behaviour additions | keep; largest upstream churn in the set (2,906 lines) |
 | `deer-flow-agent.py` | +80/-3 | Lead-agent factory additions | keep; 1,013 lines upstream churn |
@@ -132,6 +138,26 @@ regression test (`pacgate-adapters/python/tests/test_memory_revision.py`) is the
 guard to keep green through the migration.
 
 ### 1.4 Independent, ship-now items (no bump required)
+
+**Delivery mechanism for everything in this section — NO IMAGE REBUILD NEEDED
+(verified 2026-09-22).** This is worth stating because it decides the sequencing
+at the end of the project. All eight patches are bind-mounted by
+`compose.prod.yaml` at repo-relative paths (`./patches/deer-flow-uploads.py`), so
+a patch fix travels with the REPO, not the image. `install.ps1` step 7c exists
+precisely for this and says so:
+
+    # 7c. Restart services whose CODE is bind-mounted.
+    # A changed bind-mounted FILE does not alter compose config, so `up -d` does NOT
+    # ... Without this restart, patched code (patches/*.py) ...
+    docker compose -f compose.prod.yaml restart deer-flow
+
+Consequence for sequencing: a patch-only fix reaches an AIPC through `git pull`
+plus that restart. It does NOT need a GHCR rebuild and does NOT need to wait for
+2.1.0 GA. So the cheap fixes can be delivered either on their own, or folded into
+the single rebuild the 2.1 bump requires — the operator's choice, not a forced
+ordering. What DOES need the rebuild is anything baked into an image (the
+frontend overlays copied in `build-ghcr.yml`) or any `FROM`/pin change.
+
 
 - **Delete-symlink hardening — DONE (2026-09-22).** Shipped on the current base in
   `48f5a3b` with `scripts/test-upload-symlink-guard.ps1`. Two corrections to the
