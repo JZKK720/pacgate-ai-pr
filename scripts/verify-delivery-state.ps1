@@ -28,19 +28,29 @@ $V = $cv
 Write-Host ("=== Delivery state for {0} ===" -f $V)
 Write-Output ''
 
+# Publish authority is a SINGLE remote. The `pacgate-ai` fork is a stale mirror
+# that nothing client-facing reads (0 refs in both compose files, 0 in
+# install.ps1), so asserting `fork == origin` could never hold and was removed
+# rather than papered over. origin (JZKK720) is what clients clone and pull.
 $origin = (git rev-parse HEAD).Trim()
-$fork = ((git ls-remote https://github.com/pacgate-ai/pacgate-ai-pr.git refs/heads/main) -split '\s+')[0]
-Line 'origin HEAD' $origin.Substring(0, 7) $true
-Line 'fork HEAD' $fork.Substring(0, 7) $true
-Line 'fork == origin' $(if ($fork -eq $origin) { 'yes' } else { 'NO' }) ($fork -eq $origin)
+Line 'local HEAD' $origin.Substring(0, 7) $true
 
-# Pins must all read the manifest version.
+# DERIVE the namespace from the pins, do not hardcode it. The two pin regexes
+# below previously hardcoded `ghcr\.io/pacgate-ai/`, so after the plan-016 repin
+# they matched NOTHING and printed empty strings - which then passed vacuously.
+# An empty match is the dangerous case: it looks like agreement.
 $prod = Get-Content deploy/client-bundle/compose.prod.yaml -Raw
 $bundle = Get-Content deploy/client-bundle/compose.bundle.yaml -Raw
-$prodPins = ([regex]::Matches($prod, 'ghcr\.io/pacgate-ai/[a-z0-9\-]+:(?<v>\d+\.\d+\.\d+)') | ForEach-Object { $_.Groups['v'].Value })
-$bundlePins = ([regex]::Matches($bundle, 'ghcr\.io/pacgate-ai/[a-z0-9\-]+:(?<v>\d+\.\d+\.\d+)') | ForEach-Object { $_.Groups['v'].Value })
-Line 'compose.prod.yaml pins' ($prodPins -join ', ') (@($prodPins | Where-Object { $_ -ne $V }).Count -eq 0)
-Line 'compose.bundle.yaml pins' ($bundlePins -join ', ') (@($bundlePins | Where-Object { $_ -ne $V }).Count -eq 0)
+$nsMatch = [regex]::Match($prod, 'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/[a-z0-9\-]+:\d+\.\d+\.\d+')
+$ns = $nsMatch.Groups['ns'].Value
+Line 'image namespace (derived)' $ns ([bool]$ns)
+
+$prodPins = @([regex]::Matches($prod, 'ghcr\.io/[A-Za-z0-9._-]+/[a-z0-9\-]+:(?<v>\d+\.\d+\.\d+)') | ForEach-Object { $_.Groups['v'].Value })
+$bundlePins = @([regex]::Matches($bundle, 'ghcr\.io/[A-Za-z0-9._-]+/[a-z0-9\-]+:(?<v>\d+\.\d+\.\d+)') | ForEach-Object { $_.Groups['v'].Value })
+$prodOk = ($prodPins.Count -gt 0) -and (@($prodPins | Where-Object { $_ -ne $V }).Count -eq 0)
+$bundleOk = ($bundlePins.Count -gt 0) -and (@($bundlePins | Where-Object { $_ -ne $V }).Count -eq 0)
+Line 'compose.prod.yaml pins' (($prodPins | Sort-Object -Unique) -join ', ') $prodOk
+Line 'compose.bundle.yaml pins' (($bundlePins | Sort-Object -Unique) -join ', ') $bundleOk
 
 Line 'Cargo workspace version' $cv ($cv -eq $V)
 
@@ -48,8 +58,9 @@ Write-Output ''
 Write-Host '=== GHCR images (anonymous pull) ==='
 Write-Output ''
 $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
-foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow-frontend-pacgate')) {
-    $repo = "pacgate-ai/$img"
+# Five images from 0.1.16 onward; ocr-service was missing from this list.
+foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow-frontend-pacgate', 'ocr-service')) {
+    $repo = "$ns/$img"
     $status = 'ERROR'
     try {
         $tok = Invoke-RestMethod -Uri "https://ghcr.io/token?scope=repository:$repo`:pull&service=ghcr.io" -Method Get
@@ -57,10 +68,6 @@ foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow
         $status = "$($r.StatusCode)"
     }
     catch { $status = "$($_.Exception.Response.StatusCode.value__)" }
-    # ${img} not $img - in a double-quoted string PowerShell reads "$img:" as a
-    # SCOPE qualifier (like $env:), not a variable followed by a colon, so
-    # "$img:$V" would render as just the version. Same family of bug as using
-    # $Args as a parameter name.
     Line "${img}:$V" $status ($status -eq '200')
 }
 

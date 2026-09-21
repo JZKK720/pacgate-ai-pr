@@ -38,7 +38,16 @@ if (-not $Image) {
     $cargo = Get-Content pacgate-ai/Cargo.toml -Raw
     $v = [regex]::Match($cargo, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"').Groups['v'].Value
     if (-not $v) { Write-Host 'ERROR: could not read the workspace version from Cargo.toml' -ForegroundColor Red; exit 1 }
-    $Image = "ghcr.io/pacgate-ai/pacgate-api:$v"
+    # DERIVE the namespace from the compose pins. It was hardcoded as
+    # `ghcr.io/pacgate-ai/...`, which went stale when plan 016 moved publishing to
+    # ghcr.io/jzkk720. A hardcoded registry path makes this test measure the wrong
+    # image the moment the pins move - and it fails as a harness error, which
+    # reads like a product fault. The semver tag in the pattern is what excludes
+    # the digest-pinned third-party image (volcengine/openviking).
+    $ns = [regex]::Match((Get-Content 'deploy/client-bundle/compose.prod.yaml' -Raw),
+          'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/pacgate-api:\d+\.\d+\.\d+').Groups['ns'].Value
+    if (-not $ns) { Write-Host 'ERROR: could not derive the image namespace from compose.prod.yaml' -ForegroundColor Red; exit 1 }
+    $Image = "ghcr.io/$ns/pacgate-api:$v"
 }
 
 $ErrorActionPreference = 'Stop'
@@ -112,10 +121,25 @@ try {
     # Addresses the test container by NAME: Docker's embedded DNS resolves
     # container names on a user-defined network, and the name is stable whereas
     # the IP is not.
-    $code = (& docker run --rm --network $Network curlimages/curl:latest `
+    #
+    # TAKE THE LAST LINE, not the whole blob. `2>&1` merges Docker's stderr into
+    # the capture, and on a COLD CLIENT IMAGE that includes the entire pull
+    # progress ("Unable to find image ... locally", layer lines, "Status:
+    # Downloaded ..."). The real status code is printed last, so the previous
+    # `$code -eq '200'` compared a multi-line blob against '200', failed, and
+    # reported "server never became ready" on a server that had already logged
+    # `Listening on http://0.0.0.0:8080` and was answering 200. Observed
+    # 2026-09-21; it passed on every run after the image was cached, which is
+    # exactly the signature of a first-run-only defect.
+    #
+    # A readiness probe must extract the STATUS, never the transport chatter:
+    # otherwise it measures its own output instead of the target's state.
+    $code = (@(& docker run --rm --network $Network curlimages/curl:latest `
             -s -o /dev/null -w '%{http_code}' `
             --retry 40 --retry-delay 1 --retry-connrefused --max-time 3 `
-            "http://${ctr}:8080/health" 2>&1 | Out-String).Trim()
+            "http://${ctr}:8080/health" 2>&1) | Out-String).Trim() -split "`r?`n" |
+            Where-Object { $_.Trim() } | Select-Object -Last 1
+    $code = $code.Trim()
     $ready = $code -eq '200'
 
     # NOTE: no `return` here on purpose. `return` inside this try block exits the

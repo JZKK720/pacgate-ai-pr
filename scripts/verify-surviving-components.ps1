@@ -119,14 +119,21 @@ foreach ($f in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle
     Check "$f survives the merge" { (git ls-tree -r --name-only $mergeTip -- $f 2>&1 | Measure-Object).Count -gt 0 }
 }
 
-# Did the merge REVERT the namespace pins back to the deprecated jzkk720 prefix?
-$jzkk = @(Select-String -Path 'deploy/client-bundle/compose.prod.yaml' -Pattern 'ghcr\.io/jzkk720/' -Quiet)
-Check 'no deprecated ghcr.io/jzkk720 pins reintroduced' { -not $jzkk }
-Check 'all compose pins use ghcr.io/pacgate-ai' {
-    $ai = @([regex]::Matches($composeRaw, 'ghcr\.io/pacgate-ai/[a-z0-9\-]+:')).Count
-    $total = @([regex]::Matches($composeRaw, 'ghcr\.io/[a-z0-9\-]+/[a-z0-9\-]+:')).Count
-    $ai -eq $total
-} ("       {0} pacgate-ai pins, 0 other" -f (@([regex]::Matches($composeRaw, 'ghcr\.io/pacgate-ai/[a-z0-9\-]+:')).Count))
+# Did the merge REVERT the namespace pins? INVERTED 2026-09-21: these two checks
+# previously required `ghcr.io/pacgate-ai` and rejected `ghcr.io/jzkk720`, which is
+# the exact opposite of the truth after plan 016 made jzkk720 the publishing
+# authority (see deploy/plans/016-jzkk720-master-build.md). They were not merely
+# stale - they demanded the WRONG state. Now the expected namespace is DERIVED
+# from the pins instead of hardcoded, so the next namespace move cannot re-break
+# them. The semver tag excludes the digest-pinned volcengine image.
+$nsMatch = [regex]::Match($composeRaw, 'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/[a-z0-9\-]+:\d+\.\d+\.\d+')
+$expectedNs = $nsMatch.Groups['ns'].Value
+Check 'the image namespace is derivable from the pins' { [bool]$expectedNs } ("       derived namespace: {0}" -f $expectedNs)
+Check 'every compose pin uses the SAME namespace' {
+    $nsHits = @([regex]::Matches($composeRaw, 'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/[a-z0-9\-]+:\d+\.\d+\.\d+') |
+                ForEach-Object { $_.Groups['ns'].Value } | Sort-Object -Unique)
+    $nsHits.Count -eq 1 -and $nsHits[0] -eq $expectedNs
+} ("       {0} distinct namespace(s) across the semver-tagged pins" -f (@([regex]::Matches($composeRaw, 'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/[a-z0-9\-]+:\d+\.\d+\.\d+') | ForEach-Object { $_.Groups['ns'].Value } | Sort-Object -Unique).Count))
 
 Write-Output ''
 if ($fail -eq 0) {
