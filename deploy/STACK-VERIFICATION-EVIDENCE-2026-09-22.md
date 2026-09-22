@@ -58,7 +58,37 @@ real redactions, the gate opens only afterwards, restore is role-gated, and the
 ledger and audit rows are written. Metadata and legal-work behaviour are
 functional on the shipped release.
 
-## Two defects found and fixed while doing this
+## THE DEFECT THIS PASS WAS WORTH DOING FOR
+
+**The legal workflow library was mounted into the wrong service.** The product was
+serving 10 built-in English workflows instead of the firm's 222-template Chinese
+library. Full record: `deploy/DEFECT-workflow-mount-wrong-service.md`.
+
+| | before | after |
+| --- | --- | --- |
+| `WORKFLOWS_DIR` | *(empty)* | `/app/workflows` |
+| `/app/workflows` | does not exist | 15 files |
+| `GET /api/workflows` | **10** | **222** |
+
+Fixed in `b7fc540` (compose), guarded by `scripts/test-workflow-library-served.ps1`
+(`76785db`), which is proven to fire: 222/exit 0 on the fixed stack, 10/exit 1 on a
+probe reproducing the defect.
+
+Three things worth carrying forward from it:
+
+- **It was invisible.** A missing mount and a missing env var both yield a
+  well-formed 200 with plausible content. Only a count or the language of the
+  titles distinguishes library from fallback. No existing suite could see it:
+  `check-workflow-validity.ps1` validates the repo YAML (always fine) and
+  `test-workflow-namespace.ps1` checks pins. Both pass while the API serves the
+  wrong set.
+- **`plans/006`'s "220 templates" was right.** The number was real and reachable -
+  just never through the API. Good example of a true claim that looked false.
+- **The 2.1 upgrade would not have fixed it.** Ours, in compose, independent of the
+  pin. Found by auditing the metadata surface against the live stack rather than
+  reading the docs, which is the point of this pass.
+
+## Two more defects found and fixed while doing this
 
 Both were in TEST code, which is itself the finding: they had been failing
 silently because they were unreachable or unrunnable.
