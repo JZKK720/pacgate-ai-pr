@@ -124,10 +124,36 @@ built-ins). The earlier note in this document saying the 220 claim was
 unverified is now resolved in the claim's favour: the number is real, it just was
 never reachable through the API.
 
-The served workflows are the real firm library and are in Chinese, e.g.
-`项目档案初收（第一阶段）` ("project archive initial collection, phase 1") under
-category `archive_collection` - consistent with a Chinese legal practice, which
-the 10 English built-ins are not.
+The served workflows are the real firm library. It is **bilingual, not
+Chinese-only**: Chinese template NAMES with English descriptions, e.g.
+`项目档案初收（第一阶段）` with description "Phase 1 archive collection - claim
+representative complete project/case/matter archives across the five business
+modules", under category `archive_collection`.
+
+That distinction matters for anyone re-checking this later: the 10 BUILT-INS also
+have English names ("Contract Review", "Due Diligence Review"), so **title
+language alone is not a reliable discriminator** - a quick glance at an English
+title could look correct when it is the fallback. Use the COUNT.
+
+## PROVEN IN THE LANE USERS ACTUALLY USE (MCP)
+
+HTTP was not sufficient proof on its own, because per this repo's standing rule
+the workflow templates have **no user-facing UI** - the ONLY path to them is MCP
+(`pacgate_list_workflows` / `_get` / `_execute`) inside an agent chat. And MCP
+calls the same endpoint (`deploy/pacgate-mcp/server.py:366` hits
+`GET /api/workflows`), so the agent lane had also been serving the 10 built-ins.
+
+Verified by CALLING the tool over MCP, not by listing tools:
+
+    docker cp probe_wf.py pacgate-mcp:/tmp/probe_wf.py
+    docker exec pacgate-mcp python3 /tmp/probe_wf.py
+
+    WORKFLOWS VIA MCP: 222
+    distinct categories: 46
+    sample: ['项目档案初收（第一阶段）', '项目概况表编制', '文件目录表编制']
+
+So the fix reaches the agent chat, which is the whole user-visible surface for
+workflows. Before it, an agent asked to run a firm template could not see it.
 
 ## Two more reasons the fix is safe
 

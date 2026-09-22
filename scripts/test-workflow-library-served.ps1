@@ -141,6 +141,45 @@ if ($nonAscii -eq 0 -and $count -gt 10) {
     Write-Host '         content is the intended set and not a larger fallback.' -ForegroundColor Yellow
 }
 
+
+# -- SECOND LANE: MCP ------------------------------------------------------
+#
+# The HTTP check above is necessary but NOT sufficient. Per this repo's
+# standing rule the workflow templates have no user-facing UI, so
+# `pacgate_list_workflows` inside an agent chat is the ONLY path to them.
+# MCP calls the same endpoint, so both lanes shared the defect, but they are
+# separate processes and a regression could hit either alone.
+#
+# The probe is a standalone python file (scripts/probe-mcp-workflow-count.py)
+# rather than inline here, so it can be read and run on its own.
+#
+# A missing pacgate-mcp reports SKIP, never FAIL: this gate must stay runnable
+# where only the API is up, and "could not check" must not read as "fine".
+Write-Host ''
+$mcpCtr = (& docker ps --filter 'name=pacgate-mcp' --format '{{.Names}}' 2>&1 | Out-String).Trim()
+$mcpProbe = Join-Path $repo 'scripts/probe-mcp-workflow-count.py'
+if ($mcpCtr -notmatch 'pacgate-mcp') {
+    Write-Host '  [SKIP] pacgate-mcp not running - MCP lane NOT checked.' -ForegroundColor Yellow
+} elseif (-not (Test-Path $mcpProbe)) {
+    Write-Host "  [SKIP] probe missing: $mcpProbe - MCP lane NOT checked." -ForegroundColor Yellow
+} else {
+    docker cp $mcpProbe "${mcpCtr}:/tmp/pwc.py" 2>&1 | Out-Null
+    $mcpOut = (& docker exec $mcpCtr python3 /tmp/pwc.py 2>&1 | Out-String).Trim()
+    $mcpExit = $LASTEXITCODE
+    $mcpOut -split "`n" | ForEach-Object { if ($_ -match '\S') { Write-Host "    $_" } }
+    if ($mcpExit -eq 1) {
+        Fail 'the AGENT lane is serving the built-ins (MCP workflow count too low)'
+        Write-Host '  The agent chat is the only user-facing path to workflows, so a' -ForegroundColor Yellow
+        Write-Host '  healthy HTTP lane does NOT mean the product is correct here.' -ForegroundColor Yellow
+        Write-Host 'RESULT: FAIL - the library is not served over MCP.' -ForegroundColor Red
+        exit 1
+    } elseif ($mcpExit -eq 0) {
+        Pass 'MCP pacgate_list_workflows returned the library'
+    } else {
+        Write-Host "  [SKIP] MCP probe inconclusive (exit $mcpExit) - NOT counted as a pass." -ForegroundColor Yellow
+    }
+}
+
 Write-Host ''
 Write-Host "RESULT: the legal workflow library is served ($count workflows, $($cats.Count) categories)." -ForegroundColor Green
 exit 0
