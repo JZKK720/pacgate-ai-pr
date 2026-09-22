@@ -39,6 +39,12 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Plan 019/021: the extraction lane (cached per document version, fail-closed).
       OCR_SERVICE_URL: http://ocr-service:8100
+      # The firm's legal workflow library. WITHOUT THIS the API silently serves
+      # only its 10 built-in Rust definitions: workflows.rs takes the
+      # `unwrap_or_else(list_workflows)` branch when workflows_dir is None.
+      # Measured 10 -> 222 with it set. Mirrors compose.prod.yaml.
+      # See deploy/DEFECT-workflow-mount-wrong-service.md.
+      WORKFLOWS_DIR: /app/workflows
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
@@ -49,6 +55,9 @@ services:
       - .env
     volumes:
       - ./data:/data
+      # The firm's 222-workflow library (46 categories, bilingual). Mounted read
+      # -only so the operator can add workflows without rebuilding the image.
+      - ./workflows:/app/workflows:ro
     restart: unless-stopped
 
   deer-flow:
@@ -76,7 +85,6 @@ services:
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
-      - ./workflows:/app/workflows:ro
       - ./deer-flow-extensions-config.json:/app/deer-flow-extensions-config.json:ro
       # Pacgate: add a unified generated-outputs listing endpoint
       # (GET /api/threads/{id}/outputs). Mounted so it survives container

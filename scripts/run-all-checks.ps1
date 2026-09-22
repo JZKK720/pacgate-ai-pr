@@ -23,6 +23,27 @@ $gates = @(
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
     'scripts/test-workflow-namespace.ps1'
+    # The workflow LIBRARY must be served, not the 10 built-in Rust definitions.
+    # This one is STATIC - it reads compose files, needs no containers, no
+    # credentials and no running stack - so it is safe as a gate.
+    #
+    # It exists because fixing one compose file and forgetting another is a real
+    # event in this repo, not a hypothetical: the first fix landed only in
+    # compose.prod.yaml, leaving compose.bundle.yaml carrying the ORIGINAL defect
+    # (mount on deer-flow, no WORKFLOWS_DIR) with nothing objecting. It also
+    # caught a dead workflows mount still sitting on deer-flow in prod.
+    #
+    # The RUNTIME counterpart (asserting the API actually returns 222) is in the
+    # measurements list below, not here: it exits 2 for "cannot check" when the
+    # stack is down, and a gate that goes red on a clean machine is the exact
+    # failure mode this runner's header warns about.
+    'scripts/test-workflow-compose-wiring.ps1'
+    # Runs immediately after, and proves the guard above can actually FAIL. The
+    # injection harness found two real defects a human review did not: a
+    # case-insensitive -match that let a COMMENT satisfy the env check (so the
+    # guard passed a file with the key deleted), and a dead workflows mount still
+    # on deer-flow. Static and safe - it mutates a throwaway temp copy only.
+    'scripts/test-workflow-compose-wiring-mutations.ps1'
     # Structural validity, separate from the string-match checks above. The
     # 0.1.14 release produced NO images because a job-level `if:` referenced the
     # `env` context, which invalidated the entire workflow file - so every run
@@ -53,6 +74,12 @@ $gates = @(
 
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
+    # Runtime counterpart of test-workflow-compose-wiring.ps1: asserts the API
+    # actually SERVES the firm's library (222 workflows / 46 categories) rather
+    # than the 10 built-ins. A measurement, not a gate, because it needs the
+    # stack up and credentials - it exits 2 for "could not check" when either is
+    # missing, and exit 2 must never be read as a failure of the CODE.
+    'scripts/test-workflow-library-served.ps1'
 )
 
 $failed = @()

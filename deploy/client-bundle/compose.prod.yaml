@@ -83,7 +83,6 @@ services:
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
-      - ./workflows:/app/workflows:ro
       - ./deer-flow-extensions-config.json:/app/deer-flow-extensions-config.json:ro
       # Pacgate: add a unified generated-outputs listing endpoint
       # (GET /api/threads/{id}/outputs). Mounted so it survives container
