@@ -180,3 +180,67 @@ workflows. Before it, an agent asked to run a firm template could not see it.
 Not an upstream/deer-flow problem, and not something the 2.1 upgrade would have
 fixed. It is our own compose wiring, present on the current release, independent
 of the pin.
+
+## SECOND PASS: the first fix was only half applied (039afdc)
+
+The fix above landed in `compose.prod.yaml` and was called done. It was not done.
+`compose.bundle.yaml` was never inspected, and it still carried the **original
+defect unchanged**: the mount on `deer-flow`, no `WORKFLOWS_DIR` anywhere.
+
+Nothing objected, and that is the part worth remembering. `install.ps1` uses
+`compose.prod.yaml` exclusively (17 references; `compose.bundle.yaml` has zero), so
+every runtime check - including the MCP lane proof - passed against the fixed file
+while a repo-parallel file sat broken. **A green runtime guard certifies only the
+file that is actually running.** It says nothing about the file beside it.
+
+A second sweep then found a further two faults:
+
+1. `compose.prod.yaml` still had the dead mount on `deer-flow`, left in place
+   during the first fix as "harmless". It is not harmless. A wrong-service mount
+   is the precise trap that produced the original defect: the next person edits
+   the `deer-flow` line, sees a workflows mount, and concludes the API is wired.
+   Removed.
+2. Adding `WORKFLOWS_DIR` to `compose.bundle.yaml` **without** also adding the
+   mount to `pacgate-api` would have pointed the API at an empty directory -
+   reproducing the identical user-visible symptom (built-ins only) through a
+   different route. Both halves are required in both files.
+
+### What now guards it
+
+Two scripts, both registered in `run-all-checks.ps1`:
+
+- `scripts/test-workflow-compose-wiring.ps1` (**gate**, static). Asserts A1
+  `WORKFLOWS_DIR` and the mount are both on `pacgate-api` or both absent; A2 no
+  non-owning service claims the mount; A3 `compose.prod.yaml` and
+  `compose.bundle.yaml` agree; A4 the mount source exists and holds YAMLs.
+- `scripts/test-workflow-compose-wiring-mutations.ps1` (**gate**). Injects each
+  fault into a throwaway copy and proves the guard fires. 5 of 5 classes caught.
+
+The runtime guard is registered as a **measurement**, not a gate: it needs the
+stack up plus credentials and exits 2 for "cannot check", which must never be read
+as a code failure.
+
+### The mutation harness found a false negative in the guard
+
+Worth recording because it is the reason the harness is a tracked file rather than
+a one-off. The first version of the guard tested:
+
+```powershell
+$hasEnv = ($apiBody -match 'WORKFLOWS_DIR')
+```
+
+PowerShell `-match` is **case-INSENSITIVE**. The explanatory comment above the
+real key contains the prose phrase `workflows_dir is None` - so that comment
+satisfied the check. Deleting the real `WORKFLOWS_DIR:` key left the guard still
+satisfied, and it **passed a genuinely broken file**.
+
+Injection caught this; reading the guard did not. The check is now case-sensitive
+and line-anchored (`-cmatch '(?m)^\s+WORKFLOWS_DIR:\s*\S'`), and A2's intruder
+detection was hardened the same way.
+
+### Lesson
+
+A fix verified only on the artifact that runs is verified only half way. When the
+same wiring exists in more than one file, "fixed" means fixed in **all** of them,
+and the check belongs in the source files - not only in the running system.
+
