@@ -35,6 +35,12 @@ services:
       # cache costs zero OCR calls. Fail-closed: if the service is down the
       # document stays pending and nothing is promoted.
       OCR_SERVICE_URL: http://ocr-service:8100
+      # The firm's legal workflow library. WITHOUT THIS the API silently serves
+      # only its 10 built-in Rust definitions and the 222-template library is
+      # never read: workflows.rs takes the `unwrap_or_else(list_workflows)`
+      # branch when workflows_dir is None. Measured before/after: 10 -> 222.
+      # See deploy/DEFECT-workflow-mount-wrong-service.md.
+      WORKFLOWS_DIR: /app/workflows
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
@@ -45,6 +51,11 @@ services:
       - .env
     volumes:
       - ./data:/data
+      # The workflow templates belong HERE, not on deer-flow: pacgate-api owns
+      # GET /api/workflows. deer-flow carries no reference to /app/workflows at
+      # all (verified in-container), so the mount that used to sit on that
+      # service was dead weight. Read-only, as the API only lists and reads them.
+      - ./workflows:/app/workflows:ro
     restart: unless-stopped
 
   deer-flow:
