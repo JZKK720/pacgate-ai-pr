@@ -40,8 +40,11 @@ running system.
 
 ## Deploying: use `JZKK720`, never the fork
 
+**Canonical procedure: `deploy/HANDOFF-AIPC-0.1.17.md`.** Both per-machine prompts
+now point there; the machine-specific wrappers carry only their own notes.
+
 ```
-JZKK720/pacgate-ai-pr   main = 84cc6c4   ← current, clone this
+JZKK720/pacgate-ai-pr   main = 4f9329e   ← current, clone this
 pacgate-ai/pacgate-ai-pr  main = 7e0aa4b   ← 26 commits BEHIND
 ```
 
@@ -49,11 +52,13 @@ The fork has `a0198d5` (the CORS fix) but is **missing `b7fc540` and `039afdc`**
 It carries the 15 workflow YAMLs but not the wiring, so a machine cloned from the
 fork serves **10 built-ins instead of 222**.
 
-- `deploy/AIPC1-HANDOFF-PROMPT-v2.md` — **correct**, clones JZKK720.
-- `deploy/AIPC2-HANDOFF-PROMPT-v2.md` — **STALE AND MISLEADING.** Line ~37 tells
-  the engineer to clone the fork, and it inverts the namespace model (calls
-  `pacgate-ai/*` "the published release"; every compose file actually pins
-  `ghcr.io/jzkk720/*`). Do not follow it as written.
+Three client-facing docs previously told the engineer to clone the fork, and the
+deployment handbook asserted the two repos were "identical ... so either clone
+works" — true when written, false one day later. All corrected, runnable
+fork-clone commands removed, and now **guarded** by
+`scripts/test-handoff-command-safety.ps1` (21st gate, proven by injection).
+`deploy/AIPC2-HANDOFF-PROMPT.md` (v1) and `-v2.md` are superseded; `AIPC1`'s v2
+is correct but its expected commit moved to `4f9329e`.
 
 Update mechanism — one command, it syncs the repo itself (`install.ps1` L73-201:
 `git fetch` → `--ff-only` pull → reports changed files). No separate `git pull`
@@ -83,6 +88,11 @@ scripted journey spans all three. Scope and the A+B split:
 
 **3. Correct `deploy/AIPC2-HANDOFF-PROMPT-v2.md`** — fix the clone URL and the
 inverted namespace claim so the engineer does not deploy the defective wiring.
+
+> **DONE (2026-09-23, `83cb23a`).** Both AIPC2 prompts and both deployment
+> handbooks corrected; the v1 prompt and the v2 prompt for AIPC #2 are superseded;
+> `deploy/HANDOFF-AIPC-0.1.17.md` is now canonical. Guarded by
+> `scripts/test-handoff-command-safety.ps1`.
 
 **4. Deploy AIPC 1 and AIPC 2** from a JZKK720 clone. Scheduled-update
 registration is a **first-install** concern, not an update step.
