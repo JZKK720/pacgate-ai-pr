@@ -5,6 +5,10 @@ artifacts instead of reproducing them. Supersedes
 `CONTINUE-FROM-OTHER-MACHINE.md` at the repo root, which stops at **session 15 /
 2026-08-27 / v0.1.2** and is now badly stale.
 
+**Latest work (2026-09-23, `151d05b`):** the legal-journey acceptance test landed
+(design-doc item B). It found a real shipped-state gap — OpenViking recall cannot
+work because no account user is provisioned. Details under "Open work" §2.
+
 ## Where things actually stand (verified 2026-09-23)
 
 | Fact | Value |
@@ -81,10 +85,28 @@ Not done, and not something the dev box can substitute for: it accumulates
 credentials, pulled models, and rendered gitignored configs that mask
 clean-machine failures. This is the standing rule for any install-path change.
 
-**2. Item B, the combined legal-journey test — not started.**
-qm, OpenViking, and deer-flow each pass their suites individually, but no single
-scripted journey spans all three. Scope and the A+B split:
-`docs/superpowers/specs/2026-09-22-stack-hardening-before-2.1-design.md`.
+**2. Item B, the combined legal-journey test — DELIVERED 2026-09-23 (`151d05b`).**
+
+`scripts/test-legal-journey.ps1` proves the whole journey in one command and fails
+loudly on the first broken step. Verified live: **15 assertions pass** on 0.1.17.
+
+```powershell
+pwsh -File scripts/test-legal-journey.ps1
+pwsh -File scripts/test-legal-journey.ps1 -RequireAllLanes   # on a machine where qm + OpenViking are expected
+```
+
+**Two lanes are NOT proven, and the test reports SKIP rather than a green line:**
+
+- **qm co-work** — the qm stack is not running here. Start it with
+  `deploy/qm-pacgate/setup-qm.ps1`.
+- **OpenViking recall — a REAL GAP, not a test defect.** OpenViking is two-tier:
+  the configured root key is an **admin** credential (200 on
+  `/api/v1/admin/accounts`) while recall needs an **account-user** key. The
+  `default` account reports **`user_count: 0`**, so no user is provisioned and the
+  recall lane cannot work until one is created via
+  `POST /api/v1/admin/accounts/{id}/users/{uid}/key`.
+
+Design doc: `docs/superpowers/specs/2026-09-22-stack-hardening-before-2.1-design.md`.
 
 **3. Correct `deploy/AIPC2-HANDOFF-PROMPT-v2.md`** — fix the clone URL and the
 inverted namespace claim so the engineer does not deploy the defective wiring.

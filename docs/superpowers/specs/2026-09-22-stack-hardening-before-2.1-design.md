@@ -1,8 +1,35 @@
 # Solidify the current stack before the 2.1 upgrade
 
 **Date:** 2026-09-22
-**Status:** APPROVED DIRECTION, execution starting
+**Status:** A DONE, B DELIVERED 2026-09-23 (`151d05b`). See "Outcome" below.
 **Supersedes nothing.** Plan 023 stays valid; its execution start is deferred.
+
+## Outcome (2026-09-23)
+
+**A - currency restored.** `scripts/run-all-checks.ps1` reports **21/21 gates**,
+and the numbers are published in `deploy/STACK-VERIFICATION-EVIDENCE-2026-09-22.md`.
+
+**B - the artifact exists.** `scripts/test-legal-journey.ps1` proves the journey in
+one command and fails loudly on the first broken step. It runs on the LIVE stack
+and needs no scratch containers, unlike the boot-your-own-container E2E scripts.
+Verified: **15 assertions pass** on 0.1.17 / revision `2a51fbd`.
+
+**Two lanes are NOT yet proven, and the test says so rather than quietly passing:**
+
+- **qm co-work** - the qm stack is not running on this box. SKIP, with the start
+  command named.
+- **OpenViking recall - this is a REAL GAP, not a test defect.** OpenViking is
+  two-tier: the configured `root_api_key` is an ADMIN credential (200 on
+  `/api/v1/admin/accounts`) while `/api/v1/search/recall` needs an ACCOUNT-USER
+  key. The `default` account currently reports `user_count: 0`, so **no user is
+  provisioned and the recall lane cannot work at all**. Provisioning one
+  (`POST /api/v1/admin/accounts/{id}/users/{uid}/key`) is the unblocking step.
+  This is a genuine finding about the shipped state, discovered by refusing to
+  let a 403 read as "probably fine".
+
+**Still open from this spec:** the clean-clone proof (see the standing rule - this
+dev box masks clean-machine failures), and the human judgement pass on output
+quality, which is explicitly not automatable.
 
 ## The decision
 
