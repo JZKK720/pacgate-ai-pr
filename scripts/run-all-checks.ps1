@@ -44,6 +44,14 @@ $gates = @(
     # guard passed a file with the key deleted), and a dead workflows mount still
     # on deer-flow. Static and safe - it mutates a throwaway temp copy only.
     'scripts/test-workflow-compose-wiring-mutations.ps1'
+    # Client-facing handoff docs must not instruct a deployable-but-wrong action.
+    # Three docs told the on-site engineer to clone the FORK, and the AIPC
+    # handbook asserted the two repos were "identical ... so either clone works".
+    # That was true when written and became FALSE the next day, when 26 commits
+    # landed on JZKK720 that the fork did not have - so a machine deployed from
+    # the fork silently serves 10 built-in workflows instead of the firm's 222.
+    # Static: reads markdown only, no stack required.
+    'scripts/test-handoff-command-safety.ps1'
     # Structural validity, separate from the string-match checks above. The
     # 0.1.14 release produced NO images because a job-level `if:` referenced the
     # `env` context, which invalidated the entire workflow file - so every run

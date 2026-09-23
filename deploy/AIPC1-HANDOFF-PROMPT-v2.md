@@ -1,10 +1,20 @@
 # AIPC #1 Handoff Prompt — PacGate Full-Stack Setup (v0.1.17)
 
-> Copy everything below into a fresh agent session on **AIPC #1**. This is a
-> self-contained setup prompt. It assumes AIPC #1 already ran the original
-> v0.1.x install (Docker Desktop, Ollama, Node.js 24+ installed, stack present)
-> and is being UPDATED to the current release, OR is a fresh machine — both
-> paths are covered below.
+> **⚠️ PARTIALLY SUPERSEDED (2026-09-23).** This prompt is CORRECT on the
+> essentials (it clones JZKK720, and the `--force-recreate` guidance is right),
+> but two details have moved and one step is missing:
+>
+> 1. **Expected commit is now `4f9329e`, not `a0198d5`.**
+> 2. **The workflow-library check is missing** — it is the client-visible feature
+>    a wrong clone silently loses. See `deploy/HANDOFF-AIPC-0.1.17.md` step 3.
+> 3. **Never clone the fork.** The fork is 26 commits behind and still carries
+>    the original workflow-wiring defect, so it serves 10 built-in workflows
+>    instead of the firm's 222.
+>
+> **Canonical procedure: `deploy/HANDOFF-AIPC-0.1.17.md`.** This file is kept for
+the AIPC #1-specific notes below; the shared steps live there.
+
+> Copy everything below into a fresh agent session on **AIPC #1**.
 
 ---
 
@@ -47,17 +57,20 @@ the upload body-limit fix, and the LAN sign-in/register fix.
 cd C:\pacgate-ai-pr
 git status --porcelain --untracked-files=no   # must be EMPTY before update
 git pull --ff-only origin main
-git log -1 --format="%h %s"   # expect: a0198d5 fix(install): derive GATEWAY_CORS_ORIGINS...
+git log -1 --format="%h %s"   # expect: 4f9329e docs: current continuation snapshot...
 ```
 
 If `git pull` refuses: a tracked file was edited locally. Commit or revert
 it first — the update refuses to overwrite local work by design.
 
-> If this machine's clone points at `pacgate-ai/pacgate-ai-pr` (the fork),
-> the fork must carry `a0198d5` too. Verify both:
+> **The clone must be `JZKK720/pacgate-ai-pr`, not the fork.** Check with
+> `git remote -v`. The fork (`pacgate-ai/pacgate-ai-pr`) is 26 commits behind and
+> still carries the original workflow-wiring defect — a machine cloned from it
+> serves 10 built-in workflows instead of the firm's 222, with no error shown.
+> If `origin` shows the fork, re-clone from JZKK720 rather than patching in place.
 > ```powershell
-> git ls-remote origin refs/heads/main
-> # must show a0198d58a2af33de2a7bde0b22e382f57a376386 (or newer)
+> git remote -v
+> git ls-remote origin refs/heads/main   # must show 4f9329e or newer
 > ```
 
 ## Step 1 — run the update

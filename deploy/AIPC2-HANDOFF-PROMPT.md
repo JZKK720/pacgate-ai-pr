@@ -1,9 +1,20 @@
-# AIPC #2 Handoff Prompt — PacGate Full-Stack Setup (v0.1.3)
+# AIPC #2 Handoff Prompt — PacGate Full-Stack Setup (v0.1.3) — SUPERSEDED
 
-> Copy everything below into a fresh agent session on **AIPC #2**. This is a
-> self-contained setup prompt. It assumes AIPC #2 is a fresh Windows machine
-> (Docker Desktop, Ollama, Node.js 24+ installed) and that you have the
-> `pacgate-ai` GitHub credentials available.
+> **⛔ SUPERSEDED — DO NOT USE (2026-09-23).** This is the v1 prompt, targeting the
+> **0.1.3** era — fourteen releases stale (current is **0.1.17**). Use
+> **`deploy/HANDOFF-AIPC-0.1.17.md`** (canonical), or the machine wrapper
+> `deploy/AIPC2-HANDOFF-PROMPT-v2.md`.
+>
+> Two errors here would cause real harm if followed:
+>
+> 1. **It tells you to clone the fork.** Clone **`JZKK720/pacgate-ai-pr`**. The fork
+>    is 26 commits behind and still carries the original workflow-wiring defect, so a
+>    machine cloned from it serves **10 built-in workflows instead of the firm's 222**,
+>    with no error shown.
+> 2. Its verification steps check for **0.1.3-era** markers, so they would pass on a
+>    machine that is missing every fix since.
+>
+> Retained as a record only. Nothing below should be executed.
 
 ---
 
@@ -13,17 +24,22 @@ Set up the complete PacGate AI stack on this machine (AIPC #2), identical to
 AIPC #1, using the **updated** code that carries all the 2026-09-02 fixes **and**
 the 2026-09-04 delivery package + qm model fix.
 
-## Critical: clone from the fork, not the old repo
+## ~~Critical: clone from the fork, not the old repo~~ ❌ WRONG — see header
 
 The `pacgate-ai` account **cannot write** to `JZKK720/pacgate-ai-pr` (403, needs
 2FA grant). The fixes live on the **`pacgate-ai/pacgate-ai-pr`** fork, which the
 `pacgate-ai` account owns. **Clone from there:**
 
-```powershell
-cd C:\
-git clone https://github.com/pacgate-ai/pacgate-ai-pr.git
-cd pacgate-ai-pr
-```
+> The original text printed a runnable `git clone` of the fork at this point. It has
+> been **removed deliberately** so it cannot be copy-pasted: cloning the fork deploys
+> the workflow defect. Clone `JZKK720/pacgate-ai-pr`:
+>
+> ```powershell
+> cd C:\
+> git clone https://github.com/JZKK720/pacgate-ai-pr.git
+> cd pacgate-ai-pr
+> git remote -v   # origin MUST be JZKK720
+> ```
 
 Verify you have the fixes — the handbook should be v0.1.3 and contain a
 "Significant findings" section, and the delivery package should exist:

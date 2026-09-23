@@ -181,14 +181,24 @@ On both machines:
 
 ```powershell
 cd C:\
-git clone https://github.com/pacgate-ai/pacgate-ai-pr.git
+git clone https://github.com/JZKK720/pacgate-ai-pr.git
 cd pacgate-ai-pr
+git remote -v   # origin MUST be JZKK720/pacgate-ai-pr
 ```
 
-> **AIPC #2 note:** both repos are now **identical** (`origin/main` = fork `main`, each
-> carrying all fixes plus merge `832d84e`) and **both are public**, so either clone works.
-> The only difference that matters is which repo you push a release tag to — that decides
-> which GHCR namespace the images publish into. See
+> **AIPC #2 note (CORRECTED 2026-09-23):** the two repos are **NO LONGER IDENTICAL**,
+> so "either clone works" is no longer true. **Clone `JZKK720`.**
+>
+> `pacgate-ai/pacgate-ai-pr` is **26 commits behind** (last checked 2026-09-23) and is
+> missing `b7fc540` and `039afdc`, so it still carries the **original
+> workflow-wiring defect**. The 15 workflow YAMLs are present in the fork but are not
+> wired into `pacgate-api`, so the API serves **10 built-in workflows instead of the
+> firm's 222** — with no error shown anywhere. The identity claim above was accurate
+> when written; the divergence came afterwards, which is exactly why a doc must not
+> assert two things are in sync without a check that can fail.
+>
+> The namespace difference is unchanged — which repo you push a release tag to
+> decides which GHCR namespace the images publish into. See
 > `plans/012-master-release-namespace.md`.
 >
 > Cloning needs no credentials now that the repos are public; a PAT or `gh auth login` is

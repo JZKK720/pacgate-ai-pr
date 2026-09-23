@@ -1,9 +1,28 @@
 # AIPC #2 Handoff Prompt — PacGate Full-Stack Setup (v0.2, 2026-09-05)
 
-> Copy everything below into a fresh agent session on **AIPC #2**. This is a
-> self-contained setup prompt. It assumes AIPC #2 is a fresh Windows machine
-> (Docker Desktop, Ollama, Node.js 24+ installed) and that you have the
-> `pacgate-ai` GitHub credentials available.
+> # 🛑 DO NOT FOLLOW THIS PROMPT AS WRITTEN — TWO ERRORS (2026-09-23)
+>
+> **1. It tells you to clone the fork. That is wrong and silently loses data.**
+> Clone **`JZKK720/pacgate-ai-pr`**. The fork (`pacgate-ai/pacgate-ai-pr`) is
+> 26 commits behind and still carries the original workflow-wiring defect, so a
+> machine cloned from it serves **10 built-in workflows instead of the firm's
+> 222**, with no error. See the "clone from the fork" section below, now marked.
+>
+> **2. It says `--force-recreate` on deer-flow "wipes its local DB + admin user".**
+> That is **FALSE**. deer-flow's state (`checkpoints.db`, `.jwt_secret`, `users/`,
+> `channels/`) lives in the **bind-mounted `./data/deer-flow`** on the host, which
+> survives container recreation by definition — verified, not assumed. Following
+> this claim would have blocked the correct CORS fix.
+>
+> It also **inverts the namespace model**: it calls `pacgate-ai/*` "the published
+> release" and `jzkk720` "upstream/developer". The reverse is true — **every
+> compose file pins `ghcr.io/jzkk720/*`** and all five images are anonymous-200
+> there.
+>
+> **Canonical procedure: `deploy/HANDOFF-AIPC-0.1.17.md`.** Use that instead.
+> The historical content below is retained only as a record.
+
+> Copy everything below into a fresh agent session on **AIPC #2**.
 
 ---
 
@@ -26,17 +45,32 @@ The repo topology was clarified. There are **two distinct things**:
 **Clone from `C:\pacgate-ai-pr` = the `pacgate-ai-pr` repo.** Do **not** create or sync
 `pacgate-law` as a GitHub repo. It is a local docs folder only.
 
-## Critical: clone from the fork, not the old repo
+## ~~Critical: clone from the fork, not the old repo~~ ❌ WRONG — see header
+
+> **This entire section was backwards and is retained only as a record.**
+> Clone **`JZKK720/pacgate-ai-pr`**. The fork is 26 commits behind and still
+> carries the workflow-wiring defect (10 built-in workflows instead of 222).
+> The remote you clone from determines whether the firm's legal template library
+> is present — nothing warns you if it is missing.
+>
+> ```powershell
+> cd C:\
+> git clone https://github.com/JZKK720/pacgate-ai-pr.git
+> cd pacgate-ai-pr
+> git remote -v   # origin must be JZKK720, NOT pacgate-ai
+> ```
+>
+> The original (incorrect) text follows, for reference only:
 
 The `pacgate-ai` account **cannot write** to `JZKK720/pacgate-ai-pr` (403, needs
 2FA grant). The fixes live on the **`pacgate-ai/pacgate-ai-pr`** fork, which the
 `pacgate-ai` account owns. **Clone from there:**
 
-```powershell
-cd C:\
-git clone https://github.com/pacgate-ai/pacgate-ai-pr.git
-cd pacgate-ai-pr
-```
+> The original text printed a runnable `git clone` of the fork at this point.
+> That command has been **removed deliberately** so it cannot be copy-pasted:
+> cloning the fork deploys the workflow defect. Clone `JZKK720/pacgate-ai-pr`.
+> (The write-permission claim above is also stale — the fork's own fixes were
+> later superseded upstream.)
 
 Verify you have the fixes:
 ```powershell
@@ -55,8 +89,17 @@ branch (or `git am` the patches in `patches/`) to get the same fixes.
    Registered in `deer-flow-extensions-config.json`.
 2. **openviking key fix** — use `OPENVIKING_ROOT_API_KEY` (not `OPENVIKING_API_KEY`).
    Wrong key → openviking 401 → **no MCP tools load at all**.
-3. **deer-flow recreate warning** — never `--force-recreate` deer-flow (wipes its
-   local DB + admin user). Use `docker compose restart deer-flow`.
+3. ~~**deer-flow recreate warning** — never `--force-recreate` deer-flow (wipes
+   its local DB + admin user). Use `docker compose restart deer-flow`.~~
+   **❌ CORRECTED 2026-09-23: this is FALSE.** `--force-recreate` on deer-flow is
+   **safe and sometimes required** (compose will not recreate a container when
+   only an env var changed). deer-flow stores its state in the bind-mounted
+   `./data/deer-flow` on the host — `checkpoints.db`, `.jwt_secret`, `users/`,
+   `channels/` — and bind-mounted data survives container recreation by
+   definition. Verified against the live stack: the only named volume in the
+   project is `pacgate-db-data` (Postgres). Use `--force-recreate` when an env
+   change must take effect; plain `restart` only if you specifically want to
+   avoid recreating.
 4. **QM sign-in** — local topology uses Mailpit SMTP (not Resend). Sign-in links go
    to `http://localhost:8025`.
 5. **QM web-ui can't self-auth** — always reach it via the portal (`:8181`).
@@ -94,12 +137,15 @@ Build it with:
 docker build -f docker/Dockerfile.pacgate -t ghcr.io/pacgate-ai/deer-flow-pacgate:local .
 ```
 
-> Tag it `:local`, not `:latest`. `ghcr.io/pacgate-ai/deer-flow-pacgate:latest`
-is a published release tag and the compose files pin *that*; overwriting it
-locally makes the machine's image disagree with the release and with every other
-AIPC. A local build is a scratch artifact — keep it on a tag the registry never
-serves. The `jzkk720` namespace this used to point at is the upstream/developer
-account and is only a mirror of `pacgate-ai` now; nothing should build INTO it.
+> Tag it `:local`, not `:latest`. **❌ CORRECTED 2026-09-23 — the namespace
+> claims in this note are inverted.** The published namespace is **`jzkk720`**:
+> every compose file pins `ghcr.io/jzkk720/*`, and all five images return
+> anonymous-200 there. `pacgate-ai/*` is the client-delivery MIRROR — and it has
+> never actually mirrored, because `GHCR_MIRROR_PAT` is unset. Overwriting
+> `jzkk720`'s `:latest` locally still makes the machine disagree with the release
+> and with every other AIPC, so the tagging advice holds; only the account names
+> were wrong. A local build is a scratch artifact — keep it on a tag the registry
+> never serves.
 
 ## Setup steps (follow the handbook)
 

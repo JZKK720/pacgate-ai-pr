@@ -176,14 +176,23 @@ docker push  ghcr.io/jzkk720/pacgate-api:$tag
 
 ```powershell
 cd C:\
-git clone https://github.com/pacgate-ai/pacgate-ai-pr.git
+git clone https://github.com/JZKK720/pacgate-ai-pr.git
 cd pacgate-ai-pr
+git remote -v   # origin 必须是 JZKK720/pacgate-ai-pr
 ```
 
-> **AIPC #2 说明：** 两个仓库现在**内容完全一致**（`origin/main` = fork `main`，
-> 均含全部修复与合并提交 `832d84e`），且**均为公开**，因此克隆哪一个都可以。
-> 唯一需要留意的差异是：向哪个仓库推送标签会决定镜像发布到哪个 GHCR 命名空间——
-> 见 `plans/012-master-release-namespace.md`。
+> **AIPC #2 说明（2026-09-23 更正）：** 两个仓库**已不再一致**，因此「克隆哪一个
+> 都可以」不再成立。**请克隆 `JZKK720`。**
+>
+> `pacgate-ai/pacgate-ai-pr` 落后 **26 个提交**（2026-09-23 核实），缺少
+> `b7fc540` 与 `039afdc`，因此仍带有**最初的 workflow 接线缺陷**。fork 中虽有那
+> 15 个 workflow YAML，但未接入 `pacgate-api`，于是 API 只会提供**10 个内置工作
+> 流，而不是公司的 222 个**，而且不会报任何错。上面「内容完全一致」的说法在写入
+> 时是准确的，分歧发生在之后——这正是文档不应在没有可失败检查的情况下断言两者
+> 同步的原因。
+>
+> 命名空间方面的差异没有变化：向哪个仓库推送标签，决定镜像发布到哪个 GHCR
+> 命名空间。见
 
 仓库为公开，克隆无需凭据；仅当需要推送时才使用个人访问令牌或 GitHub CLI（`gh auth login`）。
 
