@@ -1,5 +1,17 @@
 # How to Continue Work from Another Machine
 
+> **STALE — DO NOT FOLLOW THE STEPS BELOW.** This document stops at session 15
+> (2026-08-27, v0.1.2). The current release is **0.1.17** and much of what follows
+> no longer reflects the system (several crates listed as "STUB (needs ...)" are
+> implemented; the port, image, and deploy details have all moved).
+>
+> **Use `deploy/CONTINUE-HERE-2026-09-23.md` instead.** It carries the verified
+> current state, the open work, the deploy path (**clone `JZKK720/pacgate-ai-pr`,
+> never the fork — the fork is 26 commits behind and still carries a fixed
+> workflow-wiring defect**), and the traps worth not re-learning.
+>
+> Kept only for the historical session 14/15 record at the bottom.
+
 ## Quick start (on your other machine)
 
 ```powershell
