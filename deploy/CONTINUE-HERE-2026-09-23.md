@@ -81,9 +81,15 @@ the step-7c `deer-flow` restart.
 ## Open work
 
 **1. Fresh-clone install test — YOURS, and it is the real gate.**
-Not done, and not something the dev box can substitute for: it accumulates
+Not done by me, and not something the dev box can substitute for: it accumulates
 credentials, pulled models, and rendered gitignored configs that mask
-clean-machine failures. This is the standing rule for any install-path change.
+clean-machine failures.
+
+**The procedure now exists: `deploy/RUNBOOK-clean-clone-proof.md`.** Run it in this
+order — it frees 8089/8090 (install.ps1 takes no port override), clones into a
+truly clean directory, sets the five required `.env` values, then runs four
+verification commands. It also covers the human judgement pass and how to extend
+the proof to a second machine (VM/sandbox before an AIPC).
 
 **2. Item B, the combined legal-journey test — DELIVERED 2026-09-23 (`151d05b`).**
 

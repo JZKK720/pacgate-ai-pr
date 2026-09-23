@@ -27,9 +27,16 @@ Verified: **15 assertions pass** on 0.1.17 / revision `2a51fbd`.
   This is a genuine finding about the shipped state, discovered by refusing to
   let a 403 read as "probably fine".
 
-**Still open from this spec:** the clean-clone proof (see the standing rule - this
-dev box masks clean-machine failures), and the human judgement pass on output
-quality, which is explicitly not automatable.
+**Still open from this spec:** the clean-clone proof and the human judgement pass on
+output quality, which is explicitly not automatable.
+
+**Both now have a procedure: `deploy/RUNBOOK-clean-clone-proof.md`** (2026-09-23).
+It covers the mechanical clean-clone proof end to end (free ports, truly-clean
+directory, `.env` with the five required values, the verbs to watch for, the four
+verification commands), the human judgement pass (what to prepare in 30 minutes so
+the human spends their hour judging rather than setting up, plus the questions to
+answer), and how to extend the proof to a genuinely different machine (VM/sandbox
+before an AIPC, cheapest first).
 
 ## The decision
 
