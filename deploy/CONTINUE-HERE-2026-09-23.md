@@ -105,14 +105,28 @@ pwsh -File scripts/test-legal-journey.ps1 -RequireAllLanes   # on a machine wher
 
 - **qm co-work** — the qm stack is not running here. Start it with
   `deploy/qm-pacgate/setup-qm.ps1`.
-- **OpenViking recall — a REAL GAP, not a test defect.** OpenViking is two-tier:
-  the configured root key is an **admin** credential (200 on
-  `/api/v1/admin/accounts`) while recall needs an **account-user** key. The
-  `default` account reports **`user_count: 0`**, so no user is provisioned and the
-  recall lane cannot work until one is created via
-  `POST /api/v1/admin/accounts/{id}/users/{uid}/key`.
+  - **OpenViking recall — CORRECTED 2026-09-23: the memory lane WORKS; the test's
+    lane does not.** The earlier note here called this "a REAL GAP" and said recall
+    "cannot work". That was wrong, and it was the kind of wrong that costs an
+    engineer a day. Verified live: the product talks **MCP**
+    (`POST /mcp`, `X-API-Key: ${OPENVIKING_ROOT_API_KEY}`) and gets **200** —
+    `tools/call search` returns real stored memories with `isError: false`, and
+    `tools/call health` returns 200. The root key is sufficient for the lane we
+    ship.
 
-Design doc: `docs/superpowers/specs/2026-09-22-stack-hardening-before-2.1-design.md`.
+    The 403 is specific to this test's **REST** assertion
+    (`POST /api/v1/search/recall`), which wants an *account-user* key; a fresh
+    install reports `user_count: 0` and `GET
+    /api/v1/admin/accounts/default/users` returns `[]`. That is a **test/product
+    mismatch**, not a broken install — the two-tier model only bites the route we
+    do not use.
+
+    **Not a launch blocker.** Close it by pointing the assertion at MCP, or
+    provision a user (`POST /api/v1/admin/accounts/{id}/users/{uid}/key`) if a
+    per-user boundary is wanted for other reasons. See
+    `deploy/MULTI-USER-ARCHITECTURE-PLAN.md` for that decision, and note that
+    `qm.config.jsonc` declares `OPENVIKING_API_KEY` which `setup-qm.ps1`
+    deliberately writes empty — a cleanup question, not a defect.
 
 **3. Correct `deploy/AIPC2-HANDOFF-PROMPT-v2.md`** — fix the clone URL and the
 inverted namespace claim so the engineer does not deploy the defective wiring.

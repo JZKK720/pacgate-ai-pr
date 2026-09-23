@@ -228,16 +228,23 @@ the install, and both are stated with their reason rather than passed silently:
 
 - **qm co-work** — the qm stack is not part of `compose.prod.yaml`; it is a
   separate stack. Start it with `deploy/qm-pacgate/setup-qm.ps1`.
-- **OpenViking recall** — this is a **real gap in the shipped state**, not a test
-  artifact. OpenViking is two-tier: the configured root key is an *admin*
-  credential (200 on `/api/v1/admin/accounts`) while `/api/v1/search/recall` needs
-  an *account-user* key. A fresh install has `user_count: 0`, so recall cannot
-  work until a user is provisioned via
-  `POST /api/v1/admin/accounts/{id}/users/{uid}/key`.
+- **OpenViking recall** — **corrected 2026-09-23: the memory lane works; this
+    TEST's lane does not.** The memory lane in production is **MCP**: deer-flow
+    sends `X-API-Key: ${OPENVIKING_ROOT_API_KEY}` to `POST /mcp`, and that returns
+    **200**, with `tools/call search` returning real stored memories
+    (`isError: false`) and `health` returning 200. The root key is therefore
+    sufficient for everything the product does.
 
-If recall is in scope for the acceptance bar, that provisioning step must be part
-of `install.ps1` — otherwise every client machine ships with a non-functional
-recall lane and no error.
+    The 403 below comes only from this test, which asserts recall over the **REST**
+    route (`POST /api/v1/search/recall`). That route wants an *account-user* key,
+    and a fresh install has `user_count: 0`. This is a **mismatch between the test
+    and the product**, not a broken install. To close it, either point the
+    assertion at the MCP surface or provision a user via
+    `POST /api/v1/admin/accounts/{id}/users/{uid}/key` — but note that adding a user
+    key to the shipped config is a *product* change, and a second credential
+    shape is what makes the two-tier confusion possible in the first place.
+
+    **It is not a launch blocker.**
 
 ---
 

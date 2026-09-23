@@ -18,14 +18,33 @@ Verified: **15 assertions pass** on 0.1.17 / revision `2a51fbd`.
 
 - **qm co-work** - the qm stack is not running on this box. SKIP, with the start
   command named.
-- **OpenViking recall - this is a REAL GAP, not a test defect.** OpenViking is
-  two-tier: the configured `root_api_key` is an ADMIN credential (200 on
-  `/api/v1/admin/accounts`) while `/api/v1/search/recall` needs an ACCOUNT-USER
-  key. The `default` account currently reports `user_count: 0`, so **no user is
-  provisioned and the recall lane cannot work at all**. Provisioning one
-  (`POST /api/v1/admin/accounts/{id}/users/{uid}/key`) is the unblocking step.
-  This is a genuine finding about the shipped state, discovered by refusing to
-  let a 403 read as "probably fine".
+- **OpenViking recall - CORRECTED 2026-09-23: the product lane works; the TEST
+    lane does not.** The original finding here said recall "cannot work at all".
+    That was too broad, and it would have sent an engineer to build something
+    nobody needs. What is actually true, verified live:
+
+    | Lane | Endpoint | Root key result |
+    |---|---|---|
+    | MCP (what deer-flow uses) | `POST /mcp` | **200** |
+    | MCP `search` (real query) | `tools/call search` | **200**, returned stored memory, `isError: false` |
+    | MCP `health` | `tools/call health` | **200** |
+    | REST recall | `POST /api/v1/search/recall` | 403 in all 4 header variants tried |
+
+    OpenViking is two-tier: the root key is an *admin* credential, and the REST
+    recall route wants an *account-user* key. `default` does report
+    `user_count: 0` and `GET /api/v1/admin/accounts/default/users` returns `[]`.
+    But the deployment authenticates to the **MCP** surface, where the root key is
+    accepted, and real memories are on disk from that path
+    (`memories/entities/legal_agreement/cignus_distribution_agreement.md`,
+    `memories/events/2026/08/28/cignus_agreement_governance_confirmed.md`).
+
+    **So the residual is a test defect, not a product gap.**
+    `test-legal-journey.ps1` asserts recall via the REST route, which the product
+    does not use; that assertion SKIPs with a 403 that reads like a product
+    failure. Either point the assertion at the MCP surface, or provision a user
+    via `POST /api/v1/admin/accounts/{id}/users/{uid}/key` **if** a per-user
+    identity boundary is wanted for other reasons (see the multi-user plan).
+    Neither is a launch blocker.
 
 **Still open from this spec:** the clean-clone proof and the human judgement pass on
 output quality, which is explicitly not automatable.
