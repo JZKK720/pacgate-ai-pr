@@ -60,9 +60,69 @@ If it shows the fork, re-clone from JZKK720. Do not try to patch it in place.
 ```powershell
 cd C:\pacgate-ai-pr\deploy\client-bundle
 copy .env.example .env
-notepad .env        # set PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_API_EMAIL/PASSWORD
+notepad .env        # set every value in the table below
 .\install.ps1
 ```
+
+### The values a HUMAN must supply
+
+`install.ps1` **generates nothing** — it renders configs and preserves `.env`, so
+anything left as a placeholder stays a placeholder. It also **never validates
+these** (zero references in `install.ps1`); they are consumed only by compose as
+env substitution. So nothing warns you. Fill them before the first run:
+
+| Key | If left as `change-me` |
+|---|---|
+| `OPENVIKING_ROOT_API_KEY` | **install STOPS.** `[WARN]` L311 → `ERROR` L314 → `exit 1` L317. The only one that actually halts, because the rendered `deer-flow-extensions-config.json` is absent on a fresh machine |
+| `PACGATE_DB_PASSWORD` | install **succeeds** — Postgres comes up on the placeholder password |
+| `PACGATE_JWT_SECRET` | install **succeeds** — every token signed with a publicly-known key |
+| `PACGATE_API_PASSWORD` | install **succeeds** — the admin account is created with the placeholder password |
+
+**Read that table as a warning, not a convenience.** Three of the four do not
+fail; they ship a machine that works and is insecure, which is the worse outcome
+because nobody notices. `PACGATE_JWT_SECRET` in particular feeds both
+`PACGATE_JWT_SECRET` and `BETTER_AUTH_SECRET` (`compose.prod.yaml` L30, L144).
+
+`PACGATE_API_EMAIL` and `PACGATE_TENANT_ID` already carry working values
+(`admin@pacgate-law.com` is the one step 4 signs in as — do not change it unless
+you also change the step 4 command).
+
+**`OPENVIKING_ROOT_API_KEY` is the one that catches people**, because it is the
+only value that fails the install *after* the Docker work has started, and the
+per-machine prompts name it nowhere. Any random hex works — it is a per-machine
+key that `install.ps1` substitutes into `ov.conf` and the deer-flow MCP config:
+
+```powershell
+# Generate three secrets and REPLACE the placeholders IN PLACE.
+# Do NOT append with Add-Content: .env.example already contains these keys, so
+# appending would leave two definitions of the same key and which one wins
+# depends on the parser. Replace, never append.
+$hex = { -join (1..64 | ForEach-Object { '{0:x}' -f (Get-Random -Max 16) }) }
+$c = Get-Content .env -Raw
+foreach ($k in 'PACGATE_DB_PASSWORD','PACGATE_JWT_SECRET','OPENVIKING_ROOT_API_KEY') {
+    $c = $c -replace "(?m)^$k=.*$", "$k=$(& $hex)"
+}
+Set-Content .env -Value $c -NoNewline
+# PACGATE_API_PASSWORD: do this one by hand - it is the admin sign-in, so pick
+# something you can actually type.
+notepad .env
+```
+
+Sanity check before installing — every one of these must print a non-placeholder:
+
+```powershell
+Select-String .env -Pattern '^(PACGATE_DB_PASSWORD|PACGATE_JWT_SECRET|PACGATE_API_PASSWORD|OPENVIKING_ROOT_API_KEY)=' |
+  ForEach-Object { $k,$v = ($_.Line -split '=',2); "$k : $(if ($v -match 'change-me' -or $v -eq '') { 'STILL PLACEHOLDER' } else { "set (len=$($v.Length))" })" }
+```
+
+For reference: this key is an **admin** credential and is sufficient for
+everything the product does. The memory lane runs over **MCP** (`POST /mcp`,
+`X-API-Key`) and answers **200** with it. Only the REST route
+`/api/v1/search/recall` wants an account-user key, and nothing in the shipped
+stack calls it — so there is no separate user key to create on these machines.
+
+`OPENVIKING_API_KEY` is declared in `qm.config.jsonc`'s `secretEnv`, but
+`setup-qm.ps1` writes it **empty** on purpose and nothing enforces it. Leave it.
 
 **Existing install:**
 
