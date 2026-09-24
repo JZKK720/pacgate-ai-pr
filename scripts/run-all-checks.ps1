@@ -1,8 +1,11 @@
 # Run every local verification script and report a single pass/fail.
 #
-# TWO KINDS OF SCRIPT, and conflating them is a bug I hit on the first run:
+# THREE KINDS OF SCRIPT, and conflating them is a bug I hit on the first run:
 #
 #   GATES        exit 0 = pass, non-zero = a real failure. Nothing to interpret.
+#   LIVE-STACK   exit 0 = pass, 1 = a real failure, 2 = CANNOT CHECK. Same
+#   GATES        assertions as a gate, but they need the stack actually up, so 2
+#                must NOT be read as a failure of the code. See below.
 #   MEASUREMENTS exit code IS the answer. audit-aipc-update-coverage.ps1 exits 1
 #                while plan 014 has open work, by design - that is it correctly
 #                reporting "gaps remain", not a broken script.
@@ -12,6 +15,19 @@
 # when nothing is wrong is a runner people learn to ignore - the same failure
 # mode as the stale tools fixed earlier in this work. Measurements are now
 # reported with their result and never fail the run; only GATES can.
+#
+# THE EXIT-2 CARVE-OUT, and why it is not a way to hide a failure: 2 specifically
+# means "could not check". test-empty-extraction-gate.ps1 needs nginx, the API, the
+# OCR service and credentials; on a developer's clean checkout none of that is
+# running, and a red suite there teaches people to ignore the suite rather than to
+# trust it. So 2 is reported as SKIP CANNOT CHECK and does NOT fail the run, while
+# 0 and 1 keep their exact gate meaning - a real assertion failure is still red.
+#
+# This is a carve-out on the EXIT CODE, not on any assertion: nothing in this
+# runner can turn an observed failure green. Both pre-existing scripts that
+# already exit 2 (test-workflow-compose-wiring, test-handoff-command-safety) use
+# it for the same class of "environment is wrong" error - no compose files found,
+# no docs found - so the reading is consistent, and neither loses coverage.
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Continue'
@@ -80,6 +96,22 @@ $gates = @(
     'scripts/check-installer-syntax.ps1'
 )
 
+# A LIVE-STACK GATE: real assertions against the running system, but its exit 2
+# means "cannot check" and must not fail the run. Kept in its own list because
+# that exit code is honoured differently from the gates above - not because the
+# assertions matter less.
+$liveStackGates = @(
+    # PROVES an extraction that read nothing cannot pass the sanitization gate.
+    # A blank page used to report incomplete=false, so sanitize ran on empty text,
+    # got a pass verdict and opened the download gate - a document nobody could
+    # read was released. This is the only script that catches that end-to-end,
+    # because the defect needed BOTH services to lose the signal: ocr-service set
+    # incomplete only when OCR threw, and the API returned a literal false from
+    # its cache-hit branch. A unit test on either half passes while the product
+    # still leaks. It needs the stack up, so it reports exit 2 when it cannot run.
+    'scripts/test-empty-extraction-gate.ps1'
+)
+
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
     # Runtime counterpart of test-workflow-compose-wiring.ps1: asserts the API
@@ -127,8 +159,32 @@ foreach ($s in $measurements) {
 }
 
 Write-Output ''
+Write-Host '=== Live-stack gates (exit 2 = CANNOT CHECK, not a failure) ===' -ForegroundColor Cyan
+foreach ($s in $liveStackGates) {
+    if (-not (Test-Path $s)) {
+        Write-Host ("  SKIP {0} (missing)" -f (Split-Path $s -Leaf)) -ForegroundColor Yellow
+        continue
+    }
+    $out = & pwsh -NoProfile -File $s 2>&1
+    $code = $LASTEXITCODE
+    $tail = (($out | Where-Object { $_ -match '\d+ passed|ALL .*PASSED|RESULT|CANNOT CHECK|members present' } | Select-Object -Last 2) -join ' ; ')
+    if ($code -eq 0) {
+        Write-Host ("  PASS   {0,-44} {1}" -f (Split-Path $s -Leaf), $tail) -ForegroundColor Green
+    }
+    elseif ($code -eq 2) {
+        # Reported, never silently absorbed: a "cannot check" must never be read
+        # as a pass, and this label says so. Stack unreachable is not a code bug.
+        Write-Host ("  SKIP   {0,-44} CANNOT CHECK (exit 2) {1}" -f (Split-Path $s -Leaf), $tail) -ForegroundColor Yellow
+    }
+    else {
+        Write-Host ("  FAIL   {0,-44} exit={1} {2}" -f (Split-Path $s -Leaf), $code, $tail) -ForegroundColor Red
+        $failed += $s
+    }
+}
+
+Write-Output ''
 if ($failed.Count -eq 0) {
-    Write-Host ("ALL {0} GATES PASSED" -f $gates.Count) -ForegroundColor Green
+    Write-Host ("ALL {0} GATES PASSED ({1} live-stack gate(s) checked separately)" -f $gates.Count, $liveStackGates.Count) -ForegroundColor Green
     exit 0
 }
 Write-Host ("{0} GATE(S) FAILED:" -f $failed.Count) -ForegroundColor Red
