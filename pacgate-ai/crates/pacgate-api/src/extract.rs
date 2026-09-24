@@ -119,8 +119,28 @@ pub async fn extract_document(
                 .max()
                 .unwrap_or(1) as u32
         };
+
         // The stored flag, not a literal. This is the line that was the defect.
         let incomplete: bool = record.get("incomplete");
+
+        // A record that CLAIMS completeness while holding no text is not a
+        // complete extraction, whatever the flag says.
+        //
+        // The write path is three autocommit statements (record -> spans ->
+        // chunks) with no transaction between them. A process death after the
+        // first one leaves a record saying `incomplete = false` with no spans and
+        // no chunks. Because the cache is keyed on that record, the next read
+        // returns `text: ""` and `incomplete: false`; `sanitize.rs` refuses only
+        // on `incomplete == true`, so it would then sanitize "" to a `pass`
+        // verdict, mark the document 'sanitized', and open the egress gate on a
+        // document whose text was never persisted.
+        //
+        // Reconciling the two here is the fix: trust the flag only when the data
+        // it describes is actually present. `text.trim().is_empty()` (rather than
+        // `text.is_empty()`) also covers whitespace-only text, which redacts
+        // nothing and has the same fail-open shape.
+        let incomplete = incomplete || text.trim().is_empty();
+
         return Ok(ExtractedDocument {
             text,
             pages,
@@ -204,11 +224,21 @@ pub async fn extract_document(
         }
     }
 
+    // Same reconciliation as the cache branch: a response that claims completeness
+    // while carrying no text is not a complete extraction. `sanitize.rs` refuses
+    // only on `incomplete == true`, so without this an empty read reaches a `pass`
+    // verdict and the document is marked 'sanitized' and released.
+    //
+    // This guard must live on the WRITE path too, not only on the read path: the
+    // fresh branch returns before any cache read, and it is the branch that
+    // PERSISTS the record a later read would trust.
+    let incomplete = incomplete || text.trim().is_empty();
+
     // Persist: spans to document_spans, text to kb_chunks as pending, and the
     // completeness fact to document_extractions. Order matters for the cache:
     // the extraction record is written FIRST, so a crash between the two writes
-    // leaves a record with no spans (a cache hit reporting honestly, with empty
-    // text) rather than spans with no record (a cache miss that re-OCRs).
+    // leaves a record with an HONEST flag rather than spans with no record
+    // (which would be a cache miss that re-OCRs).
     record_extraction(
         state,
         tenant_id,

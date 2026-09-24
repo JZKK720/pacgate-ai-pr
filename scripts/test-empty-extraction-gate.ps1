@@ -292,12 +292,112 @@ Invoke-Case -Label 'A2 partial read' -FilePath $partialPdf -ExpectIncomplete 'tr
 # partial extraction to complete.
 Invoke-CacheCase -Label 'A2c cached partial read' -FilePath $partialPdf
 
-# CONTROL - a normal readable page must still sanitize. This is what stops a
-# lazy fix (mark everything incomplete) from looking green.
+# CONTROL fixture is built HERE, before A3 uses it. A3 previously referenced
+# `$controlPdf` before this block ran, so PowerShell passed an empty path,
+# `ReadAllBytes('')` threw, and the upload sent a ZERO-BYTE file - which OCR then
+# reported incomplete for the WRONG reason. Both A3 checks passed as a result.
+# A false pass is worse than a missing test: it certifies the wrong fix.
 $controlPdf = Join-Path $fixtureDir 'control.pdf'
 if (-not (New-FixturePdf -OutPath $controlPdf -Kind 'control')) {
     Die 'could not build the control fixture'
 }
+# Belt-and-braces: prove the fixture is a real non-empty file, so no future edit
+# can reintroduce the empty-path failure mode silently.
+$controlBytes = [System.IO.File]::ReadAllBytes($controlPdf)
+if ($controlBytes.Length -lt 1000) {
+    Die "control fixture is only $($controlBytes.Length) bytes - build failed."
+}
+
+# A3 - a record claiming COMPLETE with no text must not be trusted.
+#
+# Reproduces the state a crash between the write path's statements leaves behind:
+# record_extraction commits `incomplete = false`, the process dies before
+# persist_extraction/ingest_text_pending, so the cache hit returns empty text while
+# claiming completeness. sanitize.rs refuses only on `incomplete == true`, so
+# without a reconciliation this reaches a pass verdict on nothing.
+#
+# This is asserted SEPARATELY from A1/A2/A2c because it is the one case the
+# ocr-service fix alone cannot close - it never involves OCR.
+function Invoke-EmptyTextCase {
+    param([string]$Label, [string]$FixturePath)
+
+    Write-Host ''
+    Write-Host "== $Label" -ForegroundColor Cyan
+
+    if (-not $FixturePath -or -not (Test-Path $FixturePath)) {
+        Check "$Label - fixture exists" $false "no fixture at '$FixturePath'"
+        return
+    }
+
+    # The upload must be the real fixture, not an empty file. Without this, a
+    # broken fixture path makes OCR report incomplete and every later check passes
+    # for the wrong reason - which is exactly what happened once: PowerShell passed
+    # an empty path, ReadAllBytes threw, a ZERO-BYTE file was uploaded, and both
+    # assertions "passed". Assert the fixture on disk, since the Document model
+    # carries no size field to check after upload.
+    $fixtureSize = (Get-Item $FixturePath).Length
+    Check "$Label - fixture on disk is non-empty" ($fixtureSize -gt 1000) `
+        "fixture size=$fixtureSize bytes"
+
+    $doc = Send-Upload -MatterId $matterId -FilePath $FixturePath
+    if (-not $doc.id) { Check "$Label - upload" $false 'upload returned no id'; return }
+    $script:createdDocs += $doc.id
+
+    # Read the identifiers so the hand-built row is consistent with the document.
+    $rowInfo = (docker exec pacgate-db psql -U pacgate -d pacgate -t -A `
+        -c "SELECT tenant_id, version FROM documents WHERE id='$($doc.id)'") -split '\|'
+    if ($rowInfo.Count -lt 2) { Check "$Label - read doc row" $false "got '$rowInfo'"; return }
+    $tenantId = $rowInfo[0].Trim()
+    $docVersion = $rowInfo[1].Trim()
+
+    # Clear anything a normal extract would have written, then assert the crash
+    # state explicitly: COMPLETE claimed, zero spans, zero chunks.
+    docker exec pacgate-db psql -U pacgate -d pacgate -c `
+        "DELETE FROM document_spans WHERE document_id='$($doc.id)'" 2>&1 | Out-Null
+    docker exec pacgate-db psql -U pacgate -d pacgate -c `
+        "DELETE FROM kb_chunks WHERE document_id='$($doc.id)'" 2>&1 | Out-Null
+    docker exec pacgate-db psql -U pacgate -d pacgate -c `
+        "DELETE FROM document_extractions WHERE document_id='$($doc.id)'" 2>&1 | Out-Null
+
+    $insert = "INSERT INTO document_extractions " +
+              "(tenant_id, matter_id, document_id, document_version, incomplete, engine, pages) " +
+              "VALUES ('$tenantId','$matterId','$($doc.id)',$docVersion,false,'paddleocr',1)"
+    docker exec pacgate-db psql -U pacgate -d pacgate -c $insert 2>&1 | Out-Null
+
+    $spans = (docker exec pacgate-db psql -U pacgate -d pacgate -t -A `
+        -c "SELECT count(*) FROM document_spans WHERE document_id='$($doc.id)'").Trim()
+    $chunks = (docker exec pacgate-db psql -U pacgate -d pacgate -t -A `
+        -c "SELECT count(*) FROM kb_chunks WHERE document_id='$($doc.id)'").Trim()
+    Check "$Label - crash state is really zero-text" `
+        ("$spans" -eq '0' -and "$chunks" -eq '0') `
+        "spans=$spans chunks=$chunks; the state under test is not set up"
+
+    $extract = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$($doc.id)/extract" -Method Post `
+        -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' -TimeoutSec 300
+    $textLen = ($extract.text | Measure-Object -Character).Characters
+    Write-Host "     cache hit: incomplete=$($extract.incomplete) chars=$textLen"
+
+    Check "$Label - empty text is NOT reported complete" `
+        ("$($extract.incomplete)" -eq 'true') `
+        "a record claiming complete with 0 chars reported incomplete=$($extract.incomplete)"
+
+    $sanitizeStatus = $null
+    try {
+        $sanitizeStatus = (Invoke-WebRequest -Uri "$BaseUrl/api/documents/$($doc.id)/sanitize" -Method Post `
+            -Headers $AuthHeaders -ContentType 'application/json' -Body '{"data_level":"T3"}' `
+            -TimeoutSec 300 -UseBasicParsing).StatusCode
+    } catch {
+        $sanitizeStatus = [int]$_.Exception.Response.StatusCode.value__
+    }
+    Check "$Label - sanitize is REFUSED (not 200)" ($sanitizeStatus -ne 200) `
+        "sanitize returned $sanitizeStatus; empty text must never be sanitized"
+}
+
+Invoke-EmptyTextCase -Label 'A3 empty text with a complete-claiming record' `
+    -FixturePath $controlPdf
+
+# CONTROL - the same readable page, through its NORMAL path. This is what stops a
+# lazy fix (mark everything incomplete) from looking green.
 Invoke-Case -Label 'CONTROL readable page' -FilePath $controlPdf -ExpectIncomplete 'false'
 
 # ── Cleanup ──
