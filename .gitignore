@@ -132,3 +132,6 @@ graphify-out/
 pacgate-ai/**/pacgate-ai-remote-handbook/OPERATOR.md
 pacgate-ai/**/MCP*/
 .e2e-ner-model/
+
+# Superpowers SDD scratch (ledger, briefs, review packages) - regenerable, never tracked
+.superpowers/

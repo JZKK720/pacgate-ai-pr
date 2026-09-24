@@ -17,7 +17,7 @@
 - **Do NOT modify the sanitizer's redaction rules, detectors, or policy.** Out of scope.
 - **Deploy path is `origin/main` → GHCR → `install.ps1 -Update`.** No per-machine code, no manual steps on an AIPC.
 - **Dev-box image shadowing is expected.** `ocr-service` is pinned to `ghcr.io/jzkk720/ocr-service:0.1.17` in both compose files. Testing a local build requires a retag over that pinned tag plus `--force-recreate`; the shadow is lost on the next `docker compose pull`. This is the established pattern in this repo (see `plans/019-ocr-and-ner.md` lineage and the 0.1.14 frontend retag).
-- **The live stack on this box publishes nginx on host port 8081.** The canonical `install.ps1` value is 8089, which is what the compose file declares and what the client machines use. Gate scripts must DERIVE the port rather than assume either.
+- **Derive the ingress port; never assume one.** The compose file declares nginx on `8089:80`, and the live stack publishes `8089`. Older notes in this repo say `8081` — that is a stale dev-box fact, not a rule. Probe the RUNNING container (`docker port pacgate-nginx 80`), fall back to the compose-declared value, then to `8089`.
 - **`/version` is at the nginx ROOT, not under `/pacgate`.** Probing `<base>/version` hits auth middleware and answers 401, which reads as an auth failure. Check both shapes.
 - **PowerShell is case-INSENSITIVE for variables.** Use named variables; never a short name that could collide with an existing one differing only in case (this exact trap caused a two-step-away failure in `scripts/test-legal-journey.ps1`).
 - **Exit-code semantics for gate scripts:** `0` = pass, `1` = a real failure, `2` = cannot check (environment not available). A "cannot check" must never be reported as a pass.
@@ -104,17 +104,23 @@ function Die($msg) {
 
 Write-Host '=== empty-extraction gate ===' -ForegroundColor Cyan
 
-# ── Resolve the ingress port from the RUNNING stack, never from a constant ──
+# ── Resolve the ingress port from the RUNNING container, never from a constant ──
+# `docker port` reads the live container; `docker compose port` reads the compose
+# project, which answers the DECLARED mapping and can differ from what is actually
+# published (that mismatch is exactly how a stale 8081/8089 assumption hides).
 if (-not $BaseUrl) {
     $derived = ''
     try {
-        $published = docker compose -f (Join-Path $repo 'deploy/client-bundle/compose.prod.yaml') port nginx 80 2>$null
+        $published = docker port pacgate-nginx 80 2>$null
         if ($published -match ':(\d+)\s*$') { $derived = $Matches[1] }
     } catch { }
     if (-not $derived) {
-        # Fall back to the compose-declared port.
-        $derived = '8089'
+        try {
+            $published = docker compose -f (Join-Path $repo 'deploy/client-bundle/compose.prod.yaml') port nginx 80 2>$null
+            if ($published -match ':(\d+)\s*$') { $derived = $Matches[1] }
+        } catch { }
     }
+    if (-not $derived) { $derived = '8089' }
     $BaseUrl = "http://localhost:$derived/pacgate"
 }
 Write-Host "  base: $BaseUrl"
@@ -168,7 +174,11 @@ function New-FixturePdf {
     }
     $dir = Split-Path $OutPath -Parent
     $leaf = Split-Path $OutPath -Leaf
-    $script = @"
+    # `-c` with a PowerShell here-string, matching the two existing fixture
+    # builders in this repo (test-legal-journey.ps1:161, test-sanitizer-e2e.ps1:18).
+    # An earlier draft piped the script to `python3 -` over stdin; NO gate in this
+    # repo uses that form, so it was replaced with the pattern proven on this box.
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"
 from PIL import Image, ImageDraw, ImageFont
 W, H = 1400, 500
 try:
@@ -184,9 +194,7 @@ else:
     d.text((40, 150), '11010519491231002X', fill='black', font=font)
     d.text((40, 280), '13812345678', fill='black', font=font)
     img.save('/fix/$leaf', 'PDF', resolution=150)
-"@
-    $script | docker run --rm -i -v "${dir}:/fix" --entrypoint python3 `
-        ocr-service:local - 2>&1 | Out-Null
+"@ 2>&1 | Out-Null
     return (Test-Path $OutPath)
 }
 
@@ -194,7 +202,7 @@ function New-PartialFixturePdf {
     param([Parameter(Mandatory)][string]$OutPath)
     $dir = Split-Path $OutPath -Parent
     $leaf = Split-Path $OutPath -Leaf
-    $script = @"
+    $pyScript = @"
 from PIL import Image, ImageDraw, ImageFont
 W, H = 1400, 500
 try:
@@ -207,8 +215,7 @@ d.text((40, 150), '11010519491231002X', fill='black', font=font)
 p2 = Image.new('RGB', (W, H), 'white')
 p1.save('/fix/$leaf', 'PDF', resolution=150, save_all=True, append_images=[p2])
 "@
-    $script | docker run --rm -i -v "${dir}:/fix" --entrypoint python3 `
-        ocr-service:local - 2>&1 | Out-Null
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c $pyScript 2>&1 | Out-Null
     return (Test-Path $OutPath)
 }
 
@@ -340,9 +347,14 @@ Run:
 pwsh -File scripts/test-empty-extraction-gate.ps1
 ```
 
-Expected: exit 1. `A1 blank page - extract reports incomplete=true` FAILS with `got incomplete=False`. `A1 ... sanitize is REFUSED` FAILS with `sanitize returned 200`. `A1 ... download is REFUSED` FAILS with `download returned 200`. Same three failures for A2. `CONTROL` passes all four checks.
+Expected: exit 1, with **6 of 9 checks FAILED**.
 
-If the control does NOT pass, stop — the gate is wrong, not the product, and a broken gate would make the fix unfalsifiable.
+That is: A1 (3 checks) and A2 (3) each fail all three of theirs;
+`CONTROL readable page` passes all three of ITS checks. `Invoke-Case` emits 3
+checks per case — the fourth (`- upload`) only fires when the upload returns no
+id, so it does not appear on a healthy run.
+
+If the CONTROL does not pass all three, stop — the gate is wrong, not the product, and a broken gate would make the fix unfalsifiable.
 
 - [ ] **Step 3: Commit the failing gate**
 
@@ -504,9 +516,14 @@ cd C:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 pwsh -File scripts/test-empty-extraction-gate.ps1
 ```
 
-Expected: exit 1 still, but for a DIFFERENT reason. The three `extract reports incomplete=true` checks now PASS for A1 and A2, and the `sanitize is REFUSED` / `download is REFUSED` checks now PASS too (because `sanitize.rs` refuses on `incomplete == true` — no code change needed there). CONTROL still passes.
+Expected: `RESULT: 9 of 9 checks passed`, exit **0**.
+Why exit 0 here: the gate currently has A1 (3 checks), A2 (3) and CONTROL (3) —
+A2c is added in Task 3, not yet. Once `incomplete` is honest, `sanitize.rs` refuses
+on its own (no sanitizer change is needed), so the refusal and download checks flip
+to passing at the same time as the extract check. All nine pass.
 
-If any check still fails, read the failure text before changing anything — do not adjust the test to match the code.
+If any check still fails, read the failure text before changing anything — do not
+adjust the test to match the code.
 
 - [ ] **Step 5: Commit**
 
@@ -589,9 +606,18 @@ Run:
 pwsh -File scripts/test-empty-extraction-gate.ps1
 ```
 
-Expected: exit 1. `A2c cached partial read - first extract incomplete=true` PASSES (Task 2 fixed the live path). `A2c cached partial read - CACHED extract still reports incomplete=true` FAILS with `reported incomplete=False`. Everything else passes.
+Expected: exit 1 again, with **2 of 11 checks FAILED**.
+
+At this point the gate has A1 (3), A2 (3), A2c cache (2) and CONTROL (3) = 11
+checks. Task 2 already made the LIVE path honest, so A1 and A2 pass fully. The
+only failures are A2c's:
+
+- `A2c cached partial read - first extract incomplete=true` — PASSES
+- `A2c cached partial read - CACHED extract still reports incomplete=true` — **FAILS**
 
 This is the defect in `extract.rs`: the cache branch returns the literal `false`.
+An exit 0 here means the cache path was fixed already, which would contradict the
+code — re-read `extract.rs` before proceeding.
 
 - [ ] **Step 3: Commit**
 
@@ -1016,10 +1042,9 @@ pwsh -File scripts/test-empty-extraction-gate.ps1
 
 Expected: `RESULT: 11 of 11 checks passed`, exit 0.
 
-That total is A1 (3 checks: extract, sanitize refusal, download refusal) +
-A2 (3) + A2c cache (2) + CONTROL (3). If the script reports a different total,
-trust the script's own count — the requirement is **zero FAILED**, not a
-particular number.
+The count is A1 (3) + A2 (3) + A2c cache (2) + CONTROL (3). If the script reports
+a different total, trust the script's own count — the requirement is **zero
+FAILED**, not a particular number.
 
 A note on the build: the API Dockerfile's paths assume context = `pacgate-ai/` (matching `build-ghcr.yml`'s `context: pacgate-ai`), so `-f pacgate-ai/Dockerfile pacgate-ai` is the correct invocation. `pacgate-ai/.dockerignore` exists and excludes `target/`, so the context stays small.
 
