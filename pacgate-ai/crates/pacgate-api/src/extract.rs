@@ -109,16 +109,15 @@ pub async fn extract_document(
                 text: r.get("text"),
             })
             .collect();
-        let recorded_pages: i32 = record.get("pages");
-        let pages = if recorded_pages > 0 {
-            recorded_pages as u32
-        } else {
-            cached
-                .iter()
-                .map(|r| r.get::<Option<i32>, _>("page").unwrap_or(1))
-                .max()
-                .unwrap_or(1) as u32
-        };
+        // `pages` comes from the stored record. `record_extraction` is the only
+        // writer of this table and always supplies it from the OCR response, whose
+        // `pages` is at least 1, so the value is never 0 in practice - the column
+        // has a DEFAULT 0 only so the INSERT can be narrow. A previous revision
+        // fell back to the span maximum here, which was dead code AND wrong if it
+        // ever fired: for a PARTIALLY-read document the highest span page is lower
+        // than the true page count, so the fallback would have undercounted the
+        // exact case this fix exists for. Removed rather than left as a trap.
+        let pages: u32 = record.get::<i32, _>("pages").max(0) as u32;
 
         // The stored flag, not a literal. This is the line that was the defect.
         let incomplete: bool = record.get("incomplete");

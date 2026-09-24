@@ -38,9 +38,19 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     engine            TEXT,
     pages             INTEGER NOT NULL DEFAULT 0,
     extracted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- One row per document version. The version binding is the correctness
-    -- property: a new upload bumps documents.version, so a stale row can never
-    -- be served for a newer file.
+    -- One row per document version.
+    --
+    -- NOTE ON THE VERSION BINDING, corrected after review: this is NOT the
+    -- protection it looks like. `FsDocumentStore::upload_bytes` ->
+    -- `insert_doc_row` INSERTS A NEW ROW WITH A NEW document_id; `documents.version`
+    -- is not bumped in place. So today (document_id, document_version) is
+    -- effectively just document_id, and document_version is a constant per row.
+    --
+    -- The behaviour is correct either way - a re-upload is a different document_id,
+    -- so the lookup misses and the new version is extracted fresh - but do NOT cite
+    -- this constraint as the reason a stale row cannot be served. If a future
+    -- refactor implements true version-in-place, this table's keying must be
+    -- re-examined rather than assumed safe.
     UNIQUE (document_id, document_version)
 );
 
