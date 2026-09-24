@@ -7,9 +7,13 @@ Contract with pacgate-api (design 3.1):
                  "height": int, "text": str}, ...],
       "engine": "paddleocr", "incomplete": bool}
 
-`incomplete` is the fail-closed flag: any page that fails to parse leaves it
-True, and the caller MUST treat the document as pending rather than trusting
-a partial extraction (spec section 7: 不得因未提取到文字就视为不存在敏感信息).
+`incomplete` is the fail-closed flag: any page that FAILS TO PARSE **or YIELDS
+NO TEXT** leaves it True, and the caller MUST treat the document as pending
+rather than trusting a partial extraction (spec section 7: 不得因未提取到文字就视为不存在敏感信息).
+
+A page that rasterises cleanly but produces no text lines sets this flag. Do not
+narrow it to "only when OCR throws" - a page whose content was not recovered is
+exactly the case the product must refuse.
 """
 
 import logging
@@ -79,9 +83,31 @@ async def extract(
                 logger.exception("page %s failed to parse", page_no)
                 incomplete = True
                 continue
+
+            # FAIL CLOSED on a page that produced nothing.
+            #
+            # Two shapes mean "this page yielded no text": an empty/None `result`,
+            # and a `result[0]` that is empty or None. The previous code used
+            # `continue` for the first and iterated past the second, leaving
+            # `incomplete = False` - so a page whose content was never recovered
+            # was reported as a COMPLETE read. That is the fail-open this guards.
+            #
+            # A blank page is indistinguishable here from a page whose read
+            # failed, so both are reported incomplete. The caller decides whether
+            # to refuse; reporting a false "complete" is not an option.
             if not result:
+                logger.warning("page %s produced no OCR result; marking incomplete", page_no)
+                incomplete = True
                 continue
-            for line in result[0] or []:
+
+            page_lines = result[0] or []
+            if not page_lines:
+                logger.warning("page %s produced no text lines; marking incomplete", page_no)
+                incomplete = True
+                continue
+
+            page_span_count = 0
+            for line in page_lines:
                 box, (text, _conf) = line[0], line[1]
                 xs = [int(p[0]) for p in box]
                 ys = [int(p[1]) for p in box]
@@ -96,6 +122,11 @@ async def extract(
                     }
                 )
                 all_text.append(text)
+                page_span_count += 1
+
+            if page_span_count == 0:
+                logger.warning("page %s yielded no spans; marking incomplete", page_no)
+                incomplete = True
 
         return {
             "text": "\n".join(all_text),
