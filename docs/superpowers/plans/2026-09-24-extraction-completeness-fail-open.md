@@ -1169,13 +1169,18 @@ docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | Select-String 'pac
 
 Expected: both containers run a tag matching `ghcr.io/jzkk720/*:0.1.17`, and the local images `pacgate-api:local` / `ocr-service:local` share an ID with that tag. This confirms the shadow is by retag, not a different reference — so `docker compose pull` would revert BOTH, and the fix is only real once released.
 
-**Do NOT use `/version` to identify the shadow — it cannot.** On a dev-box retag
-`/version` reports `revision=unknown`, because the local build command does not pass
-`--build-arg PAC_SOURCE_REVISION=...` and the Dockerfile defaults it to `unknown`
-outside CI. So the staleness marker the Dockerfile exists to provide is INERT on a
-shadow, and `unknown` will never distinguish new code from stale.
+**Do not rely on `/version` alone to identify the shadow.** Whether it can tell you
+anything depends on how the image was BUILT, not on the deploy path:
 
-Prove the running container carries the NEW code by inspecting the binary instead:
+- A plain retag of an image built without the arg reports `revision=unknown`,
+  because `PAC_SOURCE_REVISION` defaults to `unknown` outside CI. There it is INERT
+  and can never distinguish new code from stale.
+- A build that passes `--build-arg PAC_SOURCE_REVISION=$(git rev-parse HEAD)` reports
+  the real commit — which is what this plan's Task 4 does after Ruling 10, so on THIS
+  box `/version` currently answers `487f20a0...` honestly.
+
+Because that depends on the build command, the marker is not a durable proof. Verify
+the running container carries the NEW code by inspecting it directly instead:
 
 ```powershell
 # Plan A's marker: the new error string in record_extraction
@@ -1185,12 +1190,14 @@ docker logs pacgate-api 2>&1 | Select-String '008_document_extractions' | Select
 ```
 
 Expected: `1`, `008_document_extractions.sql`, and a startup line naming 008 in the
-applied-migrations log. That trio is the real proof.
+applied-migrations log. That trio is the real proof, and it agrees with `/version`
+when the build arg was supplied.
 
 **Use `--no-deps` when force-recreating a single service:**
 `docker compose up -d --force-recreate --no-deps pacgate-api`. Without `--no-deps`,
 compose may also recreate the service's dependencies, which violates the
-"do not tear down other services" rule in this plan.
+"do not tear down other services" rule in this plan. Run it from
+`deploy/client-bundle/` — that is where `compose.prod.yaml` lives.
 
 - [ ] **Step 2: Record the release requirement in the spec**
 
