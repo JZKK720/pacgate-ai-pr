@@ -1169,6 +1169,29 @@ docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | Select-String 'pac
 
 Expected: both containers run a tag matching `ghcr.io/jzkk720/*:0.1.17`, and the local images `pacgate-api:local` / `ocr-service:local` share an ID with that tag. This confirms the shadow is by retag, not a different reference — so `docker compose pull` would revert BOTH, and the fix is only real once released.
 
+**Do NOT use `/version` to identify the shadow — it cannot.** On a dev-box retag
+`/version` reports `revision=unknown`, because the local build command does not pass
+`--build-arg PAC_SOURCE_REVISION=...` and the Dockerfile defaults it to `unknown`
+outside CI. So the staleness marker the Dockerfile exists to provide is INERT on a
+shadow, and `unknown` will never distinguish new code from stale.
+
+Prove the running container carries the NEW code by inspecting the binary instead:
+
+```powershell
+# Plan A's marker: the new error string in record_extraction
+docker exec pacgate-api grep -c 'failed to record extraction state' /usr/local/bin/pacgate-server
+docker exec pacgate-api ls /app/migrations | Select-String '008'
+docker logs pacgate-api 2>&1 | Select-String '008_document_extractions' | Select-Object -Last 1
+```
+
+Expected: `1`, `008_document_extractions.sql`, and a startup line naming 008 in the
+applied-migrations log. That trio is the real proof.
+
+**Use `--no-deps` when force-recreating a single service:**
+`docker compose up -d --force-recreate --no-deps pacgate-api`. Without `--no-deps`,
+compose may also recreate the service's dependencies, which violates the
+"do not tear down other services" rule in this plan.
+
 - [ ] **Step 2: Record the release requirement in the spec**
 
 Append to §12 (Delivery) of `docs/superpowers/specs/2026-09-24-document-coverage-and-text-sanitize-design.md`:
