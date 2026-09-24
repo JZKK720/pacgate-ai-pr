@@ -265,14 +265,58 @@ but is unreachable through the API - that is a coverage hole in itself.
 
 ### 7.1 The converter decision
 
-Measured coverage of what we already deploy:
+**AMENDED 2026-09-24, after measurement.** The original text below recommended "the
+conversion service" — a new Python container wrapping the markitdown-based converter
+we already ship. Two measurements since then make that the wrong answer, and this
+amendment supersedes it. The original reasoning is kept beneath, with what changed.
 
-| converter | location | coverage |
-|---|---|---|
-| markitdown 0.1.7 `[docx,pptx,xlsx,pdf]` | `pacgate-mcp` | docx, xlsx, pptx, rtf, eml, html, csv, json, xml |
-| markitdown 0.1.5 + mammoth | `deer-flow` venv | same family |
-| Docling | not installed | broadest, but needs PyTorch |
-| `anydoc` (Rust, MIT) | not installed | legacy Office, ODT, RTF, ~100 MB, no ML |
+**What changed:**
+
+1. **The converters we already own are the ones with the gap.** Measured against a
+   `.docx` carrying a unique token in its body, header, footer and table:
+
+   ```
+   mammoth 1.11 (markitdown's engine)  header MISSED  footer MISSED  table MISSED
+   pacgate-docx read_text (equiv)      header MISSED  footer MISSED  table OK
+   markitdown 0.1.7 (deployed)         header MISSED  footer MISSED  table MISSED
+   ```
+
+   All three read only `word/document.xml`. So "reuse the converter we already ship"
+   would ship the redaction hole, not close it.
+
+2. **The gap is a part-scanning problem, and a scan is ~100 lines of Rust.**
+   Scanning every `word/*.xml` part for `<w:t>` runs reads body, header, footer,
+   footnote, endnote, comment, text box and table — 13 parts, **no hardcoded part
+   list**. `.xlsx` (`xl/*.xml`, `<t>`) and `.pptx` (`ppt/*.xml`, `<a:t>`) fall out of
+   the identical approach with only the element name changed. Both verified by probe.
+
+3. **A separate service would add a boundary and a runtime for no coverage gain.**
+   The conversion service would have to be Python, would place a third-party parser
+   in the safety path, and would need its own image, publish step and drift watch —
+   all to reach a capability that a self-contained Rust function provides. `anydoc`
+   remains the option if legacy formats ever matter; it is not needed for these six.
+
+**Amended recommendation: extract text in `pacgate-api`, in Rust, by scanning the
+file's own text elements.** No new service, no Python in the safety path, no new
+runtime, zero new crate dependencies beyond what `pacgate-docx` already pulls in.
+
+**Also measured, and new:** metadata. `docProps/core.xml` carries `creator`,
+`lastModifiedBy`, `title`, `subject`, `keywords`, `description` — routinely an
+attorney name, the firm, and a client or matter name. It is **not** under `word/`,
+and its fields are element text rather than `<w:t>` runs, so the part scan does not
+reach it and no converter reads it (`grep docProps` across the deployed markitdown
+returns nothing). The client's requirements list metadata coverage explicitly, so
+the extractor reads `docProps` as a separate, mandatory step. Without it a client ID
+in `keywords` still leaks.
+
+**What this costs:** the text is read by our code, so we own its correctness. The
+mitigation is that `incomplete` fails closed for any part that could not be read,
+and the gate asserts an identifier that exists ONLY in a header reaches the
+sanitizer.
+
+---
+
+**Original recommendation, retained for the record:**
 
 **Recommendation:** extract text in the **conversion service** lane, reusing the
 markitdown-based converter we already ship, behind an interface that allows a
@@ -292,20 +336,29 @@ second engine later. Rationale:
 
 ### 7.2 Conversion coverage gate
 
-Measured, not assumed. All three candidate converters **silently drop header,
-footer and footnote text**:
+**AMENDED 2026-09-24.** The requirement below — "compare the part inventory the
+document declares against the parts the converter visited, and fail closed if any
+part was skipped" — was written when the plan was to reuse a converter that reads
+only `word/document.xml`. It has the wrong shape, and measurement showed why:
 
-```
-mammoth 1.11 (markitdown's engine)  header MISSED  footer MISSED  table MISSED
-pacgate-docx read_text (equiv)      header MISSED  footer MISSED  table OK
-markitdown 0.1.7 (deployed)         header MISSED  footer MISSED  table MISSED
-```
+If we cannot read headers, and we must refuse whenever we cannot read a part, then
+**every real Word document with a header becomes unsanitizable**. That is not a
+conservative fallback; it is a product that cannot process ordinary contracts.
 
-(`read_text`'s "table OK" is accidental tag-stripping, not real table support.)
+**What replaced it:** read the parts. Scanning every `word/*.xml` for `<w:t>` runs
+covers body, header, footer, footnote, endnote, comment, text box and table with no
+hardcoded part list (§7.1 amendment). "Declared vs visited" then holds **by
+construction** — a part we did not read is a part we did not scan — and `incomplete`
+still fails closed for a part that could not be read at all, or for an archive that
+could not be opened.
 
-Under this product, silently skipping a part is a **redaction hole that fails
-open**: the document reports `sanitized` and egresses with identifiers intact in
-the header.
+**What survives from this section:** the fail-closed requirement for genuinely
+unreadable content, and the principle that coverage must be measured rather than
+assumed. `TextExtraction.parts_read` exists so a test can assert what was scanned.
+
+---
+
+**Original requirement, retained for the record:**
 
 **Requirement:** before converted text reaches the sanitizer, compare the part
 inventory the document declares against the parts the converter visited. For OOXML
@@ -373,7 +426,34 @@ Recorded because the wrong mechanism would have produced the wrong fix:
 It also missed both higher-severity findings: the §2.2 fail-open and the §2.3
 missing bridge.
 
-## 11. Non-goals
+## 11. Amendment 2026-09-24: no user-facing upload to pacgate-api, and the chat lane
+
+Recorded because it changes which surface matters, and it was found by measurement
+rather than assumed.
+
+**There is no frontend document upload to `pacgate-api`.** `/api/documents` exists and
+works, but a repo-wide search of the frontend patch set finds no caller. The only
+upload UI a client uses is the **deer-flow chat**.
+
+Consequences for this design:
+
+- `POST /api/documents` — the surface this spec's §7 fixes — is reached by the
+  **agent/MCP lane** (`pacgate_upload_document`) and by tests. That is a real user
+  path (the review panel, the sanitizer agent's document handoff), but it is not the
+  path a client's first upload takes.
+- **The chat lane still is not made safe by §7 alone.** deer-flow converts the upload
+  itself, with **mammoth** (§2.3), and per the §7.1 measurement mammoth reads only
+  `word/document.xml` — so a chat-uploaded `.docx` with an identifier in the header
+  loses that identifier *before* anything reaches us. Forwarding deer-flow's markdown
+  cannot fix this; the original bytes must be run through the §7 extractor.
+- The `text ingest` path (§6) therefore has two possible consumers, and the safe one
+  is not "whatever markdown the chat produced". A follow-on plan must either run the
+  §7 extractor on the uploaded original, or have the sanitizer agent re-fetch and
+  re-extract rather than trusting the chat's conversion.
+
+**Not yet planned.** Stated here so it is a known gap rather than a discovery.
+
+## 12. Non-goals (this revision)
 
 - Pixel-level redaction of images (v2 - `document_spans` already captures the BBox
   data, so it stays additive).
@@ -382,7 +462,7 @@ missing bridge.
 - Legacy binary Office conversion (rejected in §8; revisit only on client demand).
 - Changing the sanitizer's redaction logic. §2.5 shows it is sound.
 
-## 12. Delivery
+## 13. Delivery
 
 All five workstreams ship through the existing path:
 
@@ -409,7 +489,7 @@ separate migration step is needed on a client machine.
 Until that release ships, the fix exists only as a dev-box image shadow and
 `docker compose pull` reverts it.
 
-## 13. Build order and why
+## 14. Build order and why
 
 | # | workstream | why this position |
 |---|---|---|
@@ -432,7 +512,7 @@ argument, but they must be planned and shipped as **separate plans**:
 
 Each plan gets its own failing tests and its own release.
 
-## 14. Success criteria
+## 15. Success criteria
 
 Each is a test that must fail before its change and pass after.
 
@@ -449,7 +529,7 @@ Each is a test that must fail before its change and pass after.
    from a config value, with no rebuild.
 9. A single `install.ps1 -Update` on a clean clone delivers all of the above.
 
-## 15. Risks
+## 16. Risks
 
 | risk | mitigation |
 |---|---|
@@ -458,7 +538,7 @@ Each is a test that must fail before its change and pass after.
 | text ingest creates document records that clutter matters | ephemeral records, same cleanup pattern `pacgate_sanitize_text` already uses |
 | the model roster differs per AIPC | §9 makes it config, which is what allows per-machine rosters without a release |
 
-## 16. Sources
+## 17. Sources
 
 - `deploy/ocr-service/app.py` - `_prepare_pages`, page loop (the `.pdf`-only branch
   and the missing `incomplete` flag)
