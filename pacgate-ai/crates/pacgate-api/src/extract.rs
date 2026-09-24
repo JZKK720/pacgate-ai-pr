@@ -62,22 +62,41 @@ pub async fn extract_document(
     let version: i32 = row.get("version");
     let storage_path: String = row.get("storage_path");
 
-    // Cache check: any spans stored for this exact (document, version) mean
+    // Cache check: a recorded extraction for this exact (document, version) means
     // the extraction already ran.
-    let cached = sqlx::query(
-        "SELECT id, page, x, y, width, height, text FROM document_spans \
+    //
+    // KEYED ON document_extractions, NOT on span-emptiness. A document whose pages
+    // yielded no text has ZERO spans, so keying on spans made that case a
+    // permanent cache miss (re-OCRing on every call) while still being unable to
+    // say it was incomplete. The extraction record exists for every attempt, so
+    // it is the correct cache key and the only place completeness can live.
+    let extraction_state = sqlx::query(
+        "SELECT incomplete, pages FROM document_extractions \
          WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 AND document_version = $4 \
-         ORDER BY page, y, x",
+         LIMIT 1",
     )
     .bind(tenant_id.0)
     .bind(matter_id.0)
     .bind(document_id.0)
     .bind(version)
-    .fetch_all(&state.db)
+    .fetch_optional(&state.db)
     .await
     .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    if !cached.is_empty() {
+    if let Some(record) = extraction_state {
+        let cached = sqlx::query(
+            "SELECT id, page, x, y, width, height, text FROM document_spans \
+             WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 AND document_version = $4 \
+             ORDER BY page, y, x",
+        )
+        .bind(tenant_id.0)
+        .bind(matter_id.0)
+        .bind(document_id.0)
+        .bind(version)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
         let text = load_cached_text(state, tenant_id, matter_id, document_id).await?;
         let spans = cached
             .iter()
@@ -90,16 +109,23 @@ pub async fn extract_document(
                 text: r.get("text"),
             })
             .collect();
-        let pages = cached
-            .iter()
-            .map(|r| r.get::<Option<i32>, _>("page").unwrap_or(1))
-            .max()
-            .unwrap_or(1) as u32;
+        let recorded_pages: i32 = record.get("pages");
+        let pages = if recorded_pages > 0 {
+            recorded_pages as u32
+        } else {
+            cached
+                .iter()
+                .map(|r| r.get::<Option<i32>, _>("page").unwrap_or(1))
+                .max()
+                .unwrap_or(1) as u32
+        };
+        // The stored flag, not a literal. This is the line that was the defect.
+        let incomplete: bool = record.get("incomplete");
         return Ok(ExtractedDocument {
             text,
             pages,
             spans,
-            incomplete: false,
+            incomplete,
         });
     }
 
@@ -155,6 +181,14 @@ pub async fn extract_document(
         .unwrap_or("")
         .to_string();
     let pages = body.get("pages").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    // The engine label is stored so a future extractor change is detectable:
+    // a cache row whose engine differs from the configured one is stale text,
+    // not a valid cache hit.
+    let engine = body
+        .get("engine")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
 
     let mut spans: Vec<ExtractedSpan> = Vec::new();
     if let Some(arr) = body.get("spans").and_then(|v| v.as_array()) {
@@ -170,7 +204,22 @@ pub async fn extract_document(
         }
     }
 
-    // Persist: spans to document_spans, text to kb_chunks as pending.
+    // Persist: spans to document_spans, text to kb_chunks as pending, and the
+    // completeness fact to document_extractions. Order matters for the cache:
+    // the extraction record is written FIRST, so a crash between the two writes
+    // leaves a record with no spans (a cache hit reporting honestly, with empty
+    // text) rather than spans with no record (a cache miss that re-OCRs).
+    record_extraction(
+        state,
+        tenant_id,
+        matter_id,
+        document_id,
+        version,
+        incomplete,
+        pages,
+        &engine,
+    )
+    .await?;
     persist_extraction(state, tenant_id, matter_id, document_id, version, &spans).await?;
     if !text.is_empty() {
         ingest_text_pending(state, tenant_id, matter_id, document_id, &text).await?;
@@ -182,6 +231,47 @@ pub async fn extract_document(
         spans,
         incomplete,
     })
+}
+
+/// Record extraction completeness for a document version.
+///
+/// Upsert on `(document_id, document_version)` so a re-extraction of the same
+/// version replaces its own record rather than accumulating rows.
+///
+/// The `incomplete` flag is the reason this exists: it is what `sanitize.rs`
+/// reads to decide whether the document may be sanitized at all.
+#[allow(clippy::too_many_arguments)]
+async fn record_extraction(
+    state: &AppState,
+    tenant_id: &TenantId,
+    matter_id: &MatterId,
+    document_id: &DocumentId,
+    version: i32,
+    incomplete: bool,
+    pages: u32,
+    engine: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO document_extractions \
+         (tenant_id, matter_id, document_id, document_version, incomplete, engine, pages) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+         ON CONFLICT (document_id, document_version) DO UPDATE SET \
+             incomplete = EXCLUDED.incomplete, \
+             engine = EXCLUDED.engine, \
+             pages = EXCLUDED.pages, \
+             extracted_at = NOW()",
+    )
+    .bind(tenant_id.0)
+    .bind(matter_id.0)
+    .bind(document_id.0)
+    .bind(version)
+    .bind(incomplete)
+    .bind(engine)
+    .bind(pages as i32)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("failed to record extraction state: {e}")))?;
+    Ok(())
 }
 
 /// Persist spans. `label`/`confidence` are written as NULL here: labelling

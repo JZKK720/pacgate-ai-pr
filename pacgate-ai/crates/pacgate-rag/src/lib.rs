@@ -431,6 +431,17 @@ impl RagStore {
                 .await
                 .map_err(|e| RagError::Migration(e.to_string()))?;
 
+            // Migration 008 records extraction COMPLETENESS per document version.
+            // Without it, extract.rs cannot distinguish a fully-read document from
+            // a partially-read one, and a document whose pages yielded no text is
+            // reported as complete - which lets it be marked 'sanitized' and
+            // released through the egress gate.
+            let extractions_sql = include_str!("../../../migrations/008_document_extractions.sql");
+            sqlx::raw_sql(extractions_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
             Ok::<(), RagError>(())
         }
         .await;
@@ -444,7 +455,7 @@ impl RagStore {
         result?;
 
         tracing::info!(
-            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans + 007_sanitizer_jobs)"
+            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans + 007_sanitizer_jobs + 008_document_extractions)"
         );
         Ok(())
     }
