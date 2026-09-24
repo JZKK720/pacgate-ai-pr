@@ -242,6 +242,38 @@ function Invoke-Case {
     }
 }
 
+function Invoke-CacheCase {
+    <#
+      Proves the extraction CACHE can represent an incomplete extraction.
+
+      A partial read is recorded on the first /extract call. The second call takes
+      the cache branch. If that branch returns a hardcoded `incomplete: false`,
+      the cached answer contradicts the live one - and because
+      pacgate_ocr_batch exists to PRE-WARM this cache, a sanitize that runs later
+      would inherit "complete" for a document that was only half read.
+    #>
+    param([string]$Label, [string]$FilePath)
+
+    Write-Host ''
+    Write-Host "== $Label" -ForegroundColor Cyan
+
+    $doc = Send-Upload -MatterId $matterId -FilePath $FilePath
+    if (-not $doc.id) { Check "$Label - upload" $false 'upload returned no id'; return }
+    $script:createdDocs += $doc.id
+
+    $first = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$($doc.id)/extract" -Method Post `
+        -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' -TimeoutSec 300
+    Check "$Label - first extract incomplete=true" ("$($first.incomplete)" -eq 'true') `
+        "got incomplete=$($first.incomplete)"
+
+    $second = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$($doc.id)/extract" -Method Post `
+        -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' -TimeoutSec 300
+    Write-Host "     cached read: incomplete=$($second.incomplete) chars=$(($second.text | Measure-Object -Character).Characters)"
+    Check "$Label - CACHED extract still reports incomplete=true" `
+        ("$($second.incomplete)" -eq 'true') `
+        "the cache branch reported incomplete=$($second.incomplete); the stored completeness was lost"
+}
+
 # A1 - blank page. THE assertion this plan exists for.
 $blankPdf = Join-Path $fixtureDir 'blank.pdf'
 if (-not (New-FixturePdf -OutPath $blankPdf -Kind 'blank')) {
@@ -255,6 +287,10 @@ if (-not (New-PartialFixturePdf -OutPath $partialPdf)) {
     Die 'could not build the partial fixture'
 }
 Invoke-Case -Label 'A2 partial read' -FilePath $partialPdf -ExpectIncomplete 'true'
+
+# A2-cache - the SAME partial document read twice. The cache must not upgrade a
+# partial extraction to complete.
+Invoke-CacheCase -Label 'A2c cached partial read' -FilePath $partialPdf
 
 # CONTROL - a normal readable page must still sanitize. This is what stops a
 # lazy fix (mark everything incomplete) from looking green.
