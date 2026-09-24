@@ -625,18 +625,28 @@ Run:
 pwsh -File scripts/test-empty-extraction-gate.ps1
 ```
 
-Expected: exit 1 again, with **2 of 11 checks FAILED**.
+Expected: exit 1 again, with **3 of 11 checks FAILED**.
 
 At this point the gate has A1 (3), A2 (3), A2c cache (2) and CONTROL (3) = 11
-checks. Task 2 already made the LIVE path honest, so A1 and A2 pass fully. The
-only failures are A2c's:
+checks. Task 2 made the LIVE read path honest, so:
 
-- `A2c cached partial read - first extract incomplete=true` — PASSES
-- `A2c cached partial read - CACHED extract still reports incomplete=true` — **FAILS**
+- `A1` — all 3 PASS (a blank page has zero spans, so `sanitize` re-extracts fresh)
+- `A2` — extract PASSES; `sanitize` and `download` **still FAIL** (2 failures)
+- `A2c` — `first extract` PASSES; `CACHED extract` **FAILS** (1 failure)
+- `CONTROL` — all 3 PASS
 
-This is the defect in `extract.rs`: the cache branch returns the literal `false`.
-An exit 0 here means the cache path was fixed already, which would contradict the
-code — re-read `extract.rs` before proceeding.
+**3 failures, all the same defect seen from two angles.** `A2c` sees the cache
+directly (two `/extract` calls). `A2` sees it indirectly: `sanitize.rs:124` calls
+`extract_document` itself, and by then spans exist from the gate's earlier
+`/extract`, so the cache branch runs and returns the literal `false`.
+
+An earlier draft of this step said "2 of 11, the only failures are A2c's". That was
+stale — written before Task 2's correction established that A2 stays half red. The
+plan's own Task 4 section already states it fixes BOTH `A2c` and A2's two checks,
+which is the correct reading; this step now agrees with it.
+
+If `A2c`'s CACHED check passes, stop and report — that would mean the cache path is
+already correct, contradicting `extract.rs:102`. Do not "fix" anything in that case.
 
 - [ ] **Step 3: Commit**
 
