@@ -398,6 +398,17 @@ One new compose service if §7.1's conversion service is adopted, which the rele
 workflow must also build and publish - the same mechanical change `ocr-service`
 already went through in 0.1.16.
 
+### Plan A release requirement
+
+`ocr-service` and `pacgate-api` are both single-container images (the Dockerfiles
+`COPY app.py` / build the crate), so neither can be delivered by a bind-mount or a
+config change. Plan A therefore requires a **tagged release** that rebuilds both
+images. Migration 008 is applied automatically by `pacgate-api` at startup, so no
+separate migration step is needed on a client machine.
+
+Until that release ships, the fix exists only as a dev-box image shadow and
+`docker compose pull` reverts it.
+
 ## 13. Build order and why
 
 | # | workstream | why this position |
