@@ -508,7 +508,7 @@ docker compose -f compose.prod.yaml up -d --force-recreate ocr-service
 
 Note: `--force-recreate` is required. Compose does not recreate a container when only the image content under an unchanged tag changed, so without it the old container keeps running and the gate would test stale code.
 
-- [ ] **Step 4: Run the gate - A1 and A2 should now pass their extract assertions**
+- [ ] **Step 4: Run the gate - A1 should now be fully green; A2 stays half red (expected)**
 
 Run:
 ```powershell
@@ -516,14 +516,33 @@ cd C:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 pwsh -File scripts/test-empty-extraction-gate.ps1
 ```
 
-Expected: `RESULT: 9 of 9 checks passed`, exit **0**.
-Why exit 0 here: the gate currently has A1 (3 checks), A2 (3) and CONTROL (3) —
-A2c is added in Task 3, not yet. Once `incomplete` is honest, `sanitize.rs` refuses
-on its own (no sanitizer change is needed), so the refusal and download checks flip
-to passing at the same time as the extract check. All nine pass.
+Expected: **`RESULT: 7 of 9 checks passed`**, exit **1**.
 
-If any check still fails, read the failure text before changing anything — do not
-adjust the test to match the code.
+What flips and what does not:
+
+- **A1 passes all 3.** A blank page yields `chars=0` and ZERO spans, so `sanitize`
+  re-extracts FRESH and hits the path this task fixed. Its refusal and download
+  checks flip to passing with no change to `sanitize.rs` — it already refuses on
+  `incomplete == true`.
+- **A2's extract check passes** (`incomplete=True`), but **its sanitize and download
+  checks still FAIL**.
+- **CONTROL still passes all 3.** Any CONTROL failure means the fix is marking
+  readable content incomplete — stop and report.
+
+**Why A2 is only half fixed, and why that is correct at this point.** `sanitize.rs`
+calls `extract_document` itself (`sanitize.rs:124`). By the time the gate sanitizes,
+spans for that `(document, version)` already exist from the earlier `/extract` call,
+so `extract.rs:80` takes the **cache branch** — which still returns the hardcoded
+`incomplete: false` at `extract.rs:102`. A2's two remaining failures are therefore
+the CACHE defect, which Task 4 fixes. They are not a sign that this task failed.
+
+An earlier draft of this step predicted `9 of 9` here, reasoning that honest
+`incomplete` alone would flip the refusals. That was wrong — it ignored that the
+gate's own `/extract` call warms the cache before `/sanitize` runs. Measured
+reality: `7 of 9`.
+
+Do NOT "fix" A2 by touching `sanitize.rs` or the gate. If you believe either is
+wrong, stop and report.
 
 - [ ] **Step 5: Commit**
 
@@ -1042,9 +1061,15 @@ pwsh -File scripts/test-empty-extraction-gate.ps1
 
 Expected: `RESULT: 11 of 11 checks passed`, exit 0.
 
-The count is A1 (3) + A2 (3) + A2c cache (2) + CONTROL (3). If the script reports
-a different total, trust the script's own count — the requirement is **zero
-FAILED**, not a particular number.
+The count is A1 (3) + A2 (3) + A2c cache (2) + CONTROL (3). Note that Task 4 fixes
+BOTH A2c and A2's sanitize/download checks, because both exercise the cache path.
+A2c is still worth keeping: it asserts the cache contract DIRECTLY (two
+`/extract` calls, no sanitize in between), whereas A2's failures only reach the
+cache indirectly through `sanitize`'s internal extract call. A direct assertion
+survives a future change that stops `sanitize` from re-extracting.
+
+If the script reports a different total, trust the script's own count — the
+requirement is **zero FAILED**, not a particular number.
 
 A note on the build: the API Dockerfile's paths assume context = `pacgate-ai/` (matching `build-ghcr.yml`'s `context: pacgate-ai`), so `-f pacgate-ai/Dockerfile pacgate-ai` is the correct invocation. `pacgate-ai/.dockerignore` exists and excludes `target/`, so the context stays small.
 
