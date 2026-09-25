@@ -1,12 +1,55 @@
 # Pacgate-ai DeerFlow configuration
-# To switch the active model, reorder the models list so your preferred
-# model is first. All models use Ollama (local or cloud-routed).
-# To add a new model, copy an existing entry and change the name/model fields.
+#
+# STANDALONE / image-baked config. The CLIENT stack does not use this file: both
+# `compose.prod.yaml` and `compose.bundle.yaml` bind-mount
+# `deploy/client-bundle/deer-flow-config.yaml` over `/app/backend/config.yaml`.
+# Nothing mounts this one, and no script reads it.
+#
+# It still matters twice over, so do not leave it as a trap:
+#   1. `deploy/deer-flow-pacgate/Dockerfile` bakes it into the published
+#      deer-flow image, so any run that starts that image WITHOUT the client
+#      mount gets this behaviour.
+#   2. deer-flow treats `models[0]` as the default (`agent.py` line 96), and this
+#      file used to list three CLOUD models first. Starting the image bare
+#      therefore sent every prompt to ollama.com by default - the same defect the
+#      client config was fixed for on 2026-09-25. A local model is now first, so
+#      the default is on-device and cloud models are explicit choices only.
+#
+# The client's authoritative config lives in `deploy/client-bundle/`. Edit that
+# one for anything client-facing; edit this one only for the standalone image.
+#
+# To switch the active model, reorder the list so your preferred model is first.
+# All models use Ollama (local or cloud-routed).
 
 models:
+  # ── LOCAL FIRST: this is the default (models[0]) ──────────────────────────
+  - name: nemotron-3.5-lightning-30b-local
+    display_name: Nemotron 3.5 Lightning 30B (Local GPU)
+    description: LOCAL default. GPU-accelerated, 1M context. Long-context legal reasoning without egress.
+    use: langchain_openai:ChatOpenAI
+    model: nemotron-3.5-lightning:30b-a3b
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+
+  - name: qwen3.8-27b-local
+    display_name: Qwen 3.8 27B (Local GPU)
+    description: Local Qwen model, GPU-accelerated. No cloud dependency.
+    use: langchain_openai:ChatOpenAI
+    model: qwen3.8:27b-mtp-q4_K_M
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+
+  # ── CLOUD: reachable only by EXPLICIT selection ───────────────────────────
+  # These have no weight layers on disk; inference routes to ollama.com. Auth
+  # rides the `ollama signin` OAuth session. Selecting one is a deliberate choice;
+  # nothing here routes to them by default.
   - name: deepseek-v4-flash-0731-cloud
     display_name: DeepSeek V4 Flash 0731 (Ollama)
-    description: Fast legal execution model. Cloud-tagged via Ollama.
+    description: Fast legal execution model. Cloud-tagged via Ollama - prompt text leaves the machine.
     use: langchain_openai:ChatOpenAI
     model: deepseek-v4-flash:0731-cloud
     api_key: ollama
@@ -14,11 +57,15 @@ models:
     max_tokens: 8192
     temperature: 0.1
 
-  - name: deepseek-v4-pro-0813-cloud
-    display_name: DeepSeek V4 Pro 0813 (Ollama)
-    description: Heavier model for complex research tasks. Cloud-tagged via Ollama.
+  - name: deepseek-v4-pro-cloud
+    display_name: DeepSeek V4 Pro (Ollama)
+    description: Heavier model for complex research tasks. Cloud-tagged via Ollama - prompt text leaves the machine.
     use: langchain_openai:ChatOpenAI
-    model: deepseek-v4-pro:0813-cloud
+    # Was `deepseek-v4-pro:0813-cloud`, which no artifact pre-pulls and which
+    # nothing on a client machine serves. `:cloud` tags need no local weights, but
+    # a tag that does not exist on ollama.com still 404s with no fallback, so this
+    # now matches the tag the client config and ollama-models.txt both use.
+    model: deepseek-v4-pro:cloud
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
@@ -36,35 +83,20 @@ models:
     supports_thinking: true
     stream_chunk_timeout: 120
 
-  - name: qwen3.8-27b-local
-    display_name: Qwen 3.8 27B (Local GPU)
-    description: Local Qwen model, GPU-accelerated. No cloud dependency.
-    use: langchain_openai:ChatOpenAI
-    model: qwen3.8:27b-mtp-q4_K_M
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
-
-  - name: nemotron-3.5-lightning-30b-local
-    display_name: Nemotron 3.5 Lightning 30B (Local GPU)
-    description: Local Nemotron model, GPU-accelerated. Good for legal reasoning.
-    use: langchain_openai:ChatOpenAI
-    model: nemotron-3.5-lightning:30b-a3b
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
-
-  - name: gemma4-26b-local
-    display_name: Gemma 4 26B (Local GPU)
-    description: Local Gemma model, lighter footprint. Good for drafting.
-    use: langchain_openai:ChatOpenAI
-    model: gemma4:26b-a4b-it-qat
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
+  # gemma4:26b-a4b-it-qat was listed here and is deliberately COMMENTED OUT in
+  # deploy/client-bundle/ollama-models.txt ("heavier than AIPC NPU budget for
+  # Main"), so nothing pre-pulls it and it is absent from the dev box. Keeping it
+  # active here made the standalone image request a tag not installed anywhere:
+  # HTTP 404, no fallback. Re-enable only together with a prepull entry.
+  # - name: gemma4-26b-local
+  #   display_name: Gemma 4 26B (Local GPU)
+  #   description: Local Gemma model, lighter footprint. Good for drafting.
+  #   use: langchain_openai:ChatOpenAI
+  #   model: gemma4:26b-a4b-it-qat
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
 
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider

@@ -228,6 +228,45 @@ Check "A8 the config states cloud tags are reachable and explicit-only" `
     ($cfgSrc -match 'send prompt text to ollama\.com' -or $cfgSrc -match 'REACHABLE') `
     "the header should warn that :cloud tags egress wherever the network allows, so a reader does not infer safety from this file"
 
+# ── A9/A10: the DEFAULT MODEL must be local in EVERY deer-flow config ────────
+# deer-flow treats `models[0]` as the default (`agent.py`: `default_model_name =
+# app_config.models[0].name`). So the first entry is not a list order, it is the
+# model every prompt uses unless someone chooses otherwise.
+#
+# There are TWO deer-flow configs, and fixing only one is the failure mode here:
+#   - deploy/client-bundle/deer-flow-config.yaml  -> bind-mounted by the client stack
+#   - deploy/deer-flow-pacgate/config.yaml        -> BAKED into the published image
+# The baked one listed three CLOUD models first and had no `model_routing` block,
+# so a bare `docker run` of the image sent every prompt to ollama.com. It was never
+# mounted, which is exactly why nobody noticed - an unmounted file gets no attention
+# and no testing, while still shipping inside the artifact.
+$bakedConfig = Join-Path $repo 'deploy/deer-flow-pacgate/config.yaml'
+if (Test-Path $bakedConfig) {
+    $bakedSrc = Get-Content $bakedConfig -Raw
+    $bakedJson = & python -c @"
+import json, yaml, sys
+d = yaml.safe_load(open(sys.argv[1], encoding='utf-8'))
+ms = d.get('models') or []
+print(json.dumps({'first': (ms[0].get('model') if ms else None),
+                  'first_name': (ms[0].get('name') if ms else None)}))
+"@ $bakedConfig 2>&1
+    $baked = $null
+    try { $baked = ($bakedJson | Out-String) | ConvertFrom-Json } catch { }
+    if ($baked) {
+        Write-Host "  baked config models[0] : $($baked.first_name) -> $($baked.first)"
+        Check "A9 the image-baked deer-flow config defaults to a LOCAL model" `
+            (-not (Test-IsCloud $baked.first)) `
+            "models[0]='$($baked.first)' is CLOUD, and models[0] IS the default - so starting the published image without the client mount sends every prompt to ollama.com"
+        Check "A10 the image-baked config is not silently relying on a mount" `
+            ($bakedSrc -match 'client-bundle|bind-mount' -or $bakedSrc -match 'models\[0\]') `
+            "this file ships inside the image and is not mounted, so its state must be safe on its own; note that so a future reader does not assume the client mount protects it"
+    } else {
+        Check "A9 the image-baked deer-flow config is readable" $false "could not parse $bakedConfig"
+    }
+} else {
+    Write-Host "  [SKIP] A9/A10 - no image-baked deer-flow config found" -ForegroundColor Yellow
+}
+
 Write-Host ''
 if ($script:failures -eq 0) {
     Write-Host "RESULT: $($script:checks) of $($script:checks) checks passed" -ForegroundColor Green
