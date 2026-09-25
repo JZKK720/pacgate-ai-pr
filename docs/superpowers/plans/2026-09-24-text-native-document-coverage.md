@@ -145,11 +145,26 @@ For each case assert, in order:
 4. **sanitize** returns 200 with `verdict = pass` and `redaction_count >= 2`
 5. the sanitized text **does not contain** the identifiers
 
-Build fixtures with `docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"..."@` — the here-string form the two existing fixture builders use (`test-legal-journey.ps1:161`, `test-sanitizer-e2e.ps1:18`). **Do not pipe to `python3 -` over stdin**; no gate in this repo uses that form. Required libraries are present in `ocr-service:local`: PIL, python-docx, openpyxl, python-pptx.
+Build fixtures with `docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"..."@` — the here-string form the two existing fixture builders use (`test-legal-journey.ps1:161`, `test-sanitizer-e2e.ps1:18`). **Do not pipe to `python3 -` over stdin**; no gate in this repo uses that form.
+
+**Fixture libraries in `ocr-service:local`, MEASURED (an earlier revision of this plan claimed all four and was wrong — it had confused this image with `pacgate-mcp`, where `openpyxl`/`python-pptx` happen to be installed):**
+
+| library | `ocr-service:local` |
+|---|---|
+| `PIL` | present |
+| `python-docx` | present |
+| `openpyxl` | **ABSENT** |
+| `python-pptx` | **ABSENT** |
+
+So build `.docx` with `python-docx`, and `.xlsx`/`.pptx` with the **stdlib `zipfile` writer** — which is also what Task 3's Rust unit tests need, since a hand-built package is the only way to control exactly which parts carry text. A hand-built OOXML package is structurally valid and carries text in the elements the extractor scans (`xl/*.xml` `<t>`, `ppt/*.xml` `<a:t>`).
 
 T4's fixture is the critical one: a `.docx` whose only identifier is in `sections[0].header.paragraphs[0].text`. Build it, then assert the identifier appears in the extracted text. That assertion is what proves the fix reads beyond `document.xml`.
 
-**Guard against a false pass** (this bit us in Plan A): assert each fixture is **non-empty on disk** (`(Get-Item $p).Length -gt 1000`) before uploading, and assert the extracted text contains the identifier rather than merely being non-empty. A zero-byte fixture once produced two "passing" assertions for the wrong reason.
+**Guard against a false pass** (this bit us in Plan A): assert each fixture is **non-empty on disk** before uploading, and assert the extracted text contains the identifier rather than merely being non-empty. A zero-byte fixture once produced two "passing" assertions for the wrong reason.
+
+**The size floor must be per-format.** A blanket `-gt 1000` is wrong: a legitimate `.txt` fixture is ~50 bytes and would fail the guard while being perfectly valid. Use a small floor (~8 bytes, i.e. "not empty") for `.txt`/`.md` and ~1000 for container formats, where no legitimate `.docx`/`.xlsx`/`.pptx`/`.pdf` is ever under 1 KB.
+
+**Also guard the EGRESS assertion against passing vacuously.** `-not ''.Contains('x')` is `TRUE`, so a bare "sanitized text does not contain the identifier" check passes when sanitize failed and returned no text at all. Gate it on sanitize having succeeded AND produced non-empty text — the same false-pass class as the zero-byte incident, one layer deeper.
 
 - [ ] **Step 2: Run the gate and record every failure**
 
