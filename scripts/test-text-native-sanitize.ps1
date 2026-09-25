@@ -220,13 +220,57 @@ function New-TextFixture {
     return (Test-Path $OutPath)
 }
 
+function New-HtmlFixture {
+    <#
+      A real .html file. Added after the final review found that .html was on the
+      upload allowlist and in the routing match, yet had NO end-to-end case -- its
+      only coverage was a Rust unit test on the extractor in isolation, so the
+      ROUTING and the sanitize pipeline were never exercised for it.
+
+      The identifier is in visible body text; a <script> block carries a decoy so a
+      tag-strip that leaked script content as text would be visible.
+    #>
+    param([Parameter(Mandatory)][string]$OutPath)
+    $html = @"
+<!DOCTYPE html>
+<html><head><title>Intake</title>
+<script>var decoy = 'SCRIPTLEAK';</script>
+<style>body { color: red; }</style>
+</head>
+<body><h1>Client intake record</h1><p>ID $ID_CARD</p><p>Phone $PHONE</p></body></html>
+"@
+    [System.IO.File]::WriteAllText($OutPath, $html, (New-Object System.Text.UTF8Encoding($false)))
+    return (Test-Path $OutPath)
+}
+
+function New-Utf16Fixture {
+    <#
+      A BOM-LESS UTF-16LE .txt. Both halves matter:
+
+      * No BOM -- a BOM raises a decode error and fails closed, so a fixture WITH
+        one would pass while the real hole stayed open.
+      * UTF-16 -- every byte of ASCII text in UTF-16LE is below 0x80, so
+        String::from_utf8 ACCEPTS it and returns NUL-interleaved text. The file
+        contains the identifier byte-for-byte; the extracted string does not, as a
+        contiguous substring. Without the NUL check the document reports complete and
+        the redactor finds nothing.
+
+      The expected outcome is a REFUSAL, not a redaction, so this case asserts
+      incompleteness rather than the usual pass/redact chain.
+    #>
+    param([Parameter(Mandatory)][string]$OutPath)
+    $text = "Client intake record`n`n$ID_CARD`n$PHONE`n"
+    [System.IO.File]::WriteAllBytes($OutPath, [System.Text.Encoding]::Unicode.GetBytes($text))
+    return (Test-Path $OutPath)
+}
+
 function New-DocxFixture {
     param(
         [Parameter(Mandatory)][string]$OutPath,
-        [Parameter(Mandatory)][string]$Kind   # body | header
+        [Parameter(Mandatory)][string]$Kind   # body | header | carriers
     )
-    if ($Kind -ne 'body' -and $Kind -ne 'header') {
-        throw "New-DocxFixture: unsupported Kind '$Kind' (use body or header)"
+    if ($Kind -ne 'body' -and $Kind -ne 'header' -and $Kind -ne 'carriers') {
+        throw "New-DocxFixture: unsupported Kind '$Kind' (use body, header or carriers)"
     }
     $dir = Split-Path $OutPath -Parent
     $leaf = Split-Path $OutPath -Leaf
@@ -237,14 +281,54 @@ if '$Kind' == 'body':
     d.add_paragraph('Client intake record')
     d.add_paragraph('$ID_CARD')
     d.add_paragraph('$PHONE')
-else:
+    d.save('/fix/$leaf')
+elif '$Kind' == 'header':
     # THE SAFETY CASE. The identifier exists ONLY in the header, and the phone
     # only in the footer, so a converter that reads word/document.xml alone
     # extracts a document that looks complete and carries neither identifier.
     d.add_paragraph('Agreement between the parties.')
     d.sections[0].header.paragraphs[0].text = 'Client ID $ID_CARD'
     d.sections[0].footer.paragraphs[0].text = 'Contact $PHONE'
-d.save('/fix/$leaf')
+    d.save('/fix/$leaf')
+else:
+    # THE CARRIER CASE: hand-built, never through python-docx.
+    #
+    # Each branch saves INSIDE itself. An earlier version had one save after the
+    # whole if/elif/else, which meant the python-docx save OVERWROTE the hand-built
+    # carrier package with an empty python-docx document -- T8 then extracted only
+    # 'creator: python-docx'. The fixture was the bug, not the extractor: a test
+    # fixture that silently produces a DIFFERENT document than intended is the same
+    # false-pass class this suite keeps finding.
+    import zipfile
+    ct = ('<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>'
+          '<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">'
+          '<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>'
+          '<Default Extension=\"xml\" ContentType=\"application/xml\"/>'
+          '<Override PartName=\"/word/document.xml\" '
+          'ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>'
+          '</Types>')
+    rel = ('<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>'
+           '<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">'
+           '<Relationship Id=\"rId1\" '
+           'Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" '
+           'Target=\"word/document.xml\"/></Relationships>')
+    doc = ('<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>'
+           '<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>'
+           '<w:p><w:r><w:t>Agreement between the parties.</w:t></w:r></w:p>'
+           '<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>'
+           '<w:r><w:instrText xml:space=\"preserve\"> REF _Ref1 \\h \"' + '$ID_CARD' + '\"</w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>'
+           '<w:r><w:t>see above</w:t></w:r>'
+           '<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>'
+           '<w:p><w:r><w:t>Client </w:t></w:r>'
+           '<w:del w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">'
+           '<w:r><w:delText>' + '$PHONE' + '</w:delText></w:r></w:del>'
+           '<w:r><w:t> retained</w:t></w:r></w:p>'
+           '</w:body></w:document>')
+    with zipfile.ZipFile('/fix/$leaf', 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', ct)
+        z.writestr('_rels/.rels', rel)
+        z.writestr('word/document.xml', doc)
 "@ 2>&1 | Out-Null
     return (Test-Path $OutPath)
 }
@@ -458,6 +542,76 @@ $script:createdDocs = @()
 $fixtureDir = Join-Path ([System.IO.Path]::GetTempPath()) "txtnative-$([guid]::NewGuid().ToString('N').Substring(0,8))"
 New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
 
+function Invoke-RefusalCase {
+    <#
+      The inverse of Invoke-Case: the CORRECT outcome is a refusal.
+
+      A format can be readable in general and still hold input we must not treat as
+      text. The .txt/.md path is the case: `.txt` is UTF-8 by definition, and a
+      BOM-less UTF-16 file is ALSO valid UTF-8 (every byte below 0x80), so
+      `String::from_utf8` accepts it and returns NUL-interleaved text. The file then
+      carries the identifier byte-for-byte while the extracted string does not, as a
+      contiguous substring -- so a redaction-proving assertion would pass vacuously
+      and the document would be certified clean.
+
+      Assertions, in order:
+        1. fixture on disk is non-empty
+        2. upload returns 2xx (the format IS supported)
+        3. extract returns incomplete=true   <- the whole point
+        4. sanitize is REFUSED (not 200)
+        5. download is REFUSED (not 200)
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$FixturePath,
+        [Parameter(Mandatory)][string]$Filename,
+        [Parameter(Mandatory)][string]$ContentType,
+        [int]$MinBytes = 8
+    )
+
+    Write-Host ''
+    Write-Host "== $Label" -ForegroundColor Cyan
+
+    if (-not (Test-Path $FixturePath)) {
+        Check "$Label - fixture exists" $false "no fixture at '$FixturePath'"; return
+    }
+    $size = (Get-Item $FixturePath).Length
+    Check "$Label - fixture on disk is non-empty" ($size -ge $MinBytes) "size=$size bytes"
+
+    $doc = Send-Upload -MatterId $script:matterId -FilePath $FixturePath -Filename $Filename -ContentType $ContentType
+    if (-not $doc.id) { Check "$Label - upload returns 2xx" $false 'upload returned no id'; return }
+    Check "$Label - upload returns 2xx" $true ''
+    $script:createdDocs += $doc.id
+
+    $extract = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$($doc.id)/extract" -Method Post `
+        -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' -TimeoutSec 300
+    Write-Host "     extract incomplete=$($extract.incomplete)"
+    Check "$Label - extract reports incomplete=true (REFUSED, not silently read)" `
+        ("$($extract.incomplete)" -eq 'true') `
+        "incomplete=$($extract.incomplete); NUL-interleaved text must never be treated as a complete read"
+
+    $sanitizeStatus = $null
+    try {
+        $sanitizeStatus = (Invoke-WebRequest -Uri "$BaseUrl/api/documents/$($doc.id)/sanitize" -Method Post `
+            -Headers $AuthHeaders -ContentType 'application/json' -Body '{"data_level":"T3"}' `
+            -TimeoutSec 300 -UseBasicParsing).StatusCode
+    } catch {
+        $sanitizeStatus = [int]$_.Exception.Response.StatusCode.value__
+    }
+    Check "$Label - sanitize is REFUSED (not 200)" ($sanitizeStatus -ne 200) `
+        "sanitize returned $sanitizeStatus; unreadable encoding must not reach a verdict"
+
+    $downloadStatus = $null
+    try {
+        $downloadStatus = (Invoke-WebRequest -Uri "$BaseUrl/api/documents/$($doc.id)/download" `
+            -Headers $AuthHeaders -TimeoutSec 60 -UseBasicParsing).StatusCode
+    } catch {
+        $downloadStatus = [int]$_.Exception.Response.StatusCode.value__
+    }
+    Check "$Label - download is REFUSED (not 200)" ($downloadStatus -ne 200) `
+        "download returned $downloadStatus; the egress gate must stay shut"
+}
+
 function Invoke-Case {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -612,6 +766,9 @@ $fixtures = [ordered]@{
     T4 = @{ Path = Join-Path $fixtureDir 't4.docx'; Builder = { New-DocxFixture  -OutPath $args[0] -Kind 'header' } }
     T5 = @{ Path = Join-Path $fixtureDir 't5.xlsx'; Builder = { New-OoxmlFixture -OutPath $args[0] -Kind 'xlsx' } }
     T6 = @{ Path = Join-Path $fixtureDir 't6.pptx'; Builder = { New-OoxmlFixture -OutPath $args[0] -Kind 'pptx' } }
+    T7 = @{ Path = Join-Path $fixtureDir 't7.html'; Builder = { New-HtmlFixture  -OutPath $args[0] } }
+    T8 = @{ Path = Join-Path $fixtureDir 't8.docx'; Builder = { New-DocxFixture  -OutPath $args[0] -Kind 'carriers' } }
+    T9 = @{ Path = Join-Path $fixtureDir 't9.txt';  Builder = { New-Utf16Fixture -OutPath $args[0] } }
     CONTROL = @{ Path = Join-Path $fixtureDir 'control.pdf'; Builder = { New-PdfFixture -OutPath $args[0] } }
 }
 
@@ -640,6 +797,7 @@ $CT_DOCX  = 'application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 $CT_XLSX  = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 $CT_PPTX  = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 $CT_PDF   = 'application/pdf'
+$CT_HTML  = 'text/html'
 
 Invoke-Case -Label 'T1 plain text (.txt)'      -FixturePath $fixtures.T1.Path      -Filename 't1.txt'      -ContentType $CT_TXT    -MinBytes 8
 Invoke-Case -Label 'T2 markdown (.md)'         -FixturePath $fixtures.T2.Path      -Filename 't2.md'       -ContentType $CT_MD     -MinBytes 8
@@ -647,6 +805,16 @@ Invoke-Case -Label 'T3 docx body (.docx)'      -FixturePath $fixtures.T3.Path   
 Invoke-Case -Label 'T4 docx HEADER ONLY (.docx)' -FixturePath $fixtures.T4.Path    -Filename 't4.docx'     -ContentType $CT_DOCX   -MinBytes 1000
 Invoke-Case -Label 'T5 spreadsheet (.xlsx)'    -FixturePath $fixtures.T5.Path      -Filename 't5.xlsx'     -ContentType $CT_XLSX   -MinBytes 1000
 Invoke-Case -Label 'T6 presentation (.pptx)'   -FixturePath $fixtures.T6.Path      -Filename 't6.pptx'     -ContentType $CT_PPTX   -MinBytes 1000
+Invoke-Case -Label 'T7 html (.html)'           -FixturePath $fixtures.T7.Path      -Filename 't7.html'     -ContentType $CT_HTML   -MinBytes 8
+Invoke-Case -Label 'T8 docx field codes + tracked deletion (.docx)' -FixturePath $fixtures.T8.Path -Filename 't8.docx' -ContentType $CT_DOCX -MinBytes 1000
+
+# T9 is the one case whose correct outcome is a REFUSAL, not a redaction. A
+# BOM-less UTF-16 .txt is valid UTF-8 (every byte < 0x80), so from_utf8 accepts it
+# and returns NUL-interleaved text: the file holds the identifier byte-for-byte
+# while the extracted string does not, as a contiguous substring. Expecting
+# incomplete=true rather than pass/redact is the whole point.
+Invoke-RefusalCase -Label 'T9 BOM-less UTF-16 text (.txt)' -FixturePath $fixtures.T9.Path -Filename 't9.txt' -ContentType $CT_TXT -MinBytes 8
+
 Invoke-Case -Label 'CONTROL readable pdf (.pdf)' -FixturePath $fixtures.CONTROL.Path -Filename 'control.pdf' -ContentType $CT_PDF  -MinBytes 1000
 
 # ── Cleanup ──

@@ -125,26 +125,50 @@ impl TextExtraction {
 /// The text element a given OOXML flavour wraps its runs in, and the zip prefix
 /// that holds its parts.
 ///
-/// These two strings are the ONLY format-specific knowledge in the OOXML path, and
-/// both are prefixes/element names. No individual part name appears anywhere.
+/// These strings are the format-specific knowledge in the OOXML path, and all of them
+/// are prefixes or ELEMENT NAMES. No individual part name appears anywhere.
 struct OoxmlSpec {
     /// Zip path prefix. Every entry starting with this is scanned.
     prefix: &'static str,
-    /// Local element name holding a text run.
-    text_element: &'static str,
+    /// Local element names holding text runs, in the order to scan for them.
+    ///
+    /// A LIST, not one name — and that is the point. WordprocessingML has FOUR
+    /// run-level text carriers, not one:
+    ///
+    /// | element          | carries                                  |
+    /// |------------------|------------------------------------------|
+    /// | `w:t`            | ordinary text                            |
+    /// | `w:delText`      | text DELETED with Track Changes on       |
+    /// | `w:instrText`    | field codes (TOC, REF, PAGE, HYPERLINK)  |
+    /// | `w:delInstrText` | a field code that was deleted            |
+    ///
+    /// A single-name reader misses three of four, and the miss is SILENT: a
+    /// document whose identifier lives in a `REF` field code, or in text an
+    /// author deleted with Track Changes, extracts the surrounding `w:t` text,
+    /// reports complete, is marked `sanitized`, and egresses with the identifier
+    /// intact. `w:delText` deserves its own emphasis — text the author "deleted"
+    /// is still in the file, and nobody re-checks what they already removed.
+    ///
+    /// The prefix scan covers PARTS. It cannot cover text carriers WITHIN a part,
+    /// so a one-name list here would be the same hardcoded-list mistake the part
+    /// scan exists to avoid — the element names drift with each Word release and
+    /// the drift is invisible.
+    text_elements: &'static [&'static str],
 }
 
 const DOCX_SPEC: OoxmlSpec = OoxmlSpec {
     prefix: "word/",
-    text_element: "w:t",
+    text_elements: &["w:t", "w:delText", "w:instrText", "w:delInstrText"],
 };
 const XLSX_SPEC: OoxmlSpec = OoxmlSpec {
     prefix: "xl/",
-    text_element: "t",
+    text_elements: &["t"],
 };
 const PPTX_SPEC: OoxmlSpec = OoxmlSpec {
     prefix: "ppt/",
-    text_element: "a:t",
+    // `a:fld` carries the field TEXT (a slide number, a date placeholder) which
+    // `a:t` does not hold.
+    text_elements: &["a:t", "a:fld"],
 };
 
 /// The package's declared main part, read from `[Content_Types].xml`.
@@ -255,7 +279,25 @@ pub fn extract_text_native(format: &DocumentFormat, bytes: &[u8]) -> TextExtract
 /// a mangled string is not a redaction decision, and the failure would be invisible
 /// — the document would report complete. Refusing is the correct trade: a client
 /// with a non-UTF-8 `.txt` gets `incomplete = true` and an operator looks at it.
+///
+/// A NUL byte is refused for the same reason, and it is a SEPARATE check because
+/// `from_utf8` cannot make it. **BOM-less UTF-16LE is valid UTF-8**: every byte of
+/// `"Client ID"` in UTF-16LE is below 0x80, so `from_utf8` happily returns
+/// `"C\0l\0i\0e\0n\0t\0 \0I\0D\0"`. That string is non-empty, so every
+/// `trim().is_empty()` guard passes, the document reports complete, the redactor
+/// sees interleaved NULs and finds nothing — and the identifier is present in the
+/// file byte-for-byte while being absent as a CONTIGUOUS SUBSTRING. A UTF-16 BOM
+/// (`\xff\xfe`) does raise a decode error and does fail closed; the BOM-less case
+/// is the hole. An embedded NUL is never legitimate UTF-8 text, so refusing it
+/// costs nothing the UTF-8 path does not already cost.
 fn extract_plain(bytes: &[u8]) -> TextExtraction {
+    if bytes.contains(&0) {
+        return TextExtraction::failed(
+            "plain-text",
+            "input contains a NUL byte; this is not UTF-8 text (BOM-less UTF-16 is 
+             valid UTF-8 and would hide every character from the redactor)",
+        );
+    }
     match String::from_utf8(bytes.to_vec()) {
         Ok(text) => TextExtraction {
             text,
@@ -312,16 +354,41 @@ fn extract_html(bytes: &[u8]) -> TextExtraction {
             continue;
         }
 
-        // A comment: `<` `!` `-` `-` ... `-` `-` `>`. Skip to the terminator.
+        // `<!` is NOT necessarily a comment. It opens `<!-- -->`, but it also opens
+        // `<!DOCTYPE html>` and `<![CDATA[...]]>` and a few deprecated declarations.
+        //
+        // Treating every `<!` as a comment and scanning for `-->` made `<!DOCTYPE`
+        // behave like an unterminated comment: the scan ran to end-of-input and the
+        // ENTIRE document was dropped. A real-world `.html` file almost always starts
+        // with a DOCTYPE, so this was the common case, not an edge — a `.html` whose
+        // identifier was in visible body text extracted ONE character. It went
+        // unnoticed because no test fixture carried a DOCTYPE.
         if raw_next_is(&mut chars, '!') {
-            let mut prev = '\0';
-            let mut prev2 = '\0';
-            for c in chars.by_ref() {
-                if prev2 == '-' && prev == '-' && c == '>' {
-                    break;
+            if raw_next_is(&mut chars, '-') && raw_next_is(&mut chars, '-') {
+                // A real comment: skip to `-->`.
+                let mut prev = '\0';
+                let mut prev2 = '\0';
+                for c in chars.by_ref() {
+                    if prev2 == '-' && prev == '-' && c == '>' {
+                        break;
+                    }
+                    prev2 = prev;
+                    prev = c;
                 }
-                prev2 = prev;
-                prev = c;
+            } else {
+                // A declaration — DOCTYPE, CDATA, or similar. Skip to the closing `>`
+                // only, never to a `-->` that will not come. CDATA is the one case
+                // where this drops content: `<![CDATA[...]]>` is markup whose payload
+                // a browser WOULD render as text in an XML context. Rather than guess,
+                // the declaration is skipped as markup and the payload is not emitted;
+                // a document that needs CDATA redaction is not something a client
+                // sends, and guessing wrong in the emit direction would put markup in
+                // front of the redactor. Recorded rather than hidden.
+                for c in chars.by_ref() {
+                    if c == '>' {
+                        break;
+                    }
+                }
             }
             out.push(' ');
             continue;
@@ -457,7 +524,11 @@ fn extract_ooxml(spec: &OoxmlSpec, bytes: &[u8]) -> TextExtraction {
                 // and a part that decoded to nothing is reported by the emptiness
                 // rule below rather than passing silently.
                 let xml = String::from_utf8_lossy(&raw);
-                append_element_text(&mut out.text, &xml, spec.text_element);
+                // Scan for EVERY text carrier the format can use, not one. A single
+                // name here loses the others silently - see `OoxmlSpec::text_elements`.
+                for element in spec.text_elements {
+                    append_element_text(&mut out.text, &xml, element);
+                }
             }
             // A part we failed to read is content we did not scan. Fail closed.
             Err(e) => {
@@ -1583,5 +1654,232 @@ mod tests {
             ("ppt/presentation.xml", &pres),
             ("ppt/slides/slide1.xml", &slide),
         ])
+    }
+
+    // ── The four WordprocessingML run-level text carriers ───────────────────────
+    //
+    // The prefix scan covers PARTS. It cannot cover text carriers WITHIN a part, so
+    // a single element name misses the other three SILENTLY. These four tests are
+    // the regression suite for that, and each one is a realistic document rather
+    // than a crafted one.
+
+    /// A field code — the shape Word writes for a TOC, REF, PAGE or HYPERLINK field.
+    /// `w:instrText`, not `w:t`, holds the instruction, and a field's instruction can
+    /// name a matter or a client.
+    #[test]
+    fn docx_reads_field_code_text() {
+        let body = concat!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+            r#"<w:r><w:instrText xml:space="preserve"> REF _Ref1 \h "Matter 2026-CLIENT-ACME-11010519491231002X"</w:instrText></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+            r#"<w:r><w:t>See above</w:t></w:r>"#,
+            r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        );
+        let bytes = zip_of(&[
+            ("[Content_Types].xml", &content_types_docx()),
+            ("_rels/.rels", &package_rels()),
+            ("word/document.xml", &w_part("document", body)),
+        ]);
+        let out = extract_text_native(&DocumentFormat::Docx, &bytes);
+        assert!(
+            out.text.contains("11010519491231002X"),
+            "FIELD CODE TEXT MISSED - an identifier in a w:instrText field code is \
+             invisible to the redactor. Got: {:?}",
+            out.text
+        );
+    }
+
+    /// Text DELETED with Track Changes on is still in the file, in `w:delText`.
+    ///
+    /// This is the most dangerous of the four misses: the author "removed" the
+    /// identifier, so nobody looks at it again, and it is present byte-for-byte.
+    #[test]
+    fn docx_reads_tracked_deletion_text() {
+        let body = concat!(
+            r#"<w:p><w:r><w:t>Client </w:t></w:r>"#,
+            r#"<w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+            r#"<w:r><w:delText>11010519491231002X</w:delText></w:r></w:del>"#,
+            r#"<w:r><w:t> retained</w:t></w:r></w:p>"#
+        );
+        let bytes = zip_of(&[
+            ("[Content_Types].xml", &content_types_docx()),
+            ("_rels/.rels", &package_rels()),
+            ("word/document.xml", &w_part("document", body)),
+        ]);
+        let out = extract_text_native(&DocumentFormat::Docx, &bytes);
+        assert!(
+            out.text.contains("11010519491231002X"),
+            "TRACKED-DELETION TEXT MISSED - text the author deleted is still in the \
+             file, and nobody re-checks what they already removed. Got: {:?}",
+            out.text
+        );
+    }
+
+    /// The same, for a deleted field code: `w:delInstrText`.
+    #[test]
+    fn docx_reads_deleted_field_code_text() {
+        let body = concat!(
+            r#"<w:p><w:r><w:t>ref</w:t></w:r>"#,
+            r#"<w:del w:id="2" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+            r#"<w:r><w:delInstrText> PAGEREF _Toc1 \h 13812345678</w:delInstrText></w:r>"#,
+            r#"</w:del></w:p>"#
+        );
+        let bytes = zip_of(&[
+            ("[Content_Types].xml", &content_types_docx()),
+            ("_rels/.rels", &package_rels()),
+            ("word/document.xml", &w_part("document", body)),
+        ]);
+        let out = extract_text_native(&DocumentFormat::Docx, &bytes);
+        assert!(
+            out.text.contains("13812345678"),
+            "DELETED FIELD CODE TEXT MISSED. Got: {:?}",
+            out.text
+        );
+    }
+
+    /// A carrier in a HEADER, to prove the carrier fix and the part fix compose —
+    /// the two failures this module was written for, in one document.
+    #[test]
+    fn docx_reads_a_field_code_in_a_header() {
+        let hdr = concat!(
+            r#"<w:p><w:r><w:instrText> REF "Matter 2026-CLIENT-ACME-11010519491231002X"</w:instrText></w:r>"#,
+            r#"<w:r><w:t>Acme</w:t></w:r></w:p>"#
+        );
+        let bytes = zip_of(&[
+            ("[Content_Types].xml", &content_types_docx()),
+            ("_rels/.rels", &package_rels()),
+            ("word/document.xml", &w_part("document", &w_para("body text"))),
+            ("word/header1.xml", &w_part("hdr", hdr)),
+        ]);
+        let out = extract_text_native(&DocumentFormat::Docx, &bytes);
+        assert!(
+            out.text.contains("11010519491231002X"),
+            "identifier in a field code IN A HEADER was missed. Got: {:?}",
+            out.text
+        );
+    }
+
+    // ── BOM-less UTF-16 is valid UTF-8, and therefore invisible ────────────────
+    //
+    // `from_utf8` REJECTS a UTF-16 BOM (`\xff\xfe`) and that path correctly fails
+    // closed. The BOM-LESS case is the hole: every byte of ASCII text encoded as
+    // UTF-16LE is below 0x80, so `from_utf8` returns `"C\0l\0i\0e\0n\0t\0"`. That is
+    // non-empty, so every emptiness guard passes, the document reports complete, and
+    // the redactor sees interleaved NULs instead of the identifier.
+
+    #[test]
+    fn bom_less_utf16_text_is_incomplete_not_silently_nul_interleaved() {
+        let utf16le: Vec<u8> = "Client ID 11010519491231002X"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        // Precondition: this really is accepted by from_utf8, which is the whole
+        // problem. If this assertion ever fails, the check below is unnecessary.
+        assert!(
+            String::from_utf8(utf16le.clone()).is_ok(),
+            "precondition changed: BOM-less UTF-16LE no longer decodes as UTF-8"
+        );
+        let out = extract_text_native(&DocumentFormat::Txt, &utf16le);
+        assert!(
+            out.incomplete,
+            "BOM-less UTF-16 .txt reported COMPLETE. The identifier is present in the \
+             file byte-for-byte and absent from the extracted string, so the redactor \
+             would find nothing. Got: {:?}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn a_utf16_bom_text_is_also_incomplete() {
+        let mut utf16be = vec![0xff, 0xfe];
+        utf16be.extend("Client ID 11010119900307551X".encode_utf16().flat_map(|u| u.to_le_bytes()));
+        let out = extract_text_native(&DocumentFormat::Txt, &utf16be);
+        assert!(out.incomplete, "a UTF-16 BOM .txt must be refused");
+    }
+
+    /// A NUL in `.md` too, and the markdown path must agree with the text path.
+    #[test]
+    fn nul_bearing_markdown_is_incomplete() {
+        let md: Vec<u8> = "# Client 11010519491231002X"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        let out = extract_text_native(&DocumentFormat::Markdown, &md);
+        assert!(out.incomplete, "a NUL-bearing .md must be refused");
+    }
+
+    // ── HTML declarations vs comments ─────────────────────────────────────────
+    //
+    // `<!` opens a comment AND a DOCTYPE. Collapsing the two made `<!DOCTYPE html>`
+    // behave as an unterminated comment, so the scan ran to end-of-input and dropped
+    // the whole document — the common case for a real .html file. No fixture carried
+    // a DOCTYPE, so 36 green tests missed it and only a live-stack case caught it.
+
+    #[test]
+    fn html_doctype_does_not_swallow_the_document() {
+        let html = concat!(
+            "<!DOCTYPE html>\n<html><head><title>Intake</title></head>\n",
+            "<body><p>ID 11010519491231002X</p><p>Phone 13812345678</p></body></html>"
+        );
+        let out = extract_text_native(&DocumentFormat::Html, html.as_bytes());
+        assert!(
+            out.text.contains("11010519491231002X"),
+            "DOCTYPE swallowed the document - the identifier is unreachable. Got {:?}",
+            out.text
+        );
+        assert!(out.text.contains("13812345678"), "phone missing. Got {:?}", out.text);
+    }
+
+    /// A DOCTYPE plus a real comment, so the two branches must both work.
+    #[test]
+    fn html_doctype_and_comment_both_handled() {
+        let html = concat!(
+            "<!DOCTYPE html><html><body>",
+            "<!-- template placeholder 11010519491231002X -->",
+            "<p>visible 13812345678</p></body></html>"
+        );
+        let out = extract_text_native(&DocumentFormat::Html, html.as_bytes());
+        assert!(
+            out.text.contains("13812345678"),
+            "visible text lost after a DOCTYPE + comment. Got {:?}",
+            out.text
+        );
+        // The comment IS dropped, which is the documented decision - but the
+        // document must not be dropped with it.
+        assert!(
+            !out.text.contains("template placeholder"),
+            "comment body should not be emitted as text"
+        );
+    }
+
+    /// Lowercase and legacy DOCTYPEs, and a doctype with no following markup.
+    #[test]
+    fn html_various_doctypes_are_skipped_not_swallowed() {
+        for decl in [
+            "<!doctype html>",
+            "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\">",
+            "<!DOCTYPE html SYSTEM \"about:legacy-compat\">",
+        ] {
+            let html = format!("{decl}<p>ID 11010519491231002X</p>");
+            let out = extract_text_native(&DocumentFormat::Html, html.as_bytes());
+            assert!(
+                out.text.contains("11010519491231002X"),
+                "declaration {decl:?} swallowed the document. Got {:?}",
+                out.text
+            );
+        }
+    }
+
+    /// CDATA: the payload is deliberately NOT emitted (recorded in the code), but
+    /// the declaration must not eat the rest of the document either.
+    #[test]
+    fn html_cdata_is_skipped_without_losing_following_text() {
+        let html = "<![CDATA[ignored]]><p>ID 11010519491231002X</p>";
+        let out = extract_text_native(&DocumentFormat::Html, html.as_bytes());
+        assert!(
+            out.text.contains("11010519491231002X"),
+            "CDATA declaration swallowed following text. Got {:?}",
+            out.text
+        );
     }
 }
