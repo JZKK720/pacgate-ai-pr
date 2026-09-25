@@ -10,7 +10,9 @@
 //! a job completes.
 
 use axum::http::StatusCode;
-use pacgate_core::{DataLevel, DocumentId, Jurisdiction, MatterId, SourceLevel, TenantId};
+use pacgate_core::{
+    DataLevel, DocumentFormat, DocumentId, Jurisdiction, MatterId, SourceLevel, TenantId,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -144,6 +146,84 @@ pub async fn extract_document(
             text,
             pages,
             spans,
+            incomplete,
+        });
+    }
+
+    // Route by format. Text-native documents have their text IN THE FILE, so they
+    // are read directly and never reach ocr-service - OCR would invent coordinates
+    // for content that never was pixels, and document_spans needs x/y/w/h
+    // (spec section 3). Raster input keeps the OCR path unchanged.
+    //
+    // The format strings are the ones `FsDocumentStore::upload_bytes` writes
+    // (verified against the allowlist in pacgate-docx/src/store.rs), not the
+    // `DocumentFormat` serde spellings - this column is written from that map.
+    let doc_format: String = sqlx::query("SELECT format FROM documents WHERE id = $1 LIMIT 1")
+        .bind(document_id.0)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .get("format");
+
+    let text_native = matches!(
+        doc_format.as_str(),
+        "docx" | "xlsx" | "pptx" | "html" | "markdown" | "txt"
+    );
+
+    if text_native {
+        let abs_path = std::path::Path::new(&state.config.data_dir).join(&storage_path);
+        let bytes = std::fs::read(&abs_path).map_err(|e| {
+            ApiError::internal(format!(
+                "failed to read stored document {}: {e}",
+                abs_path.display()
+            ))
+        })?;
+
+        let format = match doc_format.as_str() {
+            "docx" => DocumentFormat::Docx,
+            "xlsx" => DocumentFormat::Xlsx,
+            "pptx" => DocumentFormat::Pptx,
+            "html" => DocumentFormat::Html,
+            "markdown" => DocumentFormat::Markdown,
+            _ => DocumentFormat::Txt,
+        };
+
+        // Never returns Err: a condition that could not be read in full comes back
+        // as `incomplete = true` so the fail-closed contract stays in one place.
+        let out = crate::text_extract::extract_text_native(&format, &bytes);
+
+        // Text-native formats have no raster, so there are no spans. Zero spans is
+        // correct and is NOT "nothing was read" - `document_extractions` records
+        // completeness, which is why the cache must not key on span-emptiness
+        // (a point that cost a defect in the previous plan).
+        //
+        // Same reconciliation as the raster branches: an extractor that reports
+        // completeness while carrying no text is not a complete read.
+        let incomplete = out.incomplete || out.text.trim().is_empty();
+        let pages = 1u32;
+
+        record_extraction(
+            state,
+            tenant_id,
+            matter_id,
+            document_id,
+            version,
+            incomplete,
+            pages,
+            &out.engine,
+        )
+        .await?;
+        // `persist_extraction` is deliberately NOT called: there are no spans to
+        // persist, and calling it with an empty slice is a no-op that only
+        // obscures intent.
+        if !out.text.is_empty() {
+            ingest_text_pending(state, tenant_id, matter_id, document_id, &out.text).await?;
+        }
+
+        return Ok(ExtractedDocument {
+            text: out.text,
+            pages,
+            spans: Vec::new(),
             incomplete,
         });
     }
