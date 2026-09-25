@@ -41,6 +41,18 @@ services:
       # branch when workflows_dir is None. Measured before/after: 10 -> 222.
       # See deploy/DEFECT-workflow-mount-wrong-service.md.
       WORKFLOWS_DIR: /app/workflows
+      # Workflow tier model tags. These live here, not in the Rust source, because
+      # the roster is a property of the machine and the repo cannot observe it.
+      # While they were compiled in, `origin/main` and each AIPC disagreed as soon
+      # as either changed -- and a tag no local Ollama serves returns HTTP 404 with
+      # no fallback, so one stale pin failed every workflow at once.
+      #
+      # Keep these three in sync with deploy/client-bundle/ollama-models.txt (the
+      # pre-pull list) and with `ModelConfig::DEFAULT_*_TAG` in pacgate-core.
+      # scripts/test-model-roster-consistency.ps1 enforces that.
+      PACGATE_MODEL_MAIN: ${PACGATE_MODEL_MAIN:-gemma4:12b-it-qat}
+      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-qwen3.8:27b-mtp-q4_K_M}
+      PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,

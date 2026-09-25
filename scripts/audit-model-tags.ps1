@@ -145,6 +145,50 @@ if ($CheckInstalled) {
     }
 }
 
+# ── 4b. workflow tier roster tags count as REQUESTED ────────────────────────
+#
+# Collected BEFORE section 5 so the "pre-pulled but never requested" check knows
+# about them. Without this, a tier tag requested only via compose or the Rust
+# defaults was reported as unused -- a false positive that trains the reader to
+# ignore the warning. This file's own note about `nomic-embed-text` records the
+# same failure: a guard that cries wolf is a guard nobody reads.
+$coreLibPath    = 'pacgate-ai/crates/pacgate-core/src/lib.rs'
+$tierMainRsPath = 'pacgate-ai/crates/pacgate-api/src/main.rs'
+$tierTags       = @()
+$tierSources    = @{}
+
+if (Test-Path $coreLibPath) {
+    $coreSrc = Get-Content $coreLibPath -Raw
+    foreach ($c in @('DEFAULT_MAIN_TAG', 'DEFAULT_MID_TAG', 'DEFAULT_LOW_TAG')) {
+        $m = [regex]::Match($coreSrc, "$c\s*:\s*&'static str\s*=\s*""([^""]+)""")
+        if ($m.Success) {
+            $t = Normalize-Tag $m.Groups[1].Value
+            $tierTags += $t
+            if (-not $tierSources.ContainsKey($t)) { $tierSources[$t] = @() }
+            $tierSources[$t] += "$coreLibPath ($c)"
+        }
+    }
+}
+foreach ($compose in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
+    if (-not (Test-Path $compose)) { continue }
+    $csrc = Get-Content $compose -Raw
+    foreach ($var in @('PACGATE_MODEL_MAIN', 'PACGATE_MODEL_MID', 'PACGATE_MODEL_LOW')) {
+        $pat = [regex]::Escape($var) + '\s*:\s*\$\{' + [regex]::Escape($var) + ':-([^}]+)\}'
+        $m = [regex]::Match($csrc, $pat)
+        if ($m.Success) {
+            $t = Normalize-Tag $m.Groups[1].Value.Trim()
+            $tierTags += $t
+            if (-not $tierSources.ContainsKey($t)) { $tierSources[$t] = @() }
+            $tierSources[$t] += "$compose ($var)"
+        }
+    }
+}
+$tierTags = @($tierTags | Where-Object { $_ } | Sort-Object -Unique)
+foreach ($t in $tierTags) {
+    if (-not $requested.ContainsKey($t)) { $requested[$t] = @() }
+    foreach ($s in $tierSources[$t]) { $requested[$t] += $s }
+}
+
 # ── 5. note pre-pulled-but-unused (wasted download, not a failure) ──────────
 Write-Host ''
 Write-Host '=== 5. pre-pulled but never requested ===' -ForegroundColor Cyan
@@ -158,6 +202,79 @@ if ($unused) {
     Pass 'every pre-pulled tag is referenced by a config'
 }
 
+# ── 6. the WORKFLOW TIER roster (Rust + compose) ────────────────────────────
+#
+# WHY THIS SECTION EXISTS: this audit returned exit 0 through a defect that took
+# down every workflow. The tier tags lived in `pacgate-core/src/lib.rs` and nothing
+# here ever opened a Rust file, so three tags that all returned HTTP 404 were
+# invisible to a guard whose entire purpose is stale model tags.
+#
+# An audit that reports clean on the class of defect it exists to catch is worse
+# than no audit: it is the reason nobody looked. `test-model-roster-consistency.ps1`
+# owns the pass/fail assertions for this; section 6 reports it here so this file
+# cannot stay silent about the surface it used to skip.
+Write-Host ''
+Write-Host '=== 6. workflow tier roster (Rust defaults + compose overrides) ===' -ForegroundColor Cyan
+
+$coreLib   = 'pacgate-ai/crates/pacgate-core/src/lib.rs'
+$tiermainRs = 'pacgate-ai/crates/pacgate-api/src/main.rs'
+$rosterChecked = $false
+
+if ((Test-Path $coreLib) -and (Test-Path $tiermainRs)) {
+    $mainSrc = Get-Content $tiermainRs -Raw
+
+    if ($tierTags.Count -eq 0) {
+        Fail "$coreLib declares no DEFAULT_*_TAG constants - the tier roster moved; update this section"
+    } else {
+        Write-Host "  Rust tier fallbacks: $($tierTags -join ', ')"
+        foreach ($tag in $tierTags) {
+            if ($prePulled -contains $tag) { Pass "$tag (tier fallback) is pre-pulled" }
+            else { Fail "$tag is a tier fallback but NOT pre-pulled - the fallback is what applies when an override is unset, so it is a latent HTTP 404 on every workflow" }
+        }
+
+        # The override mechanism must actually be wired, or the constants above are
+        # applied unconditionally and this whole section checks a dead path.
+        if ($mainSrc -match 'ModelConfig::from_env\s*\(') {
+            Pass 'pacgate-api resolves tiers via ModelConfig::from_env (overrides honored)'
+        } else {
+            Fail 'pacgate-api does not call ModelConfig::from_env, so PACGATE_MODEL_* is ignored and the tier tags are hardcoded again'
+        }
+
+        # Compose overrides must exist and agree with the pre-pull list.
+        foreach ($compose in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
+            if (-not (Test-Path $compose)) { Warn "missing $compose - cannot verify its tier overrides"; continue }
+            $csrc = Get-Content $compose -Raw
+            foreach ($var in @('PACGATE_MODEL_MAIN', 'PACGATE_MODEL_MID', 'PACGATE_MODEL_LOW')) {
+                $pat = [regex]::Escape($var) + '\s*:\s*\$\{' + [regex]::Escape($var) + ':-([^}]+)\}'
+                $m = [regex]::Match($csrc, $pat)
+                if (-not $m.Success) { Fail "$compose does not set $var"; continue }
+                $tag = Normalize-Tag $m.Groups[1].Value.Trim()
+                if ($prePulled -contains $tag) { Pass "$compose $var=$tag is pre-pulled" }
+                else { Fail "$compose $var=$tag is NOT pre-pulled - a fresh install would 404 on the first workflow run" }
+            }
+        }
+        $rosterChecked = $true
+    }
+} else {
+    Warn "tier roster files not found; skipping section 6"
+}
+
+# Delegate the full assertion set (including the 'main.rs still hardcodes' case)
+# to the dedicated gate, so this audit cannot pass where that gate would fail.
+$rosterGate = 'scripts/test-model-roster-consistency.ps1'
+if (Test-Path $rosterGate) {
+    Write-Host ''
+    Write-Host '  delegating the full tier-roster assertions to the dedicated gate...' -ForegroundColor DarkGray
+    & pwsh -NoProfile -File $rosterGate *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Pass 'test-model-roster-consistency.ps1 passed'
+    } elseif ($LASTEXITCODE -eq 2) {
+        Warn 'test-model-roster-consistency.ps1 could not check (exit 2)'
+    } else {
+        Fail 'test-model-roster-consistency.ps1 FAILED - run it for the details'
+    }
+}
+
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "RESULT: $($script:failures) requested local tag(s) are missing from the pre-pull list." -ForegroundColor Red
@@ -166,5 +283,6 @@ if ($script:failures -gt 0) {
     Write-Host '  after any rebuild or re-image that relies on install.ps1 alone.' -ForegroundColor DarkGray
     exit 1
 }
-Write-Host "RESULT: every requested local tag is pre-pulled. ($($script:warnings) warning(s))" -ForegroundColor Green
+$surfaces = if ($rosterChecked) { 'config + Rust tier roster' } else { 'config' }
+Write-Host "RESULT: every requested local tag is pre-pulled. (surfaces: $surfaces; $($script:warnings) warning(s))" -ForegroundColor Green
 exit 0

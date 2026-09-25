@@ -109,11 +109,14 @@ pub struct ModelConfig {
 impl ModelConfig {
     /// Returns the default three-tier config using local Ollama.
     ///
-    /// | Tier | Model          | Use case                                          |
-    /// |------|----------------|---------------------------------------------------|
-    /// | Main | nemotron3:33b  | Deep-think · contract review · generative agents  |
-    /// | Mid  | qwen3.6:27b    | Agent automation · tabular review · core tasks    |
-    /// | Low  | qwen3.5:9b     | Fast labels · short summaries · routing           |
+    /// Prefer `from_env` in any binary: this constructor ignores the per-tier
+    /// environment overrides and therefore always returns the FALLBACK roster.
+    ///
+    /// | Tier | Fallback tag                | Use case                                       |
+    /// |------|-----------------------------|------------------------------------------------|
+    /// | Main | gemma4:12b-it-qat           | Deep-think · contract review · generative agents |
+    /// | Mid  | qwen3.8:27b-mtp-q4_K_M      | Agent automation · tabular review · core tasks   |
+    /// | Low  | gemma4:12b-it-qat           | Fast labels · short summaries · routing          |
     pub fn default_local() -> Vec<Self> {
         Self::default_local_with_base_url("http://localhost:11434")
     }
@@ -123,13 +126,63 @@ impl ModelConfig {
     /// (e.g. `http://host.docker.internal:11434`) — `localhost` inside a
     /// container refers to the container itself, not the host.
     pub fn default_local_with_base_url(base_url: &str) -> Vec<Self> {
+        Self::default_local_with_base_url_and_tags(
+            base_url,
+            Self::DEFAULT_MAIN_TAG,
+            Self::DEFAULT_MID_TAG,
+            Self::DEFAULT_LOW_TAG,
+        )
+    }
+
+    /// Fallback tier tags.
+    ///
+    /// These are FALLBACKS, not the source of truth. Which local model sits in
+    /// each tier is a per-machine roster decision (`plans/005`), not a compile
+    /// time constant, and the machine that owns that decision is the AIPC — not
+    /// the crate. Overriding them via `PACGATE_MODEL_MAIN` / `_MID` / `_LOW` is
+    /// the supported path; see `ModelConfig::from_env`.
+    ///
+    /// These three values used to be applied unconditionally, which produced a
+    /// 500 on every `/api/workflows/:id/execute` whenever the box's actual roster
+    /// names differed. A model tag that no local Ollama serves returns HTTP 404
+    /// with no fallback, so a stale pin here takes down all workflows at once.
+    pub const DEFAULT_MAIN_TAG: &'static str = "gemma4:12b-it-qat";
+    pub const DEFAULT_MID_TAG: &'static str = "qwen3.8:27b-mtp-q4_K_M";
+    pub const DEFAULT_LOW_TAG: &'static str = "gemma4:12b-it-qat";
+
+    /// Environment variables that override each tier's model tag.
+    pub const ENV_MAIN_TAG: &'static str = "PACGATE_MODEL_MAIN";
+    pub const ENV_MID_TAG: &'static str = "PACGATE_MODEL_MID";
+    pub const ENV_LOW_TAG: &'static str = "PACGATE_MODEL_LOW";
+
+    /// Build the three-tier config from explicit tags.
+    ///
+    /// `max_tokens`/`temperature` stay tier properties (a Low tier wants a short,
+    /// hotter completion regardless of which model fills it); only the tag varies.
+    pub fn default_local_with_base_url_and_tags(
+        base_url: &str,
+        main_tag: &str,
+        mid_tag: &str,
+        low_tag: &str,
+    ) -> Vec<Self> {
+        // A blank override is not a model name. Falling back to the default beats
+        // sending an empty string to Ollama, which 404s with a less obvious error
+        // than a wrong tag does.
+        let pick = |tag: &str, fallback: &'static str| {
+            let t = tag.trim();
+            if t.is_empty() { fallback.to_string() } else { t.to_string() }
+        };
+        let main_tag = pick(main_tag, Self::DEFAULT_MAIN_TAG);
+        let mid_tag = pick(mid_tag, Self::DEFAULT_MID_TAG);
+        let low_tag = pick(low_tag, Self::DEFAULT_LOW_TAG);
+
         vec![
             ModelConfig {
                 tier: LlmTier::Main,
                 provider: LlmProvider::Ollama {
                     base_url: base_url.to_string(),
                 },
-                model_name: "nemotron3:33b".into(),
+                model_name: main_tag,
                 max_tokens: 16384,
                 temperature: 0.1,
             },
@@ -138,7 +191,7 @@ impl ModelConfig {
                 provider: LlmProvider::Ollama {
                     base_url: base_url.to_string(),
                 },
-                model_name: "qwen3.6:27b".into(),
+                model_name: mid_tag,
                 max_tokens: 8192,
                 temperature: 0.1,
             },
@@ -147,25 +200,47 @@ impl ModelConfig {
                 provider: LlmProvider::Ollama {
                     base_url: base_url.to_string(),
                 },
-                model_name: "qwen3.5:9b".into(),
+                model_name: low_tag,
                 max_tokens: 4096,
                 temperature: 0.2,
             },
         ]
     }
 
+    /// Build the three-tier config from the environment, honoring the per-tier
+    /// tag overrides.
+    ///
+    /// `origin/main` carries the mechanism; each AIPC carries its own roster in
+    /// the compose environment. That split is deliberate — the model roster is
+    /// hardware the repo cannot observe, so pinning it in source guarantees the
+    /// source and the machine disagree eventually.
+    pub fn from_env(base_url: &str) -> Vec<Self> {
+        let tag = |key: &str| std::env::var(key).unwrap_or_default();
+        Self::default_local_with_base_url_and_tags(
+            base_url,
+            &tag(Self::ENV_MAIN_TAG),
+            &tag(Self::ENV_MID_TAG),
+            &tag(Self::ENV_LOW_TAG),
+        )
+    }
+
     /// Full local model roster available for per-tenant assignment via `TenantConfig::model_overrides`.
     ///
     /// Returns `(ollama_tag, description)` pairs.
+    ///
+    /// NOT authoritative. This is a starting list for an operator assigning
+    /// per-tenant overrides, not a statement about what a given AIPC has. It
+    /// previously named tags (`nemotron3:33b`, `qwen3.5:35b`, `qwen3.6:25b`) that
+    /// no machine serves, which made it read as a roster when it was a wish list.
+    /// Only tags confirmed present on a real box belong here; the authoritative
+    /// list for an install is `deploy/client-bundle/ollama-models.txt`.
     pub fn local_model_roster() -> &'static [(&'static str, &'static str)] {
         &[
-            ("nemotron3:33b",  "Deep-think · generative AI agents · complex contract review"),
-            ("gemma4:26b",     "Efficient reasoning · document analysis · structured output"),
-            ("gemma4:e2b",     "Efficient variant · fast structured extraction"),
-            ("qwen3.5:35b",    "Strong general · multilingual ZH/EN · cross-border matters"),
-            ("qwen3.5:9b",     "Mid-weight general · fast turnaround · Low-tier default"),
-            ("qwen3.6:27b",    "Agent automation · OpenClaw pipelines · Mid-tier default"),
-            ("qwen3.6:25b",    "Agent variant · workflow execution · Hermes scheduled tasks"),
+            (Self::DEFAULT_MAIN_TAG, "Deep-think · contract review · generative agents"),
+            (Self::DEFAULT_MID_TAG,  "Agent automation · tabular review · core tasks"),
+            ("ornith-1.5:9b",       "Fast local fallback · short summaries"),
+            ("ornith-1.5:35b",      "Strong general · multilingual ZH/EN · cross-border matters"),
+            ("nemotron-3.5-lightning:30b-a3b", "Long-context reasoning (1M) · large document sets"),
         ]
     }
 }
@@ -1367,6 +1442,83 @@ mod model_config_tests {
             serde_json::to_string(&a).unwrap(),
             serde_json::to_string(&b).unwrap()
         );
+    }
+
+    fn tag_of(cfg: &ModelConfig) -> &str {
+        &cfg.model_name
+    }
+
+    #[test]
+    fn explicit_tags_fill_each_tier() {
+        let configs = ModelConfig::default_local_with_base_url_and_tags(
+            "http://localhost:11434",
+            "main-tag",
+            "mid-tag",
+            "low-tag",
+        );
+        assert_eq!(configs.len(), 3);
+        assert_eq!(configs[0].tier, LlmTier::Main);
+        assert_eq!(tag_of(&configs[0]), "main-tag");
+        assert_eq!(configs[1].tier, LlmTier::Mid);
+        assert_eq!(tag_of(&configs[1]), "mid-tag");
+        assert_eq!(configs[2].tier, LlmTier::Low);
+        assert_eq!(tag_of(&configs[2]), "low-tag");
+    }
+
+    #[test]
+    fn blank_tag_falls_back_rather_than_sending_an_empty_model_name() {
+        // The failure this prevents: an operator sets PACGATE_MODEL_MID="" to "clear"
+        // it, and Ollama receives an empty model name and 404s with an error far less
+        // obvious than a wrong tag would produce.
+        let configs = ModelConfig::default_local_with_base_url_and_tags(
+            "http://localhost:11434",
+            "   ",
+            "",
+            "\t",
+        );
+        assert_eq!(tag_of(&configs[0]), ModelConfig::DEFAULT_MAIN_TAG);
+        assert_eq!(tag_of(&configs[1]), ModelConfig::DEFAULT_MID_TAG);
+        assert_eq!(tag_of(&configs[2]), ModelConfig::DEFAULT_LOW_TAG);
+    }
+
+    #[test]
+    fn blank_tag_is_trimmed_not_merely_checked() {
+        // A whitespace-padded tag would otherwise be sent verbatim and 404.
+        let configs = ModelConfig::default_local_with_base_url_and_tags(
+            "http://localhost:11434",
+            "  spaced-tag  ",
+            "mid",
+            "low",
+        );
+        assert_eq!(tag_of(&configs[0]), "spaced-tag");
+    }
+
+    #[test]
+    fn tier_completion_settings_do_not_move_with_the_tag() {
+        // Only the tag is configurable; a Low tier must stay short and warmer no
+        // matter which model fills it, or the override quietly changes behaviour.
+        let configs = ModelConfig::default_local_with_base_url_and_tags(
+            "http://localhost:11434",
+            "m",
+            "d",
+            "l",
+        );
+        assert_eq!(configs[0].max_tokens, 16384);
+        assert_eq!(configs[1].max_tokens, 8192);
+        assert_eq!(configs[2].max_tokens, 4096);
+        assert!(configs[2].temperature > configs[0].temperature);
+    }
+
+    #[test]
+    fn defaults_are_not_the_tags_that_404ed() {
+        // Regression guard for the original defect: these three were applied
+        // unconditionally and all three returned HTTP 404 on a live Ollama, taking
+        // down every workflow run. They must not come back.
+        for stale in ["nemotron3:33b", "qwen3.6:27b", "qwen3.5:9b"] {
+            assert_ne!(ModelConfig::DEFAULT_MAIN_TAG, stale);
+            assert_ne!(ModelConfig::DEFAULT_MID_TAG, stale);
+            assert_ne!(ModelConfig::DEFAULT_LOW_TAG, stale);
+        }
     }
 
     #[test]

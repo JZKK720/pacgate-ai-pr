@@ -106,6 +106,19 @@ $gates = @(
     # makes it exit 1. A version of this file that could not fail on its own defect
     # passed the reintroduced bug, which is why the negative test is mandatory here.
     'scripts/test-chat-no-auto-egress.ps1'
+    # Workflow tier roster. The Rust defaults, the pre-pull list and the compose
+    # overrides each named the tier models, and they had drifted into three
+    # different sets. All three Rust tags returned HTTP 404 on a live Ollama, and a
+    # tag no local Ollama serves 404s with no fallback -- so every workflow run
+    # returned 500. That is all 222 templates down from a value nothing checked.
+    #
+    # `audit-model-tags.ps1` reported clean throughout because it never opened a
+    # Rust file; its exit 0 was a false all-clear, which is worse than no check.
+    #
+    # STATIC - reads Rust source, two compose files and the prepull list - so it is
+    # safe in the gate list. Negative-tested against both the stale tag and a
+    # main.rs that bypasses the overrides.
+    'scripts/test-model-roster-consistency.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
