@@ -76,10 +76,30 @@ impl FsDocumentStore {
             Some("pdf") => "pdf",
             Some("txt") => "txt",
             Some("md") | Some("markdown") => "markdown",
+            Some("xlsx") => "xlsx",
+            Some("pptx") => "pptx",
+            Some("html") | Some("htm") => "html",
             _ => {
-                return Err(pacgate_core::PacgateError::ValidationError(
-                    "unsupported file type; expected .docx, .pdf, .txt, or .md".into(),
-                ))
+                // Name what was rejected and what is accepted. The legacy binary
+                // formats are called out with a specific remedy because clients do
+                // send them and "unsupported" alone tells an operator nothing.
+                let ext = file_path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("(none)")
+                    .to_ascii_lowercase();
+                let msg = match ext.as_str() {
+                    "doc" | "xls" | "ppt" | "wps" | "odt" | "ods" | "odp" | "msg" => format!(
+                        ".{ext} is a legacy or unsupported format. Re-save it as \
+                         .docx/.xlsx/.pptx and upload again; PacGate reads the modern \
+                         formats directly."
+                    ),
+                    _ => format!(
+                        ".{ext} is not a supported format. Supported: \
+                         .docx .xlsx .pptx .pdf .txt .md .html"
+                    ),
+                };
+                return Err(pacgate_core::PacgateError::ValidationError(msg));
             }
         };
 
@@ -331,6 +351,9 @@ impl FsDocumentStore {
             "pdf" => "pdf",
             "txt" => "txt",
             "markdown" => "md",
+            "xlsx" => "xlsx",
+            "pptx" => "pptx",
+            "html" => "html",
             _ => "bin",
         };
         format!(
@@ -439,6 +462,9 @@ fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
         "pdf" => DocumentFormat::Pdf,
         "txt" => DocumentFormat::Txt,
         "markdown" => DocumentFormat::Markdown,
+        "xlsx" => DocumentFormat::Xlsx,
+        "pptx" => DocumentFormat::Pptx,
+        "html" => DocumentFormat::Html,
         _ => DocumentFormat::Txt,
     };
     Document {

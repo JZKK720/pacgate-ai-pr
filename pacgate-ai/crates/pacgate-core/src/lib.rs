@@ -242,6 +242,12 @@ pub enum DocumentFormat {
     Pdf,
     Txt,
     Markdown,
+    /// `.xlsx` — read as OOXML text; numeric cells (`<v>`) are out of scope.
+    Xlsx,
+    /// `.pptx` — read as OOXML text.
+    Pptx,
+    /// `.html`/`.htm` — read by stripping tags, not rasterised.
+    Html,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

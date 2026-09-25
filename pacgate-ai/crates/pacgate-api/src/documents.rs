@@ -34,6 +34,9 @@ fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
             "pdf" => pacgate_core::DocumentFormat::Pdf,
             "txt" => pacgate_core::DocumentFormat::Txt,
             "markdown" => pacgate_core::DocumentFormat::Markdown,
+            "xlsx" => pacgate_core::DocumentFormat::Xlsx,
+            "pptx" => pacgate_core::DocumentFormat::Pptx,
+            "html" => pacgate_core::DocumentFormat::Html,
             _ => pacgate_core::DocumentFormat::Txt,
         },
         version: row.get::<i32, _>("version") as u32,
@@ -247,16 +250,22 @@ pub async fn download_document(
 
     let content_type = match doc.format {
         DocumentFormat::Docx => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        DocumentFormat::Xlsx => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        DocumentFormat::Pptx => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         DocumentFormat::Pdf => "application/pdf",
         DocumentFormat::Txt => "text/plain; charset=utf-8",
         DocumentFormat::Markdown => "text/markdown; charset=utf-8",
+        DocumentFormat::Html => "text/html; charset=utf-8",
     };
 
     let extension = match doc.format {
         DocumentFormat::Docx => "docx",
+        DocumentFormat::Xlsx => "xlsx",
+        DocumentFormat::Pptx => "pptx",
         DocumentFormat::Pdf => "pdf",
         DocumentFormat::Txt => "txt",
         DocumentFormat::Markdown => "md",
+        DocumentFormat::Html => "html",
     };
 
     Response::builder()
