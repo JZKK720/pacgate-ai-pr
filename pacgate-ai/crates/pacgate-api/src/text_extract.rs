@@ -483,8 +483,27 @@ fn extract_ooxml(spec: &OoxmlSpec, bytes: &[u8]) -> TextExtraction {
         Err(e) => return TextExtraction::failed("ooxml-zip-scan", &format!("not a zip: {e}")),
     };
 
+    // Count entries we could not even OPEN while building the part list. This used
+    // to be `filter_map(|i| archive.by_index(i).ok()...)`, which DROPS an entry it
+    // cannot open: the entry is never scanned, never appears in `parts_read`, and -
+    // because the read loop below only marks `incomplete` on a failed READ - a
+    // failed LISTING never reached it. A package whose header or footnotes live in
+    // an unopenable part therefore reported `incomplete == false`.
+    //
+    // That is a fail-open with a real consequence: `sanitize.rs` refuses only on
+    // `incomplete == true`, so the document would be marked `sanitized`, the egress
+    // gate opened, and text from the unscanned part downloaded unredacted. An entry
+    // nobody could open is content nobody scanned, so it must refuse.
+    let mut unlisted = 0usize;
     let names: Vec<String> = (0..archive.len())
-        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| match archive.by_index(i) {
+            Ok(f) => Some(f.name().to_string()),
+            Err(e) => {
+                unlisted += 1;
+                tracing::warn!(index = i, error = %e, "ooxml entry could not be listed");
+                None
+            }
+        })
         .collect();
 
     // Collect the prefix parts by name first so the archive borrow is released
@@ -501,6 +520,18 @@ fn extract_ooxml(spec: &OoxmlSpec, bytes: &[u8]) -> TextExtraction {
         return TextExtraction::failed(
             "ooxml-zip-scan",
             &format!("no parts under prefix {}", spec.prefix),
+        );
+    }
+
+    // Parts were found, so the package is readable in principle - but if any entry
+    // could not be listed, the part list is not the whole archive and completeness
+    // cannot be claimed.
+    if unlisted > 0 {
+        out.incomplete = true;
+        tracing::warn!(
+            unlisted,
+            parts = prefix_parts.len(),
+            "ooxml: some archive entries could not be listed; refusing to report complete"
         );
     }
 
@@ -1361,6 +1392,109 @@ mod tests {
             zip.finish().expect("finish");
         }
         buf
+    }
+
+    /// Write `parts` into a zip, then mark the entry named `target` as ENCRYPTED by
+    /// setting the general-purpose bit flag in both the local file header and the
+    /// central directory record.
+    ///
+    /// `ZipArchive::new` still parses the package and still reports 4 entries; only
+    /// opening that one entry fails (`Password required to decrypt file`). That is
+    /// the precise condition the OOXML scanner's part-list construction must
+    /// survive.
+    ///
+    /// Two earlier fixtures are worth recording, because both produced a test that
+    /// proved nothing:
+    ///   1. corrupting the local-header signature byte -> the archive could not be
+    ///      opened at all (`InvalidArchive("Could not find EOCD")`), so it exercised
+    ///      the "not a zip" branch, not the listing branch;
+    ///   2. asserting inside this helper that exactly two records were patched. The
+    ///      two records have different fixed sizes before the filename (30 vs 46),
+    ///      and pinning that count inside the helper hid a wrong-offset bug while
+    ///      saying nothing about whether the archive was still openable.
+    /// The assertions that make this fixture meaningful live in the test below, on
+    /// the archive's own observable behaviour.
+    fn zip_of_with_unopenable_entry(parts: &[(&str, &str)], target: &str) -> Vec<u8> {
+        let mut bytes = zip_of(parts);
+        let needle = target.as_bytes();
+
+        for i in 0..bytes.len().saturating_sub(46) {
+            let is_local = bytes[i..i + 4] == [0x50, 0x4b, 0x03, 0x04];
+            let is_cd = bytes[i..i + 4] == [0x50, 0x4b, 0x01, 0x02];
+            if !(is_local || is_cd) {
+                continue;
+            }
+            // Fixed sizes before the filename differ: local file header is 30
+            // bytes, central directory record is 46.
+            let name_at = if is_local { i + 30 } else { i + 46 };
+            if !bytes[name_at..].starts_with(needle) {
+                continue;
+            }
+            // General-purpose bit flag, bit 0 = encrypted.
+            // Local file header: 4 sig, 2 version, 2 flags -> flags at +6.
+            // Central directory: 4 sig, 2 made-by, 2 needed, 2 flags -> flags at +8.
+            let flags_at = if is_local { i + 6 } else { i + 8 };
+            bytes[flags_at] |= 0x01;
+        }
+        bytes
+    }
+
+    /// An entry that cannot be OPENED from the archive listing must make the whole
+    /// read incomplete.
+    ///
+    /// This is the fail-open shape this workstream exists to close. The scan builds
+    /// its part list with `filter_map(|i| archive.by_index(i).ok()...)`, so an entry
+    /// that fails to open is silently dropped from the list. The read loop below it
+    /// marks `incomplete` when a *read* fails, but a *listing* failure never reaches
+    /// that loop - it vanishes first. If every other part reads cleanly, the result
+    /// reports `incomplete == false` while a part of the archive was never scanned.
+    ///
+    /// That matters because `sanitize.rs` refuses only on `incomplete == true`: a
+    /// document whose header or footnotes live in an unopenable part would be marked
+    /// `sanitized` and the egress gate opened, with that part's text never redacted.
+    /// `extract_ooxml`'s own docstring claims iterating the archive is "the only way
+    /// to be sure every byte that could carry text was looked at" - this test holds
+    /// it to that.
+    #[test]
+    fn ooxml_entry_that_cannot_be_opened_is_incomplete() {
+        let doc = docx_document(&w_para(BODY));
+        // The header carries the token precisely because header text is what a
+        // converter typically misses. If its entry is unopenable, the read must not
+        // be allowed to claim completeness.
+        let hdr = w_part("hdr", &w_para(&format!("Client ID {HEADER}")));
+        let bytes = zip_of_with_unopenable_entry(
+            &[
+                ("[Content_Types].xml", &content_types_docx()),
+                ("_rels/.rels", &package_rels()),
+                ("word/document.xml", &doc),
+                ("word/header1.xml", &hdr),
+            ],
+            "word/header1.xml",
+        );
+
+        // Fixture preconditions, asserted on the archive's OBSERVABLE behaviour.
+        // Without these the final assertion would pass for the wrong reason - a
+        // normal, fully-read document - and prove nothing.
+        let mut verify = zip::ZipArchive::new(std::io::Cursor::new(&bytes))
+            .expect("fixture precondition: the archive must still OPEN");
+        assert_eq!(
+            verify.len(),
+            4,
+            "fixture precondition: the entry must still be LISTED, or this fixture \
+             cannot exercise the listing path"
+        );
+        assert!(
+            (0..verify.len()).any(|i| verify.by_index(i).is_err()),
+            "fixture precondition: at least one entry must FAIL to open, or there is \
+             nothing for the listing path to drop"
+        );
+
+        let out = extract_text_native(&DocumentFormat::Docx, &bytes);
+        assert!(
+            out.incomplete,
+            "an archive entry that could not be opened was never scanned, yet the \
+             read reported COMPLETE - a part could hold unredacted text"
+        );
     }
 
     fn content_types_docx() -> String {
