@@ -1,4 +1,19 @@
-# Pacgate-ai DeerFlow configuration — on-board local models (ollama.com blocked)
+# Pacgate-ai DeerFlow configuration — on-board local models are the DEFAULT.
+#
+# EGRESS STATUS (corrected 2026-09-25): this file previously said "ollama.com
+# blocked". That was FALSE as written. Nothing in this repo blocks ollama.com —
+# not a hosts entry, not a firewall rule, not a proxy. Some client networks block
+# it themselves (the handoff notes say "may be blocked"), which is a property of
+# their network, not a control we ship. So treat `:cloud` tags as REACHABLE unless
+# a given site proves otherwise: `:cloud` models DO send prompt text to ollama.com
+# wherever the network allows it.
+#
+# What we control is the DEFAULT. Local models are default, auto-escalation is
+# local (see `model_routing` below), and cloud models are reachable only when a
+# user PICKES one. The firm accepts that deliberate choice; it does not accept
+# egress as a side effect of prompt size, upload, or not touching the picker.
+# `scripts/test-chat-no-auto-egress.ps1` enforces that distinction.
+#
 # Default (first) model = gemma4:12b-it-qat (schema-valid structured/tool calls,
 # benchmarked end-to-end). ornith-1.5:9b is listed after it as a fast fallback.
 #
@@ -126,7 +141,7 @@ models:
 
   - name: glm-5.3-flash-cloud
     display_name: GLM 5.3 Flash (Cloud)
-    description: Fast cloud model for research and drafting. VLM-capable (vision) so view_image is registered; used as the auto-routed cloud model. Cloud-tagged via Ollama.
+    description: Fast cloud model for research and drafting. VLM-capable (vision) so view_image is registered. Cloud-tagged via Ollama. NOTE - this is no longer the auto-escalation target; escalation is local since 2026-09-25. Select it explicitly to use it.
     use: langchain_openai:ChatOpenAI
     model: glm-5.3-flash:cloud
     api_key: ollama
@@ -137,38 +152,41 @@ models:
     supports_vision: true
     stream_chunk_timeout: 120
 
-# ── Automatic local/cloud model routing ─────────────────────────────────────
+# ── Automatic model routing: escalation stays LOCAL ─────────────────────────
 # When enabled and NO explicit model is requested, deer-flow auto-picks the
-# model per request. It routes to the cloud model when EITHER:
+# model per request. It escalates when EITHER:
 #   - the conversation-history token estimate (from the run's messages)
 #     >= message_token_threshold, OR
 #   - the bound tool surface count >= tool_count_threshold.
-# Otherwise it stays on the local default (private, fast).
 #
-# The base prompt (system prompt + tool schemas) is constant (~41K tokens) no
-# matter the request, so it CANNOT distinguish simple from complex. The variable
-# signal is the conversation-history token count (message_tokens), which grows
-# with multi-step research, long tool results, etc. So:
-#   - a short chat (small history) stays LOCAL,
-#   - a long research thread (large history) routes to CLOUD.
+# PACGATE 2026-09-25: `cloud_model` is now the LOCAL long-context model, NOT a
+# cloud tag. This was a client-pipeline defect, not a preference.
 #
-#   enabled:            master switch. false = manual picker only.
-#   local_model:        the model used for small prompts (must be in `models:`).
-#   cloud_model:        the model used for large prompts (must be in `models:`).
-#   message_token_threshold: conversation-history tokens above which we route to cloud.
-#   tool_count_threshold:   number of bound tools above which we route to cloud.
-#                           (The tool surface is constant ~151 here, so set this
-#                           ABOVE 151 to disable the tool-count trigger, or below
-#                           to always route to cloud.)
+# What was wrong: the escalation target was `glm-5.3-flash-cloud` at a 20,000-token
+# threshold. The token signal grows with CONVERSATION HISTORY, which grows with
+# uploaded-document text and tool results -- so an attorney who uploaded an
+# ordinary ~30-page contract and did not touch the model picker had that contract
+# sent to ollama.com, with no sanitizer, no consent and no banner. The firm's whole
+# promise is that client identity does not leave the machine, so the DEFAULT had to
+# stop being egress.
 #
-# NOTE: cloud routing sends prompt text to ollama.com. The firm accepted this
-# for deer-flow/QM generation (decided 2026-08-30). Set enabled: false to keep
-# everything fully on-device.
+# Why the threshold is what it is: gemma4-12b (the local default) is capped at a
+# 64K context, while the local long-context model has 1M. Escalating at 40,000 is
+# ~62% of the small model's window, so the escalation exists for the reason it
+# should -- the small model is about to overflow -- and it lands on a model that
+# can actually hold the context. It is no longer a cloud trigger.
+#
+# Cloud models remain in `models:` and remain SELECTABLE in the picker, so
+# deliberate cloud use is unaffected. The 2026-08-30 decision that the firm accepts
+# prompt egress in exchange for research timelines still stands for a user who
+# chooses it explicitly. Only the AUTOMATIC path changed.
 model_routing:
   enabled: true
   local_model: gemma4-12b-local
-  cloud_model: glm-5.3-flash-cloud
-  message_token_threshold: 20000
+  # LOCAL, not cloud. Renaming this key would break deer-flow's config schema, so
+  # it is still called cloud_model; read it as "the escalation target".
+  cloud_model: nemotron-3.5-lightning-30b-local
+  message_token_threshold: 40000
   tool_count_threshold: 200
 
 sandbox:

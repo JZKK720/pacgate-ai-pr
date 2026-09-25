@@ -94,6 +94,18 @@ $gates = @(
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
+    # Chat-lane default egress. `model_routing` escalated to a CLOUD model at a
+    # threshold a single uploaded contract could cross, so an attorney who never
+    # touched the model picker had document text sent to ollama.com with no
+    # sanitizer and no consent. That is the client's only upload path and the
+    # firm's central promise, so it is a gate rather than a config comment.
+    #
+    # This one is STATIC - it reads deer-flow-config.yaml and the agent patch, and
+    # A5 skips itself if ollama is unreachable - so it is safe in the gate list.
+    # It was negative-tested: reintroducing the cloud target at the old threshold
+    # makes it exit 1. A version of this file that could not fail on its own defect
+    # passed the reintroduced bug, which is why the negative test is mandatory here.
+    'scripts/test-chat-no-auto-egress.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2

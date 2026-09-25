@@ -71,15 +71,26 @@ def _resolve_model_name(
     """Resolve a runtime model name safely, falling back to default if invalid. Returns None if no models are configured.
 
     Pacgate: when ``model_routing.enabled`` is true and no explicit model was
-    requested, route to a cloud model when the conversation history is large
-    (message_tokens >= message_token_threshold) OR the bound tool surface is
-    large (tool_count >= tool_count_threshold).
+    requested, escalate to the routing target when the conversation history is
+    large (message_tokens >= message_token_threshold) OR the bound tool surface
+    is large (tool_count >= tool_count_threshold).
 
     The base prompt (system prompt + tool schemas) is constant (~41K tokens) no
     matter the request, so it cannot distinguish simple from complex. The
     variable signal is the conversation-history token count (message_tokens),
     which grows with multi-step research, long tool results, etc. Simple chats
-    stay on the local default; genuinely large runs route to cloud.
+    stay on the local default; genuinely large runs escalate.
+
+    Pacgate 2026-09-25: the escalation target is NOT necessarily cloud. It was
+    ``glm-5.3-flash-cloud`` at a 20k threshold, which meant an ordinary uploaded
+    contract egressed to ollama.com with no sanitizer and no consent. The default
+    config now names the LOCAL long-context model, so escalation stays on-device.
+    The key is still called ``cloud_model`` because deer-flow's schema owns that
+    name; read it as "the escalation target", not as "a cloud model".
+
+    A cloud model is still selected when a user PICKS one in the model picker --
+    that is a deliberate choice and the firm accepts it. What this function must
+    never do is send a document off-machine as a side effect of prompt size.
     """
     app_config = app_config or get_app_config()
     default_model_name = app_config.models[0].name if app_config.models else None
@@ -108,9 +119,14 @@ def _resolve_model_name(
             tool_threshold = _routing_get("tool_count_threshold")
             message_threshold = _routing_get("message_token_threshold")
             if cloud_model and app_config.get_model_config(cloud_model):
-                # Route to cloud if the conversation history OR the tool surface
-                # crosses its threshold. Either indicates the local model would
-                # choke on a large context.
+                # Escalate if the conversation history OR the tool surface crosses
+                # its threshold. Either indicates the local default would choke on
+                # a large context.
+                #
+                # The target may be LOCAL (the shipped default) or cloud (if an
+                # operator points it at a cloud tag). The log line below reports
+                # WHICH, so a later audit can tell egress from an on-device
+                # escalation instead of having to reason about config.
                 over_message_limit = (
                     message_tokens is not None
                     and message_threshold is not None
@@ -122,9 +138,22 @@ def _resolve_model_name(
                     and tool_count >= tool_threshold
                 )
                 if over_message_limit or over_tool_limit:
+                    # Report WHICH KIND of target was chosen. The old message said
+                    # "cloud model" unconditionally, so with a local escalation
+                    # target it would have MISREPORTED an on-device run as egress -
+                    # an audit reading the logs would reach the wrong conclusion.
+                    #
+                    # Match BOTH cloud conventions. The MODEL NAME uses a hyphen
+                    # ("deepseek-v4-pro-cloud") but the underlying OLLAMA TAG uses a
+                    # colon ("deepseek-v4-pro:cloud"). Testing only for the hyphen
+                    # reports a colon-tagged cloud model as LOCAL - the exact
+                    # misreport this line exists to prevent.
+                    _lower = (cloud_model or "").lower()
+                    _is_cloud = _lower.endswith("-cloud") or _lower.endswith(":cloud")
+                    target_kind = "CLOUD (egress)" if _is_cloud else "LOCAL (on-device)"
                     logger.info(
-                        "Pacgate model routing: message_tokens=%s (thr %s), tools=%s (thr %s) -> cloud model '%s'",
-                        message_tokens, message_threshold, tool_count, tool_threshold, cloud_model,
+                        "Pacgate model routing: message_tokens=%s (thr %s), tools=%s (thr %s) -> %s model '%s'",
+                        message_tokens, message_threshold, tool_count, tool_threshold, target_kind, cloud_model,
                     )
                     return cloud_model
                 # Fall through to local default for small contexts.
