@@ -478,6 +478,11 @@ One new compose service if §7.1's conversion service is adopted, which the rele
 workflow must also build and publish - the same mechanical change `ocr-service`
 already went through in 0.1.16.
 
+**Superseded:** the §7.1 amendment replaced the conversion service with a Rust
+extractor inside `pacgate-api`, so **no new compose service is needed** and the
+release workflow needs no change. The paragraph above is retained only to record
+what the original plan would have required. Nothing is added to the image set.
+
 ### Plan A release requirement
 
 `ocr-service` and `pacgate-api` are both single-container images (the Dockerfiles

@@ -577,7 +577,7 @@ git commit -m "feat(extract): route text-native formats to the direct reader, ne
 
 **Files:**
 - Modify: `scripts/run-all-checks.ps1`
-- Modify: `docs/superpowers/specs/2026-09-24-document-coverage-and-text-sanitize-design.md` (§12)
+- Modify: `docs/superpowers/specs/2026-09-24-document-coverage-and-text-sanitize-design.md` (§13 Delivery — NOT §12; the spec was renumbered when §11 was added)
 
 **Interfaces:**
 - Consumes: `scripts/test-text-native-sanitize.ps1` from Task 1.
@@ -605,7 +605,9 @@ If a mutation suite fails, check `git status --short` for harness residue and a 
 
 - [ ] **Step 3: Record the release requirement**
 
-Append to §12 of the spec:
+Append to §13 (Delivery) of the spec. **Verify the section number first** with
+`Select-String -Path docs/superpowers/specs/2026-09-24-document-coverage-and-text-sanitize-design.md -Pattern '^## '`
+— an earlier revision of this plan said §12, which is Non-goals.
 
 ```markdown
 ### Plan B release requirement
