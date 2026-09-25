@@ -9,10 +9,17 @@ mod matters;
 mod sanitize;
 mod search;
 mod state;
+mod text_extract;
 mod workflows;
 
 pub use error::ApiError;
 pub use state::{AppConfig, AppState};
+// Re-exported rather than left module-private so the extractor's public surface is
+// reachable from outside the crate. `mod text_extract;` is private like its
+// neighbours, and an unused private module would warn as dead code until Task 4
+// wires it into `extract.rs`; a facade re-export is the honest fix rather than an
+// `#[allow(dead_code)]` that would hide real dead code later.
+pub use text_extract::{extract_text_native, TextExtraction};
 
 use axum::{
     extract::DefaultBodyLimit,

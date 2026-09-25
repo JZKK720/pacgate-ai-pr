@@ -44,6 +44,9 @@ dotenvy.workspace = true
 config.workspace = true
 bytes.workspace = true
 reqwest.workspace        = true
+# OOXML text extraction reads the file's own zip parts directly
+# (src/text_extract.rs). Same crate `pacgate-docx` already uses.
+zip.workspace            = true
 
 [dev-dependencies]
 # tower with util feature for ServiceExt::oneshot in integration tests
