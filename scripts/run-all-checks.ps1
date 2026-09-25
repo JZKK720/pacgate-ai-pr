@@ -110,6 +110,14 @@ $liveStackGates = @(
     # its cache-hit branch. A unit test on either half passes while the product
     # still leaks. It needs the stack up, so it reports exit 2 when it cannot run.
     'scripts/test-empty-extraction-gate.ps1'
+    # PROVES a text-native document (txt/md/html/docx/xlsx/pptx) reaches the direct
+    # reader and NEVER the OCR lane. Before Plan B those formats fell through to
+    # raster OCR, which returned nothing usable for a text file, so the upload was
+    # accepted and then produced an unsanitizable or empty document. The unit tests
+    # on extract_text_native cover the reader in isolation; only this script proves
+    # the API's routing sends the format there end-to-end. It needs the stack up, so
+    # it reports exit 2 when it cannot run.
+    'scripts/test-text-native-sanitize.ps1'
 )
 
 $measurements = @(

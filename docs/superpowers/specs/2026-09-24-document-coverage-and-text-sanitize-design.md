@@ -489,6 +489,16 @@ separate migration step is needed on a client machine.
 Until that release ships, the fix exists only as a dev-box image shadow and
 `docker compose pull` reverts it.
 
+### Plan B release requirement
+
+`pacgate-api` is a single image (the Dockerfile builds the crate), so the text
+extractor cannot be delivered by config or a bind-mount. Plan B requires a **tagged
+release** rebuilding `pacgate-api`. No migration is added by Plan B — the format
+allowlist is code, not schema.
+
+Until that release ships, the fix exists only as a dev-box image shadow and
+`docker compose pull` reverts it.
+
 ## 14. Build order and why
 
 | # | workstream | why this position |
