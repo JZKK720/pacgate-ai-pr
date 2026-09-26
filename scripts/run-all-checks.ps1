@@ -91,6 +91,12 @@ $gates = @(
     'scripts/test-qm-sandbox-fingerprint.ps1'
     'scripts/test-version-marker.ps1'
     'scripts/test-version-marker-against-image.ps1'
+    # The Rust layer was entirely un-gated before 2026-09-26: cargo test and
+    # cargo clippy ran nowhere in CI or run-all-checks. That is why a silent
+    # recall miss shipped in four detectors. Scope is deliberately -p
+    # pacgate-redact, which is clean; the workspace has pre-existing clippy
+    # warnings in other crates.
+    'scripts/test-rust-workspace.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
