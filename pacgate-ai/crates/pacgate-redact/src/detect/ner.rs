@@ -25,7 +25,24 @@ use tokenizers::{ModelWrapper, Tokenizer};
 use crate::detect::Detector;
 use crate::{EntityType, Match, MatchSource, RedactError, RedactResult};
 
+use super::window;
+
 const MODEL_FILES: &str = "config.json|model.safetensors|vocab.txt";
+
+/// BERT context limit, in tokens: 512 slots minus the `[CLS]`/`[SEP]` pair.
+///
+/// Documents are planned into windows of at most this many tokens. Do not raise
+/// it - the model's positional embeddings are fixed at 512, so a larger window
+/// would silently read past them.
+pub const MAX_TOKENS: usize = 500;
+
+/// Characters of overlap between consecutive windows.
+///
+/// A name straddling a boundary is seen partially by one window and fully by the
+/// next. The overlap lets the next window see the whole name, and
+/// `window::merge_matches` collapses the duplicate. 64 characters comfortably
+/// exceeds the longest Chinese organisation name this model is likely to tag.
+const OVERLAP_CHARS: usize = 64;
 
 /// Token-classification labels this detector maps. TIME stays unmatched on
 /// purpose: dates are Tier-1 pattern territory, and a model guess must never
@@ -211,23 +228,66 @@ impl Detector for NerDetector {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        // BERT context limit; long documents are processed in windows.
-        const MAX_TOKENS: usize = 500; // 512 slots minus [CLS]/[SEP]
+
+        // Plan first, tokenise per window. The previous code tokenised the WHOLE
+        // text and only then found it did not fit, which meant every document
+        // over roughly one page failed the entire job at pipeline.rs:68 - NER did
+        // not degrade to rules-only, it took the document down. verify() replayed
+        // the same detector and hit the same wall, so no verdict could be Pass
+        // either: the document simply could not be sanitized.
+        let core = window::plan_windows(text, MAX_TOKENS, window::estimated_tokens);
+        let windows = window::expand_with_overlap(text, &core, OVERLAP_CHARS);
+
+        let mut all: Vec<Match> = Vec::new();
+        for w in &windows {
+            // Fail closed: a failing window fails the DOCUMENT. No `if let Ok`,
+            // no `filter_map`, no best-effort. A region that was never scanned
+            // must not produce a Pass verdict. This is the same defect shape as
+            // the OOXML fail-open fixed in 324144c, where a
+            // `filter_map(...ok())` silently dropped unreadable archive entries.
+            all.extend(self.detect_window(text, *w)?);
+        }
+
+        // Windows overlap, so the same name can be seen partially by one window
+        // and fully by the next. Collapse those to one span.
+        Ok(window::merge_matches(all))
+    }
+}
+
+impl NerDetector {
+    /// Run the model over one window of `text`, returning matches whose offsets
+    /// are BYTE offsets into the WHOLE `text`.
+    ///
+    /// Extracted from the previous single-shot `detect` body. The tensor build,
+    /// forward pass, classifier head, argmax and BIO decode are unchanged; what
+    /// differs is the slice they operate on and the offset conversion.
+    fn detect_window(&self, text: &str, w: window::Window) -> RedactResult<Vec<Match>> {
+        // CHANGE 1: operate on the window, not the whole text.
+        let slice: String = text.chars().skip(w.start).take(w.end - w.start).collect();
+        if slice.is_empty() {
+            return Ok(Vec::new());
+        }
+
         // add_special_tokens=true is REQUIRED: BERT expects [CLS] text [SEP].
         // Without it the hidden states shift by one position and every
         // prediction degrades (locations mis-span, person names never fire).
         let encoding = self
             .tokenizer
-            .encode_char_offsets(text, true)
+            .encode_char_offsets(slice.as_str(), true)
             .map_err(|e| RedactError::Internal(format!("tokenization failed: {e}")))?;
         let ids: Vec<u32> = encoding.get_ids().to_vec();
+        // Fail closed rather than truncate. `estimated_tokens` over-estimates, so
+        // reaching this branch means the estimate was wrong for this input;
+        // truncating would drop text that was never scanned while still
+        // reporting success.
         if ids.len() > MAX_TOKENS + 2 {
-            // Simple sliding window over the first window for now; full
-            // windowed inference is a Task 7 follow-up (plan 019 T7 harness
-            // measures recall, not throughput).
-            return Err(RedactError::Internal(
-                "document exceeds NER context window (512 tokens); windowed inference not yet wired".to_string(),
-            ));
+            return Err(RedactError::Internal(format!(
+                "window [{}, {}) produced {} tokens, over the {MAX_TOKENS} limit - \
+                 the planning bound was wrong, refusing rather than truncating",
+                w.start,
+                w.end,
+                ids.len()
+            )));
         }
         if ids.len() < 2 {
             return Ok(Vec::new());
@@ -246,8 +306,7 @@ impl Detector for NerDetector {
         // The head weights live in the checkpoint as `classifier.weight/bias`
         // (BertForTokenClassification layout, prefix-less or `bert.`-prefixed
         // depending on export); BertModel::load handles the `bert.` prefix
-        // fallback internally, so load the head separately here once the
-        // VarBuilder wiring is confirmed against the pinned crate.
+        // fallback internally, so the head is loaded separately at load() time.
         let sequence_output = self
             .model
             .forward(&input_ids, &token_type_ids, Some(&attention_mask))
@@ -284,24 +343,32 @@ impl Detector for NerDetector {
         // BIO decode: tokens (skip specials), byte offsets from the encoding.
         let offsets = encoding.get_offsets();
         // The tokenizer reports CHAR offsets (verified via NER_DEBUG: CJK text
-        // yields (i, i+1) per token), but Match offsets are BYTE offsets.
-        // Convert with a char-index -> byte-index table. For pure-ASCII text
-        // the tables are identical and this is a no-op.
+        // yields (i, i+1) per token), but Match offsets are BYTE offsets. Convert
+        // with a char-index -> byte-index table.
+        //
+        // CHANGE 2: the table is built from the WINDOW slice, so it is local to
+        // the window and starts at 0.
         let char_to_byte: Vec<usize> = {
-            let mut t = Vec::with_capacity(text.chars().count() + 1);
+            let mut t = Vec::with_capacity(slice.chars().count() + 1);
             let mut b = 0usize;
             t.push(0);
-            for ch in text.chars() {
+            for ch in slice.chars() {
                 b += ch.len_utf8();
                 t.push(b);
             }
             t
         };
+        // CHANGE 3: local window offset -> absolute offset in the WHOLE text.
+        // `byte_base` is the byte length of everything before this window. Getting
+        // this wrong redacts the wrong span, which looks like success - this is
+        // the highest-risk line in the change.
+        let byte_base: usize = text.chars().take(w.start).map(|c| c.len_utf8()).sum();
         let to_byte = |idx: usize| -> usize {
-            char_to_byte
+            let local = char_to_byte
                 .get(idx)
                 .copied()
-                .unwrap_or(char_to_byte[char_to_byte.len() - 1])
+                .unwrap_or_else(|| char_to_byte[char_to_byte.len() - 1]);
+            byte_base + local
         };
         let offsets: Vec<(usize, usize)> = offsets
             .iter()
@@ -311,6 +378,10 @@ impl Detector for NerDetector {
         let mut matches: Vec<Match> = Vec::new();
         let mut cur: Option<(EntityType, usize)> = None; // (entity, start byte)
         // Flush closes the open entity at `end` (byte offset).
+        //
+        // Slices the WHOLE `text` with the absolute offsets above, so a span is
+        // reported in original-text coordinates. Do not change this to slice the
+        // window.
         fn flush(
             cur: &mut Option<(EntityType, usize)>,
             end: usize,
@@ -393,6 +464,76 @@ fn safe_slice(text: &str, start: usize, end: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wall this change removes: a document longer than one window must be
+    /// split, not refused. `MAX_TOKENS` is 500, so a 2400-character CJK document
+    /// needs at least two windows.
+    ///
+    /// Runs WITHOUT the weights: it asserts the plan, not model output. That is
+    /// the point - no test in this file previously exercised a long document
+    /// without the 388 MB bundle, which is why the wall went unnoticed.
+    #[test]
+    fn a_long_document_is_split_rather_than_refused() {
+        let text: String = "张伟是本案的委托代理人。".repeat(200);
+        let plan = window::plan_windows(&text, MAX_TOKENS, window::estimated_tokens);
+        assert!(
+            plan.len() >= 2,
+            "a 2400-char CJK document must need more than one window, got {}",
+            plan.len()
+        );
+        for w in &plan {
+            let slice: String = text.chars().skip(w.start).take(w.end - w.start).collect();
+            assert!(
+                window::estimated_tokens(&slice) <= MAX_TOKENS,
+                "window [{}, {}) exceeds the token budget",
+                w.start,
+                w.end
+            );
+        }
+    }
+
+    /// Every window boundary must land on a char boundary in BYTES, or the
+    /// byte-based offset conversion downstream slices a CJK character in half.
+    #[test]
+    fn window_boundaries_are_char_boundaries_in_bytes() {
+        let text: String = "华信律师事务所位于北京市朝阳区。".repeat(100);
+        let plan = window::plan_windows(&text, MAX_TOKENS, window::estimated_tokens);
+        assert!(plan.len() >= 2, "expected multiple windows for a 1600-char text");
+        for w in &plan {
+            let byte_start: usize = text.chars().take(w.start).map(|c| c.len_utf8()).sum();
+            let byte_end: usize = text.chars().take(w.end).map(|c| c.len_utf8()).sum();
+            assert!(
+                text.is_char_boundary(byte_start),
+                "start of {w:?} splits a character"
+            );
+            assert!(
+                text.is_char_boundary(byte_end),
+                "end of {w:?} splits a character"
+            );
+        }
+        // The last window must reach the end of the text, or trailing content is
+        // never scanned.
+        assert_eq!(
+            plan[plan.len() - 1].end,
+            text.chars().count(),
+            "the final window must cover the text to the end"
+        );
+    }
+
+    /// Overlap must not change the total span of the plan, only the window
+    /// starts - a window that ran past the end would make `byte_base` wrong for
+    /// every later window.
+    #[test]
+    fn overlap_windows_stay_inside_the_text() {
+        let text: String = "甲乙丙丁戊己庚辛壬癸".repeat(200);
+        let core = window::plan_windows(&text, MAX_TOKENS, window::estimated_tokens);
+        let expanded = window::expand_with_overlap(&text, &core, OVERLAP_CHARS);
+        let total = text.chars().count();
+        for w in &expanded {
+            assert!(w.end <= total, "{w:?} runs past the text end ({total})");
+            assert!(w.start < w.end, "{w:?} is empty or inverted");
+        }
+    }
 
     #[test]
     fn fails_closed_when_model_dir_missing() {

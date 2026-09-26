@@ -121,6 +121,61 @@ fn rule_layer_step_one_classes() {
     }
 }
 
+/// A document longer than one BERT window must sanitize, with a name that sits
+/// PAST the first window redacted.
+///
+/// Before windowed inference this call returned an error, and `pipeline.rs:68`
+/// propagates detector errors - so the ENTIRE job failed and the document could
+/// not be sanitized at all. Not a degraded result: no result.
+#[test]
+fn model_layer_long_document() {
+    let model_dir = std::env::var("PACGATE_NER_MODEL_DIR").unwrap_or_default();
+    if model_dir.is_empty() || !std::path::Path::new(&model_dir).exists() {
+        eprintln!("SKIP model_layer_long_document: PACGATE_NER_MODEL_DIR not set or missing");
+        return;
+    }
+
+    // Filler pushes the interesting name well past the first window.
+    let filler = "本所同意上述条款并遵照执行。".repeat(120);
+    let text = format!("{filler}张伟是本案的委托代理人。");
+    let detectors = full_detectors(&model_dir).expect("model dir present; load must succeed");
+    let out = run(detectors, &text);
+    assert!(
+        out.len() > 1000,
+        "the document must survive sanitization intact in length; got {} bytes",
+        out.len()
+    );
+    assert!(
+        !out.contains("张伟"),
+        "a name past the first window survived sanitization (windowed inference broken)"
+    );
+}
+
+/// A name straddling a window boundary must come out as ONE span, not two
+/// fragments. Spec 7 lists this as an explicit test.
+#[test]
+fn model_layer_boundary_straddling_name() {
+    let model_dir = std::env::var("PACGATE_NER_MODEL_DIR").unwrap_or_default();
+    if model_dir.is_empty() || !std::path::Path::new(&model_dir).exists() {
+        eprintln!(
+            "SKIP model_layer_boundary_straddling_name: PACGATE_NER_MODEL_DIR not set or missing"
+        );
+        return;
+    }
+
+    // Place a name so it likely sits across a planned boundary, then assert the
+    // name is gone entirely - a partially-redacted name is the failure this row
+    // exists to catch.
+    let filler = "本所同意上述条款并遵照执行。".repeat(60);
+    let text = format!("{filler}华信律师事务所位于北京市朝阳区。{filler}");
+    let detectors = full_detectors(&model_dir).expect("model dir present; load must succeed");
+    let out = run(detectors, &text);
+    assert!(
+        !out.contains("华信律师事务所"),
+        "a boundary-straddling org name survived sanitization"
+    );
+}
+
 /// Tier-2 candidates: person/org/location names that only the model layer
 /// can see. Skips when PACGATE_NER_MODEL_DIR is unset or the directory is
 /// missing - the skip prints loudly so the coverage gap is visible, and the
