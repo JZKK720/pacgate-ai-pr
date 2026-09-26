@@ -158,8 +158,78 @@ Then the two live-stack gates:
 
 ```powershell
 pwsh -NoProfile -File scripts\test-empty-extraction-gate.ps1   # expect 15/15
-pwsh -NoProfile -File scripts\run-all-checks.ps1               # expect ALL 23 GATES PASSED
+pwsh -NoProfile -File scripts\run-all-checks.ps1               # expect ALL 24 GATES PASSED
 ```
+
+## Sanitizer coverage: measured, with the gaps named
+
+Rules detect **7 of 15 `EntityType` classes** as of this build. The gaps are
+named below rather than implied away.
+
+| | Count |
+|---|---|
+| Classes defined | 15 |
+| Detected by rules before this work | 5 |
+| Added by this work | 2 (Landline, IpAddress) |
+| **Detected by rules now** | **7** |
+| Detectable only with the NER model, not yet enabled | 3 (PersonName, OrgName, Location) |
+| **Detected once NER is enabled** | **10** |
+| Undetected in either configuration | 5 |
+
+Undetected: `CaseNumber`, `BankAccount`, `RegistrationNumber`, `PostalAddress`,
+`Credential`.
+
+> **Read the two totals as one deliverable and one roadmap figure. 7 is what this
+> build does.** 10 requires enabling the NER model, which is separate work. Do
+> not present 10 as shipped.
+
+- `BankAccount` is the highest-value remaining follow-up.
+- `CaseNumber` needs a context signal before it can be correct: the only
+  available filter is a shape test that would exempt every candidate.
+- `Credential` needs cross-chunk handling, because a key spans lines and
+  chunk boundaries.
+
+### Fixed in this work: four classes were missing the normal written form
+
+Four classes that were reported as covered were **silently missing the common
+form**. `手机13812345678` (no space) was not detected, because the pattern
+required a word boundary that does not exist between a Chinese character and a
+digit. Chinese text has no inter-word spaces, so this was the normal case, not an
+edge case. Those four classes now match with or without a separator immediately
+adjacent to a Chinese character:
+
+```
+手机13812345678            身份证11010519491231002X
+代码91350100M000100Y43     卡号4111111111111111
+```
+
+Before the fix each of those returned **zero** matches while `verify()` replayed
+the same detectors and returned `Pass` — so the document was marked `sanitized`
+with the identifier intact.
+
+### Still not detected, and stated plainly
+
+Identifiers written with **grouped digits**: a bank card as
+`4111 1111 1111 1111` or `4111-1111-1111-1111`, a resident ID as
+`110105 19491231 002X`, a mobile as `138 1234 5678`. Only the ungrouped form is
+detected. Grouping is the canonical printed form of these numbers, so this is a
+real gap.
+
+> **Do not read the adjacency fix as making detection separator-insensitive.** An
+espace or hyphen *inside* the number still defeats it. Closing that requires
+matching against a separator-normalised copy of the text and mapping offsets back
+to the original — separate work, not part of this build.
+
+Also not detected: full-width digits (`１３８１２３４５６７８`), which a word
+processor can produce. Same shape of work, same reason it is deferred.
+
+**Pseudonymized, not anonymized.** Redaction is 去标识化 with a restorable
+mapping, per the specification's section 10. It is not 匿名化.
+
+**Recall is measured, not promised.** The research baseline for Chinese PII NER
+is F1 ~0.76; 0.95-class recall is not claimed. The per-tier harness reports
+rule-layer and model-layer recall separately, and the model layer skips loudly
+when the weights are absent.
 
 ## What is EXPECTED and must not be reported as a fault
 
