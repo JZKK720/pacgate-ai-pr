@@ -930,18 +930,25 @@ Add a section stating the measured numbers, using this exact content (adjust onl
 ```markdown
 ## Sanitizer coverage: measured, with the gaps named
 
-Detection coverage is **10 of 15 `EntityType` classes** after step 1, not all.
+Rules detect **7 of 15 `EntityType` classes** as of this build. The gaps are
+named below rather than implied away.
 
 | | Count |
 |---|---|
 | Classes defined | 15 |
-| Covered before this work | 5 (rules) |
-| Added by step 1 | 2 (Landline, IpAddress) |
-| **Covered now** | **10** |
-| Still uncovered | 5 |
+| Detected by rules before this work | 5 |
+| Added by this work | 2 (Landline, IpAddress) |
+| **Detected by rules now** | **7** |
+| Detectable only with the NER model, not yet enabled | 3 (PersonName, OrgName, Location) |
+| **Detected once NER is enabled** | **10** |
+| Undetected in either configuration | 5 |
 
-Still uncovered, and not detected at all: `CaseNumber`, `BankAccount`,
-`RegistrationNumber`, `PostalAddress`, `Credential`.
+Undetected: `CaseNumber`, `BankAccount`, `RegistrationNumber`, `PostalAddress`,
+`Credential`.
+
+Read the two totals as one deliverable and one roadmap figure: **7 is what this
+build does**, and 10 requires enabling the NER model, which is separate work.
+Do not present 10 as shipped.
 
 - `BankAccount` is the highest-value remaining follow-up.
 - `CaseNumber` needs a context signal before it can be correct: the only
@@ -988,9 +995,11 @@ Set-Location c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 git add deploy/AIPC1-SANITIZER-FINDINGS-AND-0.1.18.md
 git commit -m "docs(aipc1): state measured sanitizer coverage and the four adjacency misses
 
-10 of 15 classes after step 1, with the five uncovered ones named rather than
-implied away. Records that four classes reported as covered were silently missing
-the no-space form, which is the normal form in Chinese text."
+7 of 15 classes detected by rules after this work, 10 once NER is enabled, with
+the five undetected ones named rather than implied away. The two totals are kept
+separate so 10 is not presented as shipped. Records that four classes reported as
+covered were silently missing the no-space form, which is the normal form in
+Chinese text."
 ```
 
 ---
