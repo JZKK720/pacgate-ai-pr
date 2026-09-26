@@ -961,7 +961,16 @@ Also fixed in this work: four classes that were reported as covered were
 not detected, because the pattern required a word boundary that does not exist
 between a Chinese character and a digit. Chinese text has no inter-word spaces,
 so this was the normal case, not an edge case. Those four classes now match with
-or without a separator.
+or without a separator immediately adjacent to a Chinese character.
+
+**Still not detected, and stated plainly:** identifiers written with **grouped
+digits** — a bank card as `4111 1111 1111 1111` or `4111-1111-1111-1111`, a
+resident ID as `110105 19491231 002X`, a mobile as `138 1234 5678`. Only the
+ungrouped form is currently detected. Space and hyphen grouping is the canonical
+printed form of these numbers, so this is a real gap, not a theoretical one. It
+requires matching against a separator-normalised copy of the text and mapping
+offsets back, which is separate work (plan Task 8) and is **not** part of this
+build. Do not read the adjacency fix as making detection separator-insensitive.
 
 **Pseudonymized, not anonymized.** Redaction is 去标识化 with a restorable
 mapping, per the specification's section 10. It is not 匿名化.
@@ -1000,6 +1009,254 @@ the five undetected ones named rather than implied away. The two totals are kept
 separate so 10 is not presented as shipped. Records that four classes reported as
 covered were silently missing the no-space form, which is the normal form in
 Chinese text."
+```
+
+---
+
+---
+
+### Task 8: Separator and full-width normalisation, with offset mapping
+
+**Added 2026-09-26 after Task 1's review.** Task 1's reviewer raised a Minor about
+underscore flanking; probing that prompted a wider measurement, which found a
+**second silent recall gap in the same four classes** — grouped digits:
+
+```
+4111111111111111        matched
+4111 1111 1111 1111     NOT matched     <- the canonical printed bank-card form
+4111-1111-1111-1111     NOT matched
+11010519491231002X      matched
+110105 19491231 002X    NOT matched
+13812345678             matched
+138 1234 5678           NOT matched
+```
+
+This is the same failure class as the CJK defect this plan fixes: not detected,
+`verify()` replay finds no residue, verdict `Pass`, document downloadable. Grouping
+is how these numbers are actually printed.
+
+**Files:**
+- Create: `pacgate-ai/crates/pacgate-redact/src/detect/normalize.rs`
+- Modify: `pacgate-ai/crates/pacgate-redact/src/detect/mod.rs` (add `pub mod normalize;`)
+- Modify: `pacgate-ai/crates/pacgate-redact/src/detect/rules.rs`
+- Test: `pacgate-ai/crates/pacgate-redact/src/detect/normalize.rs`, plus rows in `tests/recall.rs`
+
+**Interfaces:**
+- Consumes: `is_bounded` (Task 1), the unanchored-pattern shape (Task 2).
+- Produces:
+  - `pub struct NormalizedText { pub text: String, map: Vec<usize> }`
+  - `NormalizedText::build(original: &str) -> NormalizedText` - strips separator characters and folds full-width digits to ASCII, recording for each byte of the normalised string which byte of the original it came from.
+  - `NormalizedText::original_span(&self, start: usize, end: usize) -> Option<(usize, usize)>` - maps a normalised byte range back to an original byte range, or `None` if either endpoint has no mapping (a separator).
+
+**Design notes:**
+- **One design fixes both deferrals.** Spec §10.5 deferred full-width digits because normalising shifts offsets; this task needs the same offset mapping. Doing them together is why this is one task and not two.
+- **`map` is byte-indexed and maps to the ORIGINAL byte offset of the character that produced each normalised byte.** For ASCII-stable characters that is identity. For a full-width digit (`３` = 3 bytes U+FF13) folded to one ASCII byte, the three normalised bytes of its ASCII form all map back to the original character's start. Removing a separator emits no normalised bytes.
+- **Match spans must be widened to whole characters.** A separator is 1 byte (ASCII space/hyphen) or 3 bytes (full-width space U+3000, middle dot U+00B7 is 2). Widening the end to the next original char boundary keeps `Redactor`'s char-boundary check satisfied and makes the placeholder replace the separators rather than leaving them stranded.
+- **This is the highest-risk task in the plan.** Nothing else here changes how offsets are computed. If it is not obviously correct, stop and report `DONE_WITH_CONCERNS` rather than guessing.
+
+- [ ] **Step 1: Write the failing test for the normaliser**
+
+Create `pacgate-ai/crates/pacgate-redact/src/detect/normalize.rs` with the test module first:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_ascii_separators_and_records_the_mapping() {
+        let n = NormalizedText::build("4111 1111-1111 1111");
+        assert_eq!(n.text, "4111111111111111");
+        // First character maps to original byte 0.
+        assert_eq!(n.original_span(0, 1), Some((0, 1)));
+        // The 5th normalized char is the 6th original char (a space sits at 4).
+        assert_eq!(&"4111 1111-1111 1111"[..1], "4");
+        assert_eq!(n.original_span(4, 5), Some((5, 6)));
+    }
+
+    #[test]
+    fn folds_full_width_digits() {
+        let n = NormalizedText::build("１３８１２３４５６７８");
+        assert_eq!(n.text, "13812345678");
+        // Every normalized byte of a folded char maps to its start.
+        assert_eq!(n.original_span(0, 1), Some((0, 1)));
+    }
+
+    #[test]
+    fn spans_straddling_separators_widen_to_whole_characters() {
+        let n = NormalizedText::build("110105 19491231 002X");
+        assert_eq!(n.text, "11010519491231002X");
+        let (s, e) = n.original_span(0, 18).expect("the whole id is mapped");
+        assert_eq!(&"110105 19491231 002X"[s..e], "110105 19491231 002X");
+    }
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```powershell
+Set-Location c:\Users\cubecloud-io\github-pr\pacgate-ai-pr\pacgate-ai
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p pacgate-redact --lib normalize 2>&1 | Out-String
+```
+
+Expected: FAIL to compile - `cannot find type 'NormalizedText' in this scope`. Note this is a **new module**: add `pub mod normalize;` to `detect/mod.rs` in the next step or the file is not compiled at all and the test will not run.
+
+- [ ] **Step 3: Implement the normaliser**
+
+Add above the test module in `normalize.rs`:
+
+```rust
+//! Separator-stripping and full-width folding, with an offset map back to the
+//! original text.
+//!
+//! Both exist for the same reason: `Match` offsets are byte offsets into the
+//! ORIGINAL text, so any transformation that changes byte positions must record
+//! how to get back. Detecting against a normalised copy and mapping the spans
+//! back is the only way to match `4111 1111 1111 1111` without either shifting
+//! every downstream offset or duplicating every pattern with separator variants.
+
+/// A normalised copy of a text plus the byte map back into the original.
+pub struct NormalizedText {
+    pub text: String,
+    /// For each byte of `text`, the byte offset in the ORIGINAL text of the
+    /// character it came from. Same length as `text`.
+    map: Vec<usize>,
+}
+
+/// Characters removed before matching: separators that appear between digits in
+/// printed identifiers. Deliberately a small closed set - anything broader would
+/// start deleting content rather than punctuation.
+const SEPARATORS: [char; 6] = [' ', '-', '\u{3000}', '\u{00B7}', '\u{2013}', '\u{FF0D}'];
+
+impl NormalizedText {
+    pub fn build(original: &str) -> Self {
+        let mut text = String::with_capacity(original.len());
+        let mut map = Vec::with_capacity(original.len());
+
+        for (offset, ch) in original.char_indices() {
+            if SEPARATORS.contains(&ch) {
+                continue;
+            }
+            // Fold full-width digits U+FF10-U+FF19 to ASCII.
+            let folded = match ch {
+                '\u{FF10}'..='\u{FF19}' => {
+                    char::from_u32(ch as u32 - 0xFF10 + '0' as u32).unwrap_or(ch)
+                }
+                _ => ch,
+            };
+            for _ in 0..folded.len_utf8() {
+                map.push(offset);
+            }
+            text.push(folded);
+        }
+
+        Self { text, map }
+    }
+
+    /// Map a normalised byte range back to an original byte range, widened to
+    /// whole characters.
+    pub fn original_span(&self, start: usize, end: usize) -> Option<(usize, usize)> {
+        if start >= end || end > self.map.len() {
+            return None;
+        }
+        let orig_start = *self.map.get(start)?;
+        let orig_end_char = *self.map.get(end - 1)?;
+        Some((orig_start, orig_end_char))
+    }
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+```powershell
+Set-Location c:\Users\cubecloud-io\github-pr\pacgate-ai-pr\pacgate-ai
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p pacgate-redact --lib normalize 2>&1 | Out-String
+```
+
+Expected: `test result: ok. 3 passed`.
+
+`original_span` returns the START offset of the last character, not its end - the caller widens. That is deliberate: the caller has the original `&str` and can advance to the next char boundary, which this type cannot do without holding a reference to it. Document that in the implementation.
+
+- [ ] **Step 5: Wire the detector to normalised matching**
+
+In `rules.rs`, at the top of `detect()`, build the normalised view and match against it for the digit-shaped classes:
+
+```rust
+        let normalized = super::normalize::NormalizedText::build(text);
+```
+
+For each of the five digit-shaped loops (`RE_CN_ID_CANDIDATE`, `RE_USCC_CANDIDATE`, `RE_MOBILE_CANDIDATE`, `RE_DIGIT_RUN`, `RE_LANDLINE`, `RE_IPV4_CANDIDATE`), match against `normalized.text`, compute the original span, and **re-validate against the original text slice**:
+
+```rust
+        for m in RE_DIGIT_RUN.find_iter(&normalized.text) {
+            let Some((start, end)) = normalized.original_span(m.start(), m.end()) else {
+                continue;
+            };
+            let Some(original) = text.get(start..=end) else {
+                continue;
+            };
+            if !is_bounded(text, start, end + original.len_utf8() - 1) {
+                continue;
+            }
+            if validate_luhn(&normalized.text[m.start()..m.end()]) {
+                self.push_span(&mut out, start, end, EntityType::BankCard, MatchSource::Checksum);
+            }
+        }
+```
+
+**Two things this snippet is deliberately not:** it is not complete (the `end` widening and `push_span` helper are yours to write, and `is_bounded`'s third argument must be the EXCLUSIVE end), and it is not to be copied verbatim. The exact index arithmetic is the part of this task that must be worked out against the tests, not transcribed. If you cannot make it correct, report `DONE_WITH_CONCERNS` with what you tried.
+
+- [ ] **Step 6: Run the full suite**
+
+```powershell
+Set-Location c:\Users\cubecloud-io\github-pr\pacgate-ai-pr\pacgate-ai
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p pacgate-redact 2>&1 | Select-String -Pattern 'test result|FAILED|panicked' | Out-String
+```
+
+Expected: all `test result: ok.`, 0 failed. **Any regression in the five pre-existing classes' tests means the mapped span is wrong** - fix the mapping, not the tests.
+
+- [ ] **Step 7: Add recall fixtures for grouped forms**
+
+Add to `tests/recall.rs`:
+
+```rust
+/// The canonical printed forms. Grouped digits are how these numbers appear in
+/// contracts and on cards, so a detector that only handles the ungrouped form
+/// misses the normal case.
+#[test]
+fn rule_layer_grouped_digit_forms() {
+    let fixtures = [
+        ("卡号4111 1111 1111 1111", "4111111111111111"),
+        ("卡号4111-1111-1111-1111", "4111111111111111"),
+        ("身份证110105 19491231 002X", "11010519491231002X"),
+    ];
+    for (text, value) in fixtures {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            !out.contains("4111 1111") && !out.contains("110105 1949"),
+            "grouped form survives sanitization in {text}: {out}"
+        );
+        let _ = value; // the assertion is on absence of the grouped form
+    }
+}
+```
+
+- [ ] **Step 8: Commit**
+
+```powershell
+Set-Location c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
+git add pacgate-ai/crates/pacgate-redact/src/detect/normalize.rs pacgate-ai/crates/pacgate-redact/src/detect/mod.rs pacgate-ai/crates/pacgate-redact/src/detect/rules.rs pacgate-ai/crates/pacgate-redact/tests/recall.rs
+git commit -m "fix(redact): detect grouped and full-width digit identifiers
+
+Measured: 4111 1111 1111 1111, 110105 19491231 002X and 138 1234 5678 all
+produce zero matches. Grouping is the canonical printed form of these numbers,
+so the ungrouped-only behaviour missed the normal case in the same four classes
+the boundary fix targets.
+
+Detection now runs against a separator-stripped, full-width-folded copy and maps
+match spans back to original byte offsets. Normalisation was already needed for
+full-width digits (spec 10.5 deferred it for exactly this reason); one offset map
+serves both."
 ```
 
 ---

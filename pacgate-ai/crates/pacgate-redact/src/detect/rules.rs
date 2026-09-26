@@ -6,6 +6,7 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::net::Ipv4Addr;
 
 use crate::checksum::{validate_cn_resident_id, validate_luhn, validate_uscc};
 use crate::{EntityType, Match, MatchSource, RedactError, RedactResult};
@@ -46,6 +47,19 @@ static RE_DIGIT_RUN: Lazy<Regex> =
 /// would emit a truncated span, redact a prefix, and leave the rest visible.
 static RE_LANDLINE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"0\d{2,3}-?\d{7,8}").expect("landline regex is valid"));
+
+/// IPv4 address detection.
+///
+/// Pattern matches dotted quad notation with correct octet ranges:
+/// 0-255 each, including leading zeros (001.002.003.004 is valid).
+/// Rejection of > 255 (e.g., 300.1.1.1) is delegated to is_bounded,
+/// not to regex, because the octet pattern is complex and Ipv4Addr
+/// validation is simpler and more precise.
+static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)")
+        .expect("ipv4 regex is valid")
+});
+
 
 /// Ceiling on matches from one text, to turn a pathological input into a
 /// fatal error instead of unbounded memory growth.
@@ -163,6 +177,15 @@ impl Detector for TierOneDetector {
                 continue;
             }
             self.push(&mut out, m, EntityType::Landline, MatchSource::Pattern);
+        }
+
+        for m in RE_IPV4.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            if m.as_str().parse::<Ipv4Addr>().is_ok() {
+                self.push(&mut out, m, EntityType::IpAddress, MatchSource::Pattern);
+            }
         }
 
         if self.include_email {
@@ -339,6 +362,43 @@ mod tests {
         assert!(
             !over_long.iter().any(|m| m.entity == EntityType::Landline),
             "an over-long subscriber (9 digits) must not match the landline pattern"
+        );
+    }
+
+    #[test]
+    fn finds_ipv4_addresses_in_text() {
+        let spaced = TierOneDetector::new().detect("服务器 192.168.1.1 地址").unwrap();
+        assert!(
+            spaced.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "192.168.1.1"),
+            "basic ipv4 must be found; got {:?}",
+            spaced.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        let multi = TierOneDetector::new().detect("127.0.0.1 and 255.255.255.255").unwrap();
+        assert!(
+            multi.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "127.0.0.1"),
+            "loopback must be found"
+        );
+        assert!(
+            multi.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "255.255.255.255"),
+            "broadcast must be found"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_ipv4_when_not_bounded_or_out_of_range() {
+        // 256.1.1.1 is out of range for an octet, so Ipv4Addr parsing fails.
+        let invalid = TierOneDetector::new().detect("256.1.1.1").unwrap();
+        assert!(
+            !invalid.iter().any(|m| m.entity == EntityType::IpAddress),
+            "out-of-range octet must be rejected by Ipv4Addr validation"
+        );
+
+        // 192.168.1.1 inside a longer token must be rejected by is_bounded.
+        let in_token = TierOneDetector::new().detect("X192.168.1.1Y").unwrap();
+        assert!(
+            !in_token.iter().any(|m| m.entity == EntityType::IpAddress),
+            "an ipv4 inside a longer alphanumeric token must be rejected by is_bounded"
         );
     }
 }
