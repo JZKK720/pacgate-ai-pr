@@ -30,19 +30,59 @@ if (-not (Test-Path (Join-Path $workspace 'Cargo.toml'))) {
     exit 2
 }
 
+# Run a cargo subcommand and report whether it really passed.
+#
+# Two PowerShell bugs this shim exists to avoid, both measured on 2026-09-26:
+#
+#  1. `& $cargo ... 2>&1 | Out-String` then reading $LASTEXITCODE does NOT work.
+#     After a pipeline, $LASTEXITCODE belongs to the pipeline's last command
+#     (Out-String), not to cargo, so a failing cargo can read as success.
+#  2. Under Windows PowerShell 5.1, $ErrorActionPreference = 'Stop' turns
+#     cargo's stderr - merged by `2>&1` - into a terminating
+#     NativeCommandError. The gate then died part-way through its own output.
+#
+# Symptom before the fix: exit 1 on a CLEAN tree under 5.1, exit 0 under pwsh 7.
+# A gate that goes red on clean code is worse than no gate: it gets disabled.
+#
+# NOTE ON MEASUREMENT: do not diagnose this by piping the gate itself through
+# Select-String or Out-String - that clobbers $LASTEXITCODE with the *pipeline's*
+# code and makes a working gate look broken and a broken gate look fine. Run it
+# with `*> $null` and read $LASTEXITCODE, or run it bare and read the console.
+function Invoke-Cargo {
+    param([string[]] $Arguments, [string] $Label)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $cargo @Arguments 2>&1
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    # Print what cargo said regardless of outcome, so a failure is diagnosable
+    # from the gate's own output rather than only from re-running cargo by hand.
+    $output | Out-String | Write-Host
+
+    if ($code -ne 0) {
+        Write-Host "  FAIL $Label (cargo exit $code)" -ForegroundColor Red
+        return $false
+    }
+    return $true
+}
+
 Push-Location $workspace
 try {
     Write-Host '=== Rust gate: pacgate-redact tests ===' -ForegroundColor Cyan
-    & $cargo test -p pacgate-redact --all-targets 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host '  FAIL cargo test -p pacgate-redact' -ForegroundColor Red
+    if (-not (Invoke-Cargo @('test', '-p', 'pacgate-redact', '--all-targets') `
+                          'cargo test -p pacgate-redact')) {
         exit 1
     }
 
     Write-Host '=== Rust gate: pacgate-redact clippy -D warnings ===' -ForegroundColor Cyan
-    & $cargo clippy -p pacgate-redact --all-targets -- -D warnings 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host '  FAIL cargo clippy -D warnings -p pacgate-redact' -ForegroundColor Red
+    if (-not (Invoke-Cargo @('clippy', '-p', 'pacgate-redact', '--all-targets', '--', '-D', 'warnings') `
+                          'cargo clippy -D warnings -p pacgate-redact')) {
         exit 1
     }
 
