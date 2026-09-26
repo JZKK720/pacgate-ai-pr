@@ -62,17 +62,21 @@ client spec section 3 forbids shifting dates), so they add no `EntityType`.
 | `EntityType` variants | **15** |
 | Detected by rules today | **5** |
 | Added by NER (PER/ORG/LOC) | **3** |
-| **Covered after this work** | **8** |
-| **Still uncovered** | **7** |
+| **Covered after workstreams 1-3** | **8** |
+| Added by section 11 (CaseNumber, Landline, IpAddress) | **3** |
+| **Covered after step 1 as well** | **11** |
+| Still uncovered after that | **4** |
 
-Arithmetic: 15 - 5 - 3 = 7. (An earlier draft of this section said "six remain
-undetected" while listing seven names; the list was right and the total was wrong.
-Stating all five counts together is what makes that checkable.)
+Arithmetic: 15 - 5 - 3 = 7 uncovered after NER; 7 - 3 = 4 uncovered after
+section 11. (An earlier draft said "six remain undetected" while listing seven;
+the list was right and the total was wrong. Stating every count together is what
+makes it checkable.)
 
-The seven remaining have **no detector source at all** - neither rule nor model:
+The four that remain after both workstreams have **no detector source at all**:
 
-`CaseNumber`, `RegistrationNumber`, `BankAccount`, `Credential`, `IpAddress`,
-`Landline`, `PostalAddress`
+`BankAccount`, `RegistrationNumber`, `PostalAddress`, `Credential`
+
+Their shape of work is measured in sections 12 and 13, not estimated.
 
 That split must be reported honestly to the client (section 8), because the client
 spec section 9 requires a covered/uncovered formats and identifiers list.
@@ -281,9 +285,11 @@ set `PACGATE_NER_MODEL_DIR`, so a client build cannot ship Tier-1-only silently.
 
 These must appear in the section 9 deliverables, not be implied away:
 
-1. **Coverage is 8 of 15 classes**, not all. Rules cover 5; NER adds 3
-   (person, org, location). The seven listed in section 1.1 remain uncovered -
-   and section 10 requires the gate that counts them to agree with the enum.
+1. **Coverage is 11 of 15 classes** once section 11 lands with workstreams 1-3,
+   not all. Rules cover 5; NER adds 3; section 11 adds 3. The four still
+   uncovered are `BankAccount`, `RegistrationNumber`, `PostalAddress`,
+   `Credential` - and section 10 requires the gate that counts them to agree with
+   the enum.
 2. **Weights are 388 MB in the API image** - a deployment constraint worth stating.
 3. **Recall is measured, not promised.** The harness reports per-tier recall; the
    research baseline for Chinese PII NER is F1 ~0.76 (OpenMed-PII-Chinese), so
@@ -299,12 +305,19 @@ These must appear in the section 9 deliverables, not be implied away:
    long documents.
 2. **Recall harness** (workstream 3) - must exist before enabling, so the
    enablement is measured rather than assumed.
-3. **Distribution** (workstream 2) - image + compose wiring + gate.
-4. **Enable and verify** - live E2E on the dev box, then release 0.1.19.
-5. **AIPC 1, then AIPC 2** - with the recall numbers recorded per machine.
+3. **Step 1 detectors** (section 11) - `CaseNumber`, `Landline`, `IpAddress`.
+   Rule-shaped, cheap, and `CaseNumber` activates existing dead code. Independent
+   of NER, so it can land before or with it.
+4. **Distribution** (workstream 2) - image + compose wiring + gate.
+5. **Enable and verify** - live E2E on the dev box, then release 0.1.19.
+6. **AIPC 1, then AIPC 2** - with the recall numbers recorded per machine.
 
-Steps 1-3 are all local and testable on this dev box. Nothing here needs a
-client machine until step 5.
+Steps 1-5 are all local and testable on this dev box. Nothing here needs a
+client machine until step 6.
+
+**Then, as separate work:** the overlap strategy (section 12) BEFORE
+`BankAccount` / `RegistrationNumber` / `Credential`, and the sub-span plus
+cross-chunk mechanisms (section 13.1) before `PostalAddress` and `Credential`.
 
 ## 10. Success criteria
 
@@ -313,19 +326,143 @@ client machine until step 5.
 - Per-tier recall is reported as separate rule-layer and model-layer rows.
 - The published `pacgate-api` image contains all three model files and the API
   logs the full detector set at startup (no `Tier-1 rules only` warning).
-- The seven uncovered classes are stated in the client deliverables, with
-  `CaseNumber` and `BankAccount` named as the highest-value follow-ups.
+- The four uncovered classes are stated in the client deliverables, with
+  `BankAccount` named as the highest-value remaining follow-up and `Credential`
+  flagged as needing cross-chunk design (section 13).
 - A gate asserts the coverage counts in this document still match `EntityType`
   and the registered detector set, so the numbers reported to the client cannot
   drift from the code.
-- `run-all-checks.ps1` remains green, with the two new gates added.
+- `run-all-checks.ps1` remains green, with the new gates added.
 
-## 11. Explicitly out of scope
+## 11. Follow-up workstream - step 1: three rule-shaped classes
 
-- Detectors for `CaseNumber`, `RegistrationNumber`, `BankAccount`, `Credential`,
-  `IpAddress`, `Landline`, `PostalAddress`. These need their own design; two are
-  strongly worth it (`CaseNumber` is high-signal and rule-shaped; `BankAccount` is
-  high blast radius).
+Added 2026-09-26 after measuring what the seven uncovered classes actually take.
+These three are rule-shaped and small, and `CaseNumber` activates code that
+already exists. Coverage goes **8/15 -> 11/15**.
+
+### 11.1 `CaseNumber` 案号 - nearly free
+
+`noise.rs:20` already encodes the court-citation shape:
+
+```
+[(（]\d{4}[)）][^\s]{1,12}?号      ->   (2023)京0105民初12345号
+```
+
+That pattern currently exists ONLY as a **filter** (`is_public_case_number` /
+`drop_public_citations`), preserving public citations from `CaseNumber` matches
+that no detector ever produces. It is effectively dead code.
+
+So the work is: add a `CaseNumber` detector whose candidate pattern is the same
+shape, and **reuse the existing filter** so the behaviour the code already
+documents (client spec L40/41: 本案案号 replace, 公开参考案例案号 preserve) becomes
+real. Two of the spec's eight taxonomy categories move from unaddressed to
+addressed.
+
+- Candidate: the citation shape, widened to catch 本案 numbers that carry a
+  court代字 without the parenthesised year form.
+- Validation: **context** - replace only when the number is attributable to the
+  project. `drop_public_citations` already implements the exclusion.
+- Policy: already `Tier::Three`, placeholder `CASE_NO`.
+- Effort: **S**. New regex + detector method + the existing filter wired in.
+
+### 11.2 `Landline` 座机 - trivial
+
+`0` + area code + subscriber number, optionally hyphenated (`010-12345678`).
+Chinese area codes are the 2-3 digit set (10, 21, 2x), subscriber 7-8 digits.
+
+- Candidate: `\b0\d{2,3}-?\d{7,8}\b`
+- Validation: area-code set membership, so an arbitrary digit run cannot match.
+- Policy: already `Tier::Two`, placeholder `LANDLINE`.
+- Effort: **S**.
+
+### 11.3 `IpAddress` - trivial, lowest priority
+
+IPv4 octet-range validated; IPv6 optional and can be deferred.
+
+- Candidate: `\b\d{1,3}(?:\.\d{1,3}){3}\b` with **per-octet <= 255 validation** -
+  without that check this pattern matches version strings and dates.
+- Policy: already `Tier::Four`, placeholder `IP`.
+- Effort: **S**. Lowest legal relevance of the seven; include because it is
+  cheap, not because it is urgent.
+
+### 11.4 Acceptance for step 1
+
+- A client case number is replaced; a published citation `(2023)京0105民初12345号`
+  in a legal-reference context is **preserved** (the existing filter, now live).
+- A landline with and without a hyphen is caught; a bare 11-digit number is not
+  misread as one.
+- An IP is caught; `1.2.3.400` and `2026.09.26` are not.
+- None of the three regresses the existing five classes' tests.
+- The per-tier recall harness (section 5) gains rule-layer rows for all three.
+
+## 12. Follow-up workstream - step 2: the overlap strategy (a precondition)
+
+`replace.rs:77` makes overlapping matches a **fatal error**:
+
+```rust
+if pair[0].overlaps(pair[1]) {
+    return Err(RedactError::Internal(format!(
+        "overlapping matches at [{}, {}) and [{}, {}) - run NoiseFilter first",
+```
+
+The client spec **requires** an overlap strategy - section 5 (L164):
+
+> **处理重叠及长内容。**身份证与银行卡候选重叠、账号与金额混淆、凭证内部数字误识别、
+> 跨行及跨分块私钥均应有明确策略。
+
+That names four distinct cases, all of which our architecture currently turns
+into a hard failure rather than a strategy:
+
+| Spec case | Our situation |
+|---|---|
+| 身份证与银行卡候选重叠 | `RE_CN_ID_CANDIDATE` and `RE_DIGIT_RUN` can both fire on one run |
+| 账号与金额混淆 | **arrives with `BankAccount`** - no checksum/length to separate them |
+| 凭证内部数字误识别 | a key containing digit runs also matches `RE_DIGIT_RUN` |
+| 跨行及跨分块私钥 | spans lines **and** chunk boundaries; policy is `Remove` |
+
+**So this must be designed BEFORE `BankAccount`, `RegistrationNumber` or
+`Credential` ship.** Adding those detectors without it can *break* sanitization on
+realistic documents - a worse outcome than the current silent miss, because the
+failure mode flips from "missed a class" to "cannot sanitize at all".
+
+Same shape of blocker as the 512-token wall: a precondition discoverable only by
+reasoning about real input rather than the happy path.
+
+Design questions to settle (not answered here):
+- Precedence when two classes claim the same span (身份证 vs 银行卡).
+- Whether the loser is dropped, or both are merged into one redaction.
+- How the verifier treats a span that was suppressed as a lower-priority
+  duplicate - suppressing it must not let residue through.
+- Whether overlap resolution belongs in `NoiseFilter` (where the invariant
+  currently lives) or in `Redactor`.
+
+## 13. Follow-up workstream - step 3: remaining classes
+
+In priority order, with the reasons:
+
+| class | approach | effort | why this order |
+|---|---|---|---|
+| `BankAccount` 收款账户 | label-anchored rule + NER assist | **M** | Highest severity remaining. **No checksum or fixed length** in Chinese account numbers, so a naked-digit match would eat amounts and dates (exactly 账号与金额混淆). Needs the step-2 overlap strategy first. |
+| `PostalAddress` 地址 | rule + NER, **sub-span** | **M** | Spec L28 requires partial replacement - `对可定位部分进行替换` while KEEPING 国家/省市/法域 for jurisdiction analysis. Our `Match` is whole-span, so this needs a sub-span mechanism, not a detector. |
+| `RegistrationNumber` 产权证/商标/专利号 | rule, per document family | **M** | Multiple unrelated formats (不动产权证号, 商标注册号, 专利号); each needs its own pattern. No single rule covers them. |
+| `Credential` 密码/私钥/令牌 | pattern + entropy | **M-L** | PEM blocks are easy; generic tokens need entropy or provider-prefix heuristics. Spec L30 requires **removal** (policy already `Remove`), and L164 requires **cross-line AND cross-chunk** support - a design task, not a detector task. |
+
+### 13.1 Two mechanisms we have no answer for at all
+
+Beyond needing detectors, two spec requirements have no implementation:
+
+1. **Sub-span replacement** (L28) - replace the locatable part of an address,
+   keep the jurisdiction. `Match` carries a single whole span.
+2. **Cross-line, cross-chunk spans** (L164) - a private key spanning lines and
+   chunk boundaries. `Credential`'s `Remove` policy is incompatible with
+   chunk-scoped processing until designed.
+
+Both are design work, not pattern work, and both are already required by the
+client spec rather than newly requested.
+
+## 14. Explicitly out of scope
+
+- Everything in sections 12 and 13 beyond `CaseNumber`, `Landline`, `IpAddress`.
 - GPU acceleration. Candle CPU inference is the target; per-document cost is
   bounded by window count and should be measured in the harness output.
 - Upstream deer-flow 2.1 (plan 023) - separate track, blocked on a tag that does
