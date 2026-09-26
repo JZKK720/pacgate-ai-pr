@@ -49,13 +49,20 @@ static RE_LANDLINE: Lazy<Regex> =
 
 /// IPv4 address detection.
 ///
-/// Pattern matches dotted quad notation with correct octet ranges:
-/// 0-255 each. Rejection of out-of-range octets (e.g., 300.1.1.1) is
-/// done by the octet pattern itself: (?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)
-/// does not match values above 255. is_bounded checks only the flanking
-/// characters and is load-bearing for the five-dot case: 1.2.3.4.5
-/// matches its first four groups and is rejected if text continues past
-/// the fourth dot.
+/// Pattern matches dotted quad notation with correct octet ranges (0-255 each).
+/// Rejection of out-of-range octets (e.g., 300.1.1.1) is done by the octet
+/// pattern itself: (?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d) does not match values
+/// above 255.
+///
+/// Boundary validation is multi-layer:
+/// - is_bounded() rejects matches embedded in longer alphanumeric tokens
+///   (e.g., X192.168.1.1Y), ensuring the address is a standalone entity.
+/// - A dot immediately BEFORE the match rejects fragments of longer runs
+///   (e.g., .1.2.3.4, 9.1.2.3.4), preventing matches that are not addresses.
+/// - A dot immediately AFTER the match rejects longer runs ONLY if a digit
+///   follows (e.g., 1.2.3.4.5 is rejected, but 192.168.1.1. is allowed for
+///   sentence-final cases). This prevents false acceptance at text boundaries
+///   while allowing sentence-ending periods.
 static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)")
         .expect("ipv4 regex is valid")
@@ -184,9 +191,17 @@ impl Detector for TierOneDetector {
             if !is_bounded(text, m.start(), m.end()) {
                 continue;
             }
-            // A fifth dot-group means this is a longer run, not an address:
-            // `1.2.3.4.5` otherwise matches its first four groups.
-            if text[m.end()..].starts_with('.') {
+            // A dot-immediately-before this match means the match is a FRAGMENT
+            // of a longer numeric run (`.1.2.3.4`, `9.1.2.3.4`), not an address.
+            if text[..m.start()].ends_with('.') {
+                continue;
+            }
+            // A dot AFTER the match only means a longer run when a digit follows
+            // it. `1.2.3.4.5` continues a run; `192.168.1.1.` at the end of a
+            // sentence does not, and must still be detected.
+            if text[m.end()..].starts_with('.')
+                && text[m.end() + 1..].starts_with(|c: char| c.is_ascii_digit())
+            {
                 continue;
             }
             self.push(&mut out, m, EntityType::IpAddress, MatchSource::Pattern);
@@ -343,9 +358,9 @@ mod tests {
             spaced.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );
 
-        let no_hyphen = TierOneDetector::new().detect("联系 0101234567").unwrap();
+        let no_hyphen = TierOneDetector::new().detect("联系 01012345678").unwrap();
         assert!(
-            no_hyphen.iter().any(|m| m.entity == EntityType::Landline && m.text == "0101234567"),
+            no_hyphen.iter().any(|m| m.entity == EntityType::Landline && m.text == "01012345678"),
             "landline without hyphen and 8-digit subscriber must be found; got {:?}",
             no_hyphen.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );
@@ -425,6 +440,93 @@ mod tests {
         assert!(
             !five_dot_cjk.iter().any(|m| m.entity == EntityType::IpAddress),
             "a five-dot pattern with CJK adjacency must not match"
+        );
+    }
+
+    /// Comprehensive tests for IPv4 boundary conditions.
+    /// Covers both right-flank (five-dot) and left-flank (fragment) guards.
+    #[test]
+    fn ipv4_dot_guard_comprehensive() {
+        let detector = TierOneDetector::new();
+
+        // FINDING A: Sentence-ending period must NOT kill detection.
+        // Current regression: `host 192.168.1.1.` returns no match.
+        let sentence_period = detector.detect("host 192.168.1.1.").unwrap();
+        assert!(
+            sentence_period.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "192.168.1.1"),
+            "IPv4 before sentence-ending ASCII period MUST match; got {:?}",
+            sentence_period.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Chinese period (full-width 。) does NOT match ASCII dot, so is_bounded will accept it.
+        let cjk_period = detector.detect("见192.168.1.1。").unwrap();
+        assert!(
+            cjk_period.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "192.168.1.1"),
+            "IPv4 before full-width period MUST match; got {:?}",
+            cjk_period.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Basic form without trailing period.
+        let basic = detector.detect("host 192.168.1.1").unwrap();
+        assert!(
+            basic.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "192.168.1.1"),
+            "basic IPv4 MUST match"
+        );
+
+        // FINDING B: Five-dot and longer numeric runs must be rejected.
+        let five_dot = detector.detect("1.2.3.4.5").unwrap();
+        assert!(
+            !five_dot.iter().any(|m| m.entity == EntityType::IpAddress),
+            "1.2.3.4.5 (five-dot) must NOT match"
+        );
+
+        let eight_dot = detector.detect("1.2.3.4.5.6.7.8").unwrap();
+        assert!(
+            !eight_dot.iter().any(|m| m.entity == EntityType::IpAddress),
+            "1.2.3.4.5.6.7.8 (eight-dot, longer run) must NOT match; got {:?}",
+            eight_dot.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // FINDING B: Left-flank fragments must be rejected.
+        let leading_dot = detector.detect(".1.2.3.4").unwrap();
+        assert!(
+            !leading_dot.iter().any(|m| m.entity == EntityType::IpAddress),
+            ".1.2.3.4 (leading dot fragment) must NOT match; got {:?}",
+            leading_dot.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        let alpha_dot_fragment = detector.detect("x.1.2.3.4").unwrap();
+        assert!(
+            !alpha_dot_fragment.iter().any(|m| m.entity == EntityType::IpAddress),
+            "x.1.2.3.4 (alphanumeric-prefixed fragment) must NOT match; got {:?}",
+            alpha_dot_fragment.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        let nine_dot_fragment = detector.detect("9.1.2.3.4").unwrap();
+        assert!(
+            !nine_dot_fragment.iter().any(|m| m.entity == EntityType::IpAddress),
+            "9.1.2.3.4 (five-octet, left-flank fragment) must NOT match; got {:?}",
+            nine_dot_fragment.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Five-octet: 10.0.0.1.255
+        let five_octet = detector.detect("10.0.0.1.255").unwrap();
+        assert!(
+            !five_octet.iter().any(|m| m.entity == EntityType::IpAddress),
+            "10.0.0.1.255 (five-octet) must NOT match"
+        );
+
+        // Valid boundary cases.
+        let max_octets = detector.detect("255.255.255.255").unwrap();
+        assert!(
+            max_octets.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "255.255.255.255"),
+            "255.255.255.255 (max valid octets) MUST match"
+        );
+
+        let with_port = detector.detect("10.0.0.1:8080").unwrap();
+        assert!(
+            with_port.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "10.0.0.1"),
+            "10.0.0.1:8080 (with port) MUST match the IP part"
         );
     }
 }
