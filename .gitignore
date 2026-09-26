@@ -135,3 +135,25 @@ pacgate-ai/**/MCP*/
 
 # Superpowers SDD scratch (ledger, briefs, review packages) - regenerable, never tracked
 .superpowers/
+
+# Playwright persistent browser profile - CONTAINS LIVE GITHUB SESSION COOKIES.
+#
+# scripts/dispatch-release-via-ui.py and sync-fork-via-ui.py use this directory so
+# a human signs in once and later runs need no human. That makes it a credential
+# store, not scratch: committing it would hand over the signed-in session and the
+# ability to act as the release authority. Gitignored on the same reasoning as the
+# 2026-09-16 credential-carrier entries above, and checked, because the scripts
+# create it silently on first run.
+.playwright-profile/
+.playwright-profile-*/
+
+# Playwright debug screenshots (the scripts write these on failure paths)
+dispatch-debug.png
+dispatch-no-tag-input.png
+dispatch-no-confirm.png
+dispatch-dry-run.png
+dispatch-after.png
+sync-fork-debug.png
+sync-fork-discard-warning.png
+sync-fork-no-update.png
+sync-fork-after.png
