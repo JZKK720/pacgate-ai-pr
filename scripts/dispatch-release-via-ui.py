@@ -17,7 +17,8 @@ USAGE
 
     Options:
       --tag <x.y.z>    image tag to build (required)
-      --user <login>   required account login (default: pacgate-ai)
+      --user <login>   account login that must be signed in
+                       (default: the owner of this checkout's origin remote)
       --profile <dir>  persistent browser profile (keeps you signed in)
       --headless       hide the window (you still must already be signed in)
 """
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 import time
 
@@ -34,7 +36,44 @@ try:
 except ImportError:
     sys.exit("playwright is not installed. python -m pip install playwright")
 
-FORK = "pacgate-ai/pacgate-ai-pr"
+# The repo to dispatch is a property of THIS CHECKOUT, not of this script.
+#
+# It was hardcoded as "pacgate-ai/pacgate-ai-pr". That is now the READ-ONLY
+# MIRROR, which publishes NO images: per .github/workflows/build-ghcr.yml
+# (2026-09-18), `jzkk720` is the release authority for both code and images, and
+# `pacgate-ai` is a read-only mirror. Dispatching against the mirror starts a run
+# that fails at the verify step, because `secrets.GITHUB_TOKEN` can only push to
+# the namespace of the account that runs the workflow.
+#
+# Deriving it from the origin remote means the value cannot go stale when the
+# remote moves again - the same failure mode as hardcoding a model tag in a crate
+# while the machines carried something else.
+FALLBACK_FORK = "JZKK720/pacgate-ai-pr"
+
+
+def resolve_fork() -> str:
+    """Return 'owner/repo' for the checkout this script is running inside."""
+    try:
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        url = (out.stdout or "").strip()
+        # https://github.com/owner/repo(.git) and git@github.com:owner/repo(.git)
+        m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?$", url)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    except Exception:
+        pass
+    print(f"[dispatch-release] WARNING: could not read the origin remote; using {FALLBACK_FORK}")
+    return FALLBACK_FORK
+
+
+FORK = resolve_fork()
+FORK_OWNER = FORK.split("/", 1)[0]
 WORKFLOW_URL = f"https://github.com/{FORK}/actions/workflows/build-ghcr.yml"
 ACTIONS_URL = f"https://github.com/{FORK}/actions"
 
@@ -126,13 +165,20 @@ def latest_run_ids(page) -> set[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True, help="image tag, e.g. 0.1.12")
-    ap.add_argument("--user", default="pacgate-ai")
+    ap.add_argument(
+        "--user",
+        default=FORK_OWNER,
+        help=f"account login that must be signed in (default: {FORK_OWNER}, the repo owner)",
+    )
     ap.add_argument("--profile", default=".playwright-profile")
     ap.add_argument("--headless", action="store_true")
     args = ap.parse_args()
 
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.tag):
         return _fail(f"--tag must look like 0.1.12 (got {args.tag!r})")
+
+    log(f"repository: {FORK}  (derived from the origin remote)")
+    log(f"expecting sign-in as: {args.user}")
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(

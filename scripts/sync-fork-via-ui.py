@@ -26,7 +26,8 @@ USAGE
     python scripts/sync-fork-via-ui.py
 
     Options:
-      --user <login>   required account login (default: pacgate-ai)
+      --user <login>   account login that must be signed in
+                     (default: the owner of this checkout's origin remote)
       --profile <dir>  reuse a persistent browser profile (keeps you signed in
                        between runs). Default: .playwright-profile
       --headless       do not show the window (you still must be signed in)
@@ -35,6 +36,8 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import re
+import subprocess
 import sys
 import time
 
@@ -47,7 +50,39 @@ except ImportError:
         "  (browsers are usually already cached; if not: python -m playwright install chromium)"
     )
 
-FORK = "pacgate-ai/pacgate-ai-pr"
+# The repo to sync is a property of THIS CHECKOUT, not of this script.
+#
+# It was hardcoded as "pacgate-ai/pacgate-ai-pr". Per
+# .github/workflows/build-ghcr.yml (2026-09-18), `jzkk720` is the release
+# authority for both code and images; `pacgate-ai` is a READ-ONLY MIRROR. Syncing
+# the mirror is harmless but useless, and it silently targets the wrong repo if
+# the remote ever moves - which is exactly the stale-value failure mode this repo
+# keeps finding in model tags and compose pins.
+FALLBACK_FORK = "JZKK720/pacgate-ai-pr"
+
+
+def resolve_fork() -> str:
+    """Return 'owner/repo' for the checkout this script is running inside."""
+    try:
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        url = (out.stdout or "").strip()
+        # https://github.com/owner/repo(.git) and git@github.com:owner/repo(.git)
+        m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?$", url)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    except Exception:
+        pass
+    return FALLBACK_FORK
+
+
+FORK = resolve_fork()
+FORK_OWNER = FORK.split("/", 1)[0]
 FORK_URL = f"https://github.com/{FORK}"
 
 
@@ -152,7 +187,11 @@ def fork_behind_count(page, attempts: int = 5) -> int | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--user", default="pacgate-ai")
+    ap.add_argument(
+        "--user",
+        default=FORK_OWNER,
+        help=f"account login that must be signed in (default: {FORK_OWNER}, the repo owner)",
+    )
     ap.add_argument("--profile", default=".playwright-profile")
     ap.add_argument("--headless", action="store_true")
     args = ap.parse_args()
