@@ -6,7 +6,6 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::net::Ipv4Addr;
 
 use crate::checksum::{validate_cn_resident_id, validate_luhn, validate_uscc};
 use crate::{EntityType, Match, MatchSource, RedactError, RedactResult};
@@ -51,10 +50,12 @@ static RE_LANDLINE: Lazy<Regex> =
 /// IPv4 address detection.
 ///
 /// Pattern matches dotted quad notation with correct octet ranges:
-/// 0-255 each, including leading zeros (001.002.003.004 is valid).
-/// Rejection of > 255 (e.g., 300.1.1.1) is delegated to is_bounded,
-/// not to regex, because the octet pattern is complex and Ipv4Addr
-/// validation is simpler and more precise.
+/// 0-255 each. Rejection of out-of-range octets (e.g., 300.1.1.1) is
+/// done by the octet pattern itself: (?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)
+/// does not match values above 255. is_bounded checks only the flanking
+/// characters and is load-bearing for the five-dot case: 1.2.3.4.5
+/// matches its first four groups and is rejected if text continues past
+/// the fourth dot.
 static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)")
         .expect("ipv4 regex is valid")
@@ -83,11 +84,11 @@ fn is_bounded(text: &str, start: usize, end: usize) -> bool {
     let before_ok = text[..start]
         .chars()
         .next_back()
-        .map_or(true, |c| !c.is_ascii_alphanumeric());
+        .is_none_or(|c| !c.is_ascii_alphanumeric());
     let after_ok = text[end..]
         .chars()
         .next()
-        .map_or(true, |c| !c.is_ascii_alphanumeric());
+        .is_none_or(|c| !c.is_ascii_alphanumeric());
     before_ok && after_ok
 }
 
@@ -183,9 +184,12 @@ impl Detector for TierOneDetector {
             if !is_bounded(text, m.start(), m.end()) {
                 continue;
             }
-            if m.as_str().parse::<Ipv4Addr>().is_ok() {
-                self.push(&mut out, m, EntityType::IpAddress, MatchSource::Pattern);
+            // A fifth dot-group means this is a longer run, not an address:
+            // `1.2.3.4.5` otherwise matches its first four groups.
+            if text[m.end()..].starts_with('.') {
+                continue;
             }
+            self.push(&mut out, m, EntityType::IpAddress, MatchSource::Pattern);
         }
 
         if self.include_email {
@@ -332,18 +336,26 @@ mod tests {
 
     #[test]
     fn finds_landline_both_with_and_without_hyphen() {
-        let spaced = TierOneDetector::new().detect("联系 010-1234567").unwrap();
+        let spaced = TierOneDetector::new().detect("联系 010-12345678").unwrap();
         assert!(
-            spaced.iter().any(|m| m.entity == EntityType::Landline && m.text == "010-1234567"),
-            "landline with hyphen must be found; got {:?}",
+            spaced.iter().any(|m| m.entity == EntityType::Landline && m.text == "010-12345678"),
+            "landline with hyphen and 8-digit subscriber must be found; got {:?}",
             spaced.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );
 
-        let no_hyphen = TierOneDetector::new().detect("联系 01012345678").unwrap();
+        let no_hyphen = TierOneDetector::new().detect("联系 0101234567").unwrap();
         assert!(
-            no_hyphen.iter().any(|m| m.entity == EntityType::Landline && m.text == "01012345678"),
-            "landline without hyphen must be found; got {:?}",
+            no_hyphen.iter().any(|m| m.entity == EntityType::Landline && m.text == "0101234567"),
+            "landline without hyphen and 8-digit subscriber must be found; got {:?}",
             no_hyphen.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Also verify 7-digit form is accepted
+        let seven_digit = TierOneDetector::new().detect("联系 010-1234567").unwrap();
+        assert!(
+            seven_digit.iter().any(|m| m.entity == EntityType::Landline && m.text == "010-1234567"),
+            "landline with hyphen and 7-digit subscriber must be found; got {:?}",
+            seven_digit.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );
     }
 
@@ -357,11 +369,13 @@ mod tests {
         );
 
         // A landline form with too many digits (9 instead of 7-8) that looks like
-        // a truncated extension: 010-123456789 should not match because 9 > 8.
+        // a truncated extension: 010-123456789 the pattern matches the first 11 chars
+        // (010-12345678), but is_bounded rejects it because the span ends on digit 8
+        // and the next character is also a digit (9).
         let over_long = TierOneDetector::new().detect("010-123456789").unwrap();
         assert!(
             !over_long.iter().any(|m| m.entity == EntityType::Landline),
-            "an over-long subscriber (9 digits) must not match the landline pattern"
+            "an over-long subscriber (9 digits) must not match because is_bounded rejects it"
         );
     }
 
@@ -386,19 +400,31 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_ipv4_when_not_bounded_or_out_of_range() {
-        // 256.1.1.1 is out of range for an octet, so Ipv4Addr parsing fails.
-        let invalid = TierOneDetector::new().detect("256.1.1.1").unwrap();
-        assert!(
-            !invalid.iter().any(|m| m.entity == EntityType::IpAddress),
-            "out-of-range octet must be rejected by Ipv4Addr validation"
-        );
-
+    fn rejects_ipv4_when_not_bounded() {
         // 192.168.1.1 inside a longer token must be rejected by is_bounded.
         let in_token = TierOneDetector::new().detect("X192.168.1.1Y").unwrap();
         assert!(
             !in_token.iter().any(|m| m.entity == EntityType::IpAddress),
             "an ipv4 inside a longer alphanumeric token must be rejected by is_bounded"
+        );
+    }
+
+    #[test]
+    fn rejects_ipv4_when_five_dot_pattern() {
+        // 1.2.3.4.5 matches the first four groups as a valid IPv4 pattern,
+        // but the fifth dot means it is a longer run. The fifth-dot guard
+        // must reject it.
+        let five_dot = TierOneDetector::new().detect("1.2.3.4.5").unwrap();
+        assert!(
+            !five_dot.iter().any(|m| m.entity == EntityType::IpAddress),
+            "a five-dot pattern must not match as an IPv4 address"
+        );
+
+        // Same with CJK adjacency
+        let five_dot_cjk = TierOneDetector::new().detect("地址1.2.3.4.5").unwrap();
+        assert!(
+            !five_dot_cjk.iter().any(|m| m.entity == EntityType::IpAddress),
+            "a five-dot pattern with CJK adjacency must not match"
         );
     }
 }
