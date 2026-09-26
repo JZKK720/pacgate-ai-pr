@@ -5,16 +5,22 @@
 # so the /api/* rewrites target the pacgate backend (deer-flow:8001).
 #
 # Usage (from repo root):
-#   .\deploy\build-frontend.ps1                      # build only (tagged ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:0.1.0)
+#   .\deploy\build-frontend.ps1                      # build only (tagged ghcr.io/<namespace>/deer-flow-frontend-pacgate)
 #   .\deploy\build-frontend.ps1 -Push                # build + push to GHCR (needs docker login)
 #   .\deploy\build-frontend.ps1 -Tag 0.1.1           # custom tag
 #   .\deploy\build-frontend.ps1 -GatewayUrl http://deer-flow:8001
+#
+# NAMESPACE: defaults to `GHCR_NAMESPACE` in .github/workflows/build-ghcr.yml,
+# which README-BUILD.md declares the single source of truth. This file previously
+# hardcoded `ghcr.io/pacgate-ai/*` - the READ-ONLY MIRROR that publishes NO
+# images. build-images.ps1 passes the resolved value in explicitly.
 
 param(
     [switch]$Push,
     [string]$Tag = "0.1.0",
     [string]$GatewayUrl = "http://deer-flow:8001",
-    [string]$DeerFlowVersion = "v2.0.0"
+    [string]$DeerFlowVersion = "v2.0.0",
+    [string]$Namespace = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,11 +29,27 @@ $Root = Split-Path -Parent $PSScriptRoot
 $SrcDir = Join-Path $Root "deploy/deer-flow-src"
 $FrontendDir = Join-Path $SrcDir "frontend"
 
+# Resolve the GHCR namespace from its declared single source of truth.
+function Resolve-GhcrNamespace([string]$RepoRoot, [string]$Override) {
+    if ($Override) { return $Override }
+    $wf = Join-Path $RepoRoot ".github/workflows/build-ghcr.yml"
+    if (Test-Path $wf) {
+        $m = Select-String -Path $wf -Pattern '^\s*GHCR_NAMESPACE:\s*(\S+)' | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    Write-Host "WARN: could not read GHCR_NAMESPACE from $wf; using fallback 'jzkk720'." -ForegroundColor Yellow
+    return "jzkk720"
+}
+
+$Ns = Resolve-GhcrNamespace $Root $Namespace
+$Image = "ghcr.io/$Ns/deer-flow-frontend-pacgate:$Tag"
+
 Write-Host "=== Pacgate deer-flow frontend build ===" -ForegroundColor Cyan
 Write-Host "  Repo root : $Root"
 Write-Host "  Source dir: $SrcDir"
 Write-Host "  Version   : $DeerFlowVersion"
 Write-Host "  Tag       : $Tag"
+Write-Host "  Namespace : $Ns  (from GHCR_NAMESPACE)"
 Write-Host "  Gateway   : $GatewayUrl"
 
 # 1. Ensure docker is available
@@ -67,27 +89,27 @@ if (Test-Path $PatchFiles) {
 }
 
 # 3. Build the image.
-Write-Host "[2/3] Building ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:$Tag ..." -ForegroundColor Cyan
+Write-Host "[2/3] Building $Image ..." -ForegroundColor Cyan
 docker build `
     -f (Join-Path $Root "deploy/deer-flow-frontend-pacgate/Dockerfile") `
     --build-arg "DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=$GatewayUrl" `
-    -t "ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:$Tag" `
+    -t $Image `
     $Root
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: docker build failed." -ForegroundColor Red
     exit 1
 }
-Write-Host "[OK] Built ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:$Tag" -ForegroundColor Green
+Write-Host "[OK] Built $Image" -ForegroundColor Green
 
 # 4. Push if requested.
 if ($Push) {
     Write-Host "[3/3] Pushing to GHCR..." -ForegroundColor Cyan
-    docker push "ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:$Tag"
+    docker push $Image
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: docker push failed. Ensure you are logged in: docker login ghcr.io" -ForegroundColor Red
         exit 1
     }
-    Write-Host "[OK] Pushed ghcr.io/pacgate-ai/deer-flow-frontend-pacgate:$Tag" -ForegroundColor Green
+    Write-Host "[OK] Pushed $Image" -ForegroundColor Green
 } else {
     Write-Host "[3/3] Skipping push (use -Push to push)." -ForegroundColor Yellow
 }
