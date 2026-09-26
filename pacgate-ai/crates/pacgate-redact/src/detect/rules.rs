@@ -33,6 +33,20 @@ static RE_MOBILE_CANDIDATE: Lazy<Regex> =
 static RE_DIGIT_RUN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d{12,19}").expect("digit run regex is valid"));
 
+/// Chinese landline: `0` + 2-3 digit area code + 7-8 digit subscriber,
+/// optionally hyphenated.
+///
+/// The `0` head is what keeps this clear of the mobile rule - `1[3-9]\d{9}`
+/// never matches a number starting with 0 (measured).
+///
+/// Note this pattern is NOT self-guarding for the over-long case: in
+/// `010-123456789` it happily matches the first 11 characters. `is_bounded`
+/// rejects it, because the span then ends on a digit. That check is therefore
+/// load-bearing for precision here, not just for the CJK fix - without it we
+/// would emit a truncated span, redact a prefix, and leave the rest visible.
+static RE_LANDLINE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"0\d{2,3}-?\d{7,8}").expect("landline regex is valid"));
+
 /// Ceiling on matches from one text, to turn a pathological input into a
 /// fatal error instead of unbounded memory growth.
 const MAX_MATCHES: usize = 4096;
@@ -142,6 +156,13 @@ impl Detector for TierOneDetector {
             if validate_luhn(m.as_str()) {
                 self.push(&mut out, m, EntityType::BankCard, MatchSource::Checksum);
             }
+        }
+
+        for m in RE_LANDLINE.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::Landline, MatchSource::Pattern);
         }
 
         if self.include_email {
@@ -283,6 +304,41 @@ mod tests {
         assert!(
             !extra.iter().any(|m| m.entity == EntityType::CnMobile),
             "a 12-digit run must not be read as a mobile"
+        );
+    }
+
+    #[test]
+    fn finds_landline_both_with_and_without_hyphen() {
+        let spaced = TierOneDetector::new().detect("联系 010-1234567").unwrap();
+        assert!(
+            spaced.iter().any(|m| m.entity == EntityType::Landline && m.text == "010-1234567"),
+            "landline with hyphen must be found; got {:?}",
+            spaced.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        let no_hyphen = TierOneDetector::new().detect("联系 01012345678").unwrap();
+        assert!(
+            no_hyphen.iter().any(|m| m.entity == EntityType::Landline && m.text == "01012345678"),
+            "landline without hyphen must be found; got {:?}",
+            no_hyphen.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn rejects_landline_when_not_bounded() {
+        // 0755-1234567 inside a longer token must be rejected by is_bounded.
+        let in_token = TierOneDetector::new().detect("A0755-1234567B").unwrap();
+        assert!(
+            !in_token.iter().any(|m| m.entity == EntityType::Landline),
+            "a landline inside a longer alphanumeric token must be rejected by is_bounded"
+        );
+
+        // A landline form with too many digits (9 instead of 7-8) that looks like
+        // a truncated extension: 010-123456789 should not match because 9 > 8.
+        let over_long = TierOneDetector::new().detect("010-123456789").unwrap();
+        assert!(
+            !over_long.iter().any(|m| m.entity == EntityType::Landline),
+            "an over-long subscriber (9 digits) must not match the landline pattern"
         );
     }
 }
