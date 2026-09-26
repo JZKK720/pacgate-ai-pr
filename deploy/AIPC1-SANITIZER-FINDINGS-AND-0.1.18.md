@@ -207,21 +207,38 @@ Before the fix each of those returned **zero** matches while `verify()` replayed
 the same detectors and returned `Pass` — so the document was marked `sanitized`
 with the identifier intact.
 
-### Still not detected, and stated plainly
+### Also fixed in this work: grouped digits and full-width writing
 
-Identifiers written with **grouped digits**: a bank card as
-`4111 1111 1111 1111` or `4111-1111-1111-1111`, a resident ID as
-`110105 19491231 002X`, a mobile as `138 1234 5678`. Only the ungrouped form is
-detected. Grouping is the canonical printed form of these numbers, so this is a
-real gap.
+Identifiers written with **grouped digits** and with **full-width characters** are
+now detected, where before they were not:
 
-> **Do not read the adjacency fix as making detection separator-insensitive.** An
-espace or hyphen *inside* the number still defeats it. Closing that requires
-matching against a separator-normalised copy of the text and mapping offsets back
-to the original — separate work, not part of this build.
+```
+卡号4111 1111 1111 1111                 卡号4111-1111-1111-1111
+身份证110105 19491231 002X              手机138 1234 5678
+卡号４１１１１１１１１１１１１１１１       身份证１１０１０５１９４９１２３１００２Ｘ
+```
 
-Also not detected: full-width digits (`１３８１２３４５６７８`), which a word
-processor can produce. Same shape of work, same reason it is deferred.
+Grouping and full-width forms are how these numbers appear on cards, in contracts
+and after a word processor has touched a document, so an ungrouped-only detector
+missed a normal case. Detection now runs against a separator-stripped,
+full-width-folded copy of the text and maps each match back to the original byte
+range, so the redacted output replaces the whole value including its separators.
+
+**A partial result must not be read as a general one.** These are the limits, and
+they are deliberate:
+
+- **A space-grouped landline** (`010 12345678`) is **not** detected. Removing the
+  separator makes that string identical in shape to the valid
+  `075512345678` (both 12 digits), and the two cannot be told apart by shape
+  alone. A miss on a rare spacing is preferable to redacting an unrelated 12-digit
+  number that happens to start with `0`.
+- **A 12-digit number whose leading digits form a real area code** can still be
+  read as a landline. `050123456789` is area code `501` plus an 8-digit
+  subscriber, which is a valid shape. Only unallocated prefixes such as `020` and
+  over-long forms are rejected structurally. This is honest precision/recall
+  behaviour on an ambiguous format, not a defect.
+- **Full-width detection covers digits and Latin letters** (which the resident-ID
+  check character `Ｘ` needs). Other full-width punctuation is not folded.
 
 **Pseudonymized, not anonymized.** Redaction is 去标识化 with a restorable
 mapping, per the specification's section 10. It is not 匿名化.
