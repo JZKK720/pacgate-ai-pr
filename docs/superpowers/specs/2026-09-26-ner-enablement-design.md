@@ -63,20 +63,23 @@ client spec section 3 forbids shifting dates), so they add no `EntityType`.
 | Detected by rules today | **5** |
 | Added by NER (PER/ORG/LOC) | **3** |
 | **Covered after workstreams 1-3** | **8** |
-| Added by section 11 (CaseNumber, Landline, IpAddress) | **3** |
-| **Covered after step 1 as well** | **11** |
-| Still uncovered after that | **4** |
+| Added by section 11 (Landline, IpAddress) | **2** |
+| **Covered after step 1 as well** | **10** |
+| Still uncovered after that | **5** |
 
-Arithmetic: 15 - 5 - 3 = 7 uncovered after NER; 7 - 3 = 4 uncovered after
+Arithmetic: 15 - 5 - 3 = 7 uncovered after NER; 7 - 2 = 5 uncovered after
 section 11. (An earlier draft said "six remain undetected" while listing seven;
 the list was right and the total was wrong. Stating every count together is what
-makes it checkable.)
+makes it checkable. A later draft said 11/15 by counting `CaseNumber` in step 1 -
+see section 11.1, which was withdrawn.) Separately, section 10.5 fixes a *silent
+miss inside* the five "detected" classes, so "5 detected" overstated real-world
+recall before step 0.
 
-The four that remain after both workstreams have **no detector source at all**:
+The five that remain after both workstreams have **no detector source at all**:
 
-`BankAccount`, `RegistrationNumber`, `PostalAddress`, `Credential`
+`CaseNumber`, `BankAccount`, `RegistrationNumber`, `PostalAddress`, `Credential`
 
-Their shape of work is measured in sections 12 and 13, not estimated.
+Their shape of work is measured in sections 11.1, 12 and 13, not estimated.
 
 That split must be reported honestly to the client (section 8), because the client
 spec section 9 requires a covered/uncovered formats and identifiers list.
@@ -239,19 +242,36 @@ The client spec section 9 requires results reported **separately per layer**
 (rules / local model / full chain / actual cloud boundary) - 不能相互替代. One
 end-to-end pass figure does not satisfy it.
 
-`tests/recall.rs` (plan 019 Task 7, unbuilt) must assert, per tier:
+**CORRECTION (2026-09-26, found while writing the implementation plan):
+this already exists.** `pacgate-ai/crates/pacgate-redact/tests/recall.rs`, 65 lines,
+with exactly the required shape:
 
-- **Rules-only row:** every Tier-1 fixture is caught by `tier_one_detectors()`.
-- **Model-layer row:** every Tier-2 fixture (person / org / location) is caught by
-  `full_detectors(model_dir)` and **not** by rules alone.
-- The two rows are **separate assertions**; one does not substitute the other.
-- The harness skips cleanly when the model directory is absent, so CI without
-  weights stays green.
+- `rule_layer_tier_one_recall` - Tier-1 fixtures via `tier_one_detectors()`, no
+  model required.
+- A model-layer row using `full_detectors(dir)` that **skips loudly** when
+  `PACGATE_NER_MODEL_DIR` is unset or the directory is missing, so CI without the
+  388 MB bundle stays green.
+- Its own header cites the contract: "Per-tier recall reporting (spec section 9:
+  不能相互替代)".
 
-**This harness is part of the fix, not an extra.** It measures recall on realistic
-fixtures, which is precisely what would have caught the 512-token wall: the
-existing tests assert *load* success and *short-sentence* detection, and a
-load-time check is not a run-time check.
+An earlier draft of this section described it as unbuilt (plan 019 Task 7). That
+was wrong - plan 019 shipped more of 3b than the plan file's checkboxes indicate.
+Recorded because the mistake points the other way from the usual one: the plan was
+stale, not the code.
+
+**So workstream 3 is not new construction; it is extension.** What remains:
+
+- Add rule-layer rows for the step-1 classes (`CaseNumber`, `Landline`,
+  `IpAddress`) once section 11 lands.
+- Add the long-document and boundary-straddling fixtures from section 3.5, which
+  are what would have caught the 512-token wall.
+- Report the **counts** per layer rather than only asserting no-miss, so the
+  numbers that go to the client come from the harness that proves them.
+
+The harness remains the reason the 512-token wall is a finding worth recording: it
+measures recall on realistic fixtures, whereas the existing unit tests assert
+*load* success and *short-sentence* detection. A load-time check is not a run-time
+check.
 
 ## 6. Fail-closed semantics
 
@@ -275,6 +295,7 @@ set `PACGATE_NER_MODEL_DIR`, so a client build cannot ship Tier-1-only silently.
 | Rust unit: offsets | char->byte translation correct with a window base offset |
 | Rust unit: long document | >1 window with a mid-document name is detected |
 | Rust unit: fail-closed | a failing window fails the document |
+| Rust unit: CJK adjacency (step 0) | `手机13812345678` is caught, `ABC13812345678` is not |
 | `tests/recall.rs` | per-tier recall, separate rows |
 | `verify()` replay | sanitized output re-scans clean; deliberate residue returns `Block` |
 | Live E2E | a real upload with a name sanitizes with the name redacted out |
@@ -301,13 +322,20 @@ These must appear in the section 9 deliverables, not be implied away:
 
 ## 9. Sequencing
 
+0. **Step 0: boundary recall fix + the Rust gate** (sections 10.5, 10.6) -
+   repairs a silent miss in the four boundary-anchored classes we already report
+   as covered, and adds the gate whose absence let it ship. Lands first because it
+   is a defect in production, not a gap, and it is the only item whose omission
+   can be mistaken for working behaviour.
 1. **Windowed inference** (workstream 1) - precondition; without it NER refuses
    long documents.
 2. **Recall harness** (workstream 3) - must exist before enabling, so the
-   enablement is measured rather than assumed.
-3. **Step 1 detectors** (section 11) - `CaseNumber`, `Landline`, `IpAddress`.
-   Rule-shaped, cheap, and `CaseNumber` activates existing dead code. Independent
-   of NER, so it can land before or with it.
+   enablement is measured rather than assumed. (Extended, not built - see
+   section 5's correction.)
+3. **Step 1 detectors** (section 11) - `Landline`, `IpAddress`. Rule-shaped,
+   cheap. Independent of NER, so it can land before or with it.
+   (`CaseNumber` is **not** here - see section 11.1; it needs the section 12
+   design pass first.)
 4. **Distribution** (workstream 2) - image + compose wiring + gate.
 5. **Enable and verify** - live E2E on the dev box, then release 0.1.19.
 6. **AIPC 1, then AIPC 2** - with the recall numbers recorded per machine.
@@ -321,79 +349,305 @@ cross-chunk mechanisms (section 13.1) before `PostalAddress` and `Credential`.
 
 ## 10. Success criteria
 
+- Every boundary-anchored class is caught when a CJK character is directly
+  adjacent (`手机13812345678`), not only when separated by a space (step 0).
 - A document longer than one BERT window sanitizes successfully, with a
   mid-document person name redacted.
 - Per-tier recall is reported as separate rule-layer and model-layer rows.
 - The published `pacgate-api` image contains all three model files and the API
   logs the full detector set at startup (no `Tier-1 rules only` warning).
-- The four uncovered classes are stated in the client deliverables, with
-  `BankAccount` named as the highest-value remaining follow-up and `Credential`
-  flagged as needing cross-chunk design (section 13).
+- The five uncovered classes are stated in the client deliverables, with
+  `BankAccount` named as the highest-value remaining follow-up, `CaseNumber`
+  flagged as needing a context signal before it can be correct (section 11.1),
+  and `Credential` flagged as needing cross-chunk design (section 13).
 - A gate asserts the coverage counts in this document still match `EntityType`
   and the registered detector set, so the numbers reported to the client cannot
   drift from the code.
-- `run-all-checks.ps1` remains green, with the new gates added.
+- `run-all-checks.ps1` remains green, with the new gates added (**including a
+  Rust gate**, which did not previously exist - see section 10.6).
 
-## 11. Follow-up workstream - step 1: three rule-shaped classes
+## 10.5. Step 0 - a recall hole in the five classes we already ship
+
+Found 2026-09-26 while writing the step-1 plan, by probing the shipped detector
+rather than reading it. **This precedes section 11**, because it is a defect in
+production today, not a coverage gap.
+
+Every Tier-1 candidate pattern is anchored with `\b`:
+
+```rust
+RE_CN_ID_CANDIDATE  \b\d{17}[\dXx]\b
+RE_USCC_CANDIDATE   \b[0-9A-HJ-NPQRTUWXY]{18}\b
+RE_MOBILE_CANDIDATE \b1[3-9]\d{9}\b
+RE_DIGIT_RUN        \b\d{12,19}\b     (BankCard, via Luhn)
+```
+
+Rust's `regex` crate is Unicode-aware by default, so `\w` includes CJK. A CJK
+character is therefore a *word* character, and **`\b` does not exist between a
+CJK character and a digit**. Measured on this box with a throwaway Rust probe:
+
+| input | matched |
+|---|---|
+| `手机 13812345678` (space) | `13812345678` |
+| `手机13812345678` (no space) | **none** |
+| `手机：13812345678` (full-width colon) | `13812345678` |
+| `身份证 11010519491231002X` (space) | `11010519491231002X` |
+| `身份证11010519491231002X` (no space) | **none** |
+| `（11010519491231002X）` (brackets) | `11010519491231002X` |
+
+All four boundary-anchored classes fail the same way: `CnResidentId`, `Uscc`,
+`CnMobile`, `BankCard`. `Email` is unaffected (it has no `\b`).
+
+**Why this is worse than the missing classes in section 1.** A missing class is
+an acknowledged gap. This is a *silent* failure inside the classes we report as
+covered, and it is the form a Chinese lawyer actually writes - `手机：138...`
+with no space, in a table cell or after a label - because Chinese text does not
+use inter-word spaces. Combined with section 1's replay property, the document
+gets a `Pass` verdict with the mobile number intact.
+
+**The fix is not `\b` -> `[^\w]`.** The correct predicate is "not flanked by an
+*ASCII alphanumeric*", which accepts CJK/punctuation/whitespace adjacency while
+still rejecting a longer token. Verified with the same probe:
+
+| input | fix result | correct? |
+|---|---|---|
+| `手机13812345678` | matches | yes - was a miss |
+| `手机13812345678号` | matches (trailing CJK) | yes |
+| `ABC13812345678` | no match | yes - longer token |
+| `138123456789` | no match | yes - 12 digits |
+| `11010519491231002XX` | no match | yes - longer token |
+
+**Also measured, and deliberately NOT in step 0:** Rust `\d` is Unicode-aware, so
+it matches full-width digits U+FF10-FF19. Verified: `１３８１２３４５６７８` (full-width
+mobile) does **not** match today, because the literal ASCII `1` in
+`RE_MOBILE_CANDIDATE` anchors the match and the remainder is rejected by `[3-9]`.
+So this is a **recall** gap, not the false-positive risk it resembles.
+
+It is deferred rather than bundled, for a concrete reason: accepting full-width
+digits means normalising the input, and every `Match` offset is a byte offset into
+the *original* text. Normalising before matching shifts offsets and would break
+redaction; normalising inside the validators means each candidate pattern must
+carry both widths (`[1１]`, `[3-9３-９]`, ...), and `validate_cn_resident_id`,
+`validate_uscc` and `validate_luhn` would each need a width-normalising entry
+point. That is a design task with its own offset-preservation questions, not a
+patch - and folding it into step 0 would obscure the adjacency fix, which is a
+defect in shipped behaviour.
+
+Trigger to pick it up: any measured full-width occurrence in the client corpus.
+Until then it is recorded here rather than silently assumed absent.
+
+**Scope note:** step 0 is a *detection* change, so it must land under the
+`tests/recall.rs` harness (section 5) with adjacency fixtures, and it must not
+regress the existing five classes' tests. Step 0 comes before section 11 because
+it repairs shipped behaviour; section 11 adds new classes.
+
+## 10.6. The reason none of this was caught: Rust tests are gated nowhere
+
+Measured 2026-09-26. This is why step 0's defect survived, and why it must be
+fixed alongside the detectors rather than after them.
+
+| Check | Runs today? |
+|---|---|
+| `run-all-checks.ps1` gates | 21 PowerShell gates |
+| Any gate invoking `cargo test` / `cargo clippy` | **none** |
+| `bootstrap-integration-postgres.ps1:158` references `cargo` | yes, but it is not in the gate list and does not run the crate suite |
+| CI (`build-ghcr.yml`) | build + push + manifest verify; **no `cargo test`, no `cargo clippy`** |
+
+So every Rust assertion in this repository - the checksum validators, the recall
+harness, the pipeline tests - is run only when a human types the command. The
+PowerShell layer is genuinely gated; the Rust layer is not gated at all.
+
+That is the structural reason a silent recall miss could sit in four shipped
+detectors: **there was no mechanism whose job was to notice.**
+
+**The gate to add**, as part of step 0:
+
+```powershell
+# scripts/test-rust-workspace.ps1
+# Gates the Rust layer, which nothing previously did. Measured 2026-09-26:
+# run-all-checks.ps1 is 21 PowerShell gates and CI runs no cargo command, so
+# every Rust assertion in this repo ran only when a human typed it.
+#
+# Scoped to -D warnings for the crate this plan touches: the workspace has
+# pre-existing clippy warnings (pacgate-core 1, pacgate-search 2,
+# pacgate-agent 1, pacgate-api 3), so a workspace-wide -D warnings gate would be
+# red on arrival and would be disabled within a week. pacgate-redact is clean
+# today (verified), so this is a ratchet, not a new burden.
+
+$ErrorActionPreference = 'Stop'
+Set-Location (Join-Path $PSScriptRoot '..')
+$cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
+if (-not (Test-Path $cargo)) {
+    Write-Host '  exit 2 - cargo not found; cannot check' -ForegroundColor Yellow
+    exit 2
+}
+
+& $cargo test -p pacgate-redact --all-targets
+if ($LASTEXITCODE -ne 0) { Write-Host '  FAIL cargo test (pacgate-redact)' -ForegroundColor Red; exit 1 }
+
+& $cargo clippy -p pacgate-redact --all-targets -- -D warnings
+if ($LASTEXITCODE -ne 0) { Write-Host '  FAIL cargo clippy -D warnings (pacgate-redact)' -ForegroundColor Red; exit 1 }
+
+Write-Host '  PASS pacgate-redact test + clippy' -ForegroundColor Green
+exit 0
+```
+
+**Why `-p pacgate-redact` and not `--workspace`:** measured on this box, the
+workspace currently emits 7 clippy warnings across `pacgate-core`, `pacgate-search`,
+`pacgate-agent` and `pacgate-api`, while `pacgate-redact` alone is clean under
+`-D warnings`. A gate that is red on arrival teaches people to ignore gates.
+Widening it to `--workspace` is a separate cleanup task, deliberately not folded in
+here.
+
+**Note the exit-2 convention.** Per the established gate contract (`0` pass, `1`
+real failure, `2` cannot check), a machine without cargo reports *cannot check*,
+never a pass. And per the existing runner's warning, a gate that needs a running
+stack belongs in `$liveStackGates`, not `$gates` - this one needs only cargo, so it
+is safe in `$gates`.
+
+## 11. Follow-up workstream - step 1: rule-shaped classes
 
 Added 2026-09-26 after measuring what the seven uncovered classes actually take.
-These three are rule-shaped and small, and `CaseNumber` activates code that
-already exists. Coverage goes **8/15 -> 11/15**.
 
-### 11.1 `CaseNumber` 案号 - nearly free
+**AMENDED 2026-09-26, while writing the step-1 plan: `CaseNumber` was NOT
+"nearly free" and has been moved out of step 1.** Section 11.1 below is retained
+with its error marked, because the mistake is instructive. What step 1 actually
+ships is two classes, not three. Coverage goes **8/15 -> 10/15**.
 
-`noise.rs:20` already encodes the court-citation shape:
+### 11.1 `CaseNumber` 案号 - WITHDRAWN from step 1 (was: "nearly free")
 
+This section previously argued the work was "New regex + detector method + the
+existing filter wired in". **That is wrong, and the existing filter is the
+reason.** Measured with the real regex:
+
+```python
+RE_CITATION = r"[(（]\d{4}[)）][^\s]{1,12}?号"
+
+is_public_case_number("参见(2023)京0105民初12345号判决", "(2023)京0105民初12345号") -> True
+is_public_case_number("本案案号(2023)京0105民初12345号",   "(2023)京0105民初12345号") -> True
+is_public_case_number("(2023)京0105民初12345号",           "(2023)京0105民初12345号") -> True
 ```
-[(（]\d{4}[)）][^\s]{1,12}?号      ->   (2023)京0105民初12345号
-```
 
-That pattern currently exists ONLY as a **filter** (`is_public_case_number` /
-`drop_public_citations`), preserving public citations from `CaseNumber` matches
-that no detector ever produces. It is effectively dead code.
+`is_public_case_number` is a pure *shape* test: it asks whether the text contains
+a `RE_CITATION` match containing the candidate. If the detector's candidate
+pattern **is** that shape - as this section proposed - then every candidate is
+trivially contained in its own shape, and the function returns `True`
+unconditionally. It is not a filter that would be "wired in"; it is a filter that
+would **silently exempt the entire class it was meant to protect**.
 
-So the work is: add a `CaseNumber` detector whose candidate pattern is the same
-shape, and **reuse the existing filter** so the behaviour the code already
-documents (client spec L40/41: 本案案号 replace, 公开参考案例案号 preserve) becomes
-real. Two of the spec's eight taxonomy categories move from unaddressed to
-addressed.
+Activating it as written would therefore produce a `CaseNumber` detector that
+redacts nothing, which is worse than the current no-detector state: it would move
+`CaseNumber` from the "not detected" column into the "detected" column while
+detecting nothing - the exact failure mode section 1 is about.
 
-- Candidate: the citation shape, widened to catch 本案 numbers that carry a
-  court代字 without the parenthesised year form.
-- Validation: **context** - replace only when the number is attributable to the
-  project. `drop_public_citations` already implements the exclusion.
-- Policy: already `Tier::Three`, placeholder `CASE_NO`.
-- Effort: **S**. New regex + detector method + the existing filter wired in.
+**Both of the spec's taxonomy branches are required and neither is implemented:**
+本案案号 (replace) and 公开参考案例案号 (preserve). Separating them needs a real
+discrimination signal - whether the number appears in a case-reference context -
+which is a label/context detector, not a shape match. That is genuinely new design
+work.
+
+**Deferred to section 12's design pass**, because it shares its shape: a conflict
+resolution question (here, which branch wins) that must be settled before the
+detector can be correct. Do NOT implement `CaseNumber` by reusing this filter.
 
 ### 11.2 `Landline` 座机 - trivial
 
 `0` + area code + subscriber number, optionally hyphenated (`010-12345678`).
 Chinese area codes are the 2-3 digit set (10, 21, 2x), subscriber 7-8 digits.
 
-- Candidate: `\b0\d{2,3}-?\d{7,8}\b`
-- Validation: area-code set membership, so an arbitrary digit run cannot match.
+Candidate: `0\d{2,3}-?\d{7,8}`, plus the step-0 boundary predicate (section 10.5).
+
+Measured, with the boundary predicate:
+
+| input | result | correct? |
+|---|---|---|
+| `座机010-12345678` | matches | yes |
+| `座机01012345678` | matches | yes |
+| `座机0755-12345678` | matches | yes |
+| `手机13812345678` | no match | yes - not a landline |
+| `编号123456789012` | no match | yes - no leading 0 |
+| `座机010-123456789` | no match | yes - subscriber too long |
+| `A010-12345678` | no match | yes - ASCII-alnum flanked |
+
+Two attributions in that table are worth stating, because both were wrong in an
+earlier draft:
+
+1. The mobile is rejected because the pattern starts with `0` and
+   `1[3-9]\d{9}` starts with `1` - the patterns never collide. Measured:
+   `138123456789` yields `landline=[]`, `digit_run=["138123456789"]`.
+2. The over-long form is rejected by **`is_bounded`, not by the pattern shape.**
+   Measured directly: `座机010-123456789` matches `010-12345678` in the regex
+   alone, ending on the digit `9`; the predicate is what rejects it. **So the
+   boundary predicate is load-bearing for `Landline` precision, not only for the
+   CJK recall fix** - without it this detector would emit a truncated span,
+   redact a prefix, and leave the remainder of the number visible. A truncated
+   redaction is worse than a miss, because it looks sanitized.
+
+Both detectors use `MatchSource::Pattern`. `MatchSource::Context` was considered
+and rejected: the codebase defines it as "a pattern plus a label or surrounding
+context" (`lib.rs:58-59`), whereas `Landline`'s `0` head is structural rather than
+a label. `Pattern` is documented as "a regex pattern matched, but no checksum was
+available", which is the honest description for both.
+
+Note also: **every row above only behaves correctly if the boundary predicate is
+in place.** `座机010-12345678` has a CJK character immediately before the `0`, so
+with `\b`-based anchoring this detector would miss the common form and catch only
+the space-separated one.
+
+- Validation: the shape plus the boundary predicate. **No area-code table is
+  needed** - `0\d{2,3}` already keeps this clear of the 11-digit mobile, measured
+  above. An earlier draft said "area-code set membership"; that would be a table
+  of ~350 codes guarding against a collision that measurement shows does not
+  exist. The real guard is `is_bounded`.
 - Policy: already `Tier::Two`, placeholder `LANDLINE`.
 - Effort: **S**.
 
 ### 11.3 `IpAddress` - trivial, lowest priority
 
-IPv4 octet-range validated; IPv6 optional and can be deferred.
+IPv4 octet-range validated.
 
-- Candidate: `\b\d{1,3}(?:\.\d{1,3}){3}\b` with **per-octet <= 255 validation** -
-  without that check this pattern matches version strings and dates.
+Candidate: `\d{1,3}(?:\.\d{1,3}){3}`, validated by `str::parse::<Ipv4Addr>()`, plus
+the boundary predicate and a **fifth-dot-group guard**.
+
+Measured:
+
+| input | result | correct? |
+|---|---|---|
+| `服务器192.168.1.1` | matches | yes |
+| `访问10.0.0.1:8080` | matches | yes |
+| `内网172.16.0.254` | matches | yes |
+| `版本1.2.3.400` | no match | yes - octet > 255 |
+| `日期2026.09.26` | no match | yes - only 3 groups |
+| `地址1.2.3.4.5` | no match | yes - fifth group |
+| `版本v1.2.3` | no match | yes - only 3 groups |
+| `999.1.1.1` | no match | yes - octet > 255 |
+
+Two implementation notes the probe established, so they are not rediscovered:
+
+1. **Use `str::parse::<Ipv4Addr>()` for the octet check, not a hand-rolled one.**
+   It also rejects leading zeros (`00.1.1.1` fails), which a hand-rolled
+   `split('.').all(|p| p.parse::<u8>().is_ok())` would wrongly accept. `u8::parse`
+   is strict here, so the standard library gives the stricter answer for free.
+2. **The fifth-dot-group guard is required.** Without it, `1.2.3.4.5` matches the
+   first four groups. Check `!text[end..].starts_with('.')`.
+
 - Policy: already `Tier::Four`, placeholder `IP`.
 - Effort: **S**. Lowest legal relevance of the seven; include because it is
   cheap, not because it is urgent.
 
 ### 11.4 Acceptance for step 1
 
-- A client case number is replaced; a published citation `(2023)京0105民初12345号`
-  in a legal-reference context is **preserved** (the existing filter, now live).
-- A landline with and without a hyphen is caught; a bare 11-digit number is not
-  misread as one.
-- An IP is caught; `1.2.3.400` and `2026.09.26` are not.
-- None of the three regresses the existing five classes' tests.
-- The per-tier recall harness (section 5) gains rule-layer rows for all three.
+- A landline with and without a hyphen is caught; a mobile and a 12-digit run are
+  not misread as one. **Fixtures must include the CJK-adjacent form** (`座机010-...`)
+  as well as the spaced form, because only the former proves step 0 landed.
+- An IP is caught; `1.2.3.400`, `2026.09.26`, `1.2.3.4.5` and `v1.2.3` are not.
+- The step-0 adjacency fix holds for all four existing boundary-anchored classes:
+  `手机13812345678`, `身份证11010519491231002X`, `代码91350100M000100Y43`,
+  `卡号4111111111111111` are each caught with no separating space.
+- None of the changes regress the existing five classes' tests.
+- The per-tier recall harness (section 5) gains rule-layer rows for both new
+  classes and for the adjacency cases.
+- `pacgate-redact` passes `cargo clippy -p pacgate-redact --all-targets -- -D warnings`
+  (verified clean today, so this is a ratchet and not a new burden).
 
 ## 12. Follow-up workstream - step 2: the overlap strategy (a precondition)
 
