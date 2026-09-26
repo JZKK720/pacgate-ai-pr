@@ -35,6 +35,32 @@ static RE_DIGIT_RUN: Lazy<Regex> =
 /// fatal error instead of unbounded memory growth.
 const MAX_MATCHES: usize = 4096;
 
+/// True when the span `[start, end)` is not flanked by an ASCII alphanumeric.
+///
+/// Replaces `\b` on the candidate patterns. `\b` is wrong here because the
+/// `regex` crate is Unicode-aware by default, so `\w` includes CJK - which means
+/// `\b` does not exist between a CJK character and a digit, and
+/// `手机13812345678` (no space) is silently missed. Chinese text does not use
+/// inter-word spaces, so that is the common form, not an edge case.
+///
+/// The test is deliberately "not ASCII-alphanumeric" rather than "non-word":
+/// trailing CJK (`手机13812345678号`) must be accepted, while a longer token
+/// (`ABC13812345678`) must not. `[^\w]` would reject both.
+///
+/// Offsets come from `regex::Match` on the same `text`, so they are char
+/// boundaries by construction.
+fn is_bounded(text: &str, start: usize, end: usize) -> bool {
+    let before_ok = text[..start]
+        .chars()
+        .next_back()
+        .map_or(true, |c| !c.is_ascii_alphanumeric());
+    let after_ok = text[end..]
+        .chars()
+        .next()
+        .map_or(true, |c| !c.is_ascii_alphanumeric());
+    before_ok && after_ok
+}
+
 /// Finds the Tier-1 identifier set. Every rule is checksum- or shape-anchored;
 /// none fires on a bare digit run.
 pub struct TierOneDetector {
@@ -182,5 +208,29 @@ mod tests {
         let found = TierOneDetector::new().detect(text).unwrap();
         assert_eq!(found.len(), 2);
         assert!(found[0].start < found[1].start);
+    }
+
+    /// A CJK character is a word character for Unicode-aware `\b`, so `\b` does
+    /// not exist between it and a digit. These are the forms a Chinese contract
+    /// actually contains - no inter-word spaces.
+    #[test]
+    fn is_bounded_accepts_cjk_adjacency_and_rejects_longer_tokens() {
+        let text = "手机13812345678";
+        let start = 6; // "手机" is 6 bytes (2 chars x 3 bytes)
+        assert_eq!(&text[start..start + 11], "13812345678");
+        assert!(is_bounded(text, start, start + 11), "CJK adjacency must be accepted");
+
+        // Trailing CJK too: the number is followed by a unit character.
+        let trailing = "手机13812345678号";
+        assert!(is_bounded(trailing, start, start + 11));
+
+        // A longer ASCII token must still be rejected: this is the reason not to
+        // simply drop the anchors.
+        assert!(!is_bounded("ABC13812345678", 3, 14));
+        assert!(!is_bounded("A13812345678", 1, 12));
+        assert!(!is_bounded("138123456789", 0, 11));
+
+        // Text edges are unconstrained.
+        assert!(is_bounded("13812345678", 0, 11));
     }
 }
