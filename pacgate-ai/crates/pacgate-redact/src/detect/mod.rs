@@ -4,6 +4,7 @@ pub mod ner;
 pub mod noise;
 pub mod normalize;
 pub mod rules;
+pub mod window;
 
 pub use rules::TierOneDetector;
 
