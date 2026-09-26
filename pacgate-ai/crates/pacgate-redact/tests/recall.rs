@@ -61,6 +61,48 @@ fn rule_layer_cjk_adjacency() {
     }
 }
 
+/// Grouped and full-width identifiers. Grouping is how these numbers are
+/// actually printed on cards and in contracts, so an ungrouped-only detector
+/// missed the normal case in the same four classes the adjacency row targets.
+///
+/// The assertion is on the DIGITS being absent, not on the exact original
+/// string: a format-preserving placeholder deliberately keeps a same-shaped
+/// value, so the grouped original may legitimately not appear verbatim. What
+/// must never survive is the identifier's actual digits.
+#[test]
+fn rule_layer_grouped_and_full_width_forms() {
+    // (input, the digits that must not survive)
+    let fixtures = [
+        ("卡号4111 1111 1111 1111", "4111 1111"),
+        ("卡号4111-1111-1111-1111", "4111-1111"),
+        ("身份证110105 19491231 002X", "19491231"),
+        ("手机138 1234 5678", "138 1234"),
+        ("卡号４１１１１１１１１１１１１１１１", "４１１１"),
+        ("身份证１１０１０５１９４９１２３１００２Ｘ", "１９４９１２３１"),
+    ];
+    for (text, marker) in fixtures {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            !out.contains(marker),
+            "grouped/full-width miss: '{marker}' survives sanitization in {text}: {out}"
+        );
+    }
+}
+
+/// Guard against the two false positives the normalised path introduced and that
+/// were caught by probing, not by review. Both are 12-digit runs whose leading
+/// digits do not form a real area code.
+#[test]
+fn rule_layer_landline_false_positives_stay_rejected() {
+    for text in ["编号020123456789", "编号010123456789"] {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            out.contains(text),
+            "false positive: {text} was altered by sanitization: {out}"
+        );
+    }
+}
+
 /// The two classes added in step 1, sanitized end-to-end rather than only
 /// detected. This is the row that reports step 1 as delivered.
 #[test]

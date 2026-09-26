@@ -33,19 +33,34 @@ static RE_MOBILE_CANDIDATE: Lazy<Regex> =
 static RE_DIGIT_RUN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d{12,19}").expect("digit run regex is valid"));
 
-/// Chinese landline: `0` + 2-3 digit area code + 7-8 digit subscriber,
-/// optionally hyphenated.
+/// Chinese landline: `0` + area code + 7-8 digit subscriber, optionally
+/// hyphenated.
 ///
-/// The `0` head is what keeps this clear of the mobile rule - `1[3-9]\d{9}`
-/// never matches a number starting with 0 (measured).
+/// The area code is matched STRUCTURALLY, not as `\d{2,3}`. Measured
+/// 2026-09-26: with a bare `0\d{2,3}` the 12-digit run `010123456789` matched in
+/// full and `is_bounded` could not reject it, because the span ran to the end of
+/// the text. That is a silent false positive on any unrelated 12-digit number
+/// starting with `0` - an account or order number. An earlier draft concluded
+/// the `0` head was sufficient on the strength of `123456789012`, which does not
+/// start with `0`; the measurement was wrong, not the reasoning that followed.
 ///
-/// Note this pattern is NOT self-guarding for the over-long case: in
-/// `010-123456789` it happily matches the first 11 characters. `is_bounded`
-/// rejects it, because the span then ends on a digit. That check is therefore
-/// load-bearing for precision here, not just for the CJK fix - without it we
-/// would emit a truncated span, redact a prefix, and leave the rest visible.
-static RE_LANDLINE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"0\d{2,3}-?\d{7,8}").expect("landline regex is valid"));
+/// Real area codes are: `10` (Beijing, written 010 - the only 2-digit one),
+/// `2x` for x in 1-9 (021-029; there is no 020), and `3xx`-`9xx`.
+///
+/// With the area code pinned, the digit count is bounded and `is_bounded` does
+/// the rest: in `010123456789` the match stops after 8 subscriber digits, the
+/// next character is a digit, and the match is rejected - the same mechanism
+/// that already rejected the hyphenated `010-123456789`.
+///
+/// Accepted cost: a SPACE-grouped landline (`010 12345678`) is not detected.
+/// This pattern deliberately matches the original text rather than the
+/// normalised copy, because normalising `010-123456789` to `010123456789` makes
+/// it identical in shape to the VALID `0755-12345678` -> `075512345678` (both 12
+/// digits) and the two cannot then be told apart. A miss on a rare spacing is
+/// preferable to redacting an unrelated number.
+static RE_LANDLINE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"0(?:10|2[1-9]|[3-9]\d{2})-?\d{7,8}").expect("landline regex is valid")
+});
 
 /// IPv4 address detection.
 ///
@@ -123,11 +138,36 @@ impl TierOneDetector {
         entity: EntityType,
         source: MatchSource,
     ) {
+        self.push_span(out, m.start(), m.end(), m.as_str(), entity, source);
+    }
+
+    /// Record a match over an explicit span of the ORIGINAL text.
+    ///
+    /// `slice` must be the ORIGINAL bytes for `[start, end)`, never a normalised
+    /// slice. `Match.text` is not a description of the match - it is the value
+    /// that reaches `PlaceholderAllocator::allocate` (`replace.rs:90`) and
+    /// therefore what the restore mapping returns for this placeholder. Storing
+    /// the de-grouped form here would make a restore of `4111 1111 1111 1111`
+    /// return `4111111111111111` - a silently altered number.
+    ///
+    /// Deliberately no separate confidence for a separator-stripped match: the
+    /// same checksum validates the same digits, so the evidence is the same
+    /// strength. Inventing a lower value would change semantics downstream
+    /// (policy, ledger) for no measured reason.
+    fn push_span(
+        &self,
+        out: &mut Vec<Match>,
+        start: usize,
+        end: usize,
+        slice: &str,
+        entity: EntityType,
+        source: MatchSource,
+    ) {
         out.push(Match {
-            start: m.start(),
-            end: m.end(),
+            start,
+            end,
             entity,
-            text: m.as_str().to_string(),
+            text: slice.to_string(),
             confidence: if source == MatchSource::Checksum { 1.0 } else { 0.9 },
             source,
         });
@@ -146,45 +186,121 @@ impl Detector for TierOneDetector {
 
         let mut out: Vec<Match> = Vec::new();
 
-        for m in RE_CN_ID_CANDIDATE.find_iter(text) {
-            if !is_bounded(text, m.start(), m.end()) {
+        // Digit-shaped classes match against a separator-stripped, full-width-
+        // folded copy. `4111 1111 1111 1111`, `110105 19491231 002X` and
+        // `138 1234 5678` are the canonical printed forms, and grouping is not
+        // rare - it is how these numbers appear in contracts and on cards.
+        // Matches are mapped back to original byte offsets with
+        // `original_span`, which returns an exclusive, char-boundary end.
+        let normalized = super::normalize::NormalizedText::build(text);
+
+        for m in RE_CN_ID_CANDIDATE.find_iter(&normalized.text) {
+            let Some((start, end)) = normalized.original_span(text, m.start(), m.end()) else {
+                continue;
+            };
+            if !is_bounded(text, start, end) {
                 continue;
             }
             if validate_cn_resident_id(m.as_str()) {
-                self.push(&mut out, m, EntityType::CnResidentId, MatchSource::Checksum);
+                self.push_span(
+                    &mut out,
+                    start,
+                    end,
+                    &text[start..end],
+                    EntityType::CnResidentId,
+                    MatchSource::Checksum,
+                );
             }
         }
 
-        for m in RE_USCC_CANDIDATE.find_iter(text) {
-            if !is_bounded(text, m.start(), m.end()) {
+        for m in RE_USCC_CANDIDATE.find_iter(&normalized.text) {
+            let Some((start, end)) = normalized.original_span(text, m.start(), m.end()) else {
+                continue;
+            };
+            if !is_bounded(text, start, end) {
                 continue;
             }
             if validate_uscc(m.as_str()) {
-                self.push(&mut out, m, EntityType::Uscc, MatchSource::Checksum);
+                self.push_span(
+                    &mut out,
+                    start,
+                    end,
+                    &text[start..end],
+                    EntityType::Uscc,
+                    MatchSource::Checksum,
+                );
             }
         }
 
-        for m in RE_MOBILE_CANDIDATE.find_iter(text) {
-            if !is_bounded(text, m.start(), m.end()) {
+        for m in RE_MOBILE_CANDIDATE.find_iter(&normalized.text) {
+            let Some((start, end)) = normalized.original_span(text, m.start(), m.end()) else {
+                continue;
+            };
+            if !is_bounded(text, start, end) {
                 continue;
             }
-            self.push(&mut out, m, EntityType::CnMobile, MatchSource::Checksum);
+            self.push_span(
+                &mut out,
+                start,
+                end,
+                &text[start..end],
+                EntityType::CnMobile,
+                MatchSource::Checksum,
+            );
         }
 
-        for m in RE_DIGIT_RUN.find_iter(text) {
-            if !is_bounded(text, m.start(), m.end()) {
+        for m in RE_DIGIT_RUN.find_iter(&normalized.text) {
+            let Some((start, end)) = normalized.original_span(text, m.start(), m.end()) else {
+                continue;
+            };
+            if !is_bounded(text, start, end) {
                 continue;
             }
+            // The checksum is over the DIGITS, so it validates the normalised
+            // slice - `4111 1111 1111 1111` is not Luhn-valid as written, with
+            // the spaces in it.
             if validate_luhn(m.as_str()) {
-                self.push(&mut out, m, EntityType::BankCard, MatchSource::Checksum);
+                self.push_span(
+                    &mut out,
+                    start,
+                    end,
+                    &text[start..end],
+                    EntityType::BankCard,
+                    MatchSource::Checksum,
+                );
             }
         }
 
+        // Landline deliberately matches the ORIGINAL text, not `normalized`.
+        //
+        // Measured, 2026-09-26: normalising it introduces a false positive.
+        // `010-123456789` normalises to `010123456789` (12 digits); the greedy
+        // `\d{2,3}` then takes a THREE-digit "area code" and the whole 12-digit
+        // run matches. That string is indistinguishable from the VALID
+        // `0755-12345678` -> `075512345678`, also 12 digits, because area codes
+        // vary in length and we deliberately have no area-code table. So the two
+        // cannot be separated by shape once the separator is gone.
+        //
+        // In the original text the hyphen splits the run, the match ends before
+        // the final `9`, and `is_bounded` rejects it - which is why the earlier
+        // round produced a correct answer. The pattern already carries `-?`, so
+        // hyphenated landlines match without any normalisation.
+        //
+        // Accepted cost: a SPACE-grouped landline (`010 12345678`) stays
+        // undetected. That is a miss on a rare form, and a miss is preferable to
+        // a false positive that redacts an unrelated 12-digit number.
         for m in RE_LANDLINE.find_iter(text) {
             if !is_bounded(text, m.start(), m.end()) {
                 continue;
             }
-            self.push(&mut out, m, EntityType::Landline, MatchSource::Pattern);
+            self.push_span(
+                &mut out,
+                m.start(),
+                m.end(),
+                m.as_str(),
+                EntityType::Landline,
+                MatchSource::Pattern,
+            );
         }
 
         for m in RE_IPV4.find_iter(text) {
@@ -392,6 +508,65 @@ mod tests {
             !over_long.iter().any(|m| m.entity == EntityType::Landline),
             "an over-long subscriber (9 digits) must not match because is_bounded rejects it"
         );
+    }
+
+    /// The false positive this pattern was tightened for: a 12-digit run whose
+    /// leading digits do NOT form a real area code. `020` is the trap - Beijing
+    /// is `010` and `021`-`029` exist, but `020` was never allocated.
+    ///
+    /// Note the limit honestly: `050123456789` reads as area code `501` plus an
+    /// 8-digit subscriber, and `501` is a real 3-digit code, so that string IS
+    /// matched. It is genuinely indistinguishable from `075512345678`. Only the
+    /// unallocated-prefix cases can be rejected by shape, and those are what this
+    /// test pins.
+    #[test]
+    fn does_not_read_an_invalid_area_code_as_a_landline() {
+        for text in [
+            "编号020123456789", // 020 was never allocated
+            "编号010123456789", // 010 + 9 subscriber digits: over-long
+            "编号000123456789", // no area code starts 00
+        ] {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                !found.iter().any(|m| m.entity == EntityType::Landline),
+                "false positive: {text} produced a Landline; got {:?}",
+                found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The accepted cost of pinning the area code, stated as a test so it is not
+    /// mistaken for an oversight later. `07551234567` is a valid 3+7 landline
+    /// shape, so it IS still detected - that is intended, not a bug.
+    #[test]
+    fn detects_a_three_digit_area_code_with_a_seven_digit_subscriber() {
+        let found = TierOneDetector::new().detect("座机07551234567").unwrap();
+        assert!(
+            found.iter().any(|m| m.entity == EntityType::Landline),
+            "a 3+7 landline shape is ambiguous with an account number but keeps \
+             matching, which is the documented tradeoff; got {:?}",
+            found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// Real area codes must still work, including the only 2-digit one.
+    #[test]
+    fn accepts_real_area_codes_including_beijing() {
+        for (text, value) in [
+            ("座机010-12345678", "010-12345678"),
+            ("座机021-12345678", "021-12345678"),
+            ("座机029-12345678", "029-12345678"),
+            ("座机0755-12345678", "0755-12345678"),
+            ("座机0999-12345678", "0999-12345678"),
+            ("座机01012345678", "01012345678"),
+        ] {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                found.iter().any(|m| m.entity == EntityType::Landline && m.text == value),
+                "landline miss: {value} not found in {text}; got {:?}",
+                found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

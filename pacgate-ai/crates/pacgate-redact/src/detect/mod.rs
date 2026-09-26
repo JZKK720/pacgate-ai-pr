@@ -2,6 +2,7 @@
 
 pub mod ner;
 pub mod noise;
+pub mod normalize;
 pub mod rules;
 
 pub use rules::TierOneDetector;
