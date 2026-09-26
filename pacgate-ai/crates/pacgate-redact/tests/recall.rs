@@ -35,6 +35,50 @@ fn rule_layer_tier_one_recall() {
     }
 }
 
+/// The forms Chinese contracts actually contain: a label immediately followed by
+/// the identifier, with no separating space. This row would have failed before
+/// the boundary fix - all four adjacent forms returned zero matches.
+///
+/// Kept as its own row rather than folded into `rule_layer_tier_one_recall`
+/// because it is a different claim: that row proves the checksums work, this one
+/// proves the boundaries do.
+#[test]
+fn rule_layer_cjk_adjacency() {
+    let fixtures = [
+        ("身份证11010519491231002X", "11010519491231002X"),
+        ("代码91350100M000100Y43", "91350100M000100Y43"),
+        ("手机13812345678", "13812345678"),
+        ("卡号4111111111111111", "4111111111111111"),
+        // Trailing CJK, which `[^\w]` would have rejected.
+        ("手机13812345678号", "13812345678"),
+    ];
+    for (text, value) in fixtures {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            !out.contains(value),
+            "adjacency miss: {value} survives sanitization in {text}"
+        );
+    }
+}
+
+/// The two classes added in step 1, sanitized end-to-end rather than only
+/// detected. This is the row that reports step 1 as delivered.
+#[test]
+fn rule_layer_step_one_classes() {
+    let fixtures = [
+        ("座机010-12345678", "010-12345678", EntityType::Landline),
+        ("座机01012345678", "01012345678", EntityType::Landline),
+        ("服务器192.168.1.1", "192.168.1.1", EntityType::IpAddress),
+    ];
+    for (text, value, entity) in fixtures {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            !out.contains(value),
+            "step-1 miss ({entity:?}): {value} survives sanitization in {text}"
+        );
+    }
+}
+
 /// Tier-2 candidates: person/org/location names that only the model layer
 /// can see. Skips when PACGATE_NER_MODEL_DIR is unset or the directory is
 /// missing - the skip prints loudly so the coverage gap is visible, and the
