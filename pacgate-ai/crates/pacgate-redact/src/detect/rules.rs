@@ -17,19 +17,21 @@ static RE_EMAIL: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 18-char resident ID shape. Validity is decided by the checksum, not this.
+/// Unanchored on purpose - `is_bounded` is the boundary test, because `\b`
+/// fails between a CJK character and a digit.
 static RE_CN_ID_CANDIDATE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\b\d{17}[\dXx]\b").expect("id candidate regex is valid"));
+    Lazy::new(|| Regex::new(r"\d{17}[\dXx]").expect("id candidate regex is valid"));
 
 /// 18-char USCC shape: digits plus uppercase letters, excluding I O S V Z.
 static RE_USCC_CANDIDATE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b[0-9A-HJ-NPQRTUWXY]{18}\b").expect("uscc candidate regex is valid")
+    Regex::new(r"[0-9A-HJ-NPQRTUWXY]{18}").expect("uscc candidate regex is valid")
 });
 
 static RE_MOBILE_CANDIDATE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\b1[3-9]\d{9}\b").expect("mobile regex is valid"));
+    Lazy::new(|| Regex::new(r"1[3-9]\d{9}").expect("mobile regex is valid"));
 
 static RE_DIGIT_RUN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\b\d{12,19}\b").expect("digit run regex is valid"));
+    Lazy::new(|| Regex::new(r"\d{12,19}").expect("digit run regex is valid"));
 
 /// Ceiling on matches from one text, to turn a pathological input into a
 /// fatal error instead of unbounded memory growth.
@@ -109,22 +111,34 @@ impl Detector for TierOneDetector {
         let mut out: Vec<Match> = Vec::new();
 
         for m in RE_CN_ID_CANDIDATE.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
             if validate_cn_resident_id(m.as_str()) {
                 self.push(&mut out, m, EntityType::CnResidentId, MatchSource::Checksum);
             }
         }
 
         for m in RE_USCC_CANDIDATE.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
             if validate_uscc(m.as_str()) {
                 self.push(&mut out, m, EntityType::Uscc, MatchSource::Checksum);
             }
         }
 
         for m in RE_MOBILE_CANDIDATE.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
             self.push(&mut out, m, EntityType::CnMobile, MatchSource::Checksum);
         }
 
         for m in RE_DIGIT_RUN.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
             if validate_luhn(m.as_str()) {
                 self.push(&mut out, m, EntityType::BankCard, MatchSource::Checksum);
             }
@@ -232,5 +246,43 @@ mod tests {
 
         // Text edges are unconstrained.
         assert!(is_bounded("13812345678", 0, 11));
+    }
+
+    /// The four boundary-anchored classes must be caught with a CJK character
+    /// directly adjacent, not only when separated by a space. Measured before
+    /// the fix: all four adjacent forms returned no matches at all.
+    #[test]
+    fn finds_boundary_anchored_classes_when_cjk_is_adjacent() {
+        let cases = [
+            ("身份证11010519491231002X", "11010519491231002X", EntityType::CnResidentId),
+            ("代码91350100M000100Y43", "91350100M000100Y43", EntityType::Uscc),
+            ("手机13812345678", "13812345678", EntityType::CnMobile),
+            ("卡号4111111111111111", "4111111111111111", EntityType::BankCard),
+        ];
+        for (text, value, entity) in cases {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                found.iter().any(|m| m.entity == entity && m.text == value),
+                "adjacency miss ({entity:?}): {value} not found in {text}; got {:?}",
+                found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The fix must not become "match any digit run": a longer ASCII token still
+    /// has to be rejected, or the recall fix becomes a precision regression.
+    #[test]
+    fn still_rejects_longer_ascii_tokens() {
+        // 11-digit mobile shape embedded in a longer alphanumeric token.
+        let embedded = TierOneDetector::new().detect("ABC13812345678").unwrap();
+        assert!(embedded.is_empty(), "must not extract a mobile from a longer token");
+
+        // 138123456789 is 12 digits: matches RE_DIGIT_RUN's 12-19 range, but is not
+        // a Luhn-valid card, so nothing should be reported.
+        let extra = TierOneDetector::new().detect("138123456789").unwrap();
+        assert!(
+            !extra.iter().any(|m| m.entity == EntityType::CnMobile),
+            "a 12-digit run must not be read as a mobile"
+        );
     }
 }
