@@ -53,8 +53,7 @@ mod tests {
     /// Requires a running Postgres. Run with `--ignored`.
     #[tokio::test]
     #[ignore]
-    async fn full_api_flow() {
-        // ── 1. Setup: connect to Postgres, create test DB, run migrations ──
+    async fn full_api_flow() {        // ── 1. Setup: connect to Postgres, create test DB, run migrations ──
 
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
@@ -471,9 +470,110 @@ mod tests {
             .unwrap();
         let saved_memory: serde_json::Value =
             serde_json::from_slice(&body_bytes).expect("memory response is valid JSON");
+
+        // The SERVER now owns `revision` (it is assigned on every successful
+        // write, so the concurrency guard has something to compare). The caller's
+        // body fields must still round-trip untouched - only the server-owned
+        // counter is added, so the round-trip is lossless apart from that field.
+        let mut expected = memory_body.clone();
+        let revision = saved_memory
+            .get("revision")
+            .and_then(|v| v.as_u64())
+            .expect("the server must assign a revision");
+        assert!(
+            revision >= 1,
+            "the first write must advance the revision from the default 0, got {revision}"
+        );
+        expected["revision"] = serde_json::Value::from(revision);
         assert_eq!(
-            saved_memory, memory_body,
-            "matter memory round-trip should be lossless"
+            saved_memory, expected,
+            "matter memory round-trip should be lossless apart from the \
+             server-assigned revision"
+        );
+
+        // ── 6b. The concurrency guard is CONNECTED (not merely present) ──
+        //
+        // This is the assertion whose absence let the guard be dead at three
+        // layers at once. Each piece had passing tests; nothing tested them
+        // TOGETHER, and a guard is only real where it can REJECT.
+
+        // A caller holding a STALE revision must be refused.
+        let stale = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/matters/{matter_id}/memory"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("if-match", "0")
+                    .body(Body::from(r#"{"facts":[{"text":"stale overwrite"}]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stale.status(),
+            StatusCode::CONFLICT,
+            "a caller holding a stale revision must get 409, not a silent overwrite"
+        );
+
+        // And the rejected write must not have modified the file: a 409 that had
+        // already truncated the file would be worse than no guard.
+        let reread = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/matters/{matter_id}/memory"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let reread_bytes = axum::body::to_bytes(reread.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let after: serde_json::Value = serde_json::from_slice(&reread_bytes).unwrap();
+        assert_eq!(
+            after["facts"][0]["text"], "Client prefers concise updates",
+            "the REJECTED write must not have modified the file"
+        );
+        assert_eq!(
+            after["revision"].as_u64(),
+            Some(revision),
+            "a rejected write must not advance the revision"
+        );
+
+        // A caller holding the CURRENT revision succeeds and advances it.
+        let good = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/matters/{matter_id}/memory"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("if-match", revision.to_string())
+                    .body(Body::from(r#"{"facts":[{"text":"second write"}]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            good.status(),
+            StatusCode::OK,
+            "a caller holding the current revision must be accepted"
+        );
+        let good_bytes = axum::body::to_bytes(good.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let second: serde_json::Value = serde_json::from_slice(&good_bytes).unwrap();
+        assert_eq!(
+            second["revision"].as_u64(),
+            Some(revision + 1),
+            "an accepted write must advance the revision"
         );
 
         // ── 7. Upload a document into the created matter ──

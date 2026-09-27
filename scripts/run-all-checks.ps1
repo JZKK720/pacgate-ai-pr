@@ -108,6 +108,11 @@ $gates = @(
     # acquired after the detector build passes every behavioural test while
     # bounding nothing. Self-contained (reads files; no docker needed).
     'scripts/test-memory-bound.ps1'
+    # Asserts the matter-memory concurrency guard is CONNECTED. It was dead at
+    # three layers at once while every unit test passed, because each layer was
+    # individually correct - the LINKS between them were missing, and a
+    # source-level check is the only thing that sees links. Self-contained.
+    'scripts/test-memory-guard.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
