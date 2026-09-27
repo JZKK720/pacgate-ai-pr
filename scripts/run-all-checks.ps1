@@ -118,6 +118,18 @@ $gates = @(
     # subsystem, so it gets the same treatment as the first: a source-level check,
     # because per-piece correctness already hid one broken chain here.
     'scripts/test-memory-scope.ps1'
+    # Asserts deer-flow's memory lane is the SANITIZED adapter and cannot silently
+    # degrade. deer-flow wraps storage instantiation in a bare `except Exception`
+    # that substitutes its own FileMemoryStorage - which bypasses all three guards
+    # above. It already happened here: native memory.json files hold real matter
+    # prose in a schema the adapter never emits. The trip-wire is a missing
+    # PACGATE_MATTER_ID, and .env.example shipped it blank. Self-contained.
+    'scripts/test-memory-lane.ps1'
+    # Proves the gate above can REJECT. It went in as a blind gate twice in this
+    # subsystem already, so the mutation harness is registered alongside it
+    # rather than trusted to a manual run. Breaks each assertion in turn,
+    # asserts exit 1, and restores every file byte-identical.
+    'scripts/test-memory-lane-mutations.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'

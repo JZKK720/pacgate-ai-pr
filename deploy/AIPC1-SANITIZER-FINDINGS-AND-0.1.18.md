@@ -318,7 +318,7 @@ the difference matters for how the system is deployed.
 |---|---|---|
 | Document index (RAG) | sanitized document text | **yes** - unsearchable until sanitized |
 | Matter memory | process notes about a matter | **yes** - write-time scope check |
-| Agent memory | process notes about an agent's work | **yes** - same endpoint as matter memory |
+| Agent memory | process notes about an agent's work | **conditionally** - see the fallback below |
 | OpenViking | conversational context | **no** - accepted limitation |
 
 **Matter memory and agent memory hold process, not matter facts.** Content that
@@ -326,6 +326,80 @@ contains an identifier is refused at write time with **HTTP 422**. Matter facts
 belong in the document index, where the sanitization gate already applies. This is
 enforced rather than advisory - see
 `pacgate-ai/crates/pacgate-api/src/memory_scope.rs`.
+
+### Agent memory is gated only while the adapter is loaded
+
+That third row said an unqualified **yes** until 2026-09-27. It was wrong, and the
+correction is the most important finding in this document.
+
+deer-flow selects its memory storage by class *path*, at runtime, and wraps the
+whole instantiation in a bare `except Exception` that substitutes its own
+`FileMemoryStorage`:
+
+```python
+# packages/harness/deerflow/agents/memory/storage.py
+except Exception as e:
+    logger.error("Failed to load memory storage %s, falling back to "
+                 "FileMemoryStorage: %s", storage_class_path, e)
+    _storage_instance = FileMemoryStorage()
+```
+
+`FileMemoryStorage` is **not** a subclass of our adapter and knows nothing about
+pacgate-api. It writes to `users/<uid>/agents/<name>/memory.json` on disk, which
+means it bypasses **all three** matter-memory guards - the 422 scope rule, the
+64 KiB cap, and the `If-Match` revision guard - because every one of them is
+enforced server-side, in an API that this path never calls.
+
+The trip-wire is a missing `PACGATE_MATTER_ID`. The adapter raises on it:
+
+```python
+# pacgate-adapters/python/pacgate_deerflow_adapter/storage.py:62
+raise ValueError("PacgateMemoryStorage requires PACGATE_MATTER_ID")
+```
+
+and that raise is precisely what the fallback catches. **`.env.example` shipped
+this key blank.** So the default fresh install was the silent-degradation path: a
+correct-looking deployment that answered every health check while writing
+unsanitized memory to disk.
+
+**This is not hypothetical - it already happened on this machine.** Two native
+files were found under
+`deploy/client-bundle/data/deer-flow/users/<uid>/agents/*/memory.json`, carrying
+real matter prose in the native `version: 1.0` schema the adapter never emits:
+
+> "Currently focused on sanitizing documents (e.g. `1b3c2e48-…`) at data level T3.
+> This involves managing redaction counts, mapping, and ensuring compliance with
+> matter-level bindings…"
+
+A document UUID, a data level, and workflow detail - on disk, unredacted, from a
+lane that was believed gated. Four `facts` entries and three summaries were
+present in the `sanitizer` file alone.
+
+To check which lane a running stack is actually on:
+
+```powershell
+docker exec deer-flow sh -c 'echo "matter=[$PACGATE_MATTER_ID]"'
+# A blank value means the adapter raised and deer-flow fell back. Expect a UUID.
+
+docker logs deer-flow 2>&1 | Select-String 'falling back to FileMemoryStorage'
+# Any hit means the fallback fired. Logs clear on restart, so absence proves
+# nothing about earlier runs - check the file lane below instead.
+
+Get-ChildItem deploy/client-bundle/data/deer-flow/users -Recurse -Filter memory.json |
+  ForEach-Object { "$($_.FullName)  $($_.LastWriteTime)" }
+# A file here in the native v1.0 shape (user.workContext / history.recentMonths /
+# facts) was written by the FALLBACK. The adapter is API-backed and never touches
+# disk, so the presence of these files is itself the evidence.
+```
+
+`scripts/test-memory-lane.ps1` now fails the build if the storage class, the
+compose env, the config mount, or the `.env.example` value would allow this, and
+`scripts/test-memory-lane-mutations.ps1` proves that gate can reject.
+
+**The residual risk this does not remove:** the lane is still configured rather
+than proven at runtime. The gate asserts the configuration cannot *silently*
+degrade; it does not assert that a running container loaded the adapter. The
+`docker exec` check above is the runtime verification, and it is a manual step.
 
 A call that means "remember this for later" is therefore rejected if it carries a
 resident ID, USCC, mobile number, bank card or email in it. The distinction is
