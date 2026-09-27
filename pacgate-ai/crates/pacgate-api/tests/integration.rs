@@ -576,6 +576,60 @@ mod tests {
             "an accepted write must advance the revision"
         );
 
+        // ── 6c. The memory SCOPE is enforced end to end ──
+        //
+        // Memory holds process, not matter facts. Asserted through the real router,
+        // because a policy that is only unit-tested is a policy that can be unwired
+        // without anyone noticing.
+
+        // A checksum-valid resident ID must be refused.
+        let with_id = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/matters/{matter_id}/memory"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        r#"{"facts":[{"content":"Client ID 11010519491231002X"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            with_id.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "an identifier in memory must be refused with 422, not stored"
+        );
+
+        // A PROCESS SUMMARY must still be accepted. This assertion matters as much
+        // as the refusal: a gate that fires on legitimate traffic gets disabled,
+        // which is how the If-Match guard came to be dead at three layers.
+        let prose = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/matters/{matter_id}/memory"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("if-match", (revision + 1).to_string())
+                    .body(Body::from(
+                        r#"{"facts":[{"content":"The firm reviewed the matter with the user."}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            prose.status(),
+            StatusCode::OK,
+            "a process summary must be accepted: a gate that fires on legitimate \
+             traffic gets disabled"
+        );
+
         // ── 7. Upload a document into the created matter ──
 
         let boundary = "X-PACGATE-BOUNDARY";

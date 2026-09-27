@@ -299,6 +299,26 @@ pub async fn save_matter_memory(
         return Err(ApiError::bad_request("matter memory must be a JSON object"));
     }
 
+    // Scope FIRST - before the matter lookup and before any filesystem access, so
+    // a refused write cannot have touched anything.
+    //
+    // This is the mechanical half of "memory holds process, not matter facts".
+    // The policy lives in memory_scope.rs; without this call it would be a
+    // comment, which is exactly how the If-Match guard ended up dead at three
+    // layers while six unit tests passed.
+    crate::check_memory_scope(&memory).map_err(|v| match v {
+        crate::MemoryScopeViolation::Identifier { entity, count } => ApiError::unprocessable(
+            format!(
+                "memory may hold process, not matter facts: {count} {entity} identifier(s) found. \
+                 Matter facts belong in the RAG lane, which is sanitization-gated."
+            ),
+        ),
+        crate::MemoryScopeViolation::TooLarge { bytes, limit } => ApiError::unprocessable(format!(
+            "memory payload is {bytes} bytes, over the {limit}-byte limit: this looks like content \
+             rather than a process summary"
+        )),
+    })?;
+
     let matter_id: MatterId = id
         .parse()
         .map_err(|e| ApiError::bad_request(format!("invalid matter id: {e}")))?;
@@ -548,8 +568,37 @@ mod memory_concurrency_tests {
     }
 
     #[test]
-    fn an_atomic_write_replaces_the_whole_file_and_leaves_no_temp() {
-        let dir = std::env::temp_dir().join(format!("pacgate-atomic-{}", std::process::id()));
+    fn the_save_handler_enforces_the_memory_scope() {
+        let prod = production_source();
+        let save = &prod[prod
+            .find("pub async fn save_matter_memory")
+            .expect("save_matter_memory must exist")..];
+
+        assert!(
+            save.contains("check_memory_scope("),
+            "save_matter_memory must CALL check_memory_scope - a correct rule the \
+             handler never calls is the exact shape of the defect this codebase \
+             already shipped once: defined, unit-tested, called from nowhere"
+        );
+        // 422, not 400 or 500: the body is well-formed JSON and the server is fine.
+        assert!(
+            save.contains("unprocessable"),
+            "an out-of-scope memory must be refused with 422, not 400 or 500"
+        );
+        // Ordering: the scope check must precede any filesystem access, or a
+        // refused write could already have modified the file.
+        let scope_call = save.find("check_memory_scope(").expect("checked above");
+        if let Some(fs) = save.find("std::fs::") {
+            assert!(
+                scope_call < fs,
+                "the scope check must run BEFORE any filesystem access \
+                 (scope at byte {scope_call}, fs at byte {fs})"
+            );
+        }
+    }
+
+    #[test]
+    fn an_atomic_write_replaces_the_whole_file_and_leaves_no_temp() {        let dir = std::env::temp_dir().join(format!("pacgate-atomic-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("memory.json");
 

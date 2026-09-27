@@ -113,6 +113,11 @@ $gates = @(
     # individually correct - the LINKS between them were missing, and a
     # source-level check is the only thing that sees links. Self-contained.
     'scripts/test-memory-guard.ps1'
+    # Asserts the memory SCOPE rule is defined, enforced, and still correctly
+    # asymmetric (identifiers gate, prose does not). The second guard in this
+    # subsystem, so it gets the same treatment as the first: a source-level check,
+    # because per-piece correctness already hid one broken chain here.
+    'scripts/test-memory-scope.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'

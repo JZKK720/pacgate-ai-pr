@@ -49,6 +49,20 @@ impl ApiError {
             message: msg.into(),
         }
     }
+
+    /// 422 Unprocessable Entity - well-formed but out of scope.
+    ///
+    /// Used for memory content that is not permitted in a persistent-memory lane.
+    /// A 400 would be wrong (nothing is malformed) and a 500 would be wrong (the
+    /// server is fine). 422 says exactly what happened: we understood it and
+    /// refuse to store it.
+    pub fn unprocessable(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "unprocessable",
+            message: msg.into(),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
