@@ -5,6 +5,7 @@ use axum::{
 };
 use pacgate_auth::Claims;
 use pacgate_core::{DocumentStore, Matter, MatterId, TenantId, UserId};
+use pacgate_tenant::TenantError;
 use serde::Deserialize;
 
 use crate::{error::ApiError, state::AppState};
@@ -238,7 +239,19 @@ pub async fn get_matter(
         .matter_store
         .get(&tenant_id, &matter_id)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(|e| match e {
+            // A missing matter is a 404, not a 500. The store ALREADY
+            // discriminates this: `From<sqlx::Error>` maps `RowNotFound` to
+            // `TenantError::MatterNotFound`. Flattening every variant into
+            // `internal` threw that distinction away, so an unknown matter id
+            // and a broken database were indistinguishable to a caller.
+            //
+            // That mattered here: install.ps1 probes this endpoint to decide
+            // whether a configured PACGATE_MATTER_ID is real, and a 500 reads
+            // as "the API is down" rather than "that id does not exist".
+            TenantError::MatterNotFound(_) => ApiError::not_found("matter not found"),
+            other => ApiError::internal(other.to_string()),
+        })?;
     Ok(Json(matter))
 }
 

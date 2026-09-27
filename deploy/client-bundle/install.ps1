@@ -477,10 +477,145 @@ Write-Host "`nPulling Docker images..." -ForegroundColor Cyan
 docker compose -f compose.prod.yaml pull
 Write-Host "[OK] Images pulled" -ForegroundColor Green
 
+# 6b. Provision the matter that deer-flow's memory adapter is scoped to.
+#
+# WHY THIS EXISTS, and why it runs BEFORE the stack starts.
+#
+# deer-flow selects its memory storage by class path and wraps the instantiation
+# in a bare `except Exception` that substitutes its own FileMemoryStorage. The
+# trip-wire is a missing PACGATE_MATTER_ID: the adapter raises on it, and that
+# exact raise is what the fallback catches. FileMemoryStorage never calls
+# pacgate-api, so it bypasses all three matter-memory guards (the 422 scope rule,
+# the 64 KiB cap, and the If-Match revision guard) - each enforced server-side.
+#
+# So a blank matter id does NOT mean "no memory". It means UNSANITIZED memory,
+# written to disk, with nothing reporting it as wrong. That happened here on
+# 2026-09-19/20 and was only found by reading the files.
+#
+# Ordering matters as much as the value. Running this before `up -d` means
+# deer-flow never starts without a real matter, so the fallback window is zero
+# rather than "briefly, on first boot".
+function Invoke-MatterProvision {
+    param([string]$BaseUrl)
+
+    # PACGATE_MATTER_ID may already name a real matter (a re-run, or an operator
+    # who set it deliberately). Verify before creating a duplicate.
+    $existing = $env:PACGATE_MATTER_ID
+    $H = $null
+    if ($env:PACGATE_API_EMAIL -and $env:PACGATE_API_PASSWORD) {
+        foreach ($p in @("$BaseUrl/api/auth/login", "$BaseUrl/auth/login")) {
+            try {
+                $body = @{ email = $env:PACGATE_API_EMAIL; password = $env:PACGATE_API_PASSWORD } | ConvertTo-Json -Compress
+                $login = Invoke-RestMethod -Uri $p -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 20
+                if ($login.token) { $H = @{ Authorization = "Bearer $($login.token)" }; break }
+            } catch { }
+        }
+    }
+
+    if (-not $H) {
+        # Do not silently continue: an unauthenticated run cannot provision, and
+        # continuing would leave the blank value in place - the exact state this
+        # step exists to prevent.
+        Write-Host "  [WARN] Could not authenticate to the API, so no matter could be provisioned." -ForegroundColor Yellow
+        Write-Host "         deer-flow will refuse to start its memory adapter and fall back to" -ForegroundColor Yellow
+        Write-Host "         writing UNSANITIZED memory to disk. Set PACGATE_MATTER_ID in .env to" -ForegroundColor Yellow
+        Write-Host "         a real matter id, or fix the API credentials, then re-run." -ForegroundColor Yellow
+        return $false
+    }
+
+    if ($existing -and $existing.Trim().Length -gt 0) {
+        try {
+            $null = Invoke-RestMethod -Uri "$BaseUrl/api/matters/$existing" -Headers $H -TimeoutSec 20
+            Write-Host "  [OK] PACGATE_MATTER_ID already names a real matter ($existing)" -ForegroundColor Green
+            return $true
+        } catch {
+            Write-Host "  [WARN] PACGATE_MATTER_ID=$existing does not resolve to a matter the API knows." -ForegroundColor Yellow
+            Write-Host "         Provisioning a real one instead." -ForegroundColor Yellow
+        }
+    }
+
+    try {
+        $matter = Invoke-RestMethod -Uri "$BaseUrl/api/matters" -Method Post -Headers $H -TimeoutSec 20 `
+            -ContentType 'application/json' `
+            -Body (@{ name = 'default'; description = 'Default matter for this deployment (created by install.ps1)' } | ConvertTo-Json -Compress)
+    } catch {
+        Write-Host "  [WARN] matter create failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+    if (-not $matter.id) {
+        Write-Host "  [WARN] matter create returned no id" -ForegroundColor Yellow
+        return $false
+    }
+
+    # Write it into .env so every subsequent compose run resolves the real id.
+    # Rewrite in place: preserve every other line, including comments and secrets.
+    $envPath = Join-Path (Get-Location) '.env'
+    $lines = Get-Content $envPath
+    $found = $false
+    $out = foreach ($line in $lines) {
+        if ($line -match '^\s*PACGATE_MATTER_ID\s*=') {
+            $found = $true
+            "PACGATE_MATTER_ID=$($matter.id)"
+        } else { $line }
+    }
+    if (-not $found) { $out += "PACGATE_MATTER_ID=$($matter.id)" }
+    # No BOM: docker compose chokes on a BOM in .env, and Set-Content adds one by
+    # default on Windows PowerShell.
+    [System.IO.File]::WriteAllLines($envPath, $out, [System.Text.UTF8Encoding]::new($false))
+
+    $env:PACGATE_MATTER_ID = $matter.id
+    Write-Host "  [OK] Provisioned matter $($matter.id) and wrote it to .env" -ForegroundColor Green
+
+    # Prove it. A write that is merely attempted is not a write that works, and
+    # this whole file exists because "looks configured" hid a broken lane.
+    try {
+        $probe = Invoke-RestMethod -Uri "$BaseUrl/api/matters/$($matter.id)/memory" -Headers $H -TimeoutSec 20
+        Write-Host "  [OK] memory endpoint reachable (revision $($probe.revision))" -ForegroundColor Green
+    } catch {
+        Write-Host "  [WARN] the matter exists but its memory endpoint did not answer: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    return $true
+}
+
+Write-Host "`nProvisioning the matter for deer-flow memory..." -ForegroundColor Cyan
+# The API publishes no host port; it is reached through nginx at /pacgate. Start
+# that pair now - nginx needs pacgate-api, and both are required to provision.
+$provisioned = $false
+docker compose -f compose.prod.yaml up -d pacgate-api nginx 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+$reached = $false
+foreach ($attempt in 1..30) {
+    try {
+        $null = Invoke-RestMethod -Uri "http://localhost:8089/version" -TimeoutSec 5
+        $reached = $true; break
+    } catch { Start-Sleep -Seconds 2 }
+}
+if ($reached) {
+    $provisioned = Invoke-MatterProvision -BaseUrl 'http://localhost:8089/pacgate'
+}
+else {
+    Write-Host "  [WARN] the API did not become reachable behind nginx in 60s; skipping matter provisioning." -ForegroundColor Yellow
+    Write-Host "         Re-run .\install.ps1 -Update once the stack is healthy." -ForegroundColor Yellow
+}
+
 # 7. Start stack
 Write-Host "`nStarting Pacgate-ai..." -ForegroundColor Cyan
 docker compose -f compose.prod.yaml up -d
 Write-Host "[OK] Stack running" -ForegroundColor Green
+
+# 7a. Prove deer-flow is on the SANITIZED lane, not the fallback. This is the
+# only check that observes the running container rather than the configuration.
+if ($provisioned) {
+    $lane = docker exec deer-flow sh -c 'echo $PACGATE_MATTER_ID' 2>$null
+    if ($lane -and $lane.Trim().Length -gt 0) {
+        Write-Host "[OK] deer-flow has PACGATE_MATTER_ID=$($lane.Trim())" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[WARN] deer-flow is running with a BLANK PACGATE_MATTER_ID." -ForegroundColor Yellow
+        Write-Host "       Its adapter raises on that, and deer-flow silently falls back to" -ForegroundColor Yellow
+        Write-Host "       FileMemoryStorage - UNSANITIZED memory on disk. Check that .env" -ForegroundColor Yellow
+        Write-Host "       has the value and that the container was recreated, not just restarted." -ForegroundColor Yellow
+    }
+}
 
 # 7b. Reload nginx config if it changed. The nginx service uses the stock
 # nginx:1.27-alpine image with a BIND-MOUNTED ./nginx/default.conf, so `git

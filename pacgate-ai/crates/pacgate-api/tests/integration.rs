@@ -417,6 +417,62 @@ mod tests {
             .expect("matter response contains id")
             .to_string();
 
+        // ── 6a. An UNKNOWN matter id is a 404, not a 500 ──
+        //
+        // Regression: get_matter flattened every store error into
+        // ApiError::internal, so a well-formed-but-missing id returned 500
+        // while a malformed one returned 400. The store already discriminated
+        // RowNotFound (From<sqlx::Error> -> TenantError::MatterNotFound); the
+        // handler threw it away.
+        //
+        // This is not cosmetic. install.ps1 probes GET /api/matters/<id> to
+        // decide whether a configured PACGATE_MATTER_ID is real, and a 500 is
+        // indistinguishable from "the API is down" - so the installer could not
+        // tell a stale id from a dead service, which is precisely the state the
+        // silent FileMemoryStorage fallback lives in.
+        let missing = "00000000-0000-4000-8000-000000000000";
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/matters/{missing}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let probe_status = response.status();
+        let probe_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let probe_text = String::from_utf8_lossy(&probe_body).to_string();
+        assert_eq!(
+            probe_status,
+            StatusCode::NOT_FOUND,
+            "an unknown matter id must be 404 so a caller can tell it apart from a server fault. Body was: {probe_text}"
+        );
+
+        // A malformed id stays a 400 - the two failure modes must not collapse.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/matters/not-a-uuid")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "a malformed matter id is a 400, distinct from the 404 for a missing one"
+        );
+
         let memory_body = serde_json::json!({
             "version": "2.0",
             "revision": 1,
