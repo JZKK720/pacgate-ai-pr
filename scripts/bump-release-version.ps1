@@ -91,6 +91,22 @@ try {
         'pacgate-ai/Cargo.lock' = @(
             '(?ms)(^name = "pacgate[a-z0-9\-]*"\r?\nversion = ")(?<v>\d+\.\d+\.\d+)(")'
         )
+
+        # README release headings. These make a CLAIM about which release this
+        # tree is, so they are pins in the only sense that matters: they can be
+        # wrong. Both sat at v0.1.14 across five releases (0.1.15 - 0.1.19) while
+        # the image pins in the SAME section read 0.1.19, so the first line of the
+        # file contradicted the table forty lines below it.
+        #
+        # Anchored to the `## Release:` / `## 版本：` heading so a version-shaped
+        # string elsewhere (an image pin, a changelog entry, "first-class since
+        # 0.1.16") is not touched. Those are historical facts, not claims.
+        'README.md' = @(
+            '(?m)^(## Release: v)(?<v>\d+\.\d+\.\d+)'
+        )
+        'README-ZH.md' = @(
+            '(?m)^(## 版本：v)(?<v>\d+\.\d+\.\d+)'
+        )
     }
 
     if (-not $From) {
@@ -204,6 +220,37 @@ try {
     if ($stale.Count -gt 0) {
         Write-Output 'FAIL - pins did not all move:'
         $stale | ForEach-Object { Write-Output $_ }
+        exit 1
+    }
+
+    # 4. The README release headings are CLAIMS about which release this tree is.
+    #
+    # Both sat at v0.1.14 across five releases while the image pins in the same
+    # section read 0.1.19 - the first line of the README contradicted the table
+    # below it. Nothing caught that, because the headings were not a bump target.
+    #
+    # Checked rather than assumed: an operator reads the heading first, and a
+    # heading that lags five releases is exactly the kind of stale claim that made
+    # the retired handoff docs dangerous.
+    $headingStale = @()
+    foreach ($rel in @('README.md', 'README-ZH.md')) {
+        $p = Join-Path $repoRoot $rel
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        $t = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
+        $m = [regex]::Match($t, '(?m)^## (?:Release: v|版本：v)(?<v>\d+\.\d+\.\d+)')
+        if (-not $m.Success) {
+            $headingStale += "  $rel has no '## Release: vX.Y.Z' / '## 版本：vX.Y.Z' heading to check"
+        }
+        elseif ($m.Groups['v'].Value -ne $To) {
+            $headingStale += "  $rel release heading is v$($m.Groups['v'].Value), expected v$To"
+        }
+    }
+    if ($headingStale.Count -gt 0) {
+        Write-Output ''
+        Write-Output "FAIL - the README release heading did not move to ${To}:"
+        $headingStale | ForEach-Object { Write-Output $_ }
+        Write-Output '  The heading is the first thing an operator reads; a stale one is a'
+        Write-Output '  false claim about which release this tree is.'
         exit 1
     }
 

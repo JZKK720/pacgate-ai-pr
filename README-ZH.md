@@ -4,7 +4,7 @@
 
 **English:** [README.md](README.md) | [Staff Handbook](docs/PACGATE-LAW-STAFF-HANDBOOK.md)
 
-## 版本：v0.1.14（2026年9月16日）
+## 版本：v0.1.19（2026年9月27日）
 
 - Rust 元数据核心：12 个 crate + 4 个 WASM crate，冒烟/智能体/工作流/集成测试全部通过
 - 15 个文件共 220 个 YAML 工作流模板
