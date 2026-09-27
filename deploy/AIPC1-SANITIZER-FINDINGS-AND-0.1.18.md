@@ -243,6 +243,35 @@ they are deliberate:
 **Pseudonymized, not anonymized.** Redaction is 去标识化 with a restorable
 mapping, per the specification's section 10. It is not 匿名化.
 
+## Enabling the name detector: what it costs
+
+From 0.1.19 the `pacgate-api` image carries the Chinese NER weights, so it also
+detects **person and organisation names** — the classes rules cannot see.
+Coverage goes from **7 of 15** classes to **10 of 15**.
+
+**The cost is image size: `pacgate-api` grows by about 407 MiB**, from 128.6 MiB to
+535.7 MiB. Measured by summing image layers for both builds with the same method.
+
+The weights are **baked into the image at build time, not downloaded on first
+use**, deliberately. This is a data-residency product, and a runtime fetch to a
+third party would sit inside the sanitization path itself — the one operation
+whose whole job is to stop data leaving. An install with no egress still works.
+
+The weights are verified at build time by SHA-256 and byte length, and a mismatch
+**fails the build**. A wrong-weights image that starts cleanly would be worse than
+a failed build, because it would look like success.
+
+Verify NER is active on a machine:
+
+```powershell
+docker exec pacgate-api printenv PACGATE_NER_MODEL_DIR    # expect /app/models/ner
+```
+
+If that returns nothing, the install is running rules-only: 5 classes instead of
+8, and no name detection at all. `sanitize.rs` logs
+`PACGATE_NER_MODEL_DIR unset: running Tier-1 rules only` on every job in that
+state, and `scripts/test-ner-enabled.ps1` is the gate that catches it.
+
 **Recall is measured, not promised.** The research baseline for Chinese PII NER
 is F1 ~0.76; 0.95-class recall is not claimed. The per-tier harness reports
 rule-layer and model-layer recall separately, and the model layer skips loudly

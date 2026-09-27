@@ -91,18 +91,18 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.17` | Published, public. |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.17` | Published, public. Exposes 10 MCP tools to deer-flow. |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.17` | Published, public. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.17` | Published, public. |
-| `ghcr.io/jzkk720/ocr-service:0.1.17` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
+| `ghcr.io/jzkk720/pacgate-api:0.1.19` | Published, public. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.19` | Published, public. Exposes 10 MCP tools to deer-flow. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.19` | Published, public. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.19` | Published, public. |
+| `ghcr.io/jzkk720/ocr-service:0.1.19` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed
 > `ghcr.io/pacgate-ai/*` at 0.1.0/0.1.3. `pacgate-ai` is the legacy mirror; the
 > live namespace is `jzkk720` and publishing moved there in plan 016. The old
 > `pacgate-ai/...-frontend-pacgate:0.1.0` row was also labelled "Published" while
-> returning **404** - it never resolved. All five `jzkk720/*:0.1.17` images return
+> returning **404** - it never resolved. All five `jzkk720/*:0.1.19` images return
 > HTTP 200 anonymously.
 
 **Historical release table (retained for provenance, superseded):**
