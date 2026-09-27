@@ -272,6 +272,43 @@ If that returns nothing, the install is running rules-only: 5 classes instead of
 `PACGATE_NER_MODEL_DIR unset: running Tier-1 rules only` on every job in that
 state, and `scripts/test-ner-enabled.ps1` is the gate that catches it.
 
+### Memory: what the name detector needs at runtime
+
+Enabling NER does not only grow the image. A sanitize job builds its own detector
+set, which is a **393 MiB allocation of resident memory per job**.
+
+Measured 2026-09-27. The weights are F32, so they become resident on the first
+pass and are not returned to the operating system when the job ends:
+
+| | |
+|---|---|
+| per concurrent sanitize job | **393 MiB** |
+| process resident after sanitizing | ~1.3 GiB |
+| **concurrent jobs allowed** | **2** (enforced in the API) |
+| container memory ceiling | **4 GiB** |
+
+Two jobs is deliberate, not an oversight. This endpoint is a document job rather
+than a latency-critical one, so it queues instead of allocating a larger peak. A
+request arriving when both slots are taken gets **HTTP 503** and should be
+retried - that is capacity, not a fault in the request.
+
+**Deployment requirement: give `pacgate-api` at least 4 GiB.** The container is
+capped there so an unexpected allocation restarts it rather than taking the
+machine down. That cap is a backstop; the 2-job limit is the primary control.
+
+Diagnose with:
+
+```powershell
+docker exec pacgate-api printenv PACGATE_NER_MODEL_DIR          # /app/models/ner = NER on
+docker exec pacgate-api sh -c "grep VmRSS /proc/1/status"        # resident
+docker inspect pacgate-api --format '{{.HostConfig.Memory}}'     # expect 4294967296
+```
+
+Note the ceiling is set generously on purpose. Setting it near the real peak
+would cause out-of-memory kills **under normal load** rather than only under a
+runaway, and an OOM kill mid-sanitize leaves a document `pending` - visible to a
+user as "the document will not become searchable".
+
 **Recall is measured, not promised.** The research baseline for Chinese PII NER
 is F1 ~0.76; 0.95-class recall is not claimed. The per-tier harness reports
 rule-layer and model-layer recall separately, and the model layer skips loudly
