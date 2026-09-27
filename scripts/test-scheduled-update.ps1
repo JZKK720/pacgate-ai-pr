@@ -161,9 +161,29 @@ try {
     $r = Invoke-Wrapper -Bundle $b -Extra @('-MaintenanceWindowStart', "$xStart", '-MaintenanceWindowEnd', "$xEnd", '-Force')
     Assert-True ($r.Status.outcome -eq 'SUCCESS') '-Force overrides the window' "got $($r.Status.outcome)"
 
-    # (d) A full-day window is never skipped.
-    $r = Invoke-Wrapper -Bundle $b -Extra @('-MaintenanceWindowStart', '0', '-MaintenanceWindowEnd', '23')
-    Assert-True ($r.Status.outcome -eq 'SUCCESS') 'a full-day window runs at any hour' "got $($r.Status.outcome)"
+    # (d) A window that covers the current hour is never skipped.
+    #
+    # This case asserted a "full-day window" using -Start 0 -End 23 and failed
+    # only when it ran during hour 23. The window comparison is END-EXCLUSIVE
+    # (`$hour -ge Start -and $hour -lt End`), so 0-23 covers 00:00-22:59 - 23
+    # hours, not a full day. The test was a latent time bomb: green all day,
+    # red at 23:xx, green again after midnight. It was found at 23:19.
+    #
+    # Rather than widen it to 0-24 (which would bake in a magic boundary and
+    # still be wrong in spirit), derive a window that CONTAINS the current hour.
+    # The property under test is "a window including now does not skip", which is
+    # time-independent and still fails if the comparison is wrong.
+    $hourNow = (Get-Date).Hour
+    $wStart  = $hourNow
+    $wEnd    = $hourNow + 1          # end-exclusive, so this spans the current hour
+    $r = Invoke-Wrapper -Bundle $b -Extra @('-MaintenanceWindowStart', "$wStart", '-MaintenanceWindowEnd', "$wEnd")
+    Assert-True ($r.Status.outcome -eq 'SUCCESS') "a window containing the current hour ($wStart-$wEnd) does not skip" "got $($r.Status.outcome)"
+
+    # And the true full-day boundary: 0-24 must cover hour 23. This is the case
+    # that would have caught a genuine off-by-one in the comparison rather than
+    # in the test's expectation.
+    $r = Invoke-Wrapper -Bundle $b -Extra @('-MaintenanceWindowStart', '0', '-MaintenanceWindowEnd', '24')
+    Assert-True ($r.Status.outcome -eq 'SUCCESS') 'a full-day window (0-24) runs at any hour' "got $($r.Status.outcome)"
     Write-Output ''
 
     # ---- 7. log rotation --------------------------------------------------
