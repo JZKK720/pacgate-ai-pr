@@ -20,6 +20,16 @@ services:
     image: ghcr.io/jzkk720/pacgate-api:0.1.19
     container_name: pacgate-api
     depends_on: [pacgate-db]
+    # Hard memory ceiling, as defence in depth behind the in-process admission
+    # bound (SANITIZE_MAX_CONCURRENT in state.rs).
+    #
+    # Arithmetic: a sanitize job holds a 393 MiB NER detector set (measured
+    # 2026-09-27), the process baseline is ~1.3 GiB after sanitizing, and 2
+    # concurrent jobs is the enforced bound. 4 GiB covers that plus OCR and DB
+    # headroom. Do NOT set this near the real peak - an OOM kill mid-sanitize
+    # leaves a document `pending`, and a tight limit would cause that under
+    # normal load rather than only under a runaway.
+    mem_limit: 4g
     # Sanitization gate note (design 5.1): OpenViking memory writes are
     # deer-flow -> openviking direct (not gated by pacgate-api). Accepted as a
     # documented limitation - the lane holds conversational context only, and

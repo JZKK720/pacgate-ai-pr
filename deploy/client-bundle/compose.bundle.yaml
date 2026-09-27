@@ -31,6 +31,12 @@ services:
     image: ghcr.io/jzkk720/pacgate-api:0.1.19
     container_name: pacgate-api
     depends_on: [pacgate-db]
+    # Memory ceiling as defence in depth behind the in-process admission bound
+    # (SANITIZE_MAX_CONCURRENT in state.rs). A sanitize job holds a 393 MiB NER
+    # detector set (measured 2026-09-27) and 2 run concurrently; 4 GiB covers
+    # that plus the ~1.3 GiB baseline and OCR/DB headroom. Mirrors
+    # compose.prod.yaml - both files define this service, so both need it.
+    mem_limit: 4g
     environment:
       DATABASE_URL: postgres://pacgate:${PACGATE_DB_PASSWORD}@pacgate-db:5432/pacgate
       DATA_DIR: /data/tenants
