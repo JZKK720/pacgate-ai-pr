@@ -34,6 +34,21 @@ impl ApiError {
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self { status: StatusCode::CONFLICT, code: "conflict", message: msg.into() }
     }
+
+    /// 503 Service Unavailable - server capacity, not a client fault.
+    ///
+    /// Distinct from the 4xx constructors on purpose. A sanitize job holds a
+    /// 393 MiB NER detector set (measured 2026-09-27), so concurrency is bounded
+    /// deliberately by `SANITIZE_MAX_CONCURRENT`; a caller arriving over that
+    /// bound is asked to retry rather than told its request was malformed.
+    /// Answering 429 here would misattribute the problem to the caller's rate.
+    pub fn service_unavailable(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "service_unavailable",
+            message: msg.into(),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -66,6 +81,19 @@ impl From<anyhow::Error> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_unavailable_is_503_not_a_client_error() {
+        let e = ApiError::service_unavailable("sanitize capacity");
+        assert_eq!(
+            e.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "capacity rejection must be 503: a 4xx would tell the caller their \
+             well-formed request was bad instead of busy"
+        );
+        assert_eq!(e.code, "service_unavailable");
+        assert!(e.message.contains("capacity"));
+    }
 
     #[test]
     fn conflict_is_409_with_a_stable_code() {
