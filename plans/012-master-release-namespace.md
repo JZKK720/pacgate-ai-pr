@@ -192,7 +192,8 @@ the packages exist, or client installs break.
 
 5. Sweep the remaining references (about 26 occurrences of `jzkk720` /
    `ghcr.io/jzkk720/*`): both `AIPC-DEPLOYMENT-HANDBOOK*.md`, both
-   `AIPC2-HANDOFF-PROMPT*.md`, `DEPLOYMENT-GUIDE.md`, `PLANS.md`,
+   `archive/AIPC2-HANDOFF-PROMPT*.md` (retired 2026-09-27), `DEPLOYMENT-GUIDE.md`,
+   `PLANS.md`,
    `build-frontend.ps1`, `deer-flow-frontend-pacgate/Dockerfile`,
    `handbooks/qm-openviking-pacgate-handbook.zh.md` (client-facing),
    `ARCHITECTURE-DIAGRAMS.md`, `README-BUILD.md`, `plans/001-client-bundle.md`.

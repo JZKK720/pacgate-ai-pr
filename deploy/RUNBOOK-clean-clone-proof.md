@@ -320,6 +320,9 @@ finding about the product, not about the session.
 ## Related
 
 - `docs/superpowers/specs/2026-09-22-stack-hardening-before-2.1-design.md` — the spec this serves
-- `deploy/HANDOFF-AIPC-0.1.17.md` — the install/update procedure this verifies
-- `deploy/CONTINUE-HERE-2026-09-23.md` — current state and open work
+- `deploy/archive/HANDOFF-AIPC-0.1.17.md` — the install/update procedure this verifies
+  (retired to `deploy/archive/` 2026-09-27; superseded by
+  `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`)
+- `deploy/archive/CONTINUE-HERE-2026-09-23.md` — current state and open work
+  (retired to `deploy/archive/` 2026-09-27)
 - `scripts/test-legal-journey.ps1` — step 4c, and the two SKIPs in §4

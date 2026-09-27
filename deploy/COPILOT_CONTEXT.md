@@ -1,7 +1,8 @@
 # Pacgate-ai Architecture Context (for Copilot / agents)
 
 > Compact context for AI agents working on the pacgate-ai codebase.
-> Generated 2026-08-12. Full graph: deploy/knowledge-graph.json
+> Generated 2026-08-12. Full graph: `deploy/archive/knowledge-graph.json`
+> (retired 2026-09-27 - it is a frozen snapshot, not a live input).
 
 ## What this project is
 

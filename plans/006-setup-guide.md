@@ -38,7 +38,8 @@ on-site installation. This plan creates that guide.
 - `deploy/ARCHITECTURE-DIAGRAMS.md` — Mermaid diagrams
 - `deploy/COPILOT_CONTEXT.md` — compact context for AI agents
 - `deploy/client-bundle/README-client.md` — quick-start (created by plan 001)
-- `CONTINUE-FROM-OTHER-MACHINE.md` — development handoff notes (not client-facing)
+- `deploy/archive/CONTINUE-FROM-OTHER-MACHINE.md` — development handoff notes
+  (not client-facing; retired to `deploy/archive/` 2026-09-27)
 - No single document covers the full install-day sequence end-to-end
 
 ## Commands you will need

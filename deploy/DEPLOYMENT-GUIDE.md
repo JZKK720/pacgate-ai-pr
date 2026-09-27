@@ -596,6 +596,8 @@ python -m graphify cluster-only pacgate-ai/crates --backend ollama
 
 ### Output
 
+The generator writes to `pacgate-ai/crates/graphify-out/` (gitignored):
+
 ```
 pacgate-ai/crates/graphify-out/
 ├── graph.json          ← knowledge graph (nodes, edges, communities, layers, tour)
@@ -604,6 +606,11 @@ pacgate-ai/crates/graphify-out/
 ├── manifest.json       ← corpus manifest
 └── cache/              ← extraction cache (for incremental updates)
 ```
+
+> **Retired copies.** `deploy/graph.html`, `deploy/GRAPH_REPORT.md`,
+> `deploy/graphify-graph.json` and `deploy/knowledge-graph.json` were a stale
+> 2026-08-28 output snapshot committed at the `deploy/` root. They are not read
+> by any tool and are now in `deploy/archive/`. Regenerate rather than reuse them.
 
 ### Incremental updates
 

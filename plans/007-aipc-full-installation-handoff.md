@@ -379,7 +379,8 @@ pacgate-api --format {{.Image}}`).
 # TASK: Implement Plan 007 — Pacgate AI AIPC full installation
 
 You are executing `plans/007-aipc-full-installation-handoff.md`. Read it FIRST,
-plus `CONTINUE-FROM-OTHER-MACHINE.md` and `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`.
+plus `deploy/archive/CONTINUE-FROM-OTHER-MACHINE.md` (retired 2026-09-27) and
+`deploy/AIPC-DEPLOYMENT-HANDBOOK.md`.
 Work surgically (karpathy guidelines): smallest change that solves the problem,
 every changed line traceable to the plan, validate each step before moving on.
 

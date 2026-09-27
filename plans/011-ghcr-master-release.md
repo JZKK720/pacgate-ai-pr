@@ -297,7 +297,7 @@ release in `plans/007-delivery-log.md`.
   to an older officecli, and targets the deprecated `ghcr.io/jzkk720/*`
   namespace — but its routing/hard-gate middleware is not replicated anywhere
   else. Either port that middleware forward, or retire the branch explicitly so
-  `deploy/AIPC2-HANDOFF-PROMPT-v2.md` stops pointing AIPC #2 at it. Two
+  `deploy/archive/AIPC2-HANDOFF-PROMPT-v2.md` stops pointing AIPC #2 at it. Two
   pipelines currently publish the same image name, so this also removes an
   ambiguity.
 - **Correct the "pacgate-ai org" wording** in `deploy/README-BUILD.md` — it is a

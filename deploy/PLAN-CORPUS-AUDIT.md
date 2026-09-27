@@ -149,7 +149,7 @@ Non-`README-BUILD.md` references to `ghcr.io/jzkk720/*` or the `jzkk720` owner:
 | File | Nature |
 | --- | --- |
 | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`, `-ZH.md` | Verify snippet + build/push commands |
-| `deploy/AIPC2-HANDOFF-PROMPT.md`, `-v2.md` | Points AIPC #2 at the layer branch + old namespace |
+| `deploy/archive/AIPC2-HANDOFF-PROMPT.md`, `-v2.md` | Points AIPC #2 at the layer branch + old namespace. **Retired to `deploy/archive/` 2026-09-27** — no longer shipping. |
 | `deploy/DEPLOYMENT-GUIDE.md` | Instructions to authenticate `gh` to the `jzkk720` org; `qm-pacgate` images |
 | `deploy/PLANS.md` | Image table |
 | `deploy/build-frontend.ps1`, `deploy/deer-flow-frontend-pacgate/Dockerfile` | Comments/build targets |
@@ -209,7 +209,7 @@ To be explicit about what holds up, since a defect list alone is misleading:
 | 005 workflow packaging | Verified — 15 workflow YAMLs present |
 | 008 bilingual manuals + PDFs | Verified — sources and PDFs in `deploy/client-delivery/docs/` |
 | 001 client bundle | Verified — `deploy/client-bundle/` fully tracked |
-| Plan 011 blockers | Independently confirmed (see `deploy/GHCR-MASTER-BUILD-AUDIT.md`) |
+| Plan 011 blockers | Independently confirmed (see `deploy/archive/GHCR-MASTER-BUILD-AUDIT.md`) |
 
 ---
 
