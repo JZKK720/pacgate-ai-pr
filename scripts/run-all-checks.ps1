@@ -97,6 +97,12 @@ $gates = @(
     # pacgate-redact, which is clean; the workspace has pre-existing clippy
     # warnings in other crates.
     'scripts/test-rust-workspace.ps1'
+    # Asserts NER is enabled in every BASE compose file that defines pacgate-api.
+    # An unset PACGATE_NER_MODEL_DIR is not a runtime error - it warns and degrades
+    # to 5 of 15 classes while looking healthy - so only a gate catches it.
+    # Self-contained: reads files, and its docker check self-skips when the image
+    # is absent, so it belongs here rather than in $liveStackGates.
+    'scripts/test-ner-enabled.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
