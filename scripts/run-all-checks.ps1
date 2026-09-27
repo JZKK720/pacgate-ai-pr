@@ -130,6 +130,15 @@ $gates = @(
     # rather than trusted to a manual run. Breaks each assertion in turn,
     # asserts exit 1, and restores every file byte-identical.
     'scripts/test-memory-lane-mutations.ps1'
+    # Asserts every rendered PDF is at least as new as its markdown source, and
+    # that the client-delivery copies have not drifted. These are CLIENT-FACING
+    # hand-rendered artifacts with no regeneration step, and four had gone stale
+    # (one by 12 days) while nothing noticed - an operator reading the PDF gets
+    # superseded instructions, which is worse than a missing file.
+    'scripts/test-pdf-freshness.ps1'
+    # Proves the PDF gate can reject. Registered alongside it because a gate
+    # whose only evidence is a green run has not been tested at all.
+    'scripts/test-pdf-freshness-mutations.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
