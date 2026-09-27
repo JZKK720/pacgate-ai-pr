@@ -6,6 +6,7 @@ mod extract;
 mod documents;
 mod error;
 mod matters;
+mod memory_scope;
 mod sanitize;
 mod search;
 mod state;
@@ -13,6 +14,7 @@ mod text_extract;
 mod workflows;
 
 pub use error::ApiError;
+pub use memory_scope::{check_memory_scope, MemoryScopeViolation, MEMORY_MAX_BYTES};
 pub use state::{AppConfig, AppState, SANITIZE_MAX_CONCURRENT};
 // Re-exported rather than left module-private so the extractor's public surface is
 // reachable from outside the crate. `mod text_extract;` is private like its
