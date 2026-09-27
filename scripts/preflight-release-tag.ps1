@@ -1,6 +1,14 @@
-# Pre-flight before creating the 0.1.18 release tag. Aborts on any failure.
+# Pre-flight before creating a release tag. Aborts on any failure.
 # Written as a file because multi-line commands get split line-by-line in the
 # interactive terminal, and leading '#' lines then read as separate commands.
+#
+# The version is DERIVED from pacgate-ai/Cargo.toml, never hardcoded. This script
+# previously named 0.1.18 in 13 places and was run for a 0.1.19 release, where it
+# checked the WRONG version end to end: it validated that the pins read 0.1.18
+# (they read 0.1.19), looked for tag v0.1.18, and queried GHCR for 0.1.18. Every
+# one of those checks passed vacuously because 0.1.18 was already a finished
+# release with its tag and images in place. A pre-flight that cannot fail on the
+# version it is releasing is not a pre-flight.
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -8,7 +16,20 @@ $fail = 0
 function Ok($m)   { Write-Host "  [ok]   $m" -ForegroundColor Green }
 function Bad($m)  { Write-Host "  [FAIL] $m" -ForegroundColor Red; $script:fail++ }
 
-Write-Host '=== PRE-FLIGHT: release 0.1.18 ===' -ForegroundColor Cyan
+# 0. Resolve the version being released, from the single source of truth.
+$cargoLine = (Select-String -Path 'pacgate-ai/Cargo.toml' -Pattern '^version\s*=' | Select-Object -First 1).Line
+if (-not $cargoLine -or $cargoLine -notmatch '(\d+\.\d+\.\d+)') {
+    Write-Host '=== PRE-FLIGHT: cannot determine the release version ===' -ForegroundColor Red
+    Write-Host "  [FAIL] no `version = \"x.y.z\"` found in pacgate-ai/Cargo.toml" -ForegroundColor Red
+    Write-Host '' -ForegroundColor Red
+    Write-Host 'FAILED (1) - refusing to run with an unknown version' -ForegroundColor Red
+    exit 1
+}
+$version = $Matches[1]
+$tag = "v$version"
+
+Write-Host "=== PRE-FLIGHT: release $version ===" -ForegroundColor Cyan
+Ok "version $version derived from pacgate-ai/Cargo.toml (not hardcoded)"
 
 # 1. working tree clean, ignoring this script's own file (it is tooling, not release content)
 $thisScript = 'scripts/preflight-release-tag.ps1'
@@ -25,9 +46,9 @@ else { Bad "out of sync with origin/main: behind=$($ab[0]) ahead=$($ab[1])" }
 $head = git rev-parse HEAD
 Ok "HEAD = $($head.Substring(0,7))  $(git log --oneline -1 --format=%s)"
 
-# 4. version pins must all read 0.1.18
+# 4. version pins must all read the version being released.
 $cargo = (Select-String -Path 'pacgate-ai/Cargo.toml' -Pattern '^version' | Select-Object -First 1).Line
-if ($cargo -match '0\.1\.18') { Ok "Cargo.toml -> $($cargo.Trim())" } else { Bad "Cargo.toml not 0.1.18: $cargo" }
+if ($cargo -match [regex]::Escape($version)) { Ok "Cargo.toml -> $($cargo.Trim())" } else { Bad "Cargo.toml is not $version`: $cargo" }
 
 foreach ($f in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
     # Match ONLY an `image:` pin with a semver tag:  image: ghcr.io/<ns>/<name>:0.1.18
@@ -40,21 +61,21 @@ foreach ($f in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle
     # upstream image we do not version).
     $pins = @(Select-String -Path $f -Pattern '(?m)^\s*image:\s+ghcr\.io/([^/\s]+)/([^\s:@]+):(\d+\.\d+\.\d+)\s*$' |
         ForEach-Object { $_.Matches[0].Groups[3].Value } | Sort-Object -Unique)
-    if ($pins.Count -eq 1 -and $pins[0] -eq '0.1.18') { Ok "$f pins only 0.1.18" }
+    if ($pins.Count -eq 1 -and $pins[0] -eq $version) { Ok "$f pins only $version" }
     elseif ($pins.Count -eq 0) { Bad "$f has no semver image pin found (regex or file changed)" }
     else { Bad "$f pins multiple/other versions: $($pins -join ', ')" }
 }
 
 # 5. the tag must not already exist
-$lt = git rev-parse -q --verify 'refs/tags/v0.1.18' 2>&1
-$rt = git ls-remote --tags origin 'v0.1.18' 2>&1
-if (-not $lt -and -not $rt) { Ok 'v0.1.18 absent locally and on origin' }
-else { Bad "v0.1.18 already exists (local='$lt' remote='$rt')" }
+$lt = git rev-parse -q --verify "refs/tags/$tag" 2>&1
+$rt = git ls-remote --tags origin $tag 2>&1
+if (-not $lt -and -not $rt) { Ok "$tag absent locally and on origin" }
+else { Bad "$tag already exists (local='$lt' remote='$rt')" }
 
 # 6. the images must not already exist
-$ghcr = python scripts/check-ghcr-anon.py 0.1.18 2>&1 | Select-Object -Last 1
-if ($ghcr -match 'NOT public|404') { Ok "GHCR 0.1.18 not published yet ($($ghcr.Trim()))" }
-else { Bad "GHCR 0.1.18 already has images: $ghcr" }
+$ghcr = python scripts/check-ghcr-anon.py $version 2>&1 | Select-Object -Last 1
+if ($ghcr -match 'NOT public|404') { Ok "GHCR $version not published yet ($($ghcr.Trim()))" }
+else { Bad "GHCR $version already has images: $ghcr" }
 
 # 7. the workflow must still trigger on this tag pattern
 $wf = Get-Content '.github/workflows/build-ghcr.yml' -Raw
