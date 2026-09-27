@@ -36,6 +36,12 @@ services:
       DATA_DIR: /data/tenants
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
+      # NER weights are baked into the image at /app/models/ner (SHA-256 verified
+      # at build time). This is what turns person/organisation-name detection ON:
+      # unset means Tier-1 rules only, 5 of 15 classes instead of 8, with the
+      # install still looking healthy. Gate: scripts/test-ner-enabled.ps1.
+      # Must match the Dockerfile COPY target exactly - set-but-missing is fatal.
+      PACGATE_NER_MODEL_DIR: /app/models/ner
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Plan 019/021: the extraction lane (cached per document version, fail-closed).
       OCR_SERVICE_URL: http://ocr-service:8100

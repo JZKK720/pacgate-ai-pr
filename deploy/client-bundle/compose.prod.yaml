@@ -29,6 +29,21 @@ services:
       DATA_DIR: /data/tenants
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
+      # The NER weights are baked into this image at /app/models/ner and verified
+      # by SHA-256 at build time. Setting this path switches build_detectors()
+      # from tier_one_detectors() to full_detectors(): 5 of 15 EntityType classes
+      # becomes 8, which is the difference between a rules-only sanitizer and one
+      # that also finds person and organisation names.
+      #
+      # DO NOT REMOVE OR BLANK THIS. Unset is not fatal - sanitize.rs warns and
+      # falls back to Tier-1 rules - so the install looks healthy while silently
+      # detecting 5 of 15 classes and no names at all.
+      # scripts/test-ner-enabled.ps1 is the gate that stops that happening
+      # unnoticed.
+      #
+      # Set-but-MISSING is fatal by design: a deployment that intends NER must not
+      # silently degrade. That is why this must match the image path exactly.
+      PACGATE_NER_MODEL_DIR: /app/models/ner
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Plan 019/021: the extraction lane. pacgate-api POSTs multipart to
       # {url}/extract; extraction is cached per document version, so a warm
