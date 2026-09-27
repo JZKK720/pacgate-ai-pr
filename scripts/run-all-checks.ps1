@@ -139,6 +139,12 @@ $gates = @(
     # Proves the PDF gate can reject. Registered alongside it because a gate
     # whose only evidence is a green run has not been tested at all.
     'scripts/test-pdf-freshness-mutations.ps1'
+    # Gates the Python adapter suite, which nothing ran. Same gap
+    # test-rust-workspace.ps1 closed for Rust: 8 adapter assertions - including
+    # the 409-vs-422 distinction that exists BECAUSE the two were once collapsed -
+    # passed only when a human typed the command. Discovery is checked too, so a
+    # moved suite fails loudly instead of reporting a vacuous green.
+    'scripts/test-adapter-python.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
