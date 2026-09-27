@@ -167,6 +167,69 @@ else {
     $script:failures++
 }
 
+# ---------------------------------------------------------------------------
+# 5. The matter id must be PROVISIONED, not merely required.
+#
+# Checks 3 and 4 together still pass on a tree that ships a placeholder: a
+# non-empty PACGATE_MATTER_ID satisfies check 3, and the adapter's raise is
+# never reached because the value is non-empty. But the API refuses a write to
+# a matter that does not exist (save_matter_memory -> 404 "matter not found"),
+# so a placeholder means every memory write fails.
+#
+# That was the exact state after the first version of this fix: a syntactically
+# valid UUID that no deployment could ever create. So assert that a step exists
+# which CAN create one.
+# ---------------------------------------------------------------------------
+$installer = Join-Path $bundle 'install.ps1'
+if (Test-Path $installer) {
+    $inst = Get-Content $installer -Raw
+
+    # Match the CALL SITE, not the definition. `-match 'Invoke-MatterProvision'`
+    # also matches `function Invoke-MatterProvision {`, so commenting out the call
+    # while leaving the function defined passed this check - the mutation harness
+    # caught it. Require the argument, which only a call has. This is the same
+    # defect class that made the P4 ordering assertions pass against correct code
+    # by matching their own string literals.
+    if ($inst -match 'Invoke-MatterProvision\s+-BaseUrl') {
+        Pass 'install.ps1 CALLS the provisioning function (not merely defines it)'
+    }
+    else {
+        Fail 'install.ps1 has no provisioning step, so PACGATE_MATTER_ID can only ever be a placeholder the API will reject with 404'
+    }
+
+    if ($inst -match '/api/matters"\s*-Method\s+Post' -or $inst -match 'api/matters.*-Method Post') {
+        Pass 'install.ps1 creates the matter through POST /api/matters'
+    }
+    else {
+        Fail 'install.ps1 does not POST to /api/matters, so no matter is ever created'
+    }
+
+    # Writing the created id back into .env is the link that makes the
+    # provisioning reach compose. Creating a matter and not persisting its id
+    # would leave the placeholder in place and look identical from outside.
+    if ($inst -match "PACGATE_MATTER_ID=\\\$\(\`$matter\.id\)" -or $inst -match 'PACGATE_MATTER_ID=\$\(\$matter\.id\)') {
+        Pass 'install.ps1 writes the created matter id back into .env (provisioning reaches compose)'
+    }
+    else {
+        Fail 'install.ps1 creates a matter but never writes its id to .env, so compose keeps the placeholder'
+    }
+
+    # Ordering: provisioning must run BEFORE the full `up -d`, or deer-flow boots
+    # once without a valid matter and the fallback window is non-zero.
+    $provisionIdx = $inst.IndexOf('Invoke-MatterProvision')
+    $upIdx        = $inst.IndexOf('# 7. Start stack')
+    if ($provisionIdx -gt 0 -and $upIdx -gt 0 -and $provisionIdx -lt $upIdx) {
+        Pass 'provisioning runs BEFORE the stack starts (no fallback window on first boot)'
+    }
+    else {
+        Fail 'provisioning does not run before "# 7. Start stack" - deer-flow would boot once without a valid matter and could fall back'
+    }
+}
+else {
+    Write-Host "  exit 2 - $installer not found; cannot check provisioning" -ForegroundColor Yellow
+    $script:failures++
+}
+
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "FAILED: $($script:failures) memory-lane check(s)" -ForegroundColor Red

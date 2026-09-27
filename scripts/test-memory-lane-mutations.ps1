@@ -21,6 +21,7 @@ $targets = @(
     'deploy/client-bundle/.env.example'
     'deploy/client-bundle/deer-flow-config.yaml'
     'deploy/client-bundle/compose.bundle.yaml'
+    'deploy/client-bundle/install.ps1'
 )
 
 # Absolute paths, built once. Resolve-Path cannot be used for the .bak sibling
@@ -83,6 +84,30 @@ Test-MutationRejected -Name 'PACGATE_MATTER_ID dropped from compose' `
     -File 'deploy/client-bundle/compose.bundle.yaml' `
     -Find 'PACGATE_MATTER_ID: ${PACGATE_MATTER_ID}' `
     -ReplaceWith 'PACGATE_MATTER_ID_UNUSED: ${PACGATE_MATTER_ID}'
+
+# The provisioning chain. Without these, a tree can ship a PLACEHOLDER matter id
+# that satisfies every config check and that no deployment can ever create - so
+# every memory write 404s. That was the real state after the first version of
+# this fix, which is why each link is mutated rather than assumed.
+Test-MutationRejected -Name 'install.ps1 loses the provisioning call' `
+    -File 'deploy/client-bundle/install.ps1' `
+    -Find '$provisioned = Invoke-MatterProvision -BaseUrl' `
+    -ReplaceWith '$provisioned = $false; # Invoke-MatterProvision removed'
+
+Test-MutationRejected -Name 'install.ps1 no longer POSTs the matter' `
+    -File 'deploy/client-bundle/install.ps1' `
+    -Find '-Uri "$BaseUrl/api/matters" -Method Post' `
+    -ReplaceWith '-Uri "$BaseUrl/api/matters" -Method Get'
+
+Test-MutationRejected -Name 'install.ps1 stops persisting the created id' `
+    -File 'deploy/client-bundle/install.ps1' `
+    -Find '"PACGATE_MATTER_ID=$($matter.id)"' `
+    -ReplaceWith '"PACGATE_MATTER_ID=00000000-0000-4000-8000-000000000000"'
+
+Test-MutationRejected -Name '.env.example placeholder reverted to blank' `
+    -File 'deploy/client-bundle/.env.example' `
+    -Find 'PACGATE_MATTER_ID=00000000-0000-4000-8000-000000000000' `
+    -ReplaceWith 'PACGATE_MATTER_ID='
 
 Write-Host ''
 Write-Host '=== restore verification ===' -ForegroundColor Cyan
