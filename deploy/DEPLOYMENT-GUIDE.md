@@ -3,7 +3,7 @@
 > For Cubecloud engineers deploying to client AI PCs
 > Phase 1 — two-machine pilot
 
-> **VERIFIED AGAINST `0.1.19` (2026-09-21).** The pins in this guide were reset
+> **VERIFIED AGAINST `0.1.20` (2026-09-21).** The pins in this guide were reset
 > from the 0.1.3 era, when the namespace was `ghcr.io/pacgate-ai/*`. The release
 > authority is now **`ghcr.io/jzkk720/*`** and every pin is `0.1.19`, derived
 > from `pacgate-ai/Cargo.toml` rather than hand-typed. Confirm the current value
@@ -56,7 +56,7 @@ This document describes the target client runtime bundle. It does not reflect th
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
 # Build the Rust binary in Docker (multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.19 `
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.20 `
   -f pacgate-ai/Dockerfile `
   ./pacgate-ai
 ```
@@ -84,7 +84,7 @@ produces the `pacgate-server` binary.
 #   ENV PACGATE_API_URL=http://pacgate-api:8080
 #   CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
 
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.19 `
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.20 `
   -f deploy/deer-flow-pacgate/Dockerfile `
   .
 ```
@@ -123,7 +123,7 @@ echo $env:GHCR_TOKEN | docker login ghcr.io -u pacgate-ai --password-stdin
 docker push ghcr.io/jzkk720/pacgate-api:<version>
 docker push ghcr.io/jzkk720/pacgate-mcp:<version>
 docker push ghcr.io/jzkk720/deer-flow-pacgate:<version>
-docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.19
+docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.20
 ```
 
 ## Part 2: Prepare the client bundle
@@ -159,7 +159,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.19
+    image: ghcr.io/jzkk720/pacgate-api:0.1.20
     container_name: pacgate-api
     depends_on: [pacgate-db]
     environment:
@@ -173,7 +173,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.19
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.20
     container_name: deer-flow
     depends_on: [pacgate-api]
     environment:
@@ -463,7 +463,7 @@ docker push ghcr.io/jzkk720/deer-flow-pacgate:<version>
 # 3. Update compose.prod.yaml version pins (and Cargo.toml/Cargo.lock;
 #    scripts/bump-release-version.ps1 does all four surfaces and refuses to
 #    finish if the pins moved but Cargo.toml did not)
-#    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.19
+#    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.20
 
 # 4. Ship new bundle to client (or just the updated compose.prod.yaml)
 # 5. Client runs: .\install.ps1 -Update

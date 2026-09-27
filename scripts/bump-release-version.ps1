@@ -98,14 +98,79 @@ try {
         # the image pins in the SAME section read 0.1.19, so the first line of the
         # file contradicted the table forty lines below it.
         #
-        # Anchored to the `## Release:` / `## 版本：` heading so a version-shaped
-        # string elsewhere (an image pin, a changelog entry, "first-class since
-        # 0.1.16") is not touched. Those are historical facts, not claims.
+        # Two patterns, and BOTH are required.
+        #
+        # The heading is anchored so a version-shaped string elsewhere (a
+        # changelog entry, "first-class since 0.1.16") is not touched - those are
+        # historical facts, not claims.
+        #
+        # The image list is a CLAIM and must move with it. The first version of
+        # this entry matched only the heading, so a bump to 0.1.20 moved the
+        # heading and left 22 image pins (11 per README) reading 0.1.19 - a
+        # README that contradicted itself two lines apart. Found by auditing the
+        # bump's own output rather than trusting its "all pins now read" line.
+        #
+        # Anchored to the `- <x> image: \`ghcr.io/...:` shape, which only appears
+        # in the release manifest list, so a version cited in prose is untouched.
+        # Two patterns per README, and BOTH are required.
+        #
+        # The heading is anchored so a version-shaped string elsewhere (a
+        # changelog entry, "first-class since 0.1.16") is not touched - those are
+        # historical facts, not claims.
+        #
+        # The image surface is a CLAIM and must move with the heading. It appears
+        # in TWO shapes, and matching only one left the other stale TWICE:
+        #   * a bullet list  (`- pacgate-api image: ghcr.io/...:0.1.19`)
+        #   * a markdown table (`| ghcr.io/...:0.1.19 | ... |`)
+        # Neither is matched by anchoring on a word like "image:", because the ZH
+        # list says `镜像：` and the table has no label at all. So this anchors on
+        # the LINE SHAPE - a version immediately after a jzkk720 tag, at the start
+        # of a list item or table row - which survives both languages and both
+        # layouts. Every miss here produced a README contradicting itself.
         'README.md' = @(
-            '(?m)^(## Release: v)(?<v>\d+\.\d+\.\d+)'
+            '(?m)^(## Release: v)(?<v>\d+\.\d+\.\d+)',
+            '(?m)^([-|]\s[^\r\n]*?ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
         'README-ZH.md' = @(
-            '(?m)^(## 版本：v)(?<v>\d+\.\d+\.\d+)'
+            '(?m)^(## 版本：v)(?<v>\d+\.\d+\.\d+)',
+            '(?m)^([-|]\s[^\r\n]*?ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
+        )
+
+        # The five client-facing docs. These were the LOOP: none of them was in
+        # this list, so every bump left all five carrying the previous release,
+        # the freshness audit failed on the same five, and they were corrected by
+        # hand - then the next bump repeated it exactly.
+        #
+        # Each carries several surfaces that must move together: a
+        # "VERIFIED AGAINST `x.y.z`" attestation, an image-pin table, and
+        # `docker build -t ghcr.io/jzkk720/<name>:x.y.z` command lines. All of
+        # them are the shape `ghcr.io/jzkk720/<name>:<version>`, so ONE pattern
+        # covers all three shapes in both languages. That is why this anchors on
+        # the tag rather than on a label like "image:" - the ZH table has no
+        # label at all, and the build commands have no table.
+        #
+        # Deliberately NOT anchored to a line start: the pins appear mid-line in
+        # prose ("every pin is `0.1.19`, derived from..."), in table cells, and
+        # after `-t `. A line-start anchor would have missed most of them.
+        #
+        # The `VERIFIED AGAINST` date is NOT bumped - only the version it names.
+        # The date records when the verification happened; silently advancing it
+        # would assert a re-verification that did not occur.
+        'deploy/DEPLOYMENT-GUIDE.md' = @(
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)',
+            '(VERIFIED AGAINST `)(?<v>\d+\.\d+\.\d+)'
+        )
+        'deploy/AIPC-DEPLOYMENT-HANDBOOK.md' = @(
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
+        )
+        'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md' = @(
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
+        )
+        'deploy/SETUP-AND-OPERATIONS.md' = @(
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
+        )
+        'deploy/SETUP-AND-OPERATIONS-ZH.md' = @(
+            '(ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
     }
 
