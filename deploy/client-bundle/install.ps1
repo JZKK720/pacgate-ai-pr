@@ -498,17 +498,46 @@ Write-Host "[OK] Images pulled" -ForegroundColor Green
 function Invoke-MatterProvision {
     param([string]$BaseUrl)
 
+    # Read from $envVars, NOT $env:.
+    #
+    # install.ps1 parses .env into a local $envVars HASHTABLE (step 4b) and never
+    # populates the process environment. The first version of this function read
+    # $env:PACGATE_API_EMAIL, which is therefore ALWAYS empty inside the
+    # installer - so the credential guard below was false, login was never even
+    # attempted, and it reported "Could not authenticate" while the credentials
+    # were sitting in .env and worked perfectly by hand. The failure looked like
+    # a server fault; it was a wrong variable scope.
+    $apiEmail    = if ($envVars.ContainsKey('PACGATE_API_EMAIL'))    { $envVars['PACGATE_API_EMAIL'] }    else { '' }
+    $apiPassword = if ($envVars.ContainsKey('PACGATE_API_PASSWORD')) { $envVars['PACGATE_API_PASSWORD'] } else { '' }
+    $existing    = if ($envVars.ContainsKey('PACGATE_MATTER_ID'))    { $envVars['PACGATE_MATTER_ID'] }    else { '' }
+
     # PACGATE_MATTER_ID may already name a real matter (a re-run, or an operator
     # who set it deliberately). Verify before creating a duplicate.
-    $existing = $env:PACGATE_MATTER_ID
     $H = $null
-    if ($env:PACGATE_API_EMAIL -and $env:PACGATE_API_PASSWORD) {
-        foreach ($p in @("$BaseUrl/api/auth/login", "$BaseUrl/auth/login")) {
-            try {
-                $body = @{ email = $env:PACGATE_API_EMAIL; password = $env:PACGATE_API_PASSWORD } | ConvertTo-Json -Compress
-                $login = Invoke-RestMethod -Uri $p -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 20
-                if ($login.token) { $H = @{ Authorization = "Bearer $($login.token)" }; break }
-            } catch { }
+    if ($apiEmail -and $apiPassword) {
+        # RETRY, because /version answering is not the same as being ready to
+        # authenticate. The first version polled /version for readiness and then
+        # tried login exactly ONCE, which failed on the first real E2E run: the
+        # container had just been recreated, nginx answered, and the API was
+        # still applying migrations (they are applied at startup and logged
+        # AFTER the listener binds). A single attempt turned a transient race
+        # into a permanent "could not authenticate", and provisioning was
+        # skipped - leaving the placeholder in place, which is the exact state
+        # this whole step exists to prevent.
+        #
+        # 30 attempts x 4s = 120s, comfortably past the observed startup, and it
+        # exits the moment one succeeds rather than always sleeping.
+        $attempts = 30
+        for ($i = 1; $i -le $attempts; $i++) {
+            foreach ($p in @("$BaseUrl/api/auth/login", "$BaseUrl/auth/login")) {
+                try {
+                    $body = @{ email = $apiEmail; password = $apiPassword } | ConvertTo-Json -Compress
+                    $login = Invoke-RestMethod -Uri $p -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 20
+                    if ($login.token) { $H = @{ Authorization = "Bearer $($login.token)" }; break }
+                } catch { }
+            }
+            if ($H) { break }
+            if ($i -lt $attempts) { Start-Sleep -Seconds 4 }
         }
     }
 
@@ -563,6 +592,12 @@ function Invoke-MatterProvision {
     # default on Windows PowerShell.
     [System.IO.File]::WriteAllLines($envPath, $out, [System.Text.UTF8Encoding]::new($false))
 
+    # Update BOTH the local map and the process env. The map is what the rest of
+    # this script reads from (step 4b parses .env once); the process env is what
+    # docker compose inherits for its `${PACGATE_MATTER_ID}` substitution in this
+    # same run, so the deer-flow container starts with the value rather than
+    # needing a recreate afterwards.
+    $envVars['PACGATE_MATTER_ID'] = $matter.id
     $env:PACGATE_MATTER_ID = $matter.id
     Write-Host "  [OK] Provisioned matter $($matter.id) and wrote it to .env" -ForegroundColor Green
 
