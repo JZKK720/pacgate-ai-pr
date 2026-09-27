@@ -309,6 +309,55 @@ would cause out-of-memory kills **under normal load** rather than only under a
 runaway, and an OOM kill mid-sanitize leaves a document `pending` - visible to a
 user as "the document will not become searchable".
 
+## Where client data may and may not be stored
+
+The stack has four persistent-memory surfaces. Only one is sanitization-gated, and
+the difference matters for how the system is deployed.
+
+| surface | holds | gated? |
+|---|---|---|
+| Document index (RAG) | sanitized document text | **yes** - unsearchable until sanitized |
+| Matter memory | process notes about a matter | **yes** - write-time scope check |
+| Agent memory | process notes about an agent's work | **yes** - same endpoint as matter memory |
+| OpenViking | conversational context | **no** - accepted limitation |
+
+**Matter memory and agent memory hold process, not matter facts.** Content that
+contains an identifier is refused at write time with **HTTP 422**. Matter facts
+belong in the document index, where the sanitization gate already applies. This is
+enforced rather than advisory - see
+`pacgate-ai/crates/pacgate-api/src/memory_scope.rs`.
+
+A call that means "remember this for later" is therefore rejected if it carries a
+resident ID, USCC, mobile number, bank card or email in it. The distinction is
+deliberate: those classes carry a checksum or an unambiguous shape, so the refusal
+is not a judgement call.
+
+Three things are deliberately **not** blocked, and are stated here rather than
+implied away:
+
+- **Names and organisations are allowed in memory.** A process summary says "the
+  firm reviewed the matter", and refusing that would make the memory lane
+  unusable. Person names in memory are therefore a residual risk that depends on
+  summaries staying about *process*.
+- **A payload over 64 KiB is refused as content.** Matter facts look like content;
+  a process summary does not.
+- **OpenViking is not gated at write time.** It is a third-party component
+  (AGPL-3.0) reached directly by the research layer, and the accepted position is
+  that it holds conversational context only. **If a workflow is ever changed to
+  push matter documents into it, that position no longer holds** and would need
+  revisiting.
+
+Verify the gate is active:
+
+```powershell
+# A refusal proves it is enforced; a 200 on the same call would mean it is not.
+curl -s -o /dev/null -w "%{http_code}" -X POST `
+  -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" `
+  -d '{"facts":[{"content":"Client ID 11010519491231002X"}]}' `
+  http://localhost:8089/pacgate/api/matters/$MATTER_ID/memory
+# expect 422
+```
+
 **Recall is measured, not promised.** The research baseline for Chinese PII NER
 is F1 ~0.76; 0.95-class recall is not claimed. The per-tier harness reports
 rule-layer and model-layer recall separately, and the model layer skips loudly

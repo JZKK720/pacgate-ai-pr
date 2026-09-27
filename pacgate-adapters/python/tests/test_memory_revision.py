@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pacgate_deerflow_adapter.storage import (  # noqa: E402
     MatterMemoryConflict,
+    MatterMemoryOutOfScope,
     PacgateMemoryStorage,
 )
 
@@ -126,6 +127,34 @@ class RevisionTrackingTests(unittest.TestCase):
             storage.save({"facts": []})
 
         self.assertIsNone(storage._revision)
+
+    def test_a_422_raises_out_of_scope_and_is_distinct_from_a_conflict(self):
+        # The two must NOT be collapsed: a 409 means "reload and retry", a 422
+        # means "this content can never be accepted". A caller that treated them
+        # alike would spin retrying a payload the server will always refuse.
+        storage = self._storage()
+        response = MagicMock()
+        response.status_code = 422
+        response.text = "memory may hold process, not matter facts"
+        storage.client.post.return_value = response
+
+        with self.assertRaises(MatterMemoryOutOfScope):
+            storage.save({"facts": [{"content": "Client ID 11010519491231002X"}]})
+
+    def test_an_out_of_scope_write_does_not_clear_the_revision(self):
+        # Unlike a conflict, the revision is still valid - the refusal was about
+        # CONTENT. Clearing it would force a pointless reload on the next write.
+        storage = self._storage()
+        storage._revision = 4
+        response = MagicMock()
+        response.status_code = 422
+        response.text = "out of scope"
+        storage.client.post.return_value = response
+
+        with self.assertRaises(MatterMemoryOutOfScope):
+            storage.save({"facts": []})
+
+        self.assertEqual(storage._revision, 4)
 
 
 if __name__ == "__main__":

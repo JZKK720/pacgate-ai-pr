@@ -28,6 +28,24 @@ class MatterMemoryConflict(Exception):
     """
 
 
+class MatterMemoryOutOfScope(Exception):
+    """Raised when a matter-memory write is rejected as out of scope (HTTP 422).
+
+    Memory lanes hold PROCESS, not matter facts. The server refuses a payload
+    containing an identifier (resident ID, USCC, mobile, bank card, email) or one
+    too large to be a summary. Matter facts belong in the RAG lane, which is
+    sanitization-gated before retrieval.
+
+    Deliberately separate from MatterMemoryConflict: a 409 means "retry after
+    reloading", and a 422 means "do not retry this content at all". Collapsing
+    them would make a caller retry a payload that can never be accepted.
+
+    NOTE the deliberate asymmetry: person and organisation NAMES are permitted.
+    A process summary legitimately says "the firm reviewed the matter", and a
+    check that refused those would reject valid summaries. Do not "fix" that.
+    """
+
+
 class PacgateMemoryStorage(MemoryStorage):
     """Memory storage backed by pacgate-api (per-matter knowledge base)."""
 
@@ -91,6 +109,14 @@ class PacgateMemoryStorage(MemoryStorage):
             self._revision = None
             raise MatterMemoryConflict(
                 f"matter memory was modified concurrently: {resp.text}"
+            )
+
+        # 422 means the CONTENT is out of scope, not that the write raced. It must
+        # not be retried: the same payload will be refused every time. Kept
+        # distinct from the 409 so a caller's retry loop cannot spin on it.
+        if resp.status_code == 422:
+            raise MatterMemoryOutOfScope(
+                f"memory content is out of scope for this lane: {resp.text}"
             )
 
         resp.raise_for_status()
