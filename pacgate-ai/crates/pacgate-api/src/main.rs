@@ -242,6 +242,12 @@ async fn main() -> anyhow::Result<()> {
         rag,
         embedding: embed_svc,
         db: pool,
+        // Admission control for the NER detector allocation. Built once and
+        // shared by every request through the Arc in AppState. See
+        // SANITIZE_MAX_CONCURRENT for the arithmetic behind the count.
+        sanitize_slots: Arc::new(tokio::sync::Semaphore::new(
+            pacgate_api::SANITIZE_MAX_CONCURRENT,
+        )),
     };
 
     // Build and start the Axum server

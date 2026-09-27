@@ -8,6 +8,18 @@ use pacgate_rag::RagStore;
 use pacgate_search::SearchRouter;
 use pacgate_tenant::{MatterStore, TenantStore};
 
+/// How many sanitize jobs may hold a detector set at once.
+///
+/// A sanitize job builds its own detector set, and with NER enabled that is a
+/// 393 MiB allocation of resident F32 weights (measured 2026-09-27). Without a
+/// bound, concurrency equals the Tokio worker count - 32 on the client hardware,
+/// which has no CPU cap in compose - so the worst case is 32 x 393 MiB = 12.6 GiB
+/// and an out-of-memory kill.
+///
+/// 2 keeps the detector peak near 786 MiB. This endpoint is a document job, not a
+/// latency-critical one, so queueing beats allocating a larger peak.
+pub const SANITIZE_MAX_CONCURRENT: usize = 2;
+
 /// Shared application state injected into all Axum handlers via `State<AppState>`.
 #[derive(Clone)]
 pub struct AppState {
@@ -26,6 +38,9 @@ pub struct AppState {
     /// Embedding service for ingesting extracted OCR text as pending chunks.
     pub embedding: pacgate_rag::EmbeddingService,
     pub db: sqlx::PgPool,
+    /// Admission control for sanitize jobs. See `SANITIZE_MAX_CONCURRENT`.
+    /// Held for the duration of the detector build and the sanitize call.
+    pub sanitize_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -54,6 +69,37 @@ impl AppState {
             tenant.config.model_overrides.clone(),
             std::collections::HashMap::new(),
         )))
+    }
+
+    /// Take a sanitize slot, or `None` when both are in use.
+    ///
+    /// Non-blocking on purpose: the caller decides what to do, and returns 503.
+    /// Failing closed means a *rejected* job, never a silently skipped one - if a
+    /// job were dropped instead, its document would stay `pending` and
+    /// unsearchable while the caller believed the sanitize had succeeded.
+    pub fn try_acquire_sanitize_slot(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.sanitize_slots.clone().try_acquire_owned().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_admission_bound_is_small_deliberately_and_documented() {
+        // The tripwire on the number. Raising the constant without redoing the
+        // arithmetic below should require deleting an assertion that says why.
+        assert_eq!(
+            SANITIZE_MAX_CONCURRENT, 2,
+            "changing this changes peak memory: 393 MiB per concurrent sanitize \
+             job, measured 2026-09-27. Re-measure before raising it."
+        );
+        assert!(
+            SANITIZE_MAX_CONCURRENT * 393 < 1024,
+            "keep the detector-memory peak under 1 GiB: {} x 393 MiB",
+            SANITIZE_MAX_CONCURRENT
+        );
     }
 }
 

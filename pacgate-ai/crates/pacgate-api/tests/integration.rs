@@ -241,6 +241,11 @@ mod tests {
             		"nomic-embed-text",
             		),
             db: pool,
+            // A test harness gets its own semaphore. Size is irrelevant here:
+            // these tests drive one request at a time.
+            sanitize_slots: Arc::new(tokio::sync::Semaphore::new(
+                pacgate_api::SANITIZE_MAX_CONCURRENT,
+            )),
         };
 
         // Keep an Arc handle to the document store BEFORE `state` is moved into
@@ -1198,6 +1203,11 @@ mod tests {
             		"nomic-embed-text",
             		),
             db: pool,
+            // A test harness gets its own semaphore. Size is irrelevant here:
+            // these tests drive one request at a time.
+            sanitize_slots: Arc::new(tokio::sync::Semaphore::new(
+                pacgate_api::SANITIZE_MAX_CONCURRENT,
+            )),
         };
 
         // Keep an Arc handle to the document store BEFORE `state` is moved into
