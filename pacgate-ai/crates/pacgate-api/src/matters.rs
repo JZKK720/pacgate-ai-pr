@@ -60,6 +60,20 @@ fn memory_revision(memory: &serde_json::Value) -> u64 {
         .unwrap_or(0)
 }
 
+/// The revision a successful write should store.
+///
+/// Server-owned on purpose: the caller's `If-Match` is a claim about what it
+/// *read*, never a value to store. Trusting a body field here would let a stale
+/// client reset the counter, which is the failure this whole mechanism exists to
+/// prevent.
+///
+/// Always strictly greater than what `memory_revision` read, including when the
+/// stored value is absent or corrupt - a counter that can fail to advance is a
+/// guard that can never reject.
+fn next_revision(current: &serde_json::Value) -> u64 {
+    memory_revision(current).saturating_add(1)
+}
+
 /// Enforce optimistic concurrency on a memory write.
 ///
 /// `expected` is the revision the caller believes it is updating, or `None`
@@ -316,5 +330,44 @@ mod memory_concurrency_tests {
         let current = default_matter_memory();
         assert!(check_revision(&current, Some(0)).is_ok());
         assert!(check_revision(&current, Some(1)).is_err());
+    }
+
+    /// The counter must advance on a successful write, or the guard compares a
+    /// constant against itself and can never reject a stale caller.
+    ///
+    /// This is the assertion whose ABSENCE let the guard be present in three
+    /// places while doing nothing: nothing in the workspace incremented it, so
+    /// `grep -r 'revision.*+=' pacgate-ai/crates` returned no match at all.
+    #[test]
+    fn the_next_revision_always_advances() {
+        assert_eq!(
+            next_revision(&serde_json::json!({})),
+            1,
+            "absent reads as 0, so the next value is 1"
+        );
+        assert_eq!(next_revision(&serde_json::json!({ "revision": 0 })), 1);
+        assert_eq!(next_revision(&serde_json::json!({ "revision": 5 })), 6);
+        // A corrupt stored value must not freeze the counter at a constant:
+        // whatever it reads as, the next value is strictly greater.
+        assert_eq!(next_revision(&serde_json::json!({ "revision": "nope" })), 1);
+        assert_eq!(next_revision(&serde_json::json!({ "revision": -3 })), 1);
+    }
+
+    /// The property that makes the guard work, stated directly rather than
+    /// inferred from the two halves being individually correct.
+    #[test]
+    fn a_stale_caller_is_rejected_after_a_write_advances_the_counter() {
+        let before = serde_json::json!({ "revision": 4 });
+        let after = serde_json::json!({ "revision": next_revision(&before) });
+
+        // The client that read revision 4 is now stale: its claim must fail.
+        assert!(
+            check_revision(&after, Some(4)).is_err(),
+            "a caller holding the PRE-write revision must be rejected after the write"
+        );
+        // A client holding the new revision succeeds.
+        assert!(check_revision(&after, Some(5)).is_ok());
+        // And an unconditional caller is still allowed (the opt-out path).
+        assert!(check_revision(&after, None).is_ok());
     }
 }
