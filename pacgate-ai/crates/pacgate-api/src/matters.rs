@@ -1,5 +1,6 @@
 use axum::{
     extract::{Extension, Path, State},
+    http::HeaderMap,
     Json,
 };
 use pacgate_auth::Claims;
@@ -37,6 +38,45 @@ fn matter_memory_path(
     pacgate_tenant::matter_dir(data_dir, tenant_id, matter_id).join("memory.json")
 }
 
+/// Write `bytes` to `path` atomically: a reader sees either the old file or the
+/// new one, never a partial one.
+///
+/// `std::fs::write` truncates the target before writing, so a crash, an out-of-
+/// memory kill, or a full disk mid-write leaves a truncated or empty file. That is
+/// unrecoverable here: `get_matter_memory` cannot parse it, there is no backup,
+/// and `mem_limit: 4g` plus a restart policy makes an OOM kill during a write a
+/// live path rather than a theoretical one.
+///
+/// Temp file in the SAME directory, so the rename is same-filesystem and
+/// therefore atomic.
+///
+/// `sync_all` before the rename is deliberate: without it the rename can be
+/// durable while the contents are not, so a power loss yields a valid-looking
+/// file of the wrong length. One flush per memory write is affordable here.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    // Include the pid so two processes writing the same matter cannot collide on
+    // the temp name.
+    let tmp = dir.join(format!(".memory.json.tmp-{}", std::process::id()));
+
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Do not leave a stray temp file behind on failure.
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 fn default_matter_memory() -> serde_json::Value {
     serde_json::json!({
         "version": "2.0",
@@ -72,6 +112,33 @@ fn memory_revision(memory: &serde_json::Value) -> u64 {
 /// guard that can never reject.
 fn next_revision(current: &serde_json::Value) -> u64 {
     memory_revision(current).saturating_add(1)
+}
+
+/// Parse the `If-Match` header into an expected revision.
+///
+/// `Ok(None)` means the header was absent: the caller opted out of the guard and
+/// the write proceeds unconditionally. That is the deliberate decision recorded
+/// on `check_revision` - requiring the header would break a caller that does not
+/// send one.
+///
+/// A present-but-unparseable value is a **400**, never `Ok(None)`. Silently
+/// ignoring a header the caller believes is protecting them is the worst possible
+/// outcome: they think they are guarded while writing unconditionally.
+fn if_match_revision(headers: &HeaderMap) -> Result<Option<u64>, ApiError> {
+    let Some(raw) = headers.get(axum::http::header::IF_MATCH) else {
+        return Ok(None);
+    };
+    let text = raw
+        .to_str()
+        .map_err(|_| ApiError::bad_request("If-Match header is not valid ASCII"))?;
+    // Tolerate the quoted form (`If-Match: "7"`), which is legal HTTP.
+    let text = text.trim().trim_matches('"');
+    let value: u64 = text.parse().map_err(|_| {
+        ApiError::bad_request(format!(
+            "If-Match must be a revision number, got {text:?}"
+        ))
+    })?;
+    Ok(Some(value))
 }
 
 /// Enforce optimistic concurrency on a memory write.
@@ -225,6 +292,7 @@ pub async fn save_matter_memory(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(memory): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if !memory.is_object() {
@@ -248,9 +316,43 @@ pub async fn save_matter_memory(
             .map_err(|e| ApiError::internal(format!("failed to prepare matter memory dir: {e}")))?;
     }
 
+    // Read the guard and the current revision BEFORE touching the file.
+    //
+    // A conflict must leave the file exactly as it was: a 409 that had already
+    // truncated the file would be worse than no guard, because the caller would
+    // believe nothing was written.
+    let expected = if_match_revision(&headers)?;
+
+    let current = if path.exists() {
+        let existing = std::fs::read(&path)
+            .map_err(|e| ApiError::internal(format!("failed to read matter memory: {e}")))?;
+        serde_json::from_slice(&existing)
+            .map_err(|e| ApiError::internal(format!("failed to parse matter memory: {e}")))?
+    } else {
+        // No file yet: revision 0, so `If-Match: 0` is correct and anything else
+        // is a stale claim.
+        default_matter_memory()
+    };
+
+    // THE GUARD. Defined at the top of this file since plan 018 Task 3 and
+    // asserted by six unit tests - but never called from production code, which
+    // made it dead and left every write unconditional.
+    check_revision(&current, expected)?;
+
+    // The server owns the counter. `If-Match` is a claim about what the caller
+    // READ, never the value to store: trusting a body field here would let a
+    // stale client reset the revision and defeat the guard on the next request.
+    let mut memory = memory;
+    if let Some(obj) = memory.as_object_mut() {
+        obj.insert(
+            "revision".to_string(),
+            serde_json::Value::from(next_revision(&current)),
+        );
+    }
+
     let bytes = serde_json::to_vec_pretty(&memory)
         .map_err(|e| ApiError::internal(format!("failed to serialize matter memory: {e}")))?;
-    std::fs::write(&path, bytes)
+    write_atomic(&path, &bytes)
         .map_err(|e| ApiError::internal(format!("failed to write matter memory: {e}")))?;
 
     Ok(Json(memory))
@@ -369,5 +471,107 @@ mod memory_concurrency_tests {
         assert!(check_revision(&after, Some(5)).is_ok());
         // And an unconditional caller is still allowed (the opt-out path).
         assert!(check_revision(&after, None).is_ok());
+    }
+
+    /// A malformed If-Match must be a client error, not a silent unconditional
+    /// write. Silently ignoring a header the caller believes is guarding them is
+    /// the worst outcome: they think they are protected.
+    #[test]
+    fn a_malformed_if_match_is_rejected_not_ignored() {
+        use axum::http::header::IF_MATCH;
+
+        let mut h = HeaderMap::new();
+        h.insert(IF_MATCH, "not-a-number".parse().unwrap());
+        let err = if_match_revision(&h).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+
+        // Absent is allowed - the unconditional path stays.
+        assert_eq!(if_match_revision(&HeaderMap::new()).unwrap(), None);
+
+        // A well-formed value parses, including the legal quoted form.
+        let mut ok = HeaderMap::new();
+        ok.insert(IF_MATCH, "7".parse().unwrap());
+        assert_eq!(if_match_revision(&ok).unwrap(), Some(7));
+
+        let mut quoted = HeaderMap::new();
+        quoted.insert(IF_MATCH, "\"7\"".parse().unwrap());
+        assert_eq!(if_match_revision(&quoted).unwrap(), Some(7));
+    }
+
+    /// Read this file's source up to the test module.
+    ///
+    /// Scoped deliberately: searching the whole file makes the assertions below
+    /// match their OWN string literals, which is the mistake made in P4 - an
+    /// ordering assertion there failed against correct code for exactly this
+    /// reason.
+    fn production_source() -> String {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/matters.rs"),
+        )
+        .expect("read own source");
+        let end = src.find("#[cfg(test)]").expect("this file must have a test module");
+        src[..end].to_string()
+    }
+
+    /// The guard must be reachable from the handler. If `save_matter_memory` does
+    /// not read headers, `If-Match` is discarded and 409 is unreachable however
+    /// correct `check_revision` is - which was the actual state of this code.
+    #[test]
+    fn the_save_handler_actually_reads_the_if_match_header() {
+        let prod = production_source();
+        let save = &prod[prod
+            .find("pub async fn save_matter_memory")
+            .expect("save_matter_memory must exist")..];
+
+        assert!(
+            save.contains("headers: HeaderMap"),
+            "save_matter_memory must take a HeaderMap, or If-Match is discarded \
+             and 409 is unreachable"
+        );
+        assert!(
+            save.contains("if_match_revision("),
+            "save_matter_memory must CALL if_match_revision"
+        );
+        assert!(
+            save.contains("check_revision("),
+            "save_matter_memory must CALL check_revision - defined-but-uncalled is \
+             the exact state that let this guard be dead at three layers"
+        );
+        assert!(
+            save.contains("next_revision("),
+            "save_matter_memory must assign the revision server-side"
+        );
+        assert!(
+            save.contains("write_atomic("),
+            "save_matter_memory must write atomically"
+        );
+    }
+
+    #[test]
+    fn an_atomic_write_replaces_the_whole_file_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("pacgate-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.json");
+
+        // Replacing an existing file must yield the new content whole.
+        std::fs::write(&path, b"{\"old\":true}").unwrap();
+        write_atomic(&path, b"{\"new\":true}").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"new\":true}");
+
+        // A fresh write works too.
+        let fresh = dir.join("fresh.json");
+        write_atomic(&fresh, b"{\"ok\":1}").unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"{\"ok\":1}");
+
+        // No temp file left behind.
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains("tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
