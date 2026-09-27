@@ -218,6 +218,16 @@ jobs:
           # actually serving traffic.
           build-args: |
             PAC_SOURCE_REVISION=${{ github.sha }}
+            # The NER weights pin. Declared here as well as in the Dockerfile so
+            # the shipped revision is visible in the build log and in one place a
+            # reviewer checks; the Dockerfile's own default keeps local builds
+            # working without this workflow.
+            #
+            # The Dockerfile verifies the fetched files against pinned SHA-256
+            # values, so a wrong or truncated artifact fails the build rather than
+            # shipping. Changing this revision without updating those hashes will
+            # break the build on purpose.
+            NER_MODEL_REV=5d660ed2aa9da482bf2d99c6bc8cf2ce66758f6a
           tags: |
             ${{ steps.ns.outputs.prefix }}/pacgate-api:${{ steps.tag.outputs.tag }}
             ${{ steps.ns.outputs.prefix }}/pacgate-api:latest
