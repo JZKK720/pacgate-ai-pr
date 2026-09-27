@@ -103,6 +103,11 @@ $gates = @(
     # Self-contained: reads files, and its docker check self-skips when the image
     # is absent, so it belongs here rather than in $liveStackGates.
     'scripts/test-ner-enabled.ps1'
+    # Asserts the NER memory bound at both layers. Neither is self-enforcing: an
+    # unset mem_limit looks like a set one until the container OOMs, and a permit
+    # acquired after the detector build passes every behavioural test while
+    # bounding nothing. Self-contained (reads files; no docker needed).
+    'scripts/test-memory-bound.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
