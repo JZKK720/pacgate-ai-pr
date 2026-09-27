@@ -141,6 +141,25 @@ pub async fn run_job(
     .map_err(|e| ApiError::internal(e.to_string()))?
     .get::<i32, _>("version");
 
+    // Take an admission slot BEFORE building detectors. The 393 MiB allocation
+    // happens inside build_detectors, so a permit taken afterwards would bound
+    // nothing while still passing every behavioural test - which is why the test
+    // below asserts source order rather than behaviour.
+    //
+    // The permit is bound to a named variable and held to the end of the
+    // function, so it covers the sanitize call too. `let _ =` would drop it
+    // immediately and bound nothing.
+    //
+    // Over the bound the answer is 503, not a silent skip: a dropped job would
+    // leave its document `pending` and unsearchable while the caller believed the
+    // sanitize had succeeded.
+    let _slot = state.try_acquire_sanitize_slot().ok_or_else(|| {
+        ApiError::service_unavailable(format!(
+            "sanitize capacity: {} job(s) already running; retry shortly",
+            crate::SANITIZE_MAX_CONCURRENT
+        ))
+    })?;
+
     // 2-4. DETECT / DECIDE / REPLACE / VERIFY inside the crate.
     let mut sanitizer = pacgate_redact::Sanitizer::new(
         build_detectors(state.config.ner_model_dir.as_deref())?,
@@ -518,5 +537,68 @@ mod gate_tests {
         assert!(role_may_restore("partner"));
         assert!(!role_may_restore("attorney"));
         assert!(!role_may_restore("paralegal"));
+    }
+
+    /// Read this file's source up to the test module.
+    ///
+    /// Scoped deliberately: searching the whole file makes the assertions match
+    /// their OWN string literals and the `fn build_detectors` definition, which
+    /// is exactly what a first attempt did - both tests failed against correct
+    /// code because they were measuring their own text.
+    fn production_source() -> String {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sanitize.rs"),
+        )
+        .expect("read own source");
+        let end = src
+            .find("#[cfg(test)]")
+            .expect("this file must have a test module to scope against");
+        src[..end].to_string()
+    }
+
+    /// The bound must be enforced where the allocation happens.
+    ///
+    /// This asserts SOURCE ORDER, not behaviour, and that is deliberate: a permit
+    /// acquired *after* `build_detectors` still passes every behavioural test
+    /// while bounding nothing, because the 393 MiB has already been allocated by
+    /// then. An ordering bug is invisible to functional testing, so the only
+    /// reliable guard is the order of the two calls.
+    #[test]
+    fn the_sanitize_slot_is_taken_before_detectors_are_built() {
+        let prod = production_source();
+
+        let acquire = prod
+            .find("try_acquire_sanitize_slot")
+            .expect("run_job must acquire a sanitize slot, or the allocation is unbounded");
+        // The CALL, not the definition: `fn build_detectors` appears near the top
+        // of the file, so matching the bare name would compare against the wrong
+        // occurrence and pass regardless of call order.
+        let build = prod
+            .find("build_detectors(state.config.ner_model_dir")
+            .expect("run_job must call build_detectors; without this the order is unassertable");
+
+        assert!(
+            acquire < build,
+            "the slot must be acquired BEFORE build_detectors: acquiring after the \
+             allocation would bound nothing while passing every behavioural test \
+             (acquire at byte {acquire}, call at byte {build})"
+        );
+    }
+
+    /// `let _ =` drops the permit immediately, which would make the bound a
+    /// no-op that still reads as correct in review.
+    #[test]
+    fn the_permit_is_bound_to_a_named_variable() {
+        let prod = production_source();
+
+        assert!(
+            !prod.contains("let _ = state.try_acquire_sanitize_slot()"),
+            "the permit must be bound to a named variable: `let _ =` drops the \
+             guard immediately, so the function would hold no slot at all"
+        );
+        assert!(
+            prod.contains("let _slot = state.try_acquire_sanitize_slot()"),
+            "expected the permit bound as `_slot`"
+        );
     }
 }
