@@ -21,3 +21,12 @@ graphify-out/
 
 # Design assets (large binary assets, not needed by the API image)
 pacgate-ai-assets/
+
+# NER weights are fetched INSIDE the ner-model stage, where they are hash-checked.
+# A local copy must never enter the build context: it is 388MB, and dropping it
+# into the context would shadow the verified fetch with an unverified file - the
+# exact swap the SHA-256 check exists to catch.
+models/
+**/ner-model-zh/
+*.safetensors
+SHA256SUMS
