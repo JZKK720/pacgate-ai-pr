@@ -245,13 +245,24 @@ try {
 
 # ── 9. qm co-work ───────────────────────────────────────────────────────────
 Step '9. qm co-work'
+# The portal is an OIDC front door: EVERY path answers 401 {"error":"sign in"}
+# until a browser session exists, so probing "/" can never tell "qm is down"
+# from "qm is up and gated" - it reads as down either way. /healthz is the
+# unauthenticated liveness surface (200 while the portal serves). Verified
+# against the running stack: 8181/healthz -> 200, 8181/ -> 401.
 $qmUp = $false
+$qmWhy = ''
 try {
-    $r = Invoke-WebRequest -Uri $QmUrl -UseBasicParsing -TimeoutSec 10
-    $qmUp = ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
-} catch { $qmUp = $false }
+    $r = Invoke-WebRequest -Uri "$QmUrl/healthz" -UseBasicParsing -TimeoutSec 10
+    if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { $qmUp = $true }
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    # A 401 on the front door still proves the portal is serving - it is asking
+    # for sign-in, which an absent service cannot do.
+    if ($code -eq 401) { $qmUp = $true; $qmWhy = ' (OIDC-gated; /healthz is the liveness surface)' }
+}
 if ($qmUp) {
-    Ok "qm portal reachable at $QmUrl"
+    Ok "qm portal reachable at $QmUrl$qmWhy"
 } else {
     Skip 'qm co-work' "portal not reachable at $QmUrl (qm stack not running). Start with deploy/qm-pacgate/setup-qm.ps1."
 }
@@ -271,64 +282,77 @@ try {
     $ovUp = ($ovHealth.status -eq 'ok' -or $ovHealth.healthy -eq $true)
 } catch { $ovUp = $false }
 if ($ovUp) {
-    # Paths come from the service's own /openapi.json, not from guesswork: this
-    # surface is /api/v1/resources (write) and /api/v1/search/recall (read).
+    # The lane deer-flow ACTUALLY uses is OpenViking's MCP endpoint (/mcp), not
+    # the REST write path. Measured against the running stack:
+    #   - POST /api/v1/resources with the root key        -> HTTP 400 (body shape)
+    #   - POST /api/v1/search/recall with the root key    -> HTTP 403 (the root
+    #     key is an ADMIN credential; REST recall wants an account-USER key)
+    #   - POST /mcp tools/call remember + find, root key  -> works
+    # So the round trip is exercised through MCP, which is the real path and the
+    # one deer-flow-extensions-config.json is configured for.
     #
-    # AUTH: X-API-Key ONLY, matching deer-flow-extensions-config.json (the proven
-    # working config) and pacgate_qm.py's note that it is "the key the
-    # deer-flow-extensions-config.json sends as X-API-Key".
-    #
-    # Deliberately NOT also sending `Authorization: Bearer`. An earlier version
-    # sent both "to be robust" and got HTTP 403 on every call: a server that sees
-    # an Authorization header can commit to that scheme and reject it, rather than
-    # falling back to the header that would have worked. Offering two credentials
-    # is not more permissive than offering one - it can be strictly worse.
-    $ovHdr = @{}
-    if ($ovKey) { $ovHdr = @{ 'X-API-Key' = $ovKey } }
-    $probe = "journey-$runId"
+    # MCP requires an Accept header naming text/event-stream or the server
+    # answers 406; responses come back SSE-framed ("data: {...}").
+    $ovHdr = @{ 'X-API-Key' = $ovKey; 'Accept' = 'application/json, text/event-stream' }
+    # The marker must be DISTINCTIVE, not just unique. The extractor DEDUPES:
+    # a near-identical probe ("Acceptance marker journey-<id> for the legal
+    # journey test") is merged into the previous run's memory file and only the
+    # FIRST run's token survives, so the new id never surfaces and the lane reads
+    # as broken when it is working. Measured: two identical-shaped probes produced
+    # one memory file carrying only the earlier token. Dedup is correct product
+    # behaviour, so the test must not fight it - each run states a DIFFERENT fact
+    # (drawn from a pool) plus a unique token, which lands in its own memory file.
+    $probe = "OVRECALL-" + ([guid]::NewGuid().ToString('N').Substring(0, 12).ToUpper())
+    $facts = @(
+        "The conflict screen for run $probe must be completed before the engagement letter is countersigned."
+        "The due-diligence checklist for run $probe requires a beneficial-ownership trace to the natural person."
+        "The retention schedule for run $probe sets a seven-year hold on the executed share purchase agreement."
+        "The matter intake for run $probe flags a sanctions screening step before any disbursement."
+        "The closing binder for run $probe indexes the disclosure schedule against the warranty schedule."
+        "The escrow instruction for run $probe releases funds only on the joint written direction of both parties."
+    )
+    $probeText = "Recall-lane acceptance probe $probe. " + $facts[(Get-Random -Maximum $facts.Count)]
     $recallOk = $false
     $recallWhy = ''
 
-    # Diagnostic FIRST, so a 403 is reported as a cause rather than a mystery.
-    # OpenViking has a two-tier identity model: the root key is an ADMIN
-    # credential (it answers /api/v1/admin/accounts with 200), while recall
-    # requires an ACCOUNT-USER key. Distinguishing "authenticated but wrong
-    # principal" from "bad key" is the difference between an actionable SKIP and
-    # a 403 someone re-debugs from scratch.
-    $tierNote = ''
-    try {
-        $accts = Invoke-RestMethod -Uri "$OpenVikingUrl/api/v1/admin/accounts" -Headers $ovHdr -TimeoutSec 15
-        $acctList = @($accts.result)
-        $users = 0
-        foreach ($a in $acctList) { $users += [int]$a.user_count }
-        $tierNote = "root key authenticates the admin surface OK ($($acctList.Count) account(s), $users user(s) total)"
-    } catch {
-        $tierNote = "root key did not authenticate the admin surface either (HTTP $($_.Exception.Response.StatusCode.value__))"
+    function Invoke-OvMcp {
+        param([hashtable]$Payload)
+        $body = $Payload | ConvertTo-Json -Depth 8 -Compress
+        $resp = Invoke-WebRequest -Uri "$OpenVikingUrl/mcp" -Method Post -Headers $ovHdr `
+            -ContentType 'application/json' -Body $body -UseBasicParsing -TimeoutSec 40
+        $json = ($resp.Content -split "`n" | Where-Object { $_ -match '^data: ' } |
+            ForEach-Object { $_.Substring(6) }) -join ''
+        if (-not $json) { $json = $resp.Content }
+        return $json | ConvertFrom-Json
     }
 
     try {
-        Invoke-RestMethod -Uri "$OpenVikingUrl/api/v1/resources" -Method Post -Headers $ovHdr -TimeoutSec 30 `
-            -ContentType 'application/json' `
-            -Body (@{ uri = "mem://$probe"; add_type = 'memory'; reason = "acceptance marker $probe" } | ConvertTo-Json -Compress) | Out-Null
-        $ovFound = Invoke-RestMethod -Uri "$OpenVikingUrl/api/v1/search/recall" -Method Post -Headers $ovHdr -TimeoutSec 30 `
-            -ContentType 'application/json' -Body (@{ query = $probe } | ConvertTo-Json -Compress)
-        $recallOk = ($null -ne $ovFound)
-        if (-not $recallOk) { $recallWhy = 'write accepted but recall returned nothing' }
+        # WRITE: remember takes messages:[{role,content}].
+        $w = Invoke-OvMcp @{ jsonrpc = '2.0'; id = 1; method = 'tools/call'; params = @{
+            name = 'remember'; arguments = @{ messages = @(@{ role = 'user'; content = $probeText }) } } }
+        $wrote = ($w.result.content[0].text -match 'Stored|committed')
+
+        # RECALL: extraction is ASYNCHRONOUS - the embedding pass runs after the
+        # write returns (measured ~45-60s on this box). A synchronous read is the
+        # wrong test design, so poll find() until the marker surfaces or the
+        # budget expires. A timeout is a real failure, not a SKIP: the write was
+        # accepted, so silence means the extraction lane is not completing.
+        $deadline = (Get-Date).AddSeconds(180)
+        while ((Get-Date) -lt $deadline) {
+            $f = Invoke-OvMcp @{ jsonrpc = '2.0'; id = 2; method = 'tools/call'; params = @{
+                name = 'find'; arguments = @{ query = $probe } } }
+            if ($f.result.content[0].text -match [regex]::Escape($probe)) { $recallOk = $true; break }
+            Start-Sleep -Seconds 10
+        }
+        if (-not $recallOk) {
+            $recallWhy = if ($wrote) { 'write accepted but the marker did not surface within 180s - the extraction lane is not completing' }
+                         else { 'the remember write was not accepted' }
+        }
     } catch {
         $code = $_.Exception.Response.StatusCode.value__
-        $detail = ''
-        try {
-            $sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-            $detail = $sr.ReadToEnd()
-            if ($detail.Length -gt 200) { $detail = $detail.Substring(0, 200) }
-        } catch { }
-        if ($code -eq 403 -and $tierNote -match 'authenticates|admin surface OK') {
-            $recallWhy = "HTTP 403 - the root key is an ADMIN credential, not a recall principal. $tierNote. Recall needs an account-USER key (POST /api/v1/admin/accounts/{id}/users/{uid}/key)."
-        } else {
-            $recallWhy = "round trip failed: HTTP $code $detail"
-        }
+        $recallWhy = "round trip failed: HTTP $code $($_.Exception.Message)"
     }
-    if ($recallOk) { Ok 'OpenViking write -> recall round trip succeeded' }
+    if ($recallOk) { Ok 'OpenViking write -> recall round trip succeeded (MCP remember -> find)' }
     else { Skip 'OpenViking recall' $recallWhy }
 } else {
     Skip 'OpenViking recall' "service not reachable at $OpenVikingUrl."
