@@ -9,7 +9,10 @@
 # Both are now DERIVED, and the discrimination is tested SYNTETICALLY (accept the
 # current version, reject an outdated one) so the negative case cannot expire.
 $ErrorActionPreference = 'Continue'
-cd C:\Users\cubecloud-io\github-pr\pacgate-ai-pr
+# Derived, NOT hardcoded. This was an absolute `cd` to the author's checkout, so
+# on any other clone the script read THAT repo's compose file and reported on a
+# machine it was not running on. Silent, because the path exists there.
+Set-Location (Split-Path -Parent $PSScriptRoot)
 
 $passed = 0; $failed = 0
 function Check($n, $ok, $d) {

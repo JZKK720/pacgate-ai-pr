@@ -34,7 +34,8 @@ docker rm -f pacgate-ocr-e2e, pacgate-api-e2e 2>$null | Out-Null
 # 1. OCR service (no host port needed; API reaches it over the compose net).
 docker run -d --name pacgate-ocr-e2e --network client-bundle_default ocr-service:local | Out-Null
 # 2. API under test, wired to the live db + ocr + embeddings + NER weights.
-$nerDir = "C:\Users\cubecloud-io\github-pr\pacgate-ai-pr\.e2e-ner-model"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$nerDir = Join-Path $repoRoot '.e2e-ner-model'
 $nerMount = if (Test-Path $nerDir) { @("-e", "PACGATE_NER_MODEL_DIR=/models/ner", "-v", "${nerDir}:/models/ner") } else { @() }
 Write-Output "ner weights mounted: $($nerMount.Count -gt 0)"
 docker run -d --name pacgate-api-e2e --network client-bundle_default `
@@ -44,7 +45,7 @@ docker run -d --name pacgate-api-e2e --network client-bundle_default `
   -e "OCR_SERVICE_URL=http://pacgate-ocr-e2e:8100" `
   -e "OLLAMA_BASE_URL=http://host.docker.internal:11434" `
   @nerMount `
-  -v "C:\Users\cubecloud-io\github-pr\pacgate-ai-pr\deploy\client-bundle\data:/data" `
+  -v "$(Join-Path $repoRoot 'deploy\client-bundle\data'):/data" `
   pacgate-api:plan020-test | Out-Null
 Start-Sleep -Seconds 6
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:8097/health" -TimeoutSec 5

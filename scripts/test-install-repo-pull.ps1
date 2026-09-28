@@ -26,7 +26,19 @@
 # the local commit exists, so this cannot silently become vacuous again.
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = 'C:\Users\cubecloud-io\github-pr\pacgate-ai-pr'
+# Derived, NOT hardcoded. This was literally
+# `$repoRoot = 'C:\Users\cubecloud-io\github-pr\pacgate-ai-pr'`, which happens
+# to be correct on the author's machine and WRONG IN EVERY OTHER CLONE. New-Clone
+# copies install.ps1 from here, so any clone other than the author's silently
+# tested the AUTHOR'S file: mutating the clone's own install.ps1 changed nothing,
+# and the mutation harness reported failures it could not explain ("expected the
+# non-ASCII collision to FAIL; exit=0"). It also means this suite, run on a
+# client machine, would assert against a path that does not exist there.
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path (Join-Path $repoRoot 'deploy\client-bundle\install.ps1'))) {
+    Write-Host "FATAL: no install.ps1 under $repoRoot - this script must live in <repo>\scripts" -ForegroundColor Red
+    exit 2
+}
 # Use a real (non-8.3) temp path. $env:TEMP expands to C:\Users\CUBECL~1\...,
 # and ProcessStartInfo.WorkingDirectory rejects short names.
 $base = Join-Path ([System.IO.Path]::GetTempPath() -replace 'CUBECL~1', 'cubecloud-io') ('pg-pull-' + [guid]::NewGuid().ToString('N').Substring(0, 6))

@@ -7,7 +7,8 @@
 # Self-contained: does not rely on the caller's working directory.
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = 'C:\Users\cubecloud-io\github-pr\pacgate-ai-pr'
+# Derived, NOT hardcoded - see the note in test-install-repo-pull.ps1.
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $base = Join-Path $env:TEMP ('pg-proof-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
 
 function New-Fixture {
