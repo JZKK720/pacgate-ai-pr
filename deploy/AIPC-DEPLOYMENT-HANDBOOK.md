@@ -260,10 +260,17 @@ Verify the core stack:
 
 ```powershell
 docker compose -f compose.prod.yaml ps
-curl http://localhost:8089/health
+curl http://localhost:8089/version
+curl http://localhost:8089/pacgate/health
 ```
 
-Expected: all five containers running (pacgate-db, pacgate-api, deer-flow, openviking, nginx) and `/health` returns `ok`.
+Expected: all five containers running (pacgate-db, pacgate-api, deer-flow, openviking, nginx); `/version` returns
+`{"version":"0.1.20","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
+
+> **Do not probe `/health` at the nginx root.** nginx routes `/` to the deer-flow frontend
+> by design, so `curl http://localhost:8089/health` returns the frontend's 404 page - that
+> reads as a failure but is correct routing. `/version` is also at the root (mapped to the
+> API's `/build-info`); only `/pacgate/*` paths reach the API.
 
 ## Stage 3: Seed the tenant and register users (both machines)
 
@@ -492,7 +499,8 @@ Run this checklist on each AIPC independently.
 ### Core stack
 
 - [ ] `docker compose -f compose.prod.yaml ps` shows 5 services up (incl. openviking)
-- [ ] `curl http://localhost:8089/health` returns `ok`
+- [ ] `curl http://localhost:8089/version` returns the release version + revision JSON
+- [ ] `curl http://localhost:8089/pacgate/health` returns `ok` (NOT `/health` at the root - see Stage 2)
 - [ ] `curl http://localhost:1933/health` returns healthy JSON
 - [ ] Postgres has the `pacgate-law` tenant
 - [ ] Admin user can log in at `http://localhost:8089/api/auth/login`
