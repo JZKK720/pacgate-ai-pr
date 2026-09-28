@@ -87,13 +87,40 @@ function Invoke-MutationSuite {
     # message described a fix whose code was absent.
     #
     # So: write the pristine bytes to disk BEFORE any mutation, and delete the
-    # backups only after a clean restore. If a marker is present at startup, the
-    # previous run died; refuse to run rather than trusting the tree.
+    # backups only after a clean restore.
+    #
+    # If a marker is present at startup, the previous run died. It USED to throw
+    # here and demand a manual `git checkout` - which is what turned a
+    # rare crash into a recurring one, because the operator (or the next
+    # automated run) had to notice the marker, know the incantation, and run it.
+    # But the backup dir is not a warning; it is the RECOVERY DATA. It holds the
+    # pristine bytes, written before any mutation, keyed by path in manifest.json.
+    # So recover from it automatically, then proceed. This can never restore a
+    # corrupted file: the backup is only ever written from a pre-mutation
+    # snapshot, and a completed run deletes it.
     $backupPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.git/mutation-guard-backup'
-    if (Test-Path -LiteralPath $backupPath) {
-        throw ("A previous mutation run did not finish and may have left files mutated. " +
-               "Restore from git (git checkout -- <files>) and delete '$backupPath' before re-running. " +
-               "Refusing to snapshot a possibly-corrupted tree.")
+    $recoveredManifest = Join-Path $backupPath 'manifest.json'
+    if (Test-Path -LiteralPath $recoveredManifest) {
+        Write-Host '  [recover] a previous mutation run was interrupted; restoring from its backup' -ForegroundColor Yellow
+        $recovered = Get-Content -LiteralPath $recoveredManifest -Raw | ConvertFrom-Json
+        foreach ($prop in $recovered.PSObject.Properties) {
+            $orig = $prop.Name
+            $bin = $prop.Value
+            if ((Test-Path -LiteralPath $orig) -and (Test-Path -LiteralPath $bin)) {
+                [System.IO.File]::WriteAllBytes($orig, [System.IO.File]::ReadAllBytes($bin))
+                Write-Host "  [recover] restored $(Split-Path $orig -Leaf)" -ForegroundColor Yellow
+            }
+        }
+        Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue
+        # Re-snapshot from the now-restored files so the run below is based on
+        # pristine bytes, not the mutated ones that were on disk a moment ago.
+        foreach ($p in $guard) { $snapshots[$p] = [System.IO.File]::ReadAllBytes($p) }
+    }
+    elseif (Test-Path -LiteralPath $backupPath) {
+        # Marker dir exists but the manifest is gone - a partial write we cannot
+        # trust. This is the one case still worth refusing on.
+        throw ("A previous mutation run left an unreadable backup at '$backupPath' (no manifest). " +
+               "Delete it and restore any guarded file with `git checkout -- <file>` before re-running.")
     }
     New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
     $manifest = @{}
