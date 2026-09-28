@@ -612,23 +612,130 @@ function Invoke-MatterProvision {
     return $true
 }
 
-Write-Host "`nProvisioning the matter for deer-flow memory..." -ForegroundColor Cyan
-# The API publishes no host port; it is reached through nginx at /pacgate. Start
-# that pair now - nginx needs pacgate-api, and both are required to provision.
-$provisioned = $false
-docker compose -f compose.prod.yaml up -d pacgate-api nginx 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-$reached = $false
+# 6a. Bootstrap the default tenant and the admin user.
+#
+# WHY THIS IS HERE, and why it runs BEFORE provisioning.
+#
+# Nothing used to do this. A fresh install finished with ZERO users, so:
+#   * login returned 401
+#   * matter provisioning could not authenticate and was skipped
+#   * deer-flow then started with a BLANK PACGATE_MATTER_ID, its adapter raised,
+#     and get_memory_storage() silently substituted FileMemoryStorage
+#   * ...which writes UNSANITIZED matter prose to disk, outside all three
+#     matter-memory guards
+#
+# So "no admin" was not a cosmetic gap - it was the first link in the chain that
+# ends with unredacted client text on disk. Found by the clean-clone proof,
+# because the dev box already had an admin and could never show it.
+#
+# Two details are load-bearing and both were wrong in the handbook:
+#
+#  1. The tenant slug MUST equal PACGATE_DEFAULT_TENANT (default "default-firm").
+#     The handbook inserts slug='pacgate-law', which does not match the lookup in
+#     auth.rs (`get_by_slug(&state.config.default_tenant)`), so registration fails
+#     with "default tenant not found: matter not found: row not found" - an error
+#     that reads like a database fault and is really a naming mismatch.
+#
+#  2. Registration is a POST to /api/auth/register and returns 200 on success.
+#     It is idempotent-safe to attempt: an existing user yields a non-2xx error
+#     which this step treats as "already bootstrapped", not as a failure.
+function Invoke-Bootstrap {
+    param([string]$BaseUrl)
+
+    $tenantSlug = if ($envVars.ContainsKey('PACGATE_TENANT_ID') -and $envVars['PACGATE_TENANT_ID']) {
+        $envVars['PACGATE_TENANT_ID']
+    } else { 'default-firm' }
+    $tenantName = if ($envVars.ContainsKey('PACGATE_TENANT_NAME') -and $envVars['PACGATE_TENANT_NAME']) {
+        $envVars['PACGATE_TENANT_NAME']
+    } else { 'Default Firm' }
+    $apiEmail    = if ($envVars.ContainsKey('PACGATE_API_EMAIL'))    { $envVars['PACGATE_API_EMAIL'] }    else { '' }
+    $apiPassword = if ($envVars.ContainsKey('PACGATE_API_PASSWORD')) { $envVars['PACGATE_API_PASSWORD'] } else { '' }
+
+    if (-not $apiEmail -or -not $apiPassword) {
+        Write-Host "  [WARN] PACGATE_API_EMAIL / PACGATE_API_PASSWORD are not set in .env." -ForegroundColor Yellow
+        Write-Host "         Cannot bootstrap the admin user. Set both and re-run." -ForegroundColor Yellow
+        return $false
+    }
+
+    # (1) The tenant. Created via the API when possible so the row matches what
+    # the API expects; falls back to the documented psql path because the tenant
+    # lookup is what registration needs, and a first-run API may not expose a
+    # tenant-create route at all.
+    #
+    # Match on SLUG, and use the same slug the lookup will use.
+    $sql = "INSERT INTO tenants (name, slug) SELECT '$($tenantName -replace "'","''")', '$($tenantSlug -replace "'","''")' WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = '$($tenantSlug -replace "'","''")');"
+    $seedOut = docker exec pacgate-db psql -U pacgate -d pacgate -t -c $sql 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [OK] tenant '$tenantSlug' present (created if absent)" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  [WARN] could not ensure the tenant: $($seedOut -join ' ')" -ForegroundColor Yellow
+        return $false
+    }
+
+    # (2) The admin. Retry, because the API may still be applying migrations.
+    $registered = $false
+    $alreadyThere = $false
+    for ($i = 1; $i -le 15; $i++) {
+        $resp = $null
+        try {
+            $resp = Invoke-WebRequest -Uri "$BaseUrl/api/auth/register" -Method Post `
+                -Body (@{ email = $apiEmail; password = $apiPassword } | ConvertTo-Json -Compress) `
+                -ContentType 'application/json' -TimeoutSec 20 -SkipHttpErrorCheck
+        } catch { }
+        if ($resp) {
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { $registered = $true; break }
+            # A duplicate is success for our purpose: the admin exists.
+            if ($resp.StatusCode -eq 409 -or "$($resp.Content)" -match 'already|exists|duplicate') {
+                $alreadyThere = $true; break
+            }
+        }
+        if ($i -lt 15) { Start-Sleep -Seconds 4 }
+    }
+
+    if ($registered) {
+        Write-Host "  [OK] admin '$apiEmail' registered" -ForegroundColor Green
+        return $true
+    }
+    if ($alreadyThere) {
+        Write-Host "  [OK] admin '$apiEmail' already exists" -ForegroundColor Green
+        return $true
+    }
+    Write-Host "  [WARN] could not register the admin '$apiEmail'." -ForegroundColor Yellow
+    Write-Host "         Matter provisioning will fail without a login. Check the API logs." -ForegroundColor Yellow
+    return $false
+}
+
+Write-Host "`nBootstrapping the default tenant and admin user..." -ForegroundColor Cyan
+# Same nginx-fronted path as provisioning: the API publishes no host port.
+$bootstrapped = $false
+docker compose -f compose.prod.yaml up -d pacgate-api pacgate-db nginx 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+$apiUp = $false
 foreach ($attempt in 1..30) {
     try {
         $null = Invoke-RestMethod -Uri "http://localhost:8089/version" -TimeoutSec 5
-        $reached = $true; break
+        $apiUp = $true; break
     } catch { Start-Sleep -Seconds 2 }
 }
-if ($reached) {
+if ($apiUp) {
+    $bootstrapped = Invoke-Bootstrap -BaseUrl 'http://localhost:8089/pacgate'
+}
+else {
+    Write-Host "  [WARN] the API did not become reachable in 60s; skipping bootstrap." -ForegroundColor Yellow
+}
+
+# 6b. Provision the matter deer-flow's memory adapter is scoped to.
+#
+# Runs AFTER 6a by necessity: provisioning authenticates, and before the bootstrap
+# there is no admin to authenticate as. The ordering is the point - see the note
+# at the top of 6a for the chain that a missing admin sets off.
+Write-Host "`nProvisioning the matter for deer-flow memory..." -ForegroundColor Cyan
+$provisioned = $false
+if ($apiUp) {
     $provisioned = Invoke-MatterProvision -BaseUrl 'http://localhost:8089/pacgate'
 }
 else {
-    Write-Host "  [WARN] the API did not become reachable behind nginx in 60s; skipping matter provisioning." -ForegroundColor Yellow
+    Write-Host "  [WARN] the API is not reachable, so no matter could be provisioned." -ForegroundColor Yellow
     Write-Host "         Re-run .\install.ps1 -Update once the stack is healthy." -ForegroundColor Yellow
 }
 
