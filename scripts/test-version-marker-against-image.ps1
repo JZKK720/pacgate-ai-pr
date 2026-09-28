@@ -24,8 +24,17 @@ param(
     # silently points at an old release would keep passing while proving nothing
     # about what is being shipped.
     [string]$Image = '',
-    # Network to join, so pacgate-db resolves. Defaults to the live stack.
-    [string]$Network = 'client-bundle_default',
+    # Network to join, so pacgate-db resolves.
+    #
+    # Defaults to '' and is DERIVED at runtime from the running stack, not
+    # hardcoded. It was 'client-bundle_default', which is the compose project name
+    # derived from the DIRECTORY - correct only when the repo sits in a folder
+    # literally named `client-bundle`. Any other checkout (a clean-clone proof, a
+    # client machine) runs under a different project name, so the container could
+    # not join the network and the gate failed with "docker run failed" rather
+    # than reporting anything about the version - a misleading failure that looks
+    # like a product fault.
+    [string]$Network = '',
     # Name of an existing container to copy DATABASE_URL from. The value is read
     # at runtime and passed through without ever being printed or written down -
     # guessing a password here would either fail or, worse, put a credential in
@@ -48,6 +57,24 @@ if (-not $Image) {
           'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/pacgate-api:\d+\.\d+\.\d+').Groups['ns'].Value
     if (-not $ns) { Write-Host 'ERROR: could not derive the image namespace from compose.prod.yaml' -ForegroundColor Red; exit 1 }
     $Image = "ghcr.io/$ns/pacgate-api:$v"
+}
+
+# Derive the network from the RUNNING stack, the same way the namespace above is
+# derived rather than hardcoded. Ask docker which network the live pacgate-api is
+# attached to; that is authoritative regardless of what the directory is called
+# or what COMPOSE_PROJECT_NAME was set to. Fall back to the directory-derived
+# name only if the stack is not up (the caller will then get a clear failure).
+if (-not $Network) {
+    $derived = (& docker inspect pacgate-api --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>$null |
+        Where-Object { $_ } | Select-Object -First 1)
+    if ($derived) {
+        $Network = $derived.Trim()
+        Write-Host "  network derived from the live stack: $Network" -ForegroundColor DarkGray
+    }
+    else {
+        $Network = 'client-bundle_default'
+        Write-Host "  [WARN] no running pacgate-api to derive the network from; assuming $Network" -ForegroundColor Yellow
+    }
 }
 
 $ErrorActionPreference = 'Stop'
