@@ -1,7 +1,7 @@
 # Pacgate AI - Two-AIPC Deployment Handbook
 
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
-> Version 0.1.4 - 2026-09-04
+> Targets release 0.1.20 - handbook updated 2026-09-28
 > Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`.
 
 ## ⚠️ Significant findings (2026-09-02) — read before deploying AIPC #2
@@ -9,11 +9,12 @@
 These were discovered during the AIPC #1 pilot and are **already fixed in this repo**.
 AIPC #2 must pull the **updated** code (see Stage 1) so it gets these fixes.
 
-> **Update 2026-09-15.** Both repos are now **public** and carry **identical trees**
-> (`origin/main` = fork `main`). The earlier warning to avoid "the older
-> `JZKK720/pacgate-ai-pr` main" no longer applies — `origin/main` contains every
-> fork commit plus merge `832d84e`. Clone either. See
-> `plans/012-master-release-namespace.md`.
+> **Update 2026-09-23 (supersedes the 2026-09-15 "clone either" note).** The two
+> repos are **NO LONGER identical** — `pacgate-ai/pacgate-ai-pr` is 26 commits behind
+> and missing the workflow-wiring fixes (`b7fc540`, `039afdc`), so a fork clone serves
+> **10 built-in workflows instead of the firm's 222**, with no error shown anywhere.
+> **Clone `JZKK720/pacgate-ai-pr`** (see Stage 1). Which repo you push a release tag to
+> still decides the GHCR namespace — see `plans/012-master-release-namespace.md`.
 
 1. **deer-flow agent could not query pacgate's legal databases.** Root cause: no tool was
    wired to pacgate-api's `/api/kb/search` (RAG) or `/api/search` (legal connectors), and the
@@ -73,9 +74,10 @@ If you later want shared matter data across both machines, connect them with a p
 
 ## What you need before starting
 
-- GitHub access to the source repo — either `JZKK720/pacgate-ai-pr` or
-  `pacgate-ai/pacgate-ai-pr`. Both are **public**; a plain clone needs no auth at all.
-  A PAT or `gh auth login` is only required if you intend to push.
+- GitHub access to the source repo — **`JZKK720/pacgate-ai-pr`** (public; a plain
+  clone needs no auth). **Do not clone the `pacgate-ai` fork** — it is 26 commits
+  behind and serves 10 workflows instead of 222 (see Stage 1). A PAT or
+  `gh auth login` is only required if you intend to push.
 - Docker Desktop running on both AIPCs
 - Ollama running on both AIPCs (`install.ps1` pulls the models it needs)
 - `ollama signin` completed on each AIPC if the cloud-tagged deepseek models are in use
@@ -102,8 +104,8 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 > `ghcr.io/pacgate-ai/*` at 0.1.0/0.1.3. `pacgate-ai` is the legacy mirror; the
 > live namespace is `jzkk720` and publishing moved there in plan 016. The old
 > `pacgate-ai/...-frontend-pacgate:0.1.0` row was also labelled "Published" while
-> returning **404** - it never resolved. All five `jzkk720/*:0.1.19` images return
-> HTTP 200 anonymously.
+> returning **404** - it never resolved. All five `jzkk720/*` images at the current
+> pin (0.1.20, table above) return HTTP 200 anonymously.
 
 **Historical release table (retained for provenance, superseded):**
 
