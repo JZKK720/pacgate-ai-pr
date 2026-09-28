@@ -265,22 +265,42 @@ Expected: all five containers running (pacgate-db, pacgate-api, deer-flow, openv
 
 ## Stage 3: Seed the tenant and register users (both machines)
 
+> **`install.ps1` now does this automatically (step 6a).** On a current install
+> you do not need to run anything on this page - it is kept because the manual
+> path is still useful for recovery, and because the commands below are what the
+> installer runs. Check the install output for
+> `[OK] tenant 'default-firm' present` and `[OK] admin '...' registered`.
+
 On each machine, seed the default tenant and register the admin user:
 
 ```powershell
-# Seed the tenant
-docker exec pacgate-db psql -U pacgate -c "INSERT INTO tenants (name, slug) VALUES ('Pacgate Law', 'pacgate-law');"
+# Seed the tenant.
+#
+# THE SLUG MUST MATCH PACGATE_TENANT_ID. It defaults to "default-firm", and the
+# registration below looks the tenant up by that slug. An earlier version of this
+# page used 'pacgate-law', which does not match, so registration failed with:
+#
+#   {"error":{"code":"internal_error",
+#     "message":"default tenant not found: matter not found: row not found"}}
+#
+# That reads like a database fault and is really a naming mismatch. If you set
+# PACGATE_TENANT_ID to something else in .env, use that value here instead.
+docker exec pacgate-db psql -U pacgate -d pacgate -c "INSERT INTO tenants (name, slug) SELECT 'Default Firm', 'default-firm' WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = 'default-firm');"
 
 # Register the admin user
 $body = @{email="admin@pacgate-law.com"; password="<strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 Register a qm bridge service account (needed by qm to authenticate with pacgate-api):
 
 ```powershell
+# NOTE the /pacgate prefix. The un-prefixed /api/auth/register is routed to the
+# frontend and rejected with 403 "Cross-site auth request denied", which reads
+# like a credentials or CORS fault and is really a missing path segment. An
+# earlier version of this page omitted it.
 $body = @{email="qm-bridge@pacgate.local"; password="<strong-bridge-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 ## Stage 3.5: Verify OpenViking memory service (both machines)
@@ -614,8 +634,9 @@ qm (co-working workspace):
 ### Register new users
 
 ```powershell
+# /pacgate prefix required - see the note in Stage 3.
 $body = @{email="<user>@pacgate-law.com"; password="<password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
 ### Backup the database
