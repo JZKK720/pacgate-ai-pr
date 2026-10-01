@@ -145,6 +145,12 @@ $gates = @(
     # passed only when a human typed the command. Discovery is checked too, so a
     # moved suite fails loudly instead of reporting a vacuous green.
     'scripts/test-adapter-python.ps1'
+    # Gates the pacgate-mcp 401-retry behaviour test. Same gap again, and it
+    # matters more here: the defect this guards is INVISIBLE until pacgate-api's
+    # 24-hour JWT expires. A regression would not appear in any smoke test, any
+    # deployment check, or on a freshly restarted machine - it would surface one
+    # day later as every agent tool call failing. Nothing else covers it.
+    'scripts/test-mcp-401-retry.ps1'
     'scripts/verify-delivery-state.ps1'
     'scripts/verify-surviving-components.ps1'
     'scripts/check-installer-syntax.ps1'
