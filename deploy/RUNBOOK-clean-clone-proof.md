@@ -227,24 +227,31 @@ it is the one nothing answered.
 the install, and both are stated with their reason rather than passed silently:
 
 - **qm co-work** — the qm stack is not part of `compose.prod.yaml`; it is a
-  separate stack. Start it with `deploy/qm-pacgate/setup-qm.ps1`.
-- **OpenViking recall** — **corrected 2026-09-23: the memory lane works; this
-    TEST's lane does not.** The memory lane in production is **MCP**: deer-flow
-    sends `X-API-Key: ${OPENVIKING_ROOT_API_KEY}` to `POST /mcp`, and that returns
-    **200**, with `tools/call search` returning real stored memories
-    (`isError: false`) and `health` returning 200. The root key is therefore
-    sufficient for everything the product does.
+  separate stack. Start it with `deploy/client-bundle/setup-qm.ps1`.
+  **Note (2026-10-01):** that script is *interactive* — it prompts for an admin
+  email and a Pacgate bridge service-account password — and it deliberately does
+  **not** run `qm up`. So this lane is human-gated by design, and a mechanical
+  run of this RUNBOOK can never close it. (The path in this line previously read
+  `deploy/qm-pacgate/setup-qm.ps1`, which does not exist; the script lives in
+  `client-bundle`.)
+- **OpenViking recall** — **RESOLVED 2026-10-01 (commit `def8ee5`, now in
+    origin/main).** This entry used to report a 403 and conclude "the memory lane
+    works, this TEST's lane does not". That was correct, and it is now fixed: the
+    assertion was pointed at the **MCP surface**, which is the lane the product
+    actually uses.
 
-    The 403 below comes only from this test, which asserts recall over the **REST**
-    route (`POST /api/v1/search/recall`). That route wants an *account-user* key,
-    and a fresh install has `user_count: 0`. This is a **mismatch between the test
-    and the product**, not a broken install. To close it, either point the
-    assertion at the MCP surface or provision a user via
-    `POST /api/v1/admin/accounts/{id}/users/{uid}/key` — but note that adding a user
-    key to the shipped config is a *product* change, and a second credential
-    shape is what makes the two-tier confusion possible in the first place.
+    The old 403 came from asserting recall over the **REST** route
+    (`POST /api/v1/search/recall`), which wants an *account-user* key; a fresh
+    install has `user_count: 0`. The product never uses that route — deer-flow
+    sends `X-API-Key: ${OPENVIKING_ROOT_API_KEY}` to `POST /mcp`, which returns
+    **200**. The test now drives a `tools/call` remember -> find round trip over
+    `/mcp` and **passes live** (assertion 16 of the journey).
 
-    **It is not a launch blocker.**
+    One implementation detail worth keeping: the MCP call requires an `Accept`
+    header naming `text/event-stream`, or the server rejects it. The two-tier
+    account model is otherwise untouched — no user key is added to the shipped
+    config, so the second credential shape that caused the confusion is not
+    reintroduced.
 
 ---
 

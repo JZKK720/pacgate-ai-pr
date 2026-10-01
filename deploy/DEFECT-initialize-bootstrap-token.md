@@ -81,34 +81,97 @@ installed AIPC before the on-site engineer creates the admin account. That is
 the state in which a machine sits on a LAN, unattended, with a public
 admin-creation endpoint.
 
-## The fix (not applied)
+## THE FIX IS NOT A ONE-LINE CONFIG CHANGE — PROVEN 2026-10-01
 
-Either of these arms the guard; pick one and test it on a fresh clone:
+**Arming `PACGATE_SETUP_TOKEN` on its own BREAKS first-run admin creation.**
+This was measured, not reasoned about. The earlier draft of this file called it a
+"one-line arming switch"; that was wrong.
 
-**Option A — operator-supplied token (explicit, preferred for an on-site install)**
+The frontend's setup page posts email + password and **no token**:
 
-Add `PACGATE_SETUP_TOKEN` to the deer-flow service environment in
-`deploy/client-bundle/compose.prod.yaml` **and** `compose.bundle.yaml`, sourced
-from `.env`, and have `install.ps1` generate a value on first install and print
-it to the operator (the same pattern used for the pacgate-db and auth secrets).
+`deploy/deer-flow-src/frontend/src/app/(auth)/setup/page.tsx:75`
 
-**Option B — generate-and-log (no operator step)**
-
-Set `PACGATE_GENERATE_SETUP_TOKEN=1` on the deer-flow service. The gateway
-generates a token per process and logs it at WARNING level:
-
-```
-PACGATE SETUP TOKEN: <value>  -- required by POST /api/v1/auth/initialize
-to create the first admin. Read it from the container logs.
+```ts
+await fetch("/api/v1/auth/initialize", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  credentials: "include",
+  body: JSON.stringify({ email, password: newPassword }),   // <- no token field
+});
 ```
 
-This closes the race without an install-time step, at the cost of the operator
-reading the token from `docker logs deer-flow` at setup time.
+There is no setup-token input anywhere in the UI (grepped for `setup_token` /
+`setupToken` / `PACGATE_SETUP` across the frontend and the frontend patches:
+**0 hits**). The router is in `.env.example`: no `PACGATE_SETUP_TOKEN` key exists.
 
-**Either way, verify on a FRESH CLONE.** The standing rule for this repo is that
-no install-path change is considered validated until a clean clone proves it —
-this dev box accumulates credentials, pulled models, and rendered gitignored
-configs, so it masks clean-machine failures.
+### The proof (gate armed via a temporary compose override, then reverted)
+
+| # | Condition | Request | Result |
+|---|---|---|---|
+| 1 | gate **unarmed** (shipped) | UI payload, no token | `409 system_already_initialized` |
+| 2 | gate **armed** | UI payload, no token | **`403 setup_token_required`** |
+
+Row 2 is the defect the "fix" would introduce. Note the observable: the token
+check runs *before* the admin-count probe (by design, so an unauthenticated
+caller is told nothing about whether an admin exists), so arming the gate changes
+the response from 409 to 403. On a **fresh** install — no admin — that 403 means
+**the first admin can never be created through the UI**. It replaces a
+claimable-admin window with an unbootstrappable install.
+
+The override used for row 2 was deleted and `deer-flow` recreated from the real
+compose; verified afterwards: token `UNSET`, response back to `409`, user count
+unchanged (3), and no probe account created.
+
+## The fix, done properly
+
+Arming the gate requires **two coordinated changes**, not one:
+
+1. **Provision the token**, e.g. `PACGATE_SETUP_TOKEN` in the deer-flow service
+   environment in **both** `compose.prod.yaml` and `compose.bundle.yaml`, sourced
+   from `.env` — the same pattern the installer already uses for
+   `PACGATE_DB_PASSWORD` / `PACGATE_JWT_SECRET` / `OPENVIKING_ROOT_API_KEY`.
+   `install.ps1` should generate it on first install and **print it to the
+   operator** (it should not be left for them to invent). `PACGATE_GENERATE_SETUP_TOKEN=1`
+   is the alternative that generates-and-logs per process, but it still needs
+   step 2.
+2. **Teach the setup page to send it.** Without this, step 1 bricks the flow.
+   `setup/page.tsx` needs a token field, and whatever hands the operator the
+   token (install output, or `docker logs deer-flow` for the generate-and-log
+   variant) must tell them to enter it there.
+
+Doing only (1) is strictly worse than doing nothing.
+
+### Suggested shape of (2)
+
+Keep it narrow: add an optional token input to the setup form, send it as a
+header or body field, and leave the form working unchanged when the gate is
+disabled. The endpoint already tolerates both states — `required_token is None`
+means the check is skipped entirely — so the UI change is additive and should not
+need a feature flag.
+
+**Verify on a FRESH CLONE, both branches.** The standing rule for this repo is
+that no install-path change is validated until a clean clone proves it. This dev
+box accumulates credentials, pulled models, and rendered gitignored configs, so it
+masks clean-machine failures. Specifically prove:
+- gate **off** → first-run setup still works exactly as before (no regression)
+- gate **on** → setup succeeds when the operator supplies the printed token, and
+  fails 403 when they do not
+
+## A second, separate finding (found while tracing this)
+
+`install.ps1` step 6a bootstraps the admin with `POST /api/auth/register` on
+**pacgate-api** — but that endpoint creates `system_role="user"` and is gated by
+`auth.local.allow_registration`, which ships **`false`** in
+`deploy/client-bundle/deer-flow-config.yaml`. The committed test
+`scripts/test-auth-registration-gate.ps1` confirms: `POST /register -> 403`, user
+count unchanged.
+
+So on a fresh install the installer's admin registration is refused, and it only
+logs a `[WARN]` and continues. Net effect: **pacgate-api's user system ends up
+with no admin**, which is the same class of gap the installer's own comment
+describes as the first link in a chain ending in unredacted text on disk. This is
+NOT the deer-flow `/initialize` issue above (different service, different user
+store) and should be triaged separately.
 
 ## Why this did not ship in 0.1.21
 
@@ -123,6 +186,7 @@ validated release. It is recorded here instead so it is not lost.
 
 - `deploy/HANDOFF-UPSTREAM-RELEASE-0.1.21.md` — the release this was found during.
 - `deploy/AUTH-ASSIGNED-USERS-DESIGN.md` — user provisioning design context.
+- `scripts/test-auth-registration-gate.ps1` — the committed gate for `/register`.
 - Repo memory `ghcr-jzkk720-authority.md` — the earlier analysis of this endpoint;
-  its note that the endpoint is "unguarded" is superseded: the guard now exists
-  but is inert, which is the subtler failure.
+  its note that the endpoint is "unguarded" is superseded: the guard exists but is
+  inert, which is the subtler failure.

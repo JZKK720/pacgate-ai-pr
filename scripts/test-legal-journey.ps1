@@ -264,7 +264,7 @@ try {
 if ($qmUp) {
     Ok "qm portal reachable at $QmUrl$qmWhy"
 } else {
-    Skip 'qm co-work' "portal not reachable at $QmUrl (qm stack not running). Start with deploy/qm-pacgate/setup-qm.ps1."
+    Skip 'qm co-work' "portal not reachable at $QmUrl (qm stack not running). Start it with deploy/client-bundle/setup-qm.ps1 (interactive: it asks for an admin email and a bridge service-account password, and does not run 'qm up' for you)."
 }
 
 # ── 10. OpenViking recall ───────────────────────────────────────────────────
