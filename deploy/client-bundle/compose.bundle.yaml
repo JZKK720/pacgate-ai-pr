@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.20
+    image: ghcr.io/jzkk720/pacgate-api:0.1.21
     container_name: pacgate-api
     depends_on: [pacgate-db]
     # Memory ceiling as defence in depth behind the in-process admission bound
@@ -85,7 +85,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.20
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.21
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -159,7 +159,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.20
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.21
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     environment:
@@ -171,7 +171,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.20
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.21
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -186,12 +186,19 @@ services:
   # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
   # The ~1.5GB PaddleOCR model downloads on FIRST EXTRACTION, not at build.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.1.20
+    image: ghcr.io/jzkk720/ocr-service:0.1.21
     container_name: ocr-service
     environment:
       # Python logging rejects lowercase level names.
       OCR_LOG_LEVEL: INFO
       OCR_USE_GPU: "0"
+    # PaddleOCR downloads its PP-OCRv4 det/rec/cls weights (~18 MB) into
+    # /root/.paddleocr on FIRST extraction - they are NOT baked into the image.
+    # Without this volume the cache lives in the container's writable layer, so
+    # every recreate re-downloads from paddleocr.bj.bcebos.com (the only source)
+    # and an offline recreate leaves extraction failing closed.
+    volumes:
+      - paddleocr-models:/root/.paddleocr
     restart: unless-stopped
 
   openviking:
@@ -216,5 +223,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  # Persists PaddleOCR's downloaded model weights across container recreation.
+  paddleocr-models:
   pacgate-db-data:
 

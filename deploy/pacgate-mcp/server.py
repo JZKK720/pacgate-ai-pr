@@ -104,33 +104,86 @@ class PacgateApi:
         logger.info("Authenticated with pacgate-api")
         return token
 
+    def _relogin(self) -> None:
+        """Re-acquire a JWT after a 401.
+
+        pacgate-api issues 24-hour tokens (pacgate-core/src/lib.rs:
+        `Duration::hours(24)`), but this client authenticates once at startup.
+        Without a re-login every tool call 401s from the 24-hour mark until the
+        container is recreated.
+
+        Only possible when credentials are held: a deployment configured with
+        PACGATE_JWT_TOKEN alone has nothing to log in with, and keeps the old
+        behaviour (surface the 401 rather than spin).
+        """
+        if not (self.email and self.password):
+            return
+        self.jwt_token = self._login()
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.jwt_token:
             headers["Authorization"] = f"Bearer {self.jwt_token}"
         return headers
 
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        """Send a request; on 401 re-login once and retry exactly once.
+
+        Headers are rebuilt inside `send()` so the retry carries the NEW token -
+        passing a headers dict built by the caller would resend the expired one
+        and 401 again. Retrying is safe because pacgate-api rejects an expired
+        token before the handler runs, so a 401 means nothing was executed.
+        """
+
+        def send() -> httpx.Response:
+            headers = self._headers()
+            if files is not None:
+                # Let httpx generate multipart/form-data WITH its boundary.
+                # Forcing application/json here would break every upload: the
+                # server would parse a multipart body as JSON. The previous
+                # post_multipart never set Content-Type for this reason.
+                headers.pop("Content-Type", None)
+            kwargs: dict[str, Any] = {"headers": headers}
+            if params is not None:
+                kwargs["params"] = params
+            if json is not None:
+                kwargs["json"] = json
+            if data is not None:
+                kwargs["data"] = data
+            if files is not None:
+                kwargs["files"] = files
+            return self._client.request(method, f"{self.base_url}{path}", **kwargs)
+
+        resp = send()
+        if resp.status_code == 401 and self.email and self.password:
+            logger.info("pacgate-api returned 401; re-authenticating and retrying once")
+            self._relogin()
+            resp = send()
+        return resp
+
     def get(self, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
-        return self._client.get(
-            f"{self.base_url}{path}", params=params, headers=self._headers()
-        )
+        return self._request("GET", path, params=params)
 
     def post(self, path: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        return self._client.post(
-            f"{self.base_url}{path}", json=json, headers=self._headers()
-        )
+        return self._request("POST", path, json=json)
 
     def delete(self, path: str) -> httpx.Response:
-        return self._client.delete(f"{self.base_url}{path}", headers=self._headers())
+        return self._request("DELETE", path)
 
     def post_multipart(
         self, path: str, data: dict[str, Any], files: dict[str, Any]
     ) -> httpx.Response:
         """POST multipart/form-data (used by pacgate-api document upload)."""
-        headers = {"Authorization": f"Bearer {self.jwt_token}"} if self.jwt_token else {}
-        return self._client.post(
-            f"{self.base_url}{path}", data=data, files=files, headers=headers
-        )
+        return self._request("POST", path, data=data, files=files)
 
 
 # Instantiate lazily so the MCP server can start even if pacgate-api is not yet
