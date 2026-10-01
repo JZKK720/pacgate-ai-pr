@@ -203,6 +203,14 @@ $liveStackGates = @(
     # the API's routing sends the format there end-to-end. It needs the stack up, so
     # it reports exit 2 when it cannot run.
     'scripts/test-text-native-sanitize.ps1'
+    # ONE lane-by-lane verdict over the whole stack: pai, mcp, deer-flow, frontend,
+    # openviking, ocr-service, qm. It exists because the three scripts above each
+    # prove ONE pipeline deeply, and nothing reported whether every lane is even
+    # REACHABLE on the assembled stack - a lane can be silently absent (qm), or
+    # configured-but-unbound, with every other gate green. It preflights the
+    # containers and exits 2 rather than reporting a false red on a clean machine.
+    # It reports qm honestly as CANNOT-CHECK: setup-qm.ps1 is interactive.
+    'scripts/smoke-full-stack.ps1'
 )
 
 $measurements = @(
