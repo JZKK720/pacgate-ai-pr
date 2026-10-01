@@ -157,21 +157,50 @@ masks clean-machine failures. Specifically prove:
 - gate **on** → setup succeeds when the operator supplies the printed token, and
   fails 403 when they do not
 
-## A second, separate finding (found while tracing this)
+## A second, separate finding — CORRECTED 2026-10-01, my first version was WRONG
 
-`install.ps1` step 6a bootstraps the admin with `POST /api/auth/register` on
-**pacgate-api** — but that endpoint creates `system_role="user"` and is gated by
-`auth.local.allow_registration`, which ships **`false`** in
-`deploy/client-bundle/deer-flow-config.yaml`. The committed test
-`scripts/test-auth-registration-gate.ps1` confirms: `POST /register -> 403`, user
-count unchanged.
+> **Correction.** An earlier revision of this file claimed the installer's admin
+> bootstrap "cannot succeed" and that "pacgate-api's user store ends up with no
+> admin". **That was wrong**, and the error was exactly the kind this repo's notes
+> warn about: I attributed *deer-flow's* `auth.local.allow_registration: false`
+> gate to **pacgate-api**, whose registration endpoint is a **different route on a
+> different service with no gate at all**. I never verified that the Rust route
+> was gated before asserting it was. Verified now, by reading the handler and
+> probing live.
 
-So on a fresh install the installer's admin registration is refused, and it only
-logs a `[WARN]` and continues. Net effect: **pacgate-api's user system ends up
-with no admin**, which is the same class of gap the installer's own comment
-describes as the first link in a chain ending in unredacted text on disk. This is
-NOT the deer-flow `/initialize` issue above (different service, different user
-store) and should be triaged separately.
+`install.ps1:721` bootstraps against `http://localhost:8089/pacgate` — that is
+**pacgate-api**, whose own registration route is:
+
+`pacgate-ai/crates/pacgate-api/src/auth.rs:73` (wired at `lib.rs:156`)
+
+```rust
+/// POST /api/auth/register — create a new user within the configured default tenant
+pub async fn register(
+    State(state): State<AppState>,
+    Json(req):    Json<RegisterRequest>,
+) -> Result<Json<RegisterResponse>, ApiError> {
+```
+
+Two facts from that body:
+
+1. **It has no auth extractor and no registration gate.** `allow_registration`
+   appears nowhere in the Rust crates (grep: 0 hits). The `false` value lives in
+   `deer-flow-config.yaml` and gates **deer-flow's** `/api/v1/auth/register`, a
+   different service entirely.
+2. **It hardcodes the role `"attorney"`** (`&req.password, "attorney", ...`).
+
+Live confirmation: `POST /pacgate/api/auth/register` returned **200** and created
+an account (the probe account was deleted immediately; user count returned to 3).
+So the installer's admin bootstrap **works** — pacgate-api's `/health` is 200, so
+`-ApiUp` is true and the branch is reached.
+
+**The real finding, which is the opposite of what I first wrote:** pacgate-api's
+`/api/auth/register` is reachable **unauthenticated through nginx** and creates a
+working **`attorney`** account in the default tenant. Anything a JWT grants that
+store is obtainable without credentials. That belongs with the `/initialize`
+issue as the same class of first-install exposure, and it needs its own
+verification pass (does an `attorney` JWT reach matter or document routes?) —
+**do not** treat it as fixed or as understood.
 
 ## Why this did not ship in 0.1.21
 

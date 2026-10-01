@@ -2,7 +2,25 @@
 
 **Found:** 2026-09-22, during the pre-2.1 stack hardening pass
 **Severity:** client-visible. The product serves the WRONG workflow set.
-**Status:** DIAGNOSED, NOT FIXED. Fix needs a decision (see bottom).
+**Status:** ✅ **RESOLVED 2026-09-22/23** (commits `b7fc540` + `039afdc`) —
+verified still fixed on the live 0.1.21 stack, 2026-10-01.
+
+> **Status correction (2026-10-01).** This header read "DIAGNOSED, NOT FIXED.
+> Fix needs a decision" long after it had in fact been fixed, which is worse than
+> an outdated note: a reader trusts a tracked DEFECT doc's Status line, so it
+> asserted an active client-visible bug that no longer existed. Verified with the
+> current tree, not the doc:
+>
+> | Check | Result |
+> |---|---|
+> | `WORKFLOWS_DIR` on pacgate-api in `compose.prod.yaml` | present (2 refs) |
+> | `WORKFLOWS_DIR` on pacgate-api in `compose.bundle.yaml` | present (2 refs) |
+> | live library served | **222 workflows** (journey test step 3) |
+> | static guard | `test-workflow-compose-wiring.ps1` PASS (A1–A4) |
+>
+> The remaining sections are kept as written because the **lessons** in them are
+> still load-bearing (the half-applied fix, and the case-insensitive `-match`
+> false negative). Read them as history, not as open work.
 
 ## The defect
 
