@@ -43,15 +43,50 @@ Two properties, both load-bearing:
 |---|---|
 | `POST /pacgate/api/auth/register` (no credentials) | **200**, returned a `user_id` |
 | `POST /pacgate/api/auth/login` as that account | **token obtained** |
-| `GET /pacgate/api/matters` with that token | **200** |
+| `GET /pacgate/api/matters` with that token | **200** — **148 KB of matter records** |
 | `GET /pacgate/api/workflows` with that token | **200** |
 
-Reachable through the normal client ingress (`:8089/pacgate/`), which is the path
-an AIPC exposes on the LAN.
+**The matters response is real tenant data, not an empty list.** It begins:
 
-**Probe accounts were deleted immediately after each test; the user table was
-verified back to its original three rows (`seed@`, `attorney-e2e@`,
-`admin@pacgate-law.com`).** No probe account remains.
+```json
+[{"id":"36a4004a-...","tenant_id":"e10c8cca-...","name":"journey-0a6668af","description":"legal-journey acceptan...
+```
+
+So a self-registered account reads **matter names, ids, tenant ids and
+descriptions** for the whole tenant. Matter names in a legal practice are
+client-identifying on their own. This is materially worse than the
+"is it empty or not?" question the first version of this file left open.
+
+Reachable through the normal client ingress (`:8089/pacgate/`), which is the path
+an AIPC exposes on the LAN and nginx does **not** restrict.
+
+### Exposure scope (verified 2026-10-02)
+
+| Control | State |
+|---|---|
+| `pacgate-nginx` bind | `0.0.0.0:8089->80/tcp, [::]:8089->80/tcp` — **all interfaces** |
+| IP `allow`/`deny` on `location /pacgate/` | **none** (the only `deny`/`allow`/`internal` hits in `default.conf` are unrelated comments) |
+| Intended access | LAN — `USER-MANUAL.md:29` tells users to browse to `http://<your-ai-pc-ip>:8089` |
+
+**Probe accounts were deleted after each test; the user table was verified back
+to its original three rows (`seed@`, `attorney-e2e@`, `admin@pacgate-law.com`).**
+No probe account remains.
+
+## Deployment consequence — do NOT pull this to a client LAN as-is
+
+This is the reason a deployment gate is being held on 0.1.21. The release itself
+carries two genuine client fixes (the MCP 24-hour 401 self-heal and the PaddleOCR
+volume), and the exposure is **pre-existing in the API**, not introduced by
+0.1.21 — 0.1.20 has the identical route. But deploying to a **new** machine
+creates the exposure there, and the two fixes do not justify handing a legal-matter
+system to open self-registration.
+
+**Cheapest mitigation needs no image rebuild:** `nginx/default.conf` is
+bind-mounted (`compose.prod.yaml:242`) and `install.ps1 -Update` runs
+`git pull --ff-only`, so a route-level block ships by pull + nginx reload. The
+constraint is that `install.ps1:682` bootstraps the admin **through that same
+route**, so a blanket 403 breaks first-run creation unless the install path is
+changed to use an in-network call.
 
 ## Why this matters for this product specifically
 
