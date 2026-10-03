@@ -2,6 +2,13 @@
 # Mirrors scripts/test-ocr-extraction.ps1 conventions (PASS/FAIL lines).
 # Boots fresh test containers; never touches the live pacgate-api/deer-flow.
 # Usage: powershell -File scripts/test-sanitizer-e2e.ps1
+#        powershell -File scripts/test-sanitizer-e2e.ps1 -ApiImage pacgate-api:local
+param(
+    # Override the API image. Defaults to the PUBLISHED image at the version in
+    # pacgate-ai/Cargo.toml, so this script tracks the release instead of
+    # depending on a tag somebody built locally once.
+    [string]$ApiImage = ''
+)
 $ErrorActionPreference = 'Continue'
 $script:fail = 0
 function Check($name, $cond) {
@@ -37,7 +44,29 @@ docker run -d --name pacgate-ocr-e2e --network client-bundle_default ocr-service
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $nerDir = Join-Path $repoRoot '.e2e-ner-model'
 $nerMount = if (Test-Path $nerDir) { @("-e", "PACGATE_NER_MODEL_DIR=/models/ner", "-v", "${nerDir}:/models/ner") } else { @() }
+$nerMount = docker run --rm -v pacgate-ner-models:/ner alpine:3.20 sh -c 'ls /ner | head -1' 2>$null
+if (-not $nerMount) { $nerMount = @() } else { $nerMount = @('-v', 'pacgate-ner-models:/ner') }
 Write-Output "ner weights mounted: $($nerMount.Count -gt 0)"
+
+# The API image. This used to be the locally-built `pacgate-api:plan020-test`,
+# which NOTHING builds - so the script could only ever run on the one checkout
+# where that tag had been hand-made, and on any other machine it died at
+# `docker run` with "pull access denied" and then reported eleven cascading
+# FAILs that looked like sanitizer defects. It is not in `run-all-checks.ps1`,
+# which is why the rot went unnoticed.
+#
+# Now derived from pacgate-ai/Cargo.toml (the same source
+# preflight-release-tag.ps1 and smoke-full-stack.ps1 use), so it tracks the
+# release and pulls the PUBLISHED image. Override with -ApiImage for a local build.
+$ApiImage = if ($ApiImage) { $ApiImage } else {
+    $toml = Join-Path $repoRoot 'pacgate-ai/Cargo.toml'
+    $ver = if (Test-Path $toml) {
+        (Select-String -Path $toml -Pattern '^version\s*=\s*"([0-9.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+    } else { '' }
+    if (-not $ver) { Write-Output 'SKIP: cannot derive the version from pacgate-ai/Cargo.toml'; exit 2 }
+    "ghcr.io/jzkk720/pacgate-api:$ver"
+}
+Write-Output "api image: $ApiImage"
 docker run -d --name pacgate-api-e2e --network client-bundle_default `
   -p 127.0.0.1:8097:8080 `
   -e "DATABASE_URL=postgres://pacgate:change-me-to-a-strong-password@pacgate-db:5432/pacgate" `
@@ -46,7 +75,7 @@ docker run -d --name pacgate-api-e2e --network client-bundle_default `
   -e "OLLAMA_BASE_URL=http://host.docker.internal:11434" `
   @nerMount `
   -v "$(Join-Path $repoRoot 'deploy\client-bundle\data'):/data" `
-  pacgate-api:plan020-test | Out-Null
+  $ApiImage | Out-Null
 Start-Sleep -Seconds 6
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:8097/health" -TimeoutSec 5
 Check "api boots" ($health -eq 'ok')
