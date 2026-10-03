@@ -140,7 +140,13 @@ impl AuthService {
 
         Self::verify_password(password, &stored_hash)?;
 
-        let token = self.create_token(&user_id, &tenant_id, &role, &system_role, soul_id.as_deref())?;
+        let token = self.create_token(
+            &user_id,
+            &tenant_id,
+            &role,
+            &system_role,
+            soul_id.as_deref(),
+        )?;
         Ok((token, user_id, tenant_id, role, soul_id))
     }
 
@@ -159,14 +165,52 @@ impl AuthService {
         Ok(row.get::<i64, _>("n"))
     }
 
+    /// Count the users in ONE tenant.
+    ///
+    /// Distinct from `count_users` above, which counts the whole table for the
+    /// bootstrap gate. This one exists for the admin provisioning path
+    /// (`POST /api/auth/users`), which must scope its work to the caller's own
+    /// tenant: an admin in tenant A must not be able to read a count, create an
+    /// account, or infer membership in tenant B. The project rule is that
+    /// tenant_id comes from the VERIFIED JWT and never from the request body.
+    #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str()))]
+    pub async fn count_users_in_tenant(&self, tenant_id: &TenantId) -> Result<i64, AuthError> {
+        let row = sqlx::query("SELECT count(*) AS n FROM users WHERE tenant_id = $1")
+            .bind(tenant_id.0)
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| AuthError::Database(e.to_string()))?;
+        Ok(row.get::<i64, _>("n"))
+    }
+
     /// Register a new user within a tenant.
-    #[instrument(skip(self, password), fields(email = %email, tenant_id = %tenant_id.as_str()))]
+    ///
+    /// `system_role` is the PLATFORM-level role (`admin` | `user`), not the
+    /// within-tenant `role`. It is a parameter because it was previously left to
+    /// the column default, and the column default is `'user'` — which meant no
+    /// route could create a platform admin AT ALL:
+    ///
+    ///   * `install.ps1` step 6a calls the register route to bootstrap "the
+    ///     admin" and got an account whose `role` was hardcoded `'attorney'` and
+    ///     whose `system_role` was `'user'`. The dev box shows exactly this:
+    ///     every one of its four accounts has `system_role='user'`, including
+    ///     the one the installer called admin.
+    ///   * So the installer promised an administrator and produced an attorney,
+    ///     and any authorization check keyed on `system_role == "admin"` (such as
+    ///     the account-provisioning route) was unreachable by every principal
+    ///     that could exist.
+    ///
+    /// Making it explicit means the bootstrap path and the admin-provisioning
+    /// path can each set the value they actually intend, instead of both
+    /// inheriting a default that grants nothing.
+    #[instrument(skip(self, password), fields(email = %email, tenant_id = %tenant_id.as_str(), system_role = %system_role))]
     pub async fn register(
         &self,
         tenant_id: &TenantId,
         email: &str,
         password: &str,
         role: &str,
+        system_role: &str,
         display_name: Option<&str>,
     ) -> Result<UserId, AuthError> {
         if email.trim().is_empty() || password.is_empty() {
@@ -176,14 +220,15 @@ impl AuthService {
         let password_hash = Self::hash_password(password)?;
 
         let row = sqlx::query(
-            "INSERT INTO users (tenant_id, email, password_hash, role, display_name)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO users (tenant_id, email, password_hash, role, system_role, display_name)
+             VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING id",
         )
         .bind(tenant_id.0)
         .bind(email)
         .bind(&password_hash)
         .bind(role)
+        .bind(system_role)
         .bind(display_name)
         .fetch_one(&self.db)
         .await
@@ -216,8 +261,8 @@ impl AuthService {
             Argon2,
         };
 
-        let parsed = PasswordHash::new(stored_hash)
-            .map_err(|e| AuthError::PasswordHash(e.to_string()))?;
+        let parsed =
+            PasswordHash::new(stored_hash).map_err(|e| AuthError::PasswordHash(e.to_string()))?;
 
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed)

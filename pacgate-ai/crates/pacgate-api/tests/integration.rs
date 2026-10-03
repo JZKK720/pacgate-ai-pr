@@ -53,7 +53,8 @@ mod tests {
     /// Requires a running Postgres. Run with `--ignored`.
     #[tokio::test]
     #[ignore]
-    async fn full_api_flow() {        // ── 1. Setup: connect to Postgres, create test DB, run migrations ──
+    async fn full_api_flow() {
+        // ── 1. Setup: connect to Postgres, create test DB, run migrations ──
 
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
@@ -108,6 +109,10 @@ mod tests {
             workflows_dir: None,
             ocr_service_url: None,
             ner_model_dir: None,
+            // Open registration: this test registers users directly through the
+            // service and asserts first-user-only separately, so it must not be
+            // gated by the production default here.
+            allow_registration: true,
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -126,6 +131,7 @@ mod tests {
             &other_test_email,
             "test-password-123",
             "attorney",
+            "user",
             Some("Other Tenant User"),
         )
         .await
@@ -235,10 +241,7 @@ mod tests {
             auth,
             search: Arc::new(pacgate_search::default_router()),
             rag: None,
-            embedding: pacgate_rag::EmbeddingService::new(
-            		"http://127.0.0.1:1",
-            		"nomic-embed-text",
-            		),
+            embedding: pacgate_rag::EmbeddingService::new("http://127.0.0.1:1", "nomic-embed-text"),
             db: pool,
             // A test harness gets its own semaphore. Size is irrelevant here:
             // these tests drive one request at a time.
@@ -1305,6 +1308,7 @@ mod tests {
             workflows_dir: None,
             ocr_service_url: None,
             ner_model_dir: None,
+            allow_registration: true,
         });
 
         // Build minimal state (stubs for everything)
@@ -1408,10 +1412,7 @@ mod tests {
             auth: Arc::new(pacgate_auth::AuthService::new("test-secret", pool.clone())),
             search: Arc::new(pacgate_search::default_router()),
             rag: None,
-            embedding: pacgate_rag::EmbeddingService::new(
-            		"http://127.0.0.1:1",
-            		"nomic-embed-text",
-            		),
+            embedding: pacgate_rag::EmbeddingService::new("http://127.0.0.1:1", "nomic-embed-text"),
             db: pool,
             // A test harness gets its own semaphore. Size is irrelevant here:
             // these tests drive one request at a time.

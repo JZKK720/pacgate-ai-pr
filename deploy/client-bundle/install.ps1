@@ -1067,6 +1067,201 @@ if ($Update) {
     }
 }
 
+# 7g. Bring up qm (Runtime 3) on a FIRST install.
+#
+# WHY THIS IS NEW. Until 2026-10-03 the installer deliberately never started qm -
+# every qm step only re-staged config and printed an instruction, because qm was
+# an optional side-lane. The deployment model is now "every AIPC runs all three
+# runtimes", so leaving qm down means the installer ships a stack that is missing
+# a third of its product.
+#
+# WHY ONLY ON FIRST INSTALL, NOT -Update. A restart of the co-working stack is
+# user-visible (qm is where staff work), and the R4 contention between `qm up` and
+# compose.qm.yaml means an automated path has to pick one and be right. On a FIRST
+# install nobody is mid-session, so there is nothing to interrupt; on -Update the
+# operator may be in it. -Update therefore keeps the existing print-the-command
+# behaviour, and this block only runs when the stack is not already up.
+#
+# It calls setup-qm.ps1 in NON-INTERACTIVE form. That script used to prompt for a
+# separate bridge identity, which was wrong twice over: it required a second
+# pacgate-api registration (now refused by the first-user-only gate), and qm's
+# sandbox already consumes PACGATE_API_EMAIL/PASSWORD - the same service account
+# deer-flow and pacgate-mcp use. setup-qm.ps1 now defaults the bridge to that
+# account, so no prompt is needed and no second user is created.
+if (-not $Update) {
+    $qmDir  = Join-Path $PSScriptRoot 'qm-pacgate'
+    $qmSetup = Join-Path $PSScriptRoot 'setup-qm.ps1'
+
+    Write-Host "`nBringing up qm (Runtime 3 - co-working workspace)..." -ForegroundColor Cyan
+
+    $qmAlreadyUp = @(docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-').Count -gt 0
+    if ($qmAlreadyUp) {
+        Write-Host "[OK] qm is already running - left untouched" -ForegroundColor Green
+    }
+    elseif (-not (Test-Path $qmSetup)) {
+        Write-Host "[WARN] setup-qm.ps1 not found; skipping Runtime 3." -ForegroundColor Yellow
+    }
+    else {
+        if (-not (Test-Path $qmDir)) {
+            # First install: bootstrap.
+            #
+            # The bridge is a SEPARATE, least-privilege service account, per the
+            # deployment handbooks ("Pacgate bridge - a service account in
+            # pacgate-api, used by the sandbox tool"). The sandbox runs
+            # model-directed tool calls, so it gets its own attorney-scoped
+            # credential instead of the deployment's own identity.
+            #
+            # Provisioning it needs an administrator, so this block:
+            #   1. logs in as the admin the installer just bootstrapped,
+            #   2. creates the bridge account via POST /api/auth/users (the route
+            #      that exists precisely because self-registration is
+            #      first-user-only),
+            #   3. hands setup-qm.ps1 the bridge identity non-interactively.
+            # If any step fails it falls back to running setup-qm.ps1 by hand
+            # rather than guessing a credential, because a wrong bridge password
+            # surfaces much later as a 401 inside a sandbox tool call.
+            $qmAdmin      = if ($envVars.ContainsKey('PACGATE_API_EMAIL'))    { $envVars['PACGATE_API_EMAIL'] }    else { '' }
+            $qmAdminPass  = if ($envVars.ContainsKey('PACGATE_API_PASSWORD')) { $envVars['PACGATE_API_PASSWORD'] } else { '' }
+            $bridgeEmail  = 'qm-bridge@pacgate.local'
+            $bridgePass   = ''
+            $bridgeReady  = $false
+
+            if (-not $qmAdmin -or -not $qmAdminPass) {
+                Write-Host "[WARN] PACGATE_API_EMAIL / PACGATE_API_PASSWORD are not set in .env -" -ForegroundColor Yellow
+                Write-Host "       cannot bootstrap qm non-interactively. Run .\setup-qm.ps1 by hand." -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "  provisioning the qm bridge account ('$bridgeEmail')..." -ForegroundColor Gray
+                $BaseUrl = 'http://localhost:8089/pacgate'
+                try {
+                    $loginBody = @{ email = $qmAdmin; password = $qmAdminPass } | ConvertTo-Json -Compress
+                    $login = Invoke-RestMethod -Uri "$BaseUrl/api/auth/login" -Method Post `
+                        -Body $loginBody -ContentType 'application/json' -TimeoutSec 20
+                    $tok = $login.token
+                    if (-not $tok) { throw "login returned no token" }
+
+                    # 32 bytes of CSPRNG hex, byte-for-byte the same construction as
+                    # setup-qm.ps1's New-SecretHex.
+                    #
+                    # NOT inlined as a clever one-liner. The first attempt here was
+                    # `-join ((New-Object byte[] 32) | ForEach-Object { RNG.GetBytes($_); $_ } |
+                    # ForEach-Object { $_.ToString('x2') })`, which looked reasonable
+                    # and produced SIXTY-FOUR ZEROS - the pipeline bound the byte
+                    # array as a single item, so it was never filled element-wise and
+                    # `.ToString('x2')` on the array yielded "0" repeated. That would
+                    # have silently set a fixed all-zero bridge password. Verified by
+                    # running it, not by reading it.
+                    $rngBytes = New-Object byte[] 32
+                    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($rngBytes)
+                    $bridgePass = -join ($rngBytes | ForEach-Object { $_.ToString('x2') })
+                    if ($bridgePass.Length -ne 64 -or $bridgePass -match '^0+$') {
+                        # Refuse to ship a credential that failed to generate. An
+                        # all-zero or short password is indistinguishable from a
+                        # working one until an authentication fails elsewhere.
+                        throw "bridge password generation produced an invalid value (length $($bridgePass.Length))"
+                    }
+
+                    $hdr = @{ Authorization = "Bearer $tok" }
+                    $createBody = @{ email = $bridgeEmail; password = $bridgePass; role = 'attorney' } | ConvertTo-Json -Compress
+                    try {
+                        Invoke-RestMethod -Uri "$BaseUrl/api/auth/users" -Method Post -Headers $hdr `
+                            -Body $createBody -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+                        Write-Host "  [OK] bridge account created" -ForegroundColor Green
+                        $bridgeReady = $true
+                    }
+                    catch {
+                        # 409 = it already exists. Re-running the installer is
+                        # expected, so this is not an error - but the stored
+                        # password is unknown, so it must NOT be silently reused
+                        # with a new one written to .env, which would leave the
+                        # account and the config disagreeing.
+                        $code = $_.Exception.Response.StatusCode.value__
+                        if ($code -eq 409) {
+                            Write-Host "  [OK] bridge account already exists" -ForegroundColor Green
+                            if (Test-Path (Join-Path $qmDir '.env')) {
+                                Write-Host "       (its password is whatever was set when it was created;" -ForegroundColor Gray
+                                Write-Host "        qm's .env was preserved, so the two still agree)" -ForegroundColor Gray
+                                $bridgeReady = $true
+                            }
+                            else {
+                                # The account exists but there is no qm .env to read
+                                # its password from, so the credential is unknown and
+                                # unrecoverable: there is no reset-password route, and
+                                # re-running create_user would only 409 again. Say so
+                                # plainly instead of skipping bootstrapping silently,
+                                # which would leave Runtime 3 down with no explanation.
+                                Write-Host "[WARN] the bridge account exists but qm's .env does not, so its" -ForegroundColor Yellow
+                                Write-Host "       password cannot be recovered. Runtime 3 cannot be bootstrapped" -ForegroundColor Yellow
+                                Write-Host "       automatically. Either run '.\setup-qm.ps1' and enter that" -ForegroundColor Yellow
+                                Write-Host "       account's existing password, or delete the account and re-run" -ForegroundColor Yellow
+                                Write-Host "       this installer:" -ForegroundColor Yellow
+                                Write-Host "         docker exec pacgate-db psql -U pacgate -d pacgate -c \`"DELETE FROM users WHERE email='$bridgeEmail';\`"" -ForegroundColor Gray
+                            }
+                        }
+                        else {
+                            throw "create_user returned HTTP $code"
+                        }
+                    }
+                }
+                catch {
+                    Write-Host "[WARN] could not provision the bridge account: $($_.Exception.Message)" -ForegroundColor Yellow
+                    Write-Host "       Runtime 3 will need '.\setup-qm.ps1' run by hand." -ForegroundColor Yellow
+                }
+            }
+
+            if ($bridgeReady) {
+                try {
+                    Write-Host "  bootstrapping qm (admin=$qmAdmin, bridge=$bridgeEmail)..." -ForegroundColor Gray
+                    $setupArgs = @('-NoProfile', '-File', $qmSetup, '-AdminEmail', $qmAdmin, '-BridgeEmail', $bridgeEmail)
+                    if ($bridgePass) { $setupArgs += @('-BridgePassword', $bridgePass) }
+                    & pwsh @setupArgs
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "[WARN] setup-qm.ps1 exited $LASTEXITCODE - Runtime 3 may not be up." -ForegroundColor Yellow
+                        Write-Host "       Re-run it by hand to see the error in full." -ForegroundColor Yellow
+                    }
+                }
+                catch {
+                    Write-Host "[WARN] setup-qm.ps1 failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+        }
+
+        # Start it. `docker compose` and NOT `qm up`: the CLI's which() shells out
+        # to POSIX /bin/sh, which does not exist on native Windows, so `qm up`
+        # cannot run on an AIPC at all. compose bypasses that entirely and is the
+        # path the project already uses (plans/010 migrated to it for this reason).
+        # R4 is respected by picking exactly ONE path - compose - and never mixing.
+        if (Test-Path (Join-Path $qmDir 'compose.qm.yaml')) {
+            # External network/volumes are declared `external: true`, so they must
+            # exist before compose will start; compose does not create them.
+            docker network create qm-pacgate *>$null
+            docker volume create qm-pacgate-coredata *>$null
+            docker volume create qm-pacgate-pgdata *>$null
+
+            Push-Location $qmDir
+            try {
+                docker compose -f compose.qm.yaml up -d
+                if ($LASTEXITCODE -eq 0) {
+                    Start-Sleep -Seconds 15
+                    $qmUp = @(docker ps --filter 'name=qm-' --format '{{.Names}}' 2>$null).Count
+                    if ($qmUp -ge 7) {
+                        Write-Host "[OK] qm running ($qmUp containers)" -ForegroundColor Green
+                    }
+                    else {
+                        Write-Host "[WARN] only $qmUp qm container(s) up (expected 7)." -ForegroundColor Yellow
+                        Write-Host "       A crash-looping container is usually a config value:" -ForegroundColor Yellow
+                        Write-Host "         docker logs qm-pacgate-auth --tail 30" -ForegroundColor Gray
+                    }
+                }
+                else {
+                    Write-Host "[WARN] 'docker compose -f compose.qm.yaml up -d' exited $LASTEXITCODE." -ForegroundColor Yellow
+                }
+            }
+            finally { Pop-Location }
+        }
+    }
+}
+
 # 8. Wait for health
 Write-Host "`nWaiting for services to start..." -ForegroundColor Cyan
 Start-Sleep -Seconds 10

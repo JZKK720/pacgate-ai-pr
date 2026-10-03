@@ -2,9 +2,9 @@
 
 mod auth;
 mod chat;
-mod extract;
 mod documents;
 mod error;
+mod extract;
 mod matters;
 mod memory_scope;
 mod sanitize;
@@ -57,7 +57,10 @@ pub fn build_router(state: AppState) -> Router {
             get(documents::download_document),
         )
         .route("/api/documents/:id/edit", put(documents::edit_document))
-        .route("/api/documents/:id/extract", post(documents::extract_document_handler))
+        .route(
+            "/api/documents/:id/extract",
+            post(documents::extract_document_handler),
+        )
         .route(
             "/api/documents/:id/sanitize",
             post(sanitize::sanitize_document_handler),
@@ -107,6 +110,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/dd-configs", get(search::list_dd_configs))
         // Auth-protected user info
         .route("/api/auth/me", get(auth::me))
+        // Auth-protected account provisioning. This is the counterpart the
+        // register route's 403 message promises ("An administrator must create
+        // further accounts") - without it, first-user-only would have removed the
+        // ONLY way to create an account and broken the documented qm bridge
+        // install step. Requires a verified admin JWT: unlike /api/auth/register
+        // it sits on the protected router, below the auth middleware.
+        .route("/api/auth/users", post(auth::create_user))
         // Apply auth middleware (verifies JWT, injects Claims)
         // then SOUL resolver (resolves soul_id → SoulPersona, injects into extensions)
         .layer(middleware::from_fn_with_state(
@@ -145,12 +155,15 @@ pub fn build_router(state: AppState) -> Router {
         // middleware, so it is reachable without a token. Verified against the
         // published 0.1.13 image: GET /build-info returns 200. See
         // scripts/test-version-marker-against-image.ps1.
-        .route("/build-info", get(|| async {
-            axum::Json(serde_json::json!({
-                "version": env!("CARGO_PKG_VERSION"),
-                "revision": option_env!("PAC_SOURCE_REVISION").unwrap_or("unknown"),
-            }))
-        }))
+        .route(
+            "/build-info",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "revision": option_env!("PAC_SOURCE_REVISION").unwrap_or("unknown"),
+                }))
+            }),
+        )
         // Auth endpoints (no auth required for login/register)
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/register", post(auth::register))

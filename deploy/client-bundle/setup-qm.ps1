@@ -140,7 +140,32 @@ try {
         SKILL_SIGNING_SECRET   = New-SecretHex
     }
 
-    # 5. Prompt for admin email + Pacgate bridge credentials (or take the --params)
+    # 5. Admin email + Pacgate bridge credentials (prompted, or taken from params).
+    #
+    # THE BRIDGE IS A SEPARATE, LEAST-PRIVILEGE SERVICE ACCOUNT, and the default
+    # here is restored to match the rest of the documentation. This block briefly
+    # defaulted the bridge to the deployment's own PACGATE_API_EMAIL; that was
+    # wrong and is reverted.
+    #
+    # What the documentation actually says, in the repo's own words:
+    #   QM-BRINGUP-RUNBOOK.md - "Pacgate bridge (a service account in
+    #   pacgate-api, used by the sandbox tool): PACGATE_API_EMAIL=
+    #   qm-bridge@pacgate.local"
+    #   README-client.md - "Register a service account in pacgate-api ... This
+    #   account is used by the qm sandbox bridge tool to authenticate with
+    #   pacgate-api."
+    # Fifteen files reference it, including the client-facing handbooks. It is a
+    # deliberate boundary: the sandbox is the least-trusted lane in the stack - it
+    # runs model-directed tool calls - so it gets its own attorney-scoped
+    # credential rather than the deployment's own identity. Collapsing the two
+    # would hand a sandbox the same principal the install path uses.
+    #
+    # Why the earlier "register is first-user-only, so a second account is
+    # impossible" reasoning was wrong: it was true only while register was the
+    # ONLY provisioning route. That was the real gap - the 403 said "An
+    # administrator must create further accounts" while no such route existed.
+    # `POST /api/auth/users` now exists for exactly this, so provisioning the
+    # bridge is a supported operation and the boundary can be kept.
     Write-Host "`n=== Configuration ===" -ForegroundColor Cyan
 
     $adminEmail = if ($AdminEmail) { $AdminEmail } else { Read-Host "Enter the administrator's work email (lowercased)" }
@@ -173,6 +198,55 @@ try {
     }
 
     # 6. Create .env
+    #
+    # GUARDED, and this guard is the point. Re-running this script used to fall
+    # through to step 6 and OVERWRITE .env with freshly generated secrets. That
+    # contradicts the rule this script already states at line ~104 ("`.env` holds
+    # the generated secrets and must never be overwritten by a re-run") and it
+    # breaks the running stack in a way that looks like an auth bug:
+    #
+    #   - POSTGRES_PASSWORD is regenerated, but the qm-pacgate-pgdata volume still
+    #     holds the old role password. qm-pacgate-core then cannot open its
+    #     DATABASE_URL. (Hit for real on 2026-10-03; the fix was recreating the
+    #     volume.)
+    #   - AUTH_TOKEN_SECRET / CORE_SIGNING_SECRET / AUTH_SIGNING_JWK rotate, so
+    #     every issued session is silently invalidated mid-use.
+    #
+    # Secrets are per-deployment and are never typed by a human, so there is no
+    # scenario where regenerating them automatically is the right default. Refuse,
+    # and tell the operator how to do it deliberately.
+    if (Test-Path '.env') {
+        Write-Host "`n[SKIP] .env already exists - preserved, NOT regenerated." -ForegroundColor Green
+        Write-Host "       qm secrets (POSTGRES_PASSWORD, AUTH_TOKEN_SECRET, AUTH_SIGNING_JWK)" -ForegroundColor Gray
+        Write-Host "       are pinned to the data already in the qm volumes. Regenerating them" -ForegroundColor Gray
+        Write-Host "       here would leave core unable to open its own database and would" -ForegroundColor Gray
+        Write-Host "       invalidate every live session." -ForegroundColor Gray
+        Write-Host "       To rotate on purpose: stop qm, delete .env AND the volume" -ForegroundColor Gray
+        Write-Host "       'qm-pacgate-pgdata', then re-run. That loses qm's data." -ForegroundColor Gray
+        Write-Host "`nReusing the existing bridge identity from .env:" -ForegroundColor Gray
+        foreach ($line in (Get-Content -LiteralPath '.env')) {
+            if ($line -match '^\s*PACGATE_API_EMAIL\s*=\s*(.+)$') {
+                Write-Host "  PACGATE_API_EMAIL=$($Matches[1].Trim())" -ForegroundColor DarkGray
+            }
+        }
+
+        # Config is still validated so a stale/broken .env is reported rather than
+        # discovered later as a crash-looping container.
+        Write-Host "`nValidating qm config..." -ForegroundColor Cyan
+        npm exec qm -- check
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: qm check failed against the EXISTING .env - the file needs review." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[OK] qm check passed" -ForegroundColor Green
+        Write-Host "`n=== QM already bootstrapped (nothing regenerated) ===" -ForegroundColor Green
+        Write-Host "  Start/refresh the stack with:" -ForegroundColor White
+        Write-Host "    cd qm-pacgate" -ForegroundColor Gray
+        Write-Host "    docker compose -f compose.qm.yaml up -d" -ForegroundColor Gray
+        Write-Host "  Portal: http://localhost:8181" -ForegroundColor White
+        return
+    }
+
     Write-Host "`nCreating .env..." -ForegroundColor Cyan
 
     # Postgres password for the qm stack's own database. Generated, not prompted:
