@@ -91,11 +91,11 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.21` | 已发布，公开。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.21` | 已发布，公开。向 deer-flow 暴露 10 个 MCP 工具。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.21` | 已发布，公开。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.21` | 已发布，公开。 |
-| `ghcr.io/jzkk720/ocr-service:0.1.21` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
+| `ghcr.io/jzkk720/pacgate-api:0.1.22` | 已发布，公开。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.22` | 已发布，公开。向 deer-flow 暴露 10 个 MCP 工具。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.22` | 已发布，公开。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.22` | 已发布，公开。 |
+| `ghcr.io/jzkk720/ocr-service:0.1.22` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的

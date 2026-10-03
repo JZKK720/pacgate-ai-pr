@@ -93,11 +93,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.21` | Published, public. |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.21` | Published, public. Exposes 10 MCP tools to deer-flow. |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.21` | Published, public. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.21` | Published, public. |
-| `ghcr.io/jzkk720/ocr-service:0.1.21` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
+| `ghcr.io/jzkk720/pacgate-api:0.1.22` | Published, public. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.22` | Published, public. Exposes 10 MCP tools to deer-flow. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.22` | Published, public. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.22` | Published, public. |
+| `ghcr.io/jzkk720/ocr-service:0.1.22` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed
