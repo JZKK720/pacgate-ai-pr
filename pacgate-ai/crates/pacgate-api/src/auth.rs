@@ -160,6 +160,49 @@ fn bootstrap_roles(is_first: bool) -> (&'static str, &'static str) {
     }
 }
 
+/// What the public register route should do for a caller, given the state.
+///
+/// A named enum rather than loose booleans so the three outcomes cannot be
+/// conflated - the original defect was precisely a conflation, where "open
+/// registration is enabled" was read as "this caller is the first user".
+#[derive(Debug, PartialEq, Eq)]
+enum RegistrationDecision {
+    /// No users exist: create the account, and grant it the bootstrap admin roles.
+    CreateFirstAccount,
+    /// Users exist and open registration is enabled: create it WITHOUT admin.
+    CreateNonFirstAccount,
+    /// Users exist and registration is closed: refuse.
+    Refuse,
+}
+
+/// Decide whether a self-registration is the bootstrap, an ordinary open
+/// registration, or a refusal.
+///
+/// `existing_users` MUST be the observed count, never a configuration flag, and
+/// `allow_registration` MUST NOT be able to make a non-first caller look first.
+/// That is the whole point of extracting this: the first implementation derived
+/// `is_first` from `allow_registration`, so with the escape hatch enabled every
+/// anonymous registrant was treated as the first user and received
+/// `admin`/`admin`. A documented demo switch became a mass platform-admin grant,
+/// and because the logic lived inside an async handler nothing caught it.
+///
+/// Invariants this function exists to hold:
+///   * `CreateFirstAccount` is returned ONLY when no users exist. Turning
+///     `allow_registration` on can never produce it for a later caller.
+///   * `allow_registration` only ever converts `Refuse` into
+///     `CreateNonFirstAccount`. It cannot escalate privilege.
+fn registration_decision(existing_users: i64, allow_registration: bool) -> RegistrationDecision {
+    if existing_users == 0 {
+        RegistrationDecision::CreateFirstAccount
+    }
+    else if allow_registration {
+        RegistrationDecision::CreateNonFirstAccount
+    }
+    else {
+        RegistrationDecision::Refuse
+    }
+}
+
 /// POST /api/auth/login — authenticate and receive JWT
 pub async fn login(
     State(state): State<AppState>,
@@ -236,13 +279,17 @@ pub async fn register(
         .await
         .map_err(|e| ApiError::internal(format!("could not count users: {e}")))?;
 
-    if existing > 0 && !state.config.allow_registration {
+    let decision = registration_decision(existing, state.config.allow_registration);
+
+    if decision == RegistrationDecision::Refuse {
         return Err(ApiError::forbidden(
             "Self-registration is disabled on this deployment: the first \
              account already exists. An administrator must create further \
              accounts via POST /api/auth/users.",
         ));
     }
+
+    let is_first = decision == RegistrationDecision::CreateFirstAccount;
 
     let is_first = existing == 0;
     if is_first {
@@ -496,6 +543,64 @@ mod tests {
             .filter(|is_first| bootstrap_roles(**is_first).1 == PLATFORM_ADMIN_ROLE)
             .count();
         assert_eq!(privileged, 1);
+    }
+
+    // ── register's gate ──
+    //
+    // These exist because the M1 defect lived inside the async handler where no
+    // test could reach it, and it was found by an external review rather than by
+    // the suite.
+
+    #[test]
+    fn the_first_account_is_created_even_when_registration_is_closed() {
+        // The installer's bootstrap path. Must not depend on the flag.
+        assert_eq!(
+            registration_decision(0, false),
+            RegistrationDecision::CreateFirstAccount
+        );
+    }
+
+    #[test]
+    fn open_registration_does_not_make_a_later_caller_the_first_user() {
+        // THE M1 REGRESSION TEST. With the flag on and users already present, the
+        // decision must be CreateNonFirstAccount - never CreateFirstAccount, which
+        // is what would hand out admin/admin to every anonymous registrant.
+        for existing in [1, 2, 100] {
+            assert_eq!(
+                registration_decision(existing, true),
+                RegistrationDecision::CreateNonFirstAccount,
+                "with {existing} existing user(s) and open registration, the caller \
+                 is NOT the first user and must not be granted bootstrap admin"
+            );
+        }
+    }
+
+    #[test]
+    fn closing_registration_refuses_only_once_a_user_exists() {
+        assert_eq!(registration_decision(0, false), RegistrationDecision::CreateFirstAccount);
+        assert_eq!(registration_decision(1, false), RegistrationDecision::Refuse);
+    }
+
+    #[test]
+    fn the_flag_can_only_relax_refusal_and_never_grant_the_bootstrap() {
+        // Enumerate the whole input space. The property: CreateFirstAccount
+        // appears for exactly the zero-user cases, and toggling the flag with
+        // users present can only turn Refuse into CreateNonFirstAccount.
+        let mut first_account_cases = 0;
+        for existing in [0, 1, 5] {
+            for allow in [true, false] {
+                let d = registration_decision(existing, allow);
+                if d == RegistrationDecision::CreateFirstAccount {
+                    first_account_cases += 1;
+                    assert_eq!(existing, 0, "bootstrap admin granted with users present");
+                }
+            }
+            if existing > 0 {
+                assert_eq!(registration_decision(existing, true), RegistrationDecision::CreateNonFirstAccount);
+                assert_eq!(registration_decision(existing, false), RegistrationDecision::Refuse);
+            }
+        }
+        assert_eq!(first_account_cases, 2, "only the two zero-user cases are bootstrap");
     }
 
     // ── create_user's role handling ──
