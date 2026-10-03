@@ -127,14 +127,40 @@ def main() -> int:
     failures = 0
     for repo, t, d in targets:
         verdict, evidence = classify(repo, t, d)
-        mark = "OK  " if verdict.startswith("PUBLIC") else "FAIL"
+        # PASS is EXACTLY "PUBLIC" - i.e. the requested reference resolved.
+        #
+        # This distinction is load-bearing for the caller. preflight-release-tag.ps1
+        # greps the LAST LINE for 'not public' to answer "are these images already
+        # published?". My first rewrite reported a missing tag as
+        # "PUBLIC(missing ref)" and did NOT count it as a failure, so the summary
+        # said "ALL PUBLIC" for a tag that does not exist - making preflight
+        # conclude "already has images" for an unpublished release. The original
+        # script got this right (404 -> "NOT public"); the rewrite broke it.
+        # A reference that is absent is NOT a pass, whatever the repo's visibility.
+        ok = verdict == "PUBLIC"
+        mark = "OK  " if ok else "FAIL"
         print(f"{repo:44s} {mark} {verdict:18s} {evidence}")
-        if not verdict.startswith("PUBLIC"):
+        if not ok:
             failures += 1
-    print("ALL PUBLIC" if failures == 0 else f"{failures} not public")
+    # OUTPUT CONTRACT - read before reordering these prints.
+    #
+    # preflight-release-tag.ps1 does:
+    #     $ghcr = python scripts/check-ghcr-anon.py $version 2>&1 | Select-Object -Last 1
+    #     if ($ghcr -match 'NOT public|404') { Ok "not published yet" } else { Bad "already has images" }
+    #
+    # So the LAST line must be the SUMMARY, and on failure it must contain the
+    # literal 'NOT public' - that is the exact string the caller greps for.
+    # Two ways I broke this while rewriting, recorded so it is not repeated:
+    #   1. reporting a missing tag as "PUBLIC(missing ref)" and not counting it as
+    #      a failure, so the summary said "ALL PUBLIC" for an unpublished tag;
+    #   2. printing the NOTE *after* the summary, so `-Last 1` returned the NOTE -
+    #      which happens to contain '404', making the caller's regex match by
+    #      accident and hide the real summary entirely.
+    # The note therefore goes FIRST, and the summary LAST, in the original wording.
     if failures:
-        print("NOTE: 'PRIVATE' means a token was DENIED. A bare 401/404 from a "
-              "manifest GET is NOT evidence of privacy - see this file's docstring.")
+        print("NOTE: 'PRIVATE' means a token was DENIED. A bare 401/404 status from "
+              "a manifest GET is NOT evidence of privacy - see this file's docstring.")
+    print("ALL PUBLIC" if failures == 0 else f"{failures} image(s) NOT public")
     return 1 if failures else 0
 
 
