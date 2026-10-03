@@ -1359,10 +1359,31 @@ Write-Host "  /          - Landing page" -ForegroundColor Gray
 Write-Host "  /api/      - Metadata API (internal)" -ForegroundColor Gray
 Write-Host "  /research/  - Legal research (deer-flow)" -ForegroundColor Gray
 Write-Host ""
-Write-Host "QM (co-working workspace) runs separately:" -ForegroundColor Cyan
-Write-Host "  1. Run .\setup-qm.ps1 to bootstrap qm" -ForegroundColor Gray
-Write-Host "  2. Then: cd qm-pacgate && npm exec qm -- up" -ForegroundColor Gray
-Write-Host "  3. Access: http://localhost:8182" -ForegroundColor Gray
+# This block described qm as a manual, separate step. Step 7g now brings it up on
+# a first install, so telling the operator to run anything by hand is stale - and
+# it was wrong twice over: `qm up` cannot run on Windows (its which() shells out to
+# POSIX /bin/sh), and 8182 is the web-ui, not the sign-in front door. Both mistakes
+# sent the reader somewhere that does not work. Describe what actually happened
+# instead of prescribing steps the installer already took.
+Write-Host "QM (co-working workspace):" -ForegroundColor Cyan
+if (Test-Path (Join-Path $PSScriptRoot 'qm-pacgate/compose.qm.yaml')) {
+    $qmCount = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count
+    if ($qmCount -ge 6) {
+        Write-Host "  Running ($qmCount containers). Sign in at http://localhost:8181" -ForegroundColor Gray
+        Write-Host "  (8181 is the portal FRONT DOOR - it proxies to web-ui 8182 and" -ForegroundColor Gray
+        Write-Host "   admin 8183. Opening 8182 directly skips auth.)" -ForegroundColor Gray
+    }
+    else {
+        Write-Host "  NOT running ($qmCount of 6 containers up). To bring it up:" -ForegroundColor Yellow
+        Write-Host "    cd qm-pacgate" -ForegroundColor Gray
+        Write-Host "    docker compose -f compose.qm.yaml up -d" -ForegroundColor Gray
+        Write-Host "  Do NOT use 'qm up' - it needs a POSIX shell and cannot run here." -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "  Not staged. Run .\setup-qm.ps1, then:" -ForegroundColor Yellow
+    Write-Host "    cd qm-pacgate; docker compose -f compose.qm.yaml up -d" -ForegroundColor Gray
+}
 Write-Host ""
 Write-Host "Manage:" -ForegroundColor Cyan
 Write-Host "  docker compose -f compose.prod.yaml logs -f    (view logs)" -ForegroundColor Gray
