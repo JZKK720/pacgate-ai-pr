@@ -25,7 +25,22 @@ function Get-Body($url) {
     return (& curl.exe -s --max-time 20 $url 2>&1 | Out-String).Trim()
 }
 
-Write-Host '=== FULL STACK SMOKE — 0.1.21 ===' -ForegroundColor White
+# Expected version, DERIVED rather than hardcoded.
+#
+# This was the literal '0.1.21', so the 0.1.22 bump left this gate asserting the
+# PREVIOUS release and going red on a correctly deployed stack. A release that
+# cannot pass its own smoke test trains people to ignore the test, and then it
+# cannot warn anyone about a genuine failure. bump-release-version.ps1 does not
+# own this file, so a literal here would rot on every future bump.
+$cargoToml = Join-Path (Split-Path -Parent $PSScriptRoot) 'pacgate-ai/Cargo.toml'
+$expectedVersion = if (Test-Path $cargoToml) {
+    (Select-String -Path $cargoToml -Pattern '^version\s*=\s*"([0-9.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+} else { '' }
+if (-not $expectedVersion) {
+    Write-Host '  exit 2 - could not derive the expected version from pacgate-ai/Cargo.toml' -ForegroundColor Yellow
+    exit 2
+}
+Write-Host "=== FULL STACK SMOKE — $expectedVersion ===" -ForegroundColor White
 
 # Preflight: if the stack is not running, this is CANNOT-CHECK (exit 2), not a
 # failure. Without this, every lane would report FAIL on a clean machine and the
@@ -44,8 +59,8 @@ if ($missing.Count -gt 0) {
 Lane 'pacgate-api (pai)'
 $v = Get-Body 'http://localhost:8089/version'
 Write-Host "    /version -> $v"
-if ($v -match '"version"\s*:\s*"0\.1\.21"') { Ok '/version reports 0.1.21' }
-else { Bad "/version did not report 0.1.21" }
+if ($v -match ('"version"\s*:\s*"' + [regex]::Escape($expectedVersion) + '"')) { Ok "/version reports $expectedVersion" }
+else { Bad "/version did not report $expectedVersion (got: $v)" }
 if ($v -match '"revision"\s*:\s*"[0-9a-f]{7,}"') { Ok '/version carries a real revision' }
 else { Bad '/version revision missing or unknown' }
 

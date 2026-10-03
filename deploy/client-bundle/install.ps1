@@ -695,15 +695,65 @@ function Invoke-Bootstrap {
 
     if ($registered) {
         Write-Host "  [OK] admin '$apiEmail' registered" -ForegroundColor Green
-        return $true
     }
-    if ($alreadyThere) {
+    elseif ($alreadyThere) {
         Write-Host "  [OK] admin '$apiEmail' already exists" -ForegroundColor Green
-        return $true
     }
-    Write-Host "  [WARN] could not register the admin '$apiEmail'." -ForegroundColor Yellow
-    Write-Host "         Matter provisioning will fail without a login. Check the API logs." -ForegroundColor Yellow
-    return $false
+    else {
+        Write-Host "  [WARN] could not register the admin '$apiEmail'." -ForegroundColor Yellow
+        Write-Host "         Matter provisioning will fail without a login. Check the API logs." -ForegroundColor Yellow
+        return $false
+    }
+
+    # (3) ENSURE THE ADMIN CAN ACTUALLY ADMINISTER.
+    #
+    # Existing a login is not the same as holding the admin role, and until
+    # 2026-10-03 this step only checked existence. The register route then
+    # hardcoded role='attorney' and never set system_role at all, so the column
+    # default 'user' applied and EVERY account it created was a non-admin - while
+    # this function logged "[OK] admin '<email>' registered". Verified on the dev
+    # box: all four accounts there read system_role='user'.
+    #
+    # Fixing that in the API only helps a FRESH first user; an account created by
+    # an earlier release keeps system_role='user' forever, and with it can never
+    # use POST /api/auth/users. So the upgrade path has to exist here.
+    #
+    # Why direct SQL rather than an API call: promoting an account requires an
+    # admin, and on an upgrade there is no admin yet - that is the whole problem.
+    # The installer is the trusted actor that breaks the cycle, exactly as it
+    # already does for the tenant row above.
+    #
+    # Guarded to the configured service account only. It never touches another
+    # user, and it reports what it changed.
+    $emailLiteral = $apiEmail -replace "'", "''"
+    $roleBefore = (docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
+        "SELECT system_role FROM users WHERE email = '$emailLiteral';" 2>&1 | Out-String).Trim()
+
+    if ($roleBefore -eq 'admin') {
+        Write-Host "  [OK] '$apiEmail' holds the platform admin role" -ForegroundColor Green
+    }
+    elseif ($roleBefore -eq 'user') {
+        Write-Host "  [INFO] '$apiEmail' exists but is NOT a platform admin (system_role='user')." -ForegroundColor Yellow
+        Write-Host "         Promoting it: without this the provisioning route is unreachable," -ForegroundColor Yellow
+        Write-Host "         because no principal on this machine would hold the admin role." -ForegroundColor Yellow
+        $upd = docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
+            "UPDATE users SET system_role = 'admin' WHERE email = '$emailLiteral' RETURNING email;" 2>&1 | Out-String
+        if ($upd -match [regex]::Escape($apiEmail)) {
+            Write-Host "  [OK] '$apiEmail' promoted to platform admin" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  [WARN] could not promote '$apiEmail': $($upd.Trim())" -ForegroundColor Yellow
+            Write-Host "         Run by hand: UPDATE users SET system_role='admin' WHERE email='$apiEmail';" -ForegroundColor Yellow
+        }
+    }
+    else {
+        # Empty (the account vanished between the two queries) or an unexpected
+        # value. Do not guess; say what was found.
+        Write-Host "  [WARN] could not read '$apiEmail's platform role (got '$roleBefore')." -ForegroundColor Yellow
+        Write-Host "         Verify manually: SELECT email, role, system_role FROM users;" -ForegroundColor Yellow
+    }
+
+    return $true
 }
 
 Write-Host "`nBootstrapping the default tenant and admin user..." -ForegroundColor Cyan
