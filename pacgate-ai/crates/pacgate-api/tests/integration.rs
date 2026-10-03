@@ -109,9 +109,20 @@ mod tests {
             workflows_dir: None,
             ocr_service_url: None,
             ner_model_dir: None,
-            // Open registration: this test registers users directly through the
-            // service and asserts first-user-only separately, so it must not be
-            // gated by the production default here.
+            // `true` because this test registers users DIRECTLY through
+            // `AuthService::register`, not through the HTTP route, so the gate
+            // does not participate. It is set explicitly rather than relying on a
+            // default so the value is visible here.
+            //
+            // NOT covered by this file: the first-user-only behaviour of the
+            // `POST /api/auth/register` ROUTE. An earlier version of this comment
+            // claimed the test "asserts first-user-only separately" - it does not.
+            // Nothing in this file or in `tests/smoke.rs` exercises that route, the
+            // `/api/auth/users` route, or their placement relative to the auth
+            // middleware. Those are covered by `scripts/test-auth-registration-gate.ps1`
+            // against a running stack. Say so here rather than implying coverage
+            // that does not exist - a false claim of coverage is worse than a
+            // known gap, because it stops anyone from looking.
             allow_registration: true,
         });
 

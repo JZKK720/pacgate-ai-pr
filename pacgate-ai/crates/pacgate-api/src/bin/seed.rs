@@ -176,9 +176,18 @@ async fn main() -> anyhow::Result<()> {
             "seed@pacgate.local",
             "seed-password-123",
             "admin",
-            // The seed account owns seeded rows, so it is a platform admin too -
-            // otherwise the data it creates has no administrator able to manage it.
-            "admin",
+            // NOT a platform admin. `system_role` is deliberately "user".
+            //
+            // This account has a COMPILED-IN password (`seed-password-123`) and
+            // `pacgate-seed` is built into the published image, so granting it
+            // admin would mean any deployment where the seeder runs has a
+            // known-password principal able to call POST /api/auth/users and mint
+            // further accounts. The within-tenant `role` of "admin" is kept
+            // because the seed owns the rows it creates and needs the same
+            // restore authority those rows' ACLs assume (sanitize.rs
+            // role_may_restore accepts admin|partner) - but that is a TENANT
+            // scope, and it is not the platform role that gates provisioning.
+            "user",
             Some("Seed Service Account"),
         )
         .await

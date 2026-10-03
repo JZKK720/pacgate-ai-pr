@@ -165,24 +165,6 @@ impl AuthService {
         Ok(row.get::<i64, _>("n"))
     }
 
-    /// Count the users in ONE tenant.
-    ///
-    /// Distinct from `count_users` above, which counts the whole table for the
-    /// bootstrap gate. This one exists for the admin provisioning path
-    /// (`POST /api/auth/users`), which must scope its work to the caller's own
-    /// tenant: an admin in tenant A must not be able to read a count, create an
-    /// account, or infer membership in tenant B. The project rule is that
-    /// tenant_id comes from the VERIFIED JWT and never from the request body.
-    #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str()))]
-    pub async fn count_users_in_tenant(&self, tenant_id: &TenantId) -> Result<i64, AuthError> {
-        let row = sqlx::query("SELECT count(*) AS n FROM users WHERE tenant_id = $1")
-            .bind(tenant_id.0)
-            .fetch_one(&self.db)
-            .await
-            .map_err(|e| AuthError::Database(e.to_string()))?;
-        Ok(row.get::<i64, _>("n"))
-    }
-
     /// Register a new user within a tenant.
     ///
     /// `system_role` is the PLATFORM-level role (`admin` | `user`), not the

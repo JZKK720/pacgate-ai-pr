@@ -12,10 +12,18 @@ use crate::{error::ApiError, state::AppState};
 
 /// The only roles an administrator may assign.
 ///
-/// A closed set because the `users.role` column is free text: without this, an
-/// admin could write an arbitrary string that every future authorization check
-/// would then have to cope with.
-const ASSIGNABLE_ROLES: [&str; 4] = ["admin", "attorney", "paralegal", "partner"];
+/// A closed set because the `users.role` column is free text AND load-bearing:
+/// `sanitize.rs` reads it as an ACL (`role_may_restore` accepts `admin|partner`),
+/// so an arbitrary string written here would sit in an authorization decision.
+///
+/// `partner` is deliberately ABSENT. It is the broader of the two restore-capable
+/// roles, and nothing in the deployment needs it through this route: the only
+/// documented consumer is the qm bridge, which is attorney-scoped, and a firm's
+/// partner accounts are a business decision an operator makes directly rather
+/// than something a service-provisioning endpoint should hand out. `admin` IS
+/// included because a tenant may legitimately have several administrators, and
+/// it is a tenant scope - not the platform role that gates this very route.
+const ASSIGNABLE_ROLES: [&str; 3] = ["admin", "attorney", "paralegal"];
 
 /// The default role for a created account.
 ///
@@ -144,7 +152,11 @@ fn bootstrap_roles(is_first: bool) -> (&'static str, &'static str) {
         // instead of reusing these.
         (PLATFORM_ADMIN_ROLE, PLATFORM_ADMIN_ROLE)
     } else {
-        ("attorney", "user")
+        // Reuses `create_user`'s default rather than spelling "attorney" again,
+        // so the two provisioning paths cannot disagree about what a non-first
+        // account is. Previously these were independent literals and a change to
+        // one would have silently left the other behind.
+        (DEFAULT_CREATED_ROLE, "user")
     }
 }
 
@@ -207,28 +219,44 @@ pub async fn register(
     // (1) Self-registration is first-user-only unless the deployment explicitly
     //     opts in to open registration.
     //
-    //     `is_first` is tracked so step (3) can grant the first account the
-    //     admin roles it needs. Computing it once here keeps the gate and the
-    //     grant as one decision rather than two that could disagree.
-    let mut is_first = state.config.allow_registration;
-    if !state.config.allow_registration {
-        let existing = state
-            .auth
-            .count_users()
-            .await
-            .map_err(|e| ApiError::internal(format!("could not count users: {e}")))?;
-        if existing > 0 {
-            return Err(ApiError::forbidden(
-                "Self-registration is disabled on this deployment: the first \
-                 account already exists. An administrator must create further \
-                 accounts via POST /api/auth/users.",
-            ));
-        }
-        is_first = true;
+    //     `is_first` is derived from the OBSERVED user count, never from the
+    //     flag. This distinction is load-bearing and was got wrong once already:
+    //     deriving it from `allow_registration` made the escape hatch grant
+    //     `admin`/`admin` to EVERY anonymous registrant, because the flag is true
+    //     for every caller. The flag answers "may anyone register"; only the
+    //     count answers "is this the first account". Conflating them turned a
+    //     documented demo switch into a mass platform-admin grant.
+    //
+    //     Counting unconditionally also removes an asymmetry: previously the
+    //     count was only consulted when registration was closed, so the open
+    //     path never verified the "first user" premise it then acted on.
+    let existing = state
+        .auth
+        .count_users()
+        .await
+        .map_err(|e| ApiError::internal(format!("could not count users: {e}")))?;
+
+    if existing > 0 && !state.config.allow_registration {
+        return Err(ApiError::forbidden(
+            "Self-registration is disabled on this deployment: the first \
+             account already exists. An administrator must create further \
+             accounts via POST /api/auth/users.",
+        ));
+    }
+
+    let is_first = existing == 0;
+    if is_first {
         tracing::warn!(
             email = %req.email,
             "bootstrap: creating the FIRST account via the public register route; \
              every later self-registration will be refused"
+        );
+    }
+    else {
+        tracing::info!(
+            email = %req.email,
+            "open registration is enabled; creating a NON-FIRST account, which \
+             does not receive platform admin"
         );
     }
 
@@ -249,9 +277,8 @@ pub async fn register(
     //
     // The first account is therefore both: `system_role = 'admin'` so it can
     // actually administer, and within-tenant `role = 'admin'` so it governs its
-    // own tenant. Later self-registration (only possible when
-    // `allow_registration` is explicitly enabled) keeps the previous behaviour:
-    // an attorney-scoped, non-platform account.
+    // own tenant. Every LATER account - whether permitted by the open-registration
+    // flag or created by an administrator - is attorney-scoped and non-platform.
     //
     // This does not widen the attacker's window. The route is still gated on
     // "no users exist", so the only account an unauthenticated caller can ever
@@ -346,14 +373,19 @@ pub async fn create_user(
             // it must not surface as a 500. This route is now the documented way
             // to (re)create the qm bridge account, which means re-running it is
             // expected behaviour and has to say something readable.
-            let msg = e.to_string();
-            if msg.contains("duplicate key") || msg.contains("unique constraint") {
-                ApiError::conflict(format!(
+            //
+            // Matches the TYPED variant, never the message text. The first version
+            // of this looked for `"duplicate key"` / `"unique constraint"` in the
+            // error string - which is the SERVER's localized text, so a deployment
+            // with a non-English `lc_messages` (or a different Postgres major)
+            // would have reported an operator's typo as a 500. AuthError::from_sqlx
+            // classifies on SQLSTATE 23505, which no locale changes.
+            match e {
+                pacgate_auth::AuthError::Duplicate(_) => ApiError::conflict(format!(
                     "An account with the email {} already exists.",
                     req.email
-                ))
-            } else {
-                ApiError::internal(format!("could not create the account: {msg}"))
+                )),
+                other => ApiError::internal(format!("could not create the account: {other}")),
             }
         })?;
 
@@ -486,13 +518,24 @@ mod tests {
 
     #[test]
     fn every_documented_role_is_accepted() {
-        for role in ["admin", "attorney", "paralegal", "partner"] {
+        for role in ["admin", "attorney", "paralegal"] {
             assert_eq!(
                 resolve_assignable_role(Some(role)).unwrap(),
                 role,
                 "{role} is part of the documented set"
             );
         }
+    }
+
+    #[test]
+    fn restore_capable_partner_role_cannot_be_minted_through_this_route() {
+        // `sanitize.rs`'s role_may_restore accepts admin|partner, so `partner` is
+        // an authorization-bearing value. It is excluded from this route on
+        // purpose: nothing here needs it, and the narrowest set that serves the
+        // documented consumer (the attorney-scoped qm bridge) is the safest one.
+        // Asserted explicitly so a future widening has to delete a named test.
+        let err = resolve_assignable_role(Some("partner")).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[test]

@@ -211,6 +211,14 @@ $liveStackGates = @(
     # containers and exits 2 rather than reporting a false red on a clean machine.
     # It reports qm honestly as CANNOT-CHECK: setup-qm.ps1 is interactive.
     'scripts/smoke-full-stack.ps1'
+    # PROVES pacgate-api's account-provisioning surface is closed in both
+    # directions: open registration is refused once a user exists, and a created
+    # account is NOT a platform admin. Before 2026-10-03 nothing tested these over
+    # HTTP at all - the Rust unit tests cover the role DECISION but cannot see the
+    # router, so a route moved onto the public router, or dropped entirely, would
+    # leave every other gate green. It needs the stack up (exit 2 when not), and it
+    # creates and deletes a probe account to prove the boundary end to end.
+    'scripts/test-auth-provisioning-gate.ps1'
 )
 
 $measurements = @(
