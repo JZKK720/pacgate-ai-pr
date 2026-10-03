@@ -120,6 +120,21 @@ pub struct AppConfig {
     /// Directory with the local NER weights (config.json, model.safetensors,
     /// vocab.txt). None runs Tier-1 rules only; Some-but-broken fails the job.
     pub ner_model_dir: Option<String>,
+    /// Whether `POST /api/auth/register` may create an account unauthenticated.
+    ///
+    /// This route had NO gate at all: it was reachable through nginx on the LAN
+    /// and created a working `attorney` account in the default tenant, from which
+    /// `GET /api/matters` returns the tenant's matter list. On a legal-matter
+    /// system that is client-identifying data reachable by anyone on the network.
+    ///
+    /// Mirrors the name deer-flow already uses (`auth.local.allow_registration`)
+    /// so one concept does not carry two names across the two services.
+    ///
+    /// Defaults to **true** so an un-bumped deployment behaves exactly as before -
+    /// compose sets `PACGATE_ALLOW_REGISTRATION=false` on the client stack, which
+    /// is what actually closes the door. Flipping the default would silently
+    /// change behaviour for any existing caller that relies on open registration.
+    pub allow_registration: bool,
 }
 
 impl Default for AppConfig {
@@ -132,6 +147,7 @@ impl Default for AppConfig {
             workflows_dir: None,
             ocr_service_url: None,
             ner_model_dir: None,
+            allow_registration: true,
         }
     }
 }

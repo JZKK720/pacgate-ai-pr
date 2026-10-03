@@ -40,6 +40,11 @@ services:
     environment:
       DATABASE_URL: postgres://pacgate:${PACGATE_DB_PASSWORD}@pacgate-db:5432/pacgate
       DATA_DIR: /data/tenants
+      # Self-registration gate. CLOSED on the client stack. Mirrors
+      # compose.prod.yaml - both files define this service, so both need it, or
+      # the file that is not running will silently diverge.
+      # See deploy/DEFECT-pacgate-api-open-registration.md.
+      PACGATE_ALLOW_REGISTRATION: "false"
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
       # NER weights are baked into the image at /app/models/ner (SHA-256 verified

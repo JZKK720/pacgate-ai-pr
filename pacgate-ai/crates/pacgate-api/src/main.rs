@@ -49,6 +49,18 @@ async fn main() -> anyhow::Result<()> {
         ocr_service_url: std::env::var("OCR_SERVICE_URL").ok().filter(|s| !s.is_empty()),
         ner_model_dir: std::env::var("PACGATE_NER_MODEL_DIR").ok().filter(|s| !s.is_empty()),
         workflows_dir,
+        // Unauthenticated account creation. Compose ships PACGATE_ALLOW_REGISTRATION=false
+        // to clients (this closed a real exposure - see auth.rs). The parse is
+        // permissive in the SAFE direction: anything other than an explicit
+        // true/1/yes leaves registration disabled, so a typo cannot re-open it.
+        allow_registration: matches!(
+            std::env::var("PACGATE_ALLOW_REGISTRATION")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "true" | "1" | "yes"
+        ),
     });
 
     // Create Postgres connection pool

@@ -27,6 +27,15 @@ impl ApiError {
         Self { status: StatusCode::UNAUTHORIZED, code: "unauthorized", message: msg.into() }
     }
 
+    /// 403 Forbidden - authenticated-or-not, the caller may not do this.
+    ///
+    /// Distinct from `unauthorized` on purpose. 401 means "identify yourself";
+    /// 403 means "identifying yourself would not help". The registration gate
+    /// uses 403 because no credential would open it.
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self { status: StatusCode::FORBIDDEN, code: "forbidden", message: msg.into() }
+    }
+
     /// 409 Conflict - the caller view of the resource is stale.
     ///
     /// Used for optimistic concurrency on matter memory: the caller presents

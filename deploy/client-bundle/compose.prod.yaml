@@ -37,6 +37,18 @@ services:
     environment:
       DATABASE_URL: postgres://pacgate:${PACGATE_DB_PASSWORD}@pacgate-db:5432/pacgate
       DATA_DIR: /data/tenants
+      # Self-registration gate. CLOSED on the client stack.
+      #
+      # POST /api/auth/register had NO gate: it was reachable through nginx on
+      # 0.0.0.0:8089 (LAN-wide) and created a working `attorney` account in the
+      # default tenant, from which GET /api/matters returns the tenant's matter
+      # list. See deploy/DEFECT-pacgate-api-open-registration.md.
+      #
+      # Default when unset is permissive, so this line is what actually closes
+      # the door - do not remove it. install.ps1 step 6a uses this route to create
+      # the FIRST admin, so a supervised install may set it true for that run and
+      # turn it off afterwards.
+      PACGATE_ALLOW_REGISTRATION: "false"
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
       # The NER weights are baked into this image at /app/models/ner and verified

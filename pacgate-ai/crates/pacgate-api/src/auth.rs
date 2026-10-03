@@ -70,10 +70,33 @@ pub async fn login(
 }
 
 /// POST /api/auth/register — create a new user within the configured default tenant
+///
+/// Pacgate: refuses with 403 unless `PACGATE_ALLOW_REGISTRATION` is true.
+///
+/// WHY THIS GATE EXISTS. This route had no auth extractor and no gate, so any
+/// host that could reach the API created a working `attorney` account in the
+/// default tenant — and `GET /api/matters` then returned that tenant's matter
+/// list. The AIPC publishes nginx on 0.0.0.0:8089 and the user manual tells
+/// attorneys to browse to the machine's LAN IP, so "reachable" meant "anyone on
+/// the client's network", against a system holding client-identifying matter
+/// names. Found 2026-10-01 while verifying an unrelated claim; see
+/// deploy/DEFECT-pacgate-api-open-registration.md.
+///
+/// The install path still needs this route: `install.ps1` step 6a creates the
+/// first admin with it. So the gate is CONFIGURATION, not deletion — compose
+/// ships it false to clients, and the installer may enable it for the supervised
+/// first run. A hard-coded refusal would break first-run bootstrap.
 pub async fn register(
     State(state): State<AppState>,
     Json(req):    Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, ApiError> {
+    if !state.config.allow_registration {
+        return Err(ApiError::forbidden(
+            "Self-registration is disabled on this deployment \
+             (PACGATE_ALLOW_REGISTRATION is not true)",
+        ));
+    }
+
     let tenant = state
         .tenant_store
         .get_by_slug(&state.config.default_tenant)
