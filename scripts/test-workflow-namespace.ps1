@@ -271,9 +271,45 @@ echo "`$ns|`$src|`$warn|`$cred|`$cwarn"
     # LF endings: CRLF in a mounted .sh gives 'not found' / syntax errors in sh.
     [System.IO.File]::WriteAllText($tmp, ($sh -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
-    $out = & docker run --rm --mount "type=bind,source=$tmp,target=/t.sh,readonly" alpine:3.20 sh /t.sh 2>&1
+    # Feed the script on STDIN rather than bind-mounting the file.
+    #
+    # WHY THIS CHANGED (2026-10-03). The mount form was:
+    #   docker run --rm --mount "type=bind,source=$tmp,target=/t.sh,readonly" alpine:3.20 sh /t.sh
+    # It binds a WINDOWS temp path into a Linux container, which depends on Docker
+    # Desktop's file-sharing translation. Under load that fails intermittently:
+    # this suite failed 41/1 inside run-all-checks while passing 42/0 standalone,
+    # three separate times. The failure was reported as a NAMESPACE assertion
+    # failure, which is misleading - nothing was wrong with the workflow; the
+    # container never ran the script.
+    #
+    # stdin has no file-sharing surface and no quoting surface: the script is not
+    # a CLI argument (which is what broke the earlier inline attempt with
+    # 'unexpected elif'), and it is not a mounted file. One fewer moving part.
+    $prevEnc = $OutputEncoding
+    $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    try {
+        # Retry: a transient container-start hiccup must not read as a logic
+        # failure. The content is identical each attempt, so a retry cannot change
+        # the answer - it only removes infrastructure noise.
+        $out = $null
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $out = ($sh -replace "`r`n", "`n") | & docker run -i --rm alpine:3.20 sh -s 2>&1
+            $probe = ($out | Out-String).Trim()
+            # The script's last line is its answer: 5 pipe-separated fields.
+            if (($probe -split '\|').Count -ge 5) { break }
+            if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
+        }
+    }
+    finally { $OutputEncoding = $prevEnc }
+
     $line = ($out | Out-String).Trim()
     $parts = $line -split '\|'
+    if ($parts.Count -lt 5) {
+        # Could not check. Say so explicitly rather than letting a truncated line
+        # flow into the assertions and surface as "got <docker error text>".
+        Fail "the alpine probe produced no parseable result after 3 attempts - cannot check the docker path. Raw: $line"
+        return [pscustomobject]@{ Ns = ''; Src = ''; Warn = ''; Cred = ''; CredWarn = ''; Raw = $line }
+    }
     return [pscustomobject]@{ Ns = $parts[0]; Src = $parts[1]; Warn = $parts[2]; Cred = $parts[3]; CredWarn = $parts[4]; Raw = $line }
 }
 
