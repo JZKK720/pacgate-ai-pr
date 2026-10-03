@@ -10,6 +10,38 @@ use serde::{Deserialize, Serialize};
 
 use crate::{error::ApiError, state::AppState};
 
+/// The only roles an administrator may assign.
+///
+/// A closed set because the `users.role` column is free text: without this, an
+/// admin could write an arbitrary string that every future authorization check
+/// would then have to cope with.
+const ASSIGNABLE_ROLES: [&str; 4] = ["admin", "attorney", "paralegal", "partner"];
+
+/// The default role for a created account.
+///
+/// `attorney` because the normal case for this route is minting the qm service
+/// identity, which is attorney-scoped like deer-flow's and pacgate-mcp's.
+const DEFAULT_CREATED_ROLE: &str = "attorney";
+
+/// Validate the role an administrator asked to assign.
+///
+/// Split out from the handler so the rule is testable without a database or a
+/// running server - the handler cannot be exercised until 0.1.22 is deployed,
+/// and an untested authorization boundary is exactly the kind that ships broken.
+fn resolve_assignable_role(requested: Option<&str>) -> Result<&'static str, ApiError> {
+    let role = requested.unwrap_or(DEFAULT_CREATED_ROLE);
+    ASSIGNABLE_ROLES
+        .iter()
+        .find(|allowed| **allowed == role)
+        .copied()
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "role must be one of: {}.",
+                ASSIGNABLE_ROLES.join(", ")
+            ))
+        })
+}
+
 /// Tenant from the VERIFIED token, never from a request body.
 ///
 /// Matches `claims_to_tenant_id` in chat.rs / workflows.rs; kept local rather
@@ -292,15 +324,8 @@ pub async fn create_user(
         return Err(ApiError::bad_request("email and password are required."));
     }
 
-    // Closed set. `attorney` is the default because the normal case for this
-    // route is minting the qm service identity, which is attorney-scoped like
-    // deer-flow's and pacgate-mcp's.
-    let role = req.role.as_deref().unwrap_or("attorney");
-    if !matches!(role, "admin" | "attorney" | "paralegal" | "partner") {
-        return Err(ApiError::bad_request(
-            "role must be one of: admin, attorney, paralegal, partner.",
-        ));
-    }
+    // Closed set, validated by a function that is unit-tested below.
+    let role = resolve_assignable_role(req.role.as_deref())?;
 
     // Tenant comes from the verified token, never from the body.
     let tenant_id = claims_to_tenant_id(&claims)?;
@@ -439,5 +464,56 @@ mod tests {
             .filter(|is_first| bootstrap_roles(**is_first).1 == PLATFORM_ADMIN_ROLE)
             .count();
         assert_eq!(privileged, 1);
+    }
+
+    // ── create_user's role handling ──
+    //
+    // These run without a database, which matters because the route itself
+    // cannot be exercised until 0.1.22 is deployed. An authorization boundary
+    // that shipped untested because "we'll verify it live" is how the original
+    // open-registration defect got in.
+
+    #[test]
+    fn omitting_the_role_defaults_to_the_least_privileged_service_role() {
+        assert_eq!(
+            resolve_assignable_role(None).unwrap(),
+            "attorney",
+            "the default must not be admin - the common case is a service \
+             account, and a defaulted admin is a privilege escalation by \
+             omission"
+        );
+    }
+
+    #[test]
+    fn every_documented_role_is_accepted() {
+        for role in ["admin", "attorney", "paralegal", "partner"] {
+            assert_eq!(
+                resolve_assignable_role(Some(role)).unwrap(),
+                role,
+                "{role} is part of the documented set"
+            );
+        }
+    }
+
+    #[test]
+    fn an_arbitrary_role_is_rejected() {
+        // The column is free text, so this is the guard that keeps it from
+        // becoming a privilege sink.
+        let err = resolve_assignable_role(Some("superuser")).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn role_matching_is_exact_not_case_or_prefix_insensitive() {
+        // "Admin", " admin", and "administrator" must not sneak through a
+        // case-insensitive or prefix comparison. PowerShell's -match/-replace
+        // being case-insensitive has already caused one bug in this codebase;
+        // role comparisons are the same class of trap.
+        for attempt in ["Admin", "ADMIN", " admin", "admin ", "administrator", "adm"] {
+            assert!(
+                resolve_assignable_role(Some(attempt)).is_err(),
+                "{attempt:?} must not be accepted as a role"
+            );
+        }
     }
 }
