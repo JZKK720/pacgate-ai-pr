@@ -144,6 +144,21 @@ impl AuthService {
         Ok((token, user_id, tenant_id, role, soul_id))
     }
 
+    /// Number of users in the database.
+    ///
+    /// Used by the registration gate: self-registration may only create the very
+    /// FIRST account. That is what lets `install.ps1` bootstrap an admin on a fresh
+    /// machine while keeping the route closed everywhere else — the same shape
+    /// deer-flow's `/initialize` uses (`admin_count > 0`).
+    #[instrument(skip(self))]
+    pub async fn count_users(&self) -> Result<i64, AuthError> {
+        let row = sqlx::query("SELECT count(*) AS n FROM users")
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| AuthError::Database(e.to_string()))?;
+        Ok(row.get::<i64, _>("n"))
+    }
+
     /// Register a new user within a tenant.
     #[instrument(skip(self, password), fields(email = %email, tenant_id = %tenant_id.as_str()))]
     pub async fn register(

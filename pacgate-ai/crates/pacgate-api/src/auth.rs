@@ -71,30 +71,59 @@ pub async fn login(
 
 /// POST /api/auth/register — create a new user within the configured default tenant
 ///
-/// Pacgate: refuses with 403 unless `PACGATE_ALLOW_REGISTRATION` is true.
+/// Pacgate: self-registration may create **the first account only**.
 ///
-/// WHY THIS GATE EXISTS. This route had no auth extractor and no gate, so any
-/// host that could reach the API created a working `attorney` account in the
-/// default tenant — and `GET /api/matters` then returned that tenant's matter
-/// list. The AIPC publishes nginx on 0.0.0.0:8089 and the user manual tells
-/// attorneys to browse to the machine's LAN IP, so "reachable" meant "anyone on
-/// the client's network", against a system holding client-identifying matter
-/// names. Found 2026-10-01 while verifying an unrelated claim; see
+/// WHY. This route previously had no auth extractor and no gate, so any host that
+/// could reach the API created a working `attorney` account in the default tenant,
+/// and `GET /api/matters` then returned that tenant's matter list. The AIPC
+/// publishes nginx on 0.0.0.0:8089 and the user manual tells attorneys to browse to
+/// the machine's LAN IP, so "reachable" meant "anyone on the client's network",
+/// against client-identifying matter data. Found 2026-10-01; see
 /// deploy/DEFECT-pacgate-api-open-registration.md.
 ///
-/// The install path still needs this route: `install.ps1` step 6a creates the
-/// first admin with it. So the gate is CONFIGURATION, not deletion — compose
-/// ships it false to clients, and the installer may enable it for the supervised
-/// first run. A hard-coded refusal would break first-run bootstrap.
+/// WHY FIRST-USER-ONLY RATHER THAN A CONFIG FLAG. The install path genuinely needs
+/// this route: `install.ps1` step 6a creates the first admin with it, and without
+/// an admin a fresh install has no login, matter provisioning fails, and
+/// deer-flow silently falls back to writing UNSANITIZED memory to disk. A
+/// configuration flag makes an operator choose between "installable" and "safe",
+/// and the failure mode of choosing wrong is a permanently open door on a
+/// legal-matter system.
+///
+/// The two needs are separable: the installer wants ONE account, the attacker
+/// wants ANY number. Allowing exactly one satisfies the first and defeats the
+/// second — there is nothing left to claim on a running deployment.
+///
+/// This is also the shape a reviewer can verify by reading: the guard is a COUNT,
+/// not a boolean somebody must remember to set. It mirrors deer-flow's
+/// `/initialize`, which gates on `admin_count > 0`.
+///
+/// The explicit flag is kept as an escape hatch for a deployment that legitimately
+/// wants open registration (a demo, or an onboarding window). Closed by default:
+/// anything other than an explicit true/1/yes is treated as disabled.
 pub async fn register(
     State(state): State<AppState>,
     Json(req):    Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, ApiError> {
+    // (1) Self-registration is first-user-only unless the deployment explicitly
+    //     opts in to open registration.
     if !state.config.allow_registration {
-        return Err(ApiError::forbidden(
-            "Self-registration is disabled on this deployment \
-             (PACGATE_ALLOW_REGISTRATION is not true)",
-        ));
+        let existing = state
+            .auth
+            .count_users()
+            .await
+            .map_err(|e| ApiError::internal(format!("could not count users: {e}")))?;
+        if existing > 0 {
+            return Err(ApiError::forbidden(
+                "Self-registration is disabled on this deployment: the first \
+                 account already exists. An administrator must create further \
+                 accounts.",
+            ));
+        }
+        tracing::warn!(
+            email = %req.email,
+            "bootstrap: creating the FIRST account via the public register route; \
+             every later self-registration will be refused"
+        );
     }
 
     let tenant = state
