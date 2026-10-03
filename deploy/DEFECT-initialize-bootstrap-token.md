@@ -198,9 +198,20 @@ So the installer's admin bootstrap **works** — pacgate-api's `/health` is 200,
 `/api/auth/register` is reachable **unauthenticated through nginx** and creates a
 working **`attorney`** account in the default tenant. Anything a JWT grants that
 store is obtainable without credentials. That belongs with the `/initialize`
-issue as the same class of first-install exposure, and it needs its own
-verification pass (does an `attorney` JWT reach matter or document routes?) —
-**do not** treat it as fixed or as understood.
+issue as the same class of first-install exposure.
+
+> **RESOLVED 2026-10-03, in 0.1.22.** That route is now first-user-only (`403`
+> once any user exists) and is covered by `scripts/test-auth-provisioning-gate.ps1`.
+> See `DEFECT-pacgate-api-open-registration.md`. **This does not close the
+> `/initialize` defect above** — a different route on a different service, still
+> open and still unarmed. Do not read the sibling's resolution as this one's.
+
+**Verified again on the running 0.1.22 stack (2026-10-03):** the sibling fix
+changed nothing here. `PACGATE_SETUP_TOKEN` and `PACGATE_GENERATE_SETUP_TOKEN`
+are both `UNSET` in the live `deer-flow`, `SETUP_TOKEN` appears **0 times** in
+the client bundle, and the setup page still sends no token field (`setup/page.tsx`
+posts only `{ email, password }`; 0 hits across the frontend and patches). Both
+halves of the two-part fix are still missing.
 
 ## Why this did not ship in 0.1.21
 

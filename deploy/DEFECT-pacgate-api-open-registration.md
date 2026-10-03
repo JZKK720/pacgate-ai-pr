@@ -3,8 +3,9 @@
 **Found:** 2026-10-01, while verifying a claim I had previously got wrong.
 **Severity:** HIGH — unauthenticated account creation with a working role in the
 default tenant.
-**Status:** VERIFIED PRESENT. Not fixed. Needs an owner decision on the intended
-first-run model before a fix is written.
+**Status:** ✅ **RESOLVED IN 0.1.22** (commits `ebac082` + `fc5c6af`, released
+2026-10-03). Superseded by the *RESOLVED* section at the end of this file, which
+is the current state. The body below is kept as the record of the finding.
 
 > This supersedes an **incorrect** claim I had recorded in
 > `DEFECT-initialize-bootstrap-token.md`: that this endpoint is gated by
