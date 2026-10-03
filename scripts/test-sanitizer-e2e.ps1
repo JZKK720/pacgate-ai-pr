@@ -36,7 +36,21 @@ d.text((16,150),'13812345678',fill='black',font=font)
 img.save('/fix/pacgate-san-e2e.pdf','PDF',resolution=100)" 2>&1 | Out-Null
 Check "fixture written" (Test-Path $fixture)
 
-docker rm -f pacgate-ocr-e2e, pacgate-api-e2e 2>$null | Out-Null
+# Cleanup helper. SPACE-separated names, NOT comma-joined.
+#
+# This was `docker rm -f pacgate-ocr-e2e, pacgate-api-e2e`, which does NOT remove
+# both: PowerShell passes the commas through as part of the argument, docker
+# treats `a,` as one (invalid) name and `b` as another, so only the LAST
+# container is removed and the others are left running. Verified directly:
+# `docker rm -f c1, c2` removed c2 and left c1. That is why a `pacgate-ocr-e2e`
+# container kept surviving runs - the symptom was visible as a stray container,
+# and the bug is that the cleanup silently did half its job.
+function Remove-E2EContainers {
+    foreach ($n in @('pacgate-ocr-e2e', 'pacgate-api-e2e')) {
+        docker rm -f $n 2>&1 | Out-Null
+    }
+}
+Remove-E2EContainers
 
 # 1. OCR service (no host port needed; API reaches it over the compose net).
 docker run -d --name pacgate-ocr-e2e --network client-bundle_default ocr-service:local | Out-Null
@@ -157,5 +171,9 @@ Check "ledger row written" ([int]($dbLedger | Select-Object -First 1) -ge 1)
 $dbAudit = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM audit_log WHERE action = 'document.sanitize'"" 2>&1"
 Check "audit row written" ([int]($dbAudit | Select-Object -First 1) -ge 1)
 
-docker rm -f pacgate-ocr-e2e, pacgate-api-e2e 2>$null | Out-Null
+# Cleanup on BOTH paths. The final line here used to be the only cleanup, so any
+# early exit - a failed assertion, an exception, or Ctrl-C - left the containers
+# running. Reuses the same helper as the pre-clean, so a fix to one applies to
+# both.
+Remove-E2EContainers
 if ($script:fail -eq 0) { Write-Output '== RESULT: PASS ==' } else { Write-Output "== RESULT: FAIL ($($script:fail)) =="; exit 1 }
