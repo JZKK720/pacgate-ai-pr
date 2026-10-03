@@ -17,7 +17,27 @@ param(
     [string]$QmDir,
     # Tracked source of the deployment definition.
     [string]$QmSourceDir,
-    [string]$PacgateApiUrl = "http://localhost:8081"
+    # Base URL the bridge account is verified against, from the HOST.
+    # 8089 is what compose.prod.yaml publishes for nginx; the /pacgate prefix is
+    # nginx's route to pacgate-api (it strips the prefix before proxying).
+    # This said 8081 until 2026-10-03 - a port from the old dev layout - so the
+    # verification curl at the end of this script pointed at nothing and read as
+    # "the bridge account is missing" when it was a wrong URL. It must agree with
+    # qm.config.jsonc's PACGATE_API_URL (http://host.docker.internal:8089/pacgate).
+    [string]$PacgateApiUrl = "http://localhost:8089/pacgate",
+
+    # --- non-interactive inputs (OPTIONAL) ---------------------------------
+    # Left unset, the script prompts exactly as before. When supplied, the three
+    # Read-Host prompts are skipped, which makes this script usable from a
+    # headless bring-up or a test harness. Additive on purpose: the interactive
+    # path an on-site engineer uses is unchanged, because a wrong default here
+    # would silently create an account nobody chose.
+    [string]$AdminEmail,
+    [string]$BridgeEmail,
+    # Plain text on the command line is a real exposure (shell history, process
+    # list). It exists for automated bring-up only; an operator should let the
+    # script prompt, which reads it as a SecureString and never echoes it.
+    [string]$BridgePassword
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,26 +140,33 @@ try {
         SKILL_SIGNING_SECRET   = New-SecretHex
     }
 
-    # 5. Prompt for admin email + Pacgate bridge credentials
+    # 5. Prompt for admin email + Pacgate bridge credentials (or take the --params)
     Write-Host "`n=== Configuration ===" -ForegroundColor Cyan
 
-    $adminEmail = Read-Host "Enter the administrator's work email (lowercased)"
+    $adminEmail = if ($AdminEmail) { $AdminEmail } else { Read-Host "Enter the administrator's work email (lowercased)" }
     if (-not $adminEmail) {
         Write-Host "ERROR: Admin email is required" -ForegroundColor Red
         exit 1
     }
     $adminEmail = $adminEmail.ToLowerInvariant()
 
-    $bridgeEmail = Read-Host "Enter the Pacgate bridge service-account email (e.g. qm-bridge@pacgate.local)"
+    $bridgeEmail = if ($BridgeEmail) { $BridgeEmail } else { Read-Host "Enter the Pacgate bridge service-account email (e.g. qm-bridge@pacgate.local)" }
     if (-not $bridgeEmail) {
         Write-Host "ERROR: Bridge email is required" -ForegroundColor Red
         exit 1
     }
 
-    $bridgePassword = Read-Host "Enter the Pacgate bridge service-account password" -AsSecureString
-    $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($bridgePassword)
-    )
+    if ($BridgePassword) {
+        # Non-interactive: the value arrived as plain text, so it is already a
+        # string. Never echoed, never written to a log.
+        $plainPassword = $BridgePassword
+    }
+    else {
+        $bridgePassword = Read-Host "Enter the Pacgate bridge service-account password" -AsSecureString
+        $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($bridgePassword)
+        )
+    }
     if (-not $plainPassword) {
         Write-Host "ERROR: Bridge password is required" -ForegroundColor Red
         exit 1
@@ -176,6 +203,49 @@ try {
         Write-Host "  Run install.ps1 first, or add the key to $mainEnv and re-run." -ForegroundColor Yellow
     }
 
+    # Nine further variables that compose.qm.yaml requires as BARE `${VAR}` (no
+    # default), so an unset value substitutes an EMPTY string and fails later as
+    # an auth error rather than at bootstrap. Found 2026-10-03 - audit-qm-bootstrap
+    # had been suppressing all nine via a by-name "optional" allowlist, so nothing
+    # reported them until that checker was corrected. See that script's comment.
+    #
+    # The self-issuable ones are generated here, exactly like the signing secrets
+    # above: they are per-deployment, never typed by a human, and a weak or shared
+    # value would be a real weakness (AUTH_TOKEN_SECRET signs sessions).
+    $authTokenSecret      = New-SecretHex
+    $portalSessionSecret  = New-SecretHex
+    $authClientSecret     = New-SecretHex
+    # A JWK for signing. The auth broker enforces the exact shape at boot:
+    #   "[auth] FATAL: AUTH_SIGNING_JWK must be a P-256 private JSON Web Key
+    #    (kty EC, crv P-256, with d)"
+    # RSA-2048 was tried first and crash-looped qm-pacgate-auth on that line.
+    # So: EC P-256, and `crv` must be present - a plain `privateKey.export({format:'jwk'})`
+    # includes it, but assert it anyway so a future node change fails loudly here
+    # rather than as a restart loop in the auth container.
+    # NOTE on the quoting: this MUST stay a single-line -e argument. An earlier
+    # version used a PowerShell here-string (@"..."@) INSIDE the double-quoted
+    # argument, which PowerShell does not nest - it failed with "unrecognized
+    # token". One line with single-quoted JS strings avoids the problem entirely.
+    $jwkJs = "const c=require('node:crypto');const{privateKey}=c.generateKeyPairSync('ec',{namedCurve:'P-256'});const j=privateKey.export({format:'jwk'});if(j.kty!=='EC'||j.crv!=='P-256'||!j.d){console.error('unexpected jwk shape');process.exit(1)}process.stdout.write(JSON.stringify({kty:j.kty,crv:j.crv,x:j.x,y:j.y,d:j.d}));"
+    $authSigningJwk = (& node -e $jwkJs 2>&1 | Out-String).Trim()
+    if (-not $authSigningJwk -or $authSigningJwk -notmatch '"crv":"P-256"') {
+        Write-Host "[WARN] could not generate a P-256 AUTH_SIGNING_JWK with node - the qm auth broker will refuse to start" -ForegroundColor Yellow
+    }
+
+    # Email transport. Local Mailpit accepts ANY credentials
+    # (MP_SMTP_AUTH_ACCEPT_ANY=1, MP_SMTP_AUTH_ALLOW_INSECURE=1) with SMTP_TLS=none,
+    # so placeholders are correct for a local bring-up and the mail is captured at
+    # http://localhost:8025. For a real deployment these MUST be replaced with the
+    # firm's SMTP account - the values are non-empty so nothing silently 401s.
+    $smtpUser = if ($env:QM_SMTP_USERNAME) { $env:QM_SMTP_USERNAME } else { 'pacgate-local' }
+    $smtpPass = if ($env:QM_SMTP_PASSWORD) { $env:QM_SMTP_PASSWORD } else { 'pacgate-local' }
+
+    # OpenViking scope. Account = the tenant slug qm's sandbox writes under; user =
+    # the attorney id. Defaults match the stack's tenant so the sandbox is scoped
+    # rather than blank; operators with a different tenant override via the env vars.
+    $ovAccount = if ($env:OPENVIKING_ACCOUNT) { $env:OPENVIKING_ACCOUNT } else { 'default-firm' }
+    $ovUser    = if ($env:OPENVIKING_USER)    { $env:OPENVIKING_USER }    else { $adminEmail }
+
     $envContent = @"
 ADMIN_GRANTS=$adminEmail
 AUTH_ALLOWED_EMAILS=$adminEmail
@@ -186,6 +256,15 @@ CONNECTOR_SECRET_KEY=$($secrets.CONNECTOR_SECRET_KEY)
 CORE_SIGNING_SECRET=$($secrets.CORE_SIGNING_SECRET)
 PORTAL_IDENTITY_SECRET=$($secrets.PORTAL_IDENTITY_SECRET)
 SKILL_SIGNING_SECRET=$($secrets.SKILL_SIGNING_SECRET)
+AUTH_TOKEN_SECRET=$authTokenSecret
+PORTAL_SESSION_SECRET=$portalSessionSecret
+AUTH_CLIENT_SECRET=$authClientSecret
+AUTH_SIGNING_JWK=$authSigningJwk
+AUTH_EMAIL_FROM=$adminEmail
+SMTP_USERNAME=$smtpUser
+SMTP_PASSWORD=$smtpPass
+OPENVIKING_ACCOUNT=$ovAccount
+OPENVIKING_USER=$ovUser
 POSTGRES_PASSWORD=$pgPassword
 OPENVIKING_ROOT_API_KEY=$ovRoot
 OPENVIKING_API_KEY=$ovApi
@@ -229,7 +308,9 @@ PACGATE_API_PASSWORD=$plainPassword
     Write-Host "     curl $PacgateApiUrl/api/auth/login -d '{`"email`":`"$bridgeEmail`",`"password`":`"...`"}'" -ForegroundColor Gray
     Write-Host "  2. Start qm:" -ForegroundColor White
     Write-Host "     npm exec qm -- up" -ForegroundColor Gray
-    Write-Host "  3. Open: http://localhost:8182" -ForegroundColor White
+    Write-Host "  3. Open: http://localhost:8181" -ForegroundColor White
+    Write-Host "     (8181 is the portal FRONT DOOR - sign in there; it proxies to" -ForegroundColor Gray
+    Write-Host "      web-ui 8182 and admin 8183. Opening 8182 directly skips auth.)" -ForegroundColor Gray
     Write-Host "  4. Sign in with: $adminEmail" -ForegroundColor White
 
 }

@@ -79,9 +79,30 @@ $optional = [System.Collections.Generic.HashSet[string]]::new()
 $allRaw = $composeCode + $cfgCode
 foreach ($m in [regex]::Matches($allRaw, '\$\{([A-Z][A-Z0-9_]*):-')) { [void]$optional.Add($m.Groups[1].Value) }
 foreach ($o in @('ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'PACGATE_API_TOKEN')) { [void]$optional.Add($o) }
-# Optional because compose gives them a literal default (PUBLIC_WEB_URL etc are
-# set inline, not from .env), or because the service is not enabled locally.
-foreach ($o in @('SMTP_USERNAME', 'SMTP_PASSWORD', 'AUTH_EMAIL_FROM', 'AUTH_SIGNING_JWK', 'AUTH_CLIENT_SECRET', 'AUTH_TOKEN_SECRET', 'PORTAL_SESSION_SECRET', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER')) { [void]$optional.Add($o) }
+# CORRECTED 2026-10-03. This block used to hardcode NINE variables as optional:
+#
+#   SMTP_USERNAME SMTP_PASSWORD AUTH_EMAIL_FROM AUTH_SIGNING_JWK AUTH_CLIENT_SECRET
+#   AUTH_TOKEN_SECRET PORTAL_SESSION_SECRET OPENVIKING_ACCOUNT OPENVIKING_USER
+#
+# which made them invisible to `$missing` and let this script report
+# "the generated .env is complete - missing: 0" while all nine were in fact
+# absent from the .env that setup-qm.ps1 generates. That is a check that cannot
+# fail: it reported coverage while suppressing real requirements.
+#
+# The justification given was "the service is not enabled locally" / "compose
+# gives them a literal default". Both are false for these nine - each appears in
+# compose.qm.yaml as a BARE `${VAR}` with no default, so compose substitutes an
+# EMPTY string. QM-BRINGUP-AUDIT-2026-09-21.md separately records that email
+# transport is MANDATORY.
+#
+# The rule now: a variable is optional ONLY if compose gives it a default via
+# `${VAR:-...}` (derived above) or it is a known third-party key. Never by name
+# allowlist - an allowlist encodes the assumption it is meant to test.
+#
+# These nine are now correctly REPORTED. They are still genuinely OPEN WORK: the
+# right long-term fix is for setup-qm.ps1 to generate the self-issuable ones
+# (the AUTH_*/PORTAL_* secrets) and prompt for the operator's SMTP values, so the
+# reported gap closes at the source rather than at the checker.
 
 Write-Output '=== 2. Variables the deployment requires but setup-qm.ps1 does NOT write ==='
 $missing = @($required | Where-Object { $generated -notcontains $_ -and $optional -notcontains $_ } | Sort-Object)
