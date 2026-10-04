@@ -80,6 +80,53 @@ container, which is why a pull for it can never succeed.
 5. **The Dockerfile comment calls the image "published**", which reads as a
    working artefact rather than "nothing publishes this".
 
+## STATUS 2026-10-04: the pin is fixed; the LANE IS STILL BROKEN. Read this first.
+
+The image is now published and pinned (`ghcr.io/jzkk720/pacgate-sandboxes@sha256:d9645e9c…`),
+the config and both compose copies agree, and the running core carries the new
+reference. **But the sandbox lane has still never executed, and cannot yet.**
+
+Measured state of the four links in the chain:
+
+| Link | State |
+|---|---|
+| core holds the published pin | **YES** |
+| image anonymously pullable | **NO** — `403`, package is PRIVATE |
+| core holds docker credentials | **NO** — no `/root/.docker/config.json` |
+| core can reach the docker daemon | **NO** — no socket, no `DOCKER_HOST`, no CLI |
+| **=> can core boot a sandbox?** | **NO** |
+
+And the empirical confirmation that no configuration has ever worked here: the
+core's `/data` volume is **empty** — no run artifacts, no sandbox traces, nothing.
+
+### A mechanism question this audit could not settle
+
+The config declares `"target": "docker"`, and the CLI documents that target as
+*"docker runs local containers"*. Yet the core has **no docker socket**, no
+`DOCKER_HOST`, and no docker CLI, and `compose.qm.yaml` mounts none. So whatever
+`SANDBOX_BACKEND=local` means in the core, it is **not** "core shells out to
+`docker run`" — that could never have worked on this box. What actually launches
+the sandbox is **not established**, and the CLI carries no socket reference.
+
+This matters because it decides which fix is correct:
+
+- if core is *supposed* to have a socket, the missing mount is the real defect and
+  publishing the image was necessary but not sufficient; or
+- if some other launcher is involved, the image reference may not even be what it
+  consumes.
+
+**Do not treat this as understood.** It needs the core's own source or docs, or a
+run with debug logging, before anyone claims the lane works.
+
+### What is still required for the lane to work
+
+1. **Flip the package to PUBLIC** (manual UI step; the API 404s for a personal
+   account). Without this no client — and no core without credentials — can pull.
+2. **Establish how the sandbox is launched** (above), and mount what it needs.
+3. **An end-to-end test that actually starts a sandbox** and runs one tool in it.
+   None exists. Everything green today is green without ever exercising this lane,
+   which is exactly how it got to this state.
+
 ## Why it matters
 
 The sandbox is where the co-working agent's tools execute. On a new machine the
