@@ -19,11 +19,36 @@ branch, clean tree). Verified by count, not by assumption:
 | workspace workflows | `pacgate-ai/workflows/` | **15 files** |
 | prompt templates | `docs/prompt-templates/` | **1 file** |
 
-**"222 workflows" is not 222 files.** Each YAML holds many entries — the 15
-tracked files contain **220** of them (the remainder are built-ins). Summed
-per-file to confirm rather than inferred: `litigation_extra` 49,
-`compliance_extra` 28, `fund_extra` 27, `nonlitigation_extra` 25,
-`daily_general` 24, and 10 more.
+**"222 workflows" is not 222 files — it is 220 YAML entries plus 2 code-defined
+built-ins.** Verified end to end rather than asserted:
+
+1. Each YAML is a **list of workflow objects**, one per top-level `- id:` entry.
+   Counting those unique IDs gives **220**:
+
+   ```
+   litigation_extra 49   compliance_extra 28   fund_extra 27
+   nonlitigation_extra 25   daily_general 24   compliance_specialized 10
+   archive_collection 10   litigation 9   banking_general 8   fund_lawyer 6
+   capital_markets 5   contract_review 5   investment_financing 5
+   ma_due_diligence 5   compliance_corporate 4
+   ```
+
+2. The live API serves **222**. Diffing the served IDs against the YAML IDs leaves
+   exactly two, which no YAML defines:
+
+   ```
+   00000000-0000-0000-0000-000000000101  Contract Review      contract_review
+   00000000-0000-0000-0000-000000000102  Contract Comparison  contract_review
+   ```
+
+   These are **built into the Rust code**, not shipped as files. So the served
+   library = 220 from the bind mount + 2 compiled in.
+
+My first phrasing called them "built-ins" without checking, which was a guess that
+happened to be right. The diff above is what actually establishes it.
+
+**Why this matters for clearing:** the two code-defined ones live in the
+`pacgate-api` image, and the 220 live in git. Neither lives only here.
 
 They are **bind-mounted**, not baked into a volume:
 
