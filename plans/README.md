@@ -38,6 +38,7 @@ delivery **and** release engineering.
 | 021 | Sanitizer agent + review panel | P1 | **DONE** — SOUL + provisioning + review panel in agent chat (2026-09-19) |
 | 022 | Review panel redesign (document identity + job outcome) | P2 | **DONE** — DESIGN.md + doc-identity panel + job outcome via thread metadata (2026-09-19) |
 | 023 | deer-flow 2.1 upgrade (prepare now, execute at GA) | P2 | **PREP IN PROGRESS** — patch stack inventoried (386 lines our delta vs 7,153 upstream); blocked on upstream `v2.1.0` GA. Evidence: `deploy/DEER-FLOW-UPSTREAM-DRIFT-ASSESSMENT-2026-09-21.md` |
+| 024 | v0.1.22 structure audit + full-stack deployment readiness (api+mcp, deer-flow, qm, OpenViking memory lane) | P1 | **EXECUTED 2026-10-04** — core stack UP, smoke 17 pass/0 fail, all gates green, OpenViking round-trip + persistence proven; verdict: GO for core stack (after pwsh 7 prereq doc), NO-GO for qm (sandbox defect + base-image pull failures). See verdict section. **RE-AUDITED 2026-10-04 after upstream re-sync (`17a0ba6`):** sandbox image acquired, qm brought up, full magic-link auth E2E proven (allowlist negative + link delivery + redemption), smoke 18/0, all gates green, nomic-embed pulled. qm auth/web now GO; sandbox launch mechanism remains the sole qm blocker. See re-audit addendum |
 
 ### Plan 007 sub-documents
 
