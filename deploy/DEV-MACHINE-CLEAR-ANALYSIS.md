@@ -4,6 +4,55 @@
 **Question:** the new dev machine is pulling everything; can this box's containers,
 stacks and caches be cleared?
 
+## Is the code, automation and workflow library on this machine only? — NO
+
+Every one of these is **tracked in git and pushed** (0 unpushed commits on any
+branch, clean tree). Verified by count, not by assumption:
+
+| Asset | Where it lives | Tracked |
+|---|---|---|
+| `pacgate-api` source | `pacgate-ai/crates/pacgate-api` | **18 files** |
+| `pacgate-mcp` source | `deploy/pacgate-mcp` | **3 files** |
+| automation / gates / probes | `scripts/` | **92 files** |
+| CI workflow | `.github/workflows/` | **1 file** |
+| client-bundle workflows | `deploy/client-bundle/workflows/` | **15 files** |
+| workspace workflows | `pacgate-ai/workflows/` | **15 files** |
+| prompt templates | `docs/prompt-templates/` | **1 file** |
+
+**"222 workflows" is not 222 files.** Each YAML holds many entries — the 15
+tracked files contain **220** of them (the remainder are built-ins). Summed
+per-file to confirm rather than inferred: `litigation_extra` 49,
+`compliance_extra` 28, `fund_extra` 27, `nonlitigation_extra` 25,
+`daily_general` 24, and 10 more.
+
+They are **bind-mounted**, not baked into a volume:
+
+```
+deploy/client-bundle/workflows -> /app/workflows    (pacgate-api)
+```
+
+so a container wipe does not touch them; they come from the repo.
+
+### Also shipped inside the images, as well as in the repo
+
+`pacgate-api`'s image contains the same 15 workflow YAMLs at `/app/workflows`
+(checked: 15 present). So the library exists in **two** places — git and the GHCR
+image — and the mounted copy simply overrides the baked-in one. Neither is
+machine-local.
+
+### Two runtime files exist ONLY here, and are reproducible
+
+| File | Tracked? | Reproducible from |
+|---|---|---|
+| `deer-flow-extensions-config.json` | no — rendered | `…template.json` (tracked) |
+| `openviking/ov.conf` | no — rendered | `ov.conf.template` (tracked) |
+
+Both are rendered by `install.ps1` (the `$ovTemplate` / `$dfTemplate` paths), so
+they regenerate on a fresh install. `deer-flow-config.yaml` is tracked outright.
+
+**Net: nothing about the code, automation, workflows or templates is at risk.**
+The only true machine-local assets remain the two `.env` files below.
+
 ## Verdict
 
 **Containers and build cache: safe. Volumes: safe for the pacgate stacks, but do
