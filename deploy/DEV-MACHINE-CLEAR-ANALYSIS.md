@@ -1,6 +1,8 @@
 # Clearing this dev machine — what is safe to destroy, and what is not
 
 **Answered:** 2026-10-04, before any destructive command was run.
+**EXECUTED:** 2026-10-04, containers + images + build cache. Repo and `.env`
+deliberately retained. Results at the end of this file.
 **Question:** the new dev machine is pulling everything; can this box's containers,
 stacks and caches be cleared?
 
@@ -205,3 +207,61 @@ since no volume is reclaimable anyway.
 Whether the new machine's install actually succeeds. That is the live clean-clone
 proof and it is running now — it should complete BEFORE this box is cleared, so
 there is somewhere to compare against if it fails.
+
+---
+
+# EXECUTED 2026-10-04 — what was actually done
+
+Repo and `.env` were NOT touched. Only containers, images and build cache.
+
+## Commands run
+
+```powershell
+cd deploy/client-bundle ; docker compose -f compose.prod.yaml down   # no -v
+cd qm-pacgate            ; docker compose -f compose.qm.yaml   down   # no -v
+docker rm -f pacgate-test-postgres        # the orphan compose did not know
+docker rmi <8 explicit pacgate/qm image names/ids>
+docker builder prune -f   # x2
+```
+
+## Result, measured before and after
+
+| | Before | After | Freed |
+|---|---|---|---|
+| Containers | 31 | 15 | 16 |
+| Images | 38.86 GB | 20.46 GB | 18.4 GB |
+| Build cache | 20.53 GB | 967 MB | **19.6 GB** |
+| **Total** | | | **~38 GB** |
+
+## Verified, not assumed
+
+- **All 15 other projects still running** — hermes, odysseus, open-webui,
+  ai-memory, dockhand, neoway, cloudflare-tunnel, business-site, axiom, kedios.
+  Counted: 15 of 15.
+- **Both `.env` files survived**, hash-identical:
+  `60AD13E76F8D73F8` and `E392BEEE828261F2`.
+- **Repo clean**, no modifications.
+- **Zero pacgate/qm/deer-flow containers or images remain.**
+
+## The trap that was avoided
+
+`ghcr.io/jzkk720/hermes-agent` and `ghcr.io/jzkk720/odysseus` **share the jzkk720
+namespace but belong to OTHER projects**. Removing by namespace glob (`docker rmi
+ghcr.io/jzkk720/*`) would have destroyed hermes and odysseus. Every removal was by
+explicit name or image ID instead. That is the same reason `docker system prune`
+was never used.
+
+## Volumes intentionally left in place (~160 MB)
+
+`client-bundle_pacgate-db-data` (67 MB, the test matters), `qm-pacgate-pgdata`
+(74 MB), `client-bundle_paddleocr-models` (18 MB), `qm-pacgate-coredata` (0 B),
+`pacgate-ner-models` (0 B).
+
+Kept because they are small and this machine may be used again. qm's two are
+`external: true`, so even `down -v` would not have removed them.
+
+**One consequence if the DB volume is deleted later while `.env` is kept:**
+`PACGATE_MATTER_ID` would dangle. Investigated — `Invoke-MatterProvision` verifies
+the id and provisions a real matter if it does not resolve, so it self-heals on the
+next install. Self-healing, not harmless: a *missing* matter id is the documented
+trip-wire for deer-flow falling back to writing UNSANITIZED memory to disk.
