@@ -69,7 +69,18 @@
 
   // The Fly app agents execute in. The core boots the immutable sandbox image
   // recorded by `qm sandbox publish`.
-  "sandbox": { "image": "localhost:5000/pacgate-sandboxes@sha256:207a779d0d40ba0bc46c18a4139b936a5ce00dd825f0d8f389e547d1a9991ffc", "baseImage": "ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873",
+  //
+  // REPINNED 2026-10-04. This was `localhost:5000/pacgate-sandboxes@sha256:207a779d…`
+  // - a reference to a registry that nothing provisions, on any machine. A client
+  // could never resolve it, so the agent's sandbox could never start. Published to
+  // the namespace the other five qm images already use, and pinned to the digest
+  // `qm sandbox publish` itself recorded.
+  //
+  // NOTE: the package must be PUBLIC for a client to pull it; GHCR makes new
+  // packages private by default and the visibility API returns 404 for a
+  // personal account, so this is a manual UI step. See
+  // deploy/DEFECT-qm-sandbox-image-unobtainable.md.
+  "sandbox": { "sourceFingerprint": "38e062ec7c5cb8e68208382914e8d9fae6f82706ea718ade2421104510494305", "image": "ghcr.io/jzkk720/pacgate-sandboxes@sha256:d9645e9ca54e0265feae33cb11c8c66b573f8e3069749453bc41668f61b679b6", "baseImage": "ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873",
     "app": "pacgate-sandboxes",
     "env": {
       "PACGATE_API_URL": "http://host.docker.internal:8089/pacgate",

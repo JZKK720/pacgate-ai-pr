@@ -29,9 +29,49 @@
 # it for the same class of "environment is wrong" error - no compose files found,
 # no docs found - so the reading is consistent, and neither loses coverage.
 [CmdletBinding()]
-param()
+param(
+    # The suite needs an `ocr-service:local` image because several gates build their
+    # PDF fixtures INSIDE it (it is the container that has PIL). Nothing ever built
+    # that tag - it is a hand-made leftover on machines where it happens to exist -
+    # so on any other machine those gates exit 2 (CANNOT CHECK) and are silently
+    # skipped while the suite still reports success. That is the failure mode this
+    # header warns about: coverage that quietly disappears.
+    #
+    # So the suite CREATES it from the published image, which is the same code and
+    # is guaranteed present for the release under test. Tagging an already-pulled
+    # image is free. Pass -SkipOcrTag to opt out.
+    [switch]$SkipOcrTag
+)
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
+
+# Ensure `ocr-service:local` exists, derived from the workspace version rather than
+# hardcoded, so it follows the release.
+if (-not $SkipOcrTag) {
+    $haveLocal = @(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains 'ocr-service:local'
+    if ($haveLocal) {
+        Write-Host 'ocr-service:local present' -ForegroundColor DarkGray
+    }
+    else {
+        $toml = 'pacgate-ai/Cargo.toml'
+        $ver  = if (Test-Path $toml) {
+            (Select-String -Path $toml -Pattern '^version\s*=\s*"([0-9.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+        } else { '' }
+        $ref = "ghcr.io/jzkk720/ocr-service:$ver"
+        if (-not $ver) {
+            Write-Host 'WARN: cannot derive the version; fixture-dependent gates may CANNOT CHECK.' -ForegroundColor Yellow
+        }
+        elseif (-not (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains $ref)) {
+            Write-Host "pulling $ref (needed by the fixture-dependent gates)..." -ForegroundColor DarkGray
+            docker pull $ref 2>&1 | Out-Null
+        }
+        if ($ver -and (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains $ref)) {
+            docker tag $ref ocr-service:local 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "ocr-service:local tagged from $ref" -ForegroundColor DarkGray }
+            else { Write-Host 'WARN: could not create ocr-service:local.' -ForegroundColor Yellow }
+        }
+    }
+}
 
 $gates = @(
     'scripts/test-install-render.ps1'

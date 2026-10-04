@@ -45,6 +45,12 @@ deploy/client-bundle/deer-flow-extensions-config.json
 # deploy/client-bundle/*.bak.* or it would hide genuine backup files elsewhere.
 deploy/client-bundle/deer-flow-extensions-config.json.bak.*
 deploy/client-bundle/openviking/ov.conf.bak.*
+# `qm-sandbox-fingerprint.ps1 -Write` backs the qm config up before repinning.
+# This is the TRACKED source copy (deploy/qm-pacgate), so it is not covered by the
+# two rules above - which only name deploy/client-bundle paths. Same trap: an
+# untracked .bak in the repo dir makes `git status --porcelain` non-empty, and the
+# next `install.ps1 -Update` then silently skips the repo refresh.
+deploy/qm-pacgate/qm.config.jsonc.bak.*
 
 # Deer-flow admin login credentials (per-machine, created at runtime in the
 # container's local SQLite DB; NOT in .env). Never commit.
