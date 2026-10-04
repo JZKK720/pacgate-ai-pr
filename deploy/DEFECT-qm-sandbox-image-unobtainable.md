@@ -22,11 +22,17 @@ were wrong, and the real mechanism matters because it determines the fix:
 
 - **The digest is self-consistent.** The `sandbox/Dockerfile`'s `FROM` is
   `ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6…`. A digest-pinned `FROM`
-  makes the build reproducible, so rebuilding the same context yields the same
-  layer digest. Nothing was lost; it was never published anywhere.
-- **The mechanism is `localhost:5000`, not the digest.** The build is correct and
-  the pin is correct. The only wrong part is the repository prefix: it names a
-  registry that does not exist.
+  makes the *layers* reproducible. Nothing was lost; it was never published
+  anywhere.
+  *One nuance added 2026-10-04, because I first wrote "so rebuilding yields the
+  same digest" and that is not true:* the **layers** are reproducible, but the
+  **manifest-list digest is not** — two consecutive `qm sandbox build` runs from
+  unchanged source produced `e2dd07b0…` then `9283f270…`. Cause and consequence in
+  the fix section below.
+- **The mechanism is `localhost:5000`, not the digest.** The pin is correct *in
+  form*; the only wrong part is the repository prefix, which names a registry that
+  does not exist. (The value pinned is also one no build reproduces, but that is a
+  second, independent defect — see the fix section.)
 
 ## Measured evidence (2026-10-04)
 
@@ -80,39 +86,100 @@ The sandbox is where the co-working agent's tools execute. On a new machine the
 third runtime starts, answers HTTP, and cannot run the agent. Every signal says
 success, so the failure surfaces to a user mid-task rather than at install.
 
-## The fix — designed, not yet applied
+## The fix — designed and measured 2026-10-04, NOT applied
 
-**Publish the layer to the namespace already in use, and pin THAT.** Rationale,
-in the order the constraints actually bind:
+Two options were tested against the actual validator and daemon rather than
+reasoned about. **The measurements changed the design**, so read all of this
+before picking one.
 
-- The five other qm images are already public at `ghcr.io/yc-software/qm/*`, so
-  no new namespace, credential class, or reachability question is introduced.
-- The pin survives: `isDigestPinned` accepts any `repository@sha256:<64 hex>`, so
-  the immutability the validator enforces is kept. A purely local reference
-  cannot satisfy it — after a local build the image carries **no `RepoDigest` at
-  all** (verified: `docker image inspect pacgate-sandbox:local` returns none),
-  because a registry assignation is what creates one.
-- `publish --app` resolves through `imageRepository` **only when the value
-  contains a `/`**:
-  `opts.app.includes("/") ? imageRepository(opts.app) : flySandboxRepository(opts.app)`.
-  So `--app ghcr.io/jzkk720/pacgate-sandboxes` targets GHCR, and
-  `authenticateFlyRegistry` returns early because the repository is not
-  `registry.fly.io`. No Fly dependency is triggered.
-- A GHCR login is required to **push**, and is **not present on this machine**
-  (`~/.docker/config.json` has no `auths`). So publishing is a provisioning
-  prerequisite, not something the installer can assume.
+### What was measured
 
-Then: repin both `qm.config.jsonc:72` and the `compose.qm.yaml:57` fallback to the
-published digest, and record the source fingerprint so
-`qm-sandbox-fingerprint.ps1` stops reporting "no fingerprint recorded".
+| Question | Measured answer |
+|---|---|
+| Does a locally built image get a `RepoDigest`? | **Yes** — `pacgate-sandbox@sha256:e2dd07b0…` |
+| Does that satisfy `isDigestPinned` (`/@sha256:[0-9a-f]{64}$/`)? | **Yes** |
+| Can Docker boot from it with no registry? | **Yes** — `docker run pacgate-sandbox@sha256:…` → `boot-ok` |
+| **Is the `build` digest reproducible from unchanged source?** | **NO** — two consecutive builds gave `e2dd07b0…` then `9283f270…` |
+
+### Why the digest moves — the actual root cause of the instability
+
+`commands/sandbox.js`, build path:
+
+```js
+const args = ["buildx","build","--platform",SANDBOX_RUNTIME_PLATFORM,
+              "--load","-t",tag,"--file",prepared.dockerfilePath,prepared.sandboxDir];
+```
+
+publish path:
+
+```js
+const args = ["buildx","build","--platform",SANDBOX_RUNTIME_PLATFORM,
+              "--provenance=false","--push", ...];
+```
+
+**`build` does not pass `--provenance=false`; `publish` does.** Modern buildx
+attaches an attestation manifest carrying a **timestamp**, so every `build`
+produces a different manifest-list digest even when every layer is byte-identical.
+`publish` suppresses the attestation, which is why its digest is the stable,
+pinnable one.
+
+This is why `qm sandbox build` alone can never satisfy the config — it is not
+just that it writes no config (see below); its output digest is *inherently*
+unstable, so there would be nothing stable to write.
+
+### Option A — publish and pin (the documented path)
+
+`publish` pushes the layer to a registry and writes the digest-pinned reference
+into `qm.config.jsonc` itself (`updateConfigSandbox`, `sandbox.js:409`). That is
+exactly what the config's comment says produced the current value.
+
+- **Where it would push today:** `registry.fly.io/pacgate-sandboxes:latest`. The
+  dry-run resolves the repository from `sandbox.app` via `flySandboxRepository`,
+  and `authenticateFlyRegistry` would demand a `FLY_SANDBOX_API_TOKEN`. So
+  publishing is wired to Fly, and Fly is not part of this deployment.
+- **The workaround is clean:** `--app` resolves through `imageRepository` **only
+  when the value contains a `/`**
+  (`opts.app.includes("/") ? imageRepository(opts.app) : flySandboxRepository(opts.app)`).
+  Verified: `--app ghcr.io/jzkk720/pacgate-sandboxes --dry-run` targets
+  `ghcr.io/jzkk720/pacgate-sandboxes:latest`, and the Fly auth path is skipped
+  because the repository is not `registry.fly.io`. The other five qm images are
+  already public at `ghcr.io/yc-software/qm/*`, so no new namespace or
+  reachability question is introduced.
+- **Requires:** a GHCR login to push. **Not present here** — `~/.docker/config.json`
+  has no `auths`. So it is a provisioning prerequisite, not something the
+  installer can assume.
+
+### Option B — do not pin a digest at all (rejected)
+
+An earlier draft of this file proposed a local `name@sha256:` reference on the
+grounds that "a locally built image carries no RepoDigest at all". **That was
+wrong** — I measured one. But Option B still fails, for a better reason: the
+`build` digest is not reproducible (above), so a local pin would go stale on the
+very next rebuild and the fingerprint gate would report drift forever. And
+`isDigestPinned` is only consulted for *format*; `config.js:98` still exports
+`FLY_BASE_IMAGE = sb.image`, so whatever string is written there is what the core
+tries to boot. A local reference only works if the build and the pin are produced
+by the same step and the digest never moves — which `--provenance=false` would
+give, but that is `publish`'s path anyway.
+
+### So the fix is Option A, with one extra requirement
+
+1. Publish with `--app ghcr.io/jzkk720/pacgate-sandboxes` (needs a GHCR login).
+2. It writes the new digest-pinned reference into `qm.config.jsonc` aut.
+3. Repin the `compose.qm.yaml:57` fallback to the same value, since that fallback
+   is what the core receives when `.env` omits `FLY_BASE_IMAGE` — and the
+   generated `qm-pacgate/.env` does omit it.
+4. Record the source fingerprint so `qm-sandbox-fingerprint.ps1` stops reporting
+   "no fingerprint recorded".
+5. Make `setup-qm.ps1` stop printing an unconditional `[OK] Sandbox built`: the
+   build is not what the core boots, so reporting it as success is the mask.
 
 ## Why not fixed here
 
-It needs a registry login this machine does not have, and it changes what client
-machines pull — which per this repo's rule must be proven on a clean clone.
-Designing it blind and shipping it would be the guess-and-check these notes
-repeatedly warn against. Recorded with the full mechanism so the next attempt
-starts from the truth rather than the first version's wrong story.
+Step 1 needs a registry login this machine does not have, and the whole change
+alters what client machines pull, which per this repo's rule must be proven on a
+clean clone. The mechanism is now fully traced and the option space measured, so
+the next attempt can execute rather than re-derive.
 
 ## Related
 
@@ -123,3 +190,5 @@ starts from the truth rather than the first version's wrong story.
 - `deploy/AIPC-UPDATE-GAP-ANALYSIS.md:53` — lists this among the 9-of-16 bind
   mounts needing human action.
 - `deploy/client-bundle/setup-qm.ps1:371` — the `qm sandbox build` call.
+- `deploy/INCIDENT-2026-10-04-qm-sandbox-env-printed.md` — while probing this
+  defect I printed the sandbox's secret set. Third incident of that class.
