@@ -82,9 +82,28 @@ container, which is why a pull for it can never succeed.
 
 ## STATUS 2026-10-04: the pin is fixed; the LANE IS STILL BROKEN. Read this first.
 
-The image is now published and pinned (`ghcr.io/jzkk720/pacgate-sandboxes@sha256:d9645e9c…`),
-the config and both compose copies agree, and the running core carries the new
-reference. **But the sandbox lane has still never executed, and cannot yet.**
+### THE PRIVATE PACKAGE DOES NOT BLOCK THE STACK. (Correction to my own earlier claim.)
+
+I described `pacgate-sandboxes` being private as the thing blocking a client. That
+was **wrong**, and it is easy to prove:
+
+```
+docker compose -f compose.prod.yaml config --images
+docker compose -f compose.qm.yaml   config --images
+```
+
+`pacgate-sandboxes` appears in **neither** list. It is **not a compose service** -
+it is only a *value* inside the `FLY_BASE_IMAGE` environment variable that the qm
+core reads at runtime. Compose therefore never pulls it, and a private package
+cannot stop `docker compose pull` or `up -d`.
+
+Consequence: **a new machine can pull and run the full stack with the package
+still private.** All 15 images the two compose files reference are public. The
+private package blocks one runtime sub-feature (the agent sandbox), which is
+independently broken anyway (next section).
+
+I conflated "an image the product needs" with "an image compose pulls". The
+`--images` output is the authority on the latter.
 
 Measured state of the four links in the chain:
 
@@ -95,6 +114,28 @@ Measured state of the four links in the chain:
 | core holds docker credentials | **NO** — no `/root/.docker/config.json` |
 | core can reach the docker daemon | **NO** — no socket, no `DOCKER_HOST`, no CLI |
 | **=> can core boot a sandbox?** | **NO** |
+
+### Flipping the package to public — UI only, verified
+
+The REST API **reads** the package fine but cannot write its visibility:
+
+| Request | Result |
+|---|---|
+| `GET /user/packages/container/pacgate-sandboxes` | **200**, `"visibility": "private"` |
+| `PATCH` same URL with `{"visibility":"public"}` | **404 Not Found** |
+
+So the read route exists and the write route does not — this is not a malformed
+request or a missing scope (the token has `write:packages`). It is a UI action:
+
+```
+https://github.com/users/JZKK720/packages/container/pacgate-sandboxes
+  -> Package settings
+  -> Danger Zone -> Change visibility
+  -> Public
+```
+
+Note the owner is the **user account JZKK720**, not an organization, so the
+`/users/...` path is the correct one.
 
 And the empirical confirmation that no configuration has ever worked here: the
 core's `/data` volume is **empty** — no run artifacts, no sandbox traces, nothing.
