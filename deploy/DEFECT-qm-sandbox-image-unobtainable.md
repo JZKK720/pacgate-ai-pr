@@ -140,24 +140,52 @@ Note the owner is the **user account JZKK720**, not an organization, so the
 And the empirical confirmation that no configuration has ever worked here: the
 core's `/data` volume is **empty** — no run artifacts, no sandbox traces, nothing.
 
-### A mechanism question this audit could not settle
+### SOLVED: how the sandbox is launched — it is NOT wired at all
 
-The config declares `"target": "docker"`, and the CLI documents that target as
-*"docker runs local containers"*. Yet the core has **no docker socket**, no
-`DOCKER_HOST`, and no docker CLI, and `compose.qm.yaml` mounts none. So whatever
-`SANDBOX_BACKEND=local` means in the core, it is **not** "core shells out to
-`docker run`" — that could never have worked on this box. What actually launches
-the sandbox is **not established**, and the CLI carries no socket reference.
+I recorded this as unresolved. **It is resolved, and the answer was already
+written down in this repo** — `deploy/handbooks/qm-openviking-pacgate-handbook.zh.md`
+§7.4. I should have searched the handbooks before calling it unknown.
 
-This matters because it decides which fix is correct:
+The handbook states it plainly: `SANDBOX_BACKEND=local` makes the qm core run the
+`docker` CLI **inside its own container**, but
 
-- if core is *supposed* to have a socket, the missing mount is the real defect and
-  publishing the image was necessary but not sufficient; or
-- if some other launcher is involved, the image reference may not even be what it
-  consumes.
+- qm's docker backend **does not mount `docker.sock`**, and
+- the core image is Alpine and has **no `docker` binary**,
 
-**Do not treat this as understood.** It needs the core's own source or docs, or a
-run with debug logging, before anyone claims the lane works.
+so the preflight necessarily fails. The handbook's own verdict: **"目前未接线" —
+"currently not wired"**, with the fix being either to mount `docker.sock` *and*
+install the docker CLI, or to switch the backend (`sprites` / `aws`).
+
+This is independently confirmed by my own measurements above: no socket, no
+`DOCKER_HOST`, no CLI in the core.
+
+It also means the runtime error a user sees is **misleading** — it says "requires a
+running Docker daemon (is Docker Desktop running?)" while Docker is demonstrably
+running. The problem is the container has no way to reach it.
+
+So the missing socket **is** the real defect (one of two required changes), and
+publishing the image was **necessary but not sufficient**. My earlier
+"unresolved, do not assume the socket" note was over-cautious: the socket is
+confirmed by both the handbook and my measurements.
+
+### §7.5 of that handbook is now stale
+
+It documents the symptom `local sandbox image ... not found` and recommends
+`npm exec qm -- sandbox build` as the fix. That advice is superseded: a *build*
+produces an unstable digest (see the `--provenance=false` finding) and writes no
+config. The image is now published to GHCR and pinned there. The deeper point —
+the registry was unreachable — is what was actually wrong.
+
+### What is still required for the lane to work
+
+1. **Flip the package to PUBLIC** (manual UI step; the API 404s for a personal
+   account). Without this no client — and no core without credentials — can pull.
+2. **Wire the docker backend**: mount `docker.sock` into the core container AND
+   install a docker CLI in it, *or* switch to `sprites` / `aws`. Neither is done.
+   This is a code change, not a config toggle.
+3. **An end-to-end test that actually starts a sandbox** and runs one tool in it.
+   None exists. Everything green today is green without ever exercising this lane,
+   which is exactly how it got to this state.
 
 ### What is still required for the lane to work
 
