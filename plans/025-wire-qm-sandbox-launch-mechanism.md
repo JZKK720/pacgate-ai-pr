@@ -127,6 +127,33 @@ first sandbox tool call — recorded as the follow-up task below.
 5. **Clean-clone proof** of the new compose + bootstrap steps (repo rule:
    a fresh clone is the only valid test for install-path changes).
 
+## Follow-ups EXECUTED — same day (2026-10-05, commit `a5a6d41`)
+
+| Follow-up | How it was closed | Evidence |
+|---|---|---|
+| 2 (CRLF + rebuild/repin) | `.gitattributes` LF rules for `sandbox/tools/**` + `tasks/**` (+ Dockerfile belt-and-braces CR strip); working-tree bytes normalized (7 files); full `sandbox publish --app ghcr.io/jzkk720/pacgate-sandboxes` re-run → "**published and recorded** sha256:52e867fc…" — native-LF launcher verified in the new image (`od': `bash\n`) | new digest `52e867fcb195f07c5ff32fc78e8ac3f35d000ebd5f34d6c8d792c602f6eae65b` |
+| 1 (bridge auto-provision) | `setup-qm.ps1` step 8b: exists-check via `GET /api/auth/users`, creates via `POST /api/auth/users` (attorney role), idempotent, values never echoed | live run earlier in session: bridge 401 → created → bridge 200 with real data |
+| R3 fingerprint gap | `qm-sandbox-fingerprint.ps1 -Write` then `-Check`: **source fingerprint `429e4a96…` matches pinned `52e867fc…`** | `[OK] Sandbox source matches the recorded fingerprint` |
+| 4-way pin sync | All four digest holders updated in step: `qm.config.jsonc` (auto-repin by publish) + staged copy + **both compose `FLY_BASE_IMAGE` fallbacks** | verified by replace; core recreated on the new pin (`printenv FLY_BASE_IMAGE` = 52e867fc) |
+| **Full native E2E re-proof** | Through the RECREATED core: launcher runs natively (no CR workaround), bridge authenticates as the bridge account, live `workflow-categories` data returns | first-10-lines evidence in transcript |
+
+### One environment trap recorded (401-probe unreliability on this box)
+
+Anonymous GHCR probes from this machine now 401 even for **known-public**
+images (yc-software control 401'd too) — the bare-HEAD shape is no longer a
+valid public check here; the docstring in `check-ghcr-anon.py` documents the
+correct flow (anonymous token → tags list → error code). The decisive
+client-reality proof remains **pull with an empty `DOCKER_CONFIG`**, which was
+performed: the image was deleted locally and re-pulled anonymously,
+successfully (same digest, `52e867fc` chain re-verified on GHCR).
+
+### Remaining (unchanged, recorded)
+
+- Follow-up 3 (vendored CLI committed vs fetched) — open, low urgency.
+- Follow-up 4 (in-sandbox agent-loop E2E via a real qm session) — the last
+  verification mile; needs the deer-flow-style human/agent session.
+- Follow-up 5 (clean-clone proof) — required before the client rollout claim.
+
 ## Related
 
 - `deploy/DEFECT-qm-sandbox-image-unobtainable.md` — the three wiring
