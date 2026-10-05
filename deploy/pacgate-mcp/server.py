@@ -320,6 +320,21 @@ def pacgate_list_matters() -> str:
     return json.dumps(results, ensure_ascii=False, indent=2)
 
 
+def _default_matter_id(matter_id: str | None) -> str | None:
+    """Resolve the matter id: explicit arg wins, else PACGATE_MATTER_ID env.
+
+    Models occasionally serialize an omitted optional as the literal strings
+    "None" or "null" instead of leaving it out (observed live 2026-10-05:
+    pacgate_get_workspace got matter_id="None" and the API answered
+    "invalid matter id: invalid character; found `N` at 0"). Treat those and
+    empty strings as unset so the env default still applies.
+    """
+    if matter_id and matter_id.strip().lower() not in ("none", "null", ""):
+        return matter_id.strip()
+    env_value = os.environ.get("PACGATE_MATTER_ID", "").strip()
+    return env_value or None
+
+
 @mcp.tool()
 def pacgate_read_memory(matter_id: str | None = None) -> str:
     """Read a matter's working memory (procedural notes about the matter).
@@ -333,7 +348,7 @@ def pacgate_read_memory(matter_id: str | None = None) -> str:
         matter_id: The UUID of the matter. Defaults to PACGATE_MATTER_ID from
             the environment (the deployment's scoped matter).
     """
-    mid = matter_id or os.environ.get("PACGATE_MATTER_ID")
+    mid = _default_matter_id(matter_id)
     if not mid:
         return json.dumps({"error": "no matter_id given and PACGATE_MATTER_ID is not set"})
     client = get_client()
@@ -360,7 +375,7 @@ def pacgate_write_memory(
         if_match: The revision previously read via pacgate_read_memory,
             sent as If-Match. Omit for an unconditional first write.
     """
-    mid = matter_id or os.environ.get("PACGATE_MATTER_ID")
+    mid = _default_matter_id(matter_id)
     if not mid:
         return json.dumps({"error": "no matter_id given and PACGATE_MATTER_ID is not set"})
     client = get_client()
@@ -410,7 +425,7 @@ def pacgate_get_workspace(matter_id: str | None = None) -> str:
         matter_id: The UUID of the matter. Defaults to PACGATE_MATTER_ID from
             the environment (the deployment's scoped matter).
     """
-    mid = matter_id or os.environ.get("PACGATE_MATTER_ID")
+    mid = _default_matter_id(matter_id)
     if not mid:
         return json.dumps({"error": "no matter_id given and PACGATE_MATTER_ID is not set"})
     client = get_client()
