@@ -22,6 +22,12 @@ services:
     # migration. Without this, compose auto-names it qm-pacgate-core-1.
     container_name: qm-pacgate-core
     user: node
+    # docker access for the socket mount (plan 025, measured 2026-10-05): on
+    # Docker Desktop the socket is root:root mode 660 and there is no docker
+    # gid to join (unlike a Linux host), so access is granted by joining the
+    # root group (gid 0). The node user's other groups are untouched.
+    group_add:
+      - "0"
     depends_on:
       - pg
     environment:
@@ -84,6 +90,19 @@ services:
       # configured Ollama model (glm-5.3-flash:cloud) at MODEL_BASE_URL instead
       # of the hardcoded api.openai.com catalog entry. Durable across recreation.
       - ./patch/pi-models.ts:/app/src/model/pi-models.ts:ro
+      # plan 025: the SANDBOX_BACKEND=local launch path shells the docker CLI
+      # inside this container (handbook §7.4), which upstream never wired: the
+      # Alpine core ships no docker binary and no socket. Provide BOTH halves:
+      # (1) an official static CLI, extracted from
+      # https://download.docker.com/linux/static/stable/x86_64/docker-28.5.2.tgz
+      # (client binary ONLY - dockerd/runc deliberately NOT mounted, this
+      # container must never run a daemon), and (2) the host daemon socket.
+      # RW socket = host-root-equivalent; acceptable on the single-firm AIPC
+      # deployment model where the firm owns the machine, NOT for shared
+      # multi-tenant hosts. First socket mount in this repo - decision recorded
+      # in plans/025.
+      - ./patch/docker-cli/docker:/usr/local/bin/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       - qm-pacgate-coredata:/data
     ports:
       - "${QM_CORE_PORT:-8180}:8080"
