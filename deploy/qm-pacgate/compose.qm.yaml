@@ -65,7 +65,7 @@ services:
       # not exist on any machine, so this default handed the core an image it
       # could never boot. This is a SECOND hardcoded copy of a value that
       # qm.config.jsonc also owns - keep the two in step when repinning.
-      FLY_BASE_IMAGE: ${FLY_BASE_IMAGE:-ghcr.io/jzkk720/pacgate-sandboxes@sha256:d9645e9ca54e0265feae33cb11c8c66b573f8e3069749453bc41668f61b679b6}
+      FLY_BASE_IMAGE: ${FLY_BASE_IMAGE:-ghcr.io/jzkk720/pacgate-sandboxes@sha256:52e867fcb195f07c5ff32fc78e8ac3f35d000ebd5f34d6c8d792c602f6eae65b}
       FLY_SANDBOX_APP_NAME: pacgate-sandboxes
       SANDBOX_BACKEND: local
       DEPLOYMENT_LAYER: /layer

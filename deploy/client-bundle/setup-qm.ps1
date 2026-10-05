@@ -375,6 +375,60 @@ PACGATE_API_PASSWORD=$plainPassword
     }
     Write-Host "[OK] Sandbox built" -ForegroundColor Green
 
+    # 8b. Ensure the Pacgate bridge account exists in pacgate-api.
+    #
+    # WHY THIS EXISTS (plan 025, found live 2026-10-04/05): with open
+    # registration closed (0.1.22), nothing mints the bridge account on a fresh
+    # DB - the first sandbox tool call then 401s with "invalid email or
+    # password" even though qm's .env carries valid-shaped credentials. The
+    # account is created idempotently through the documented admin route
+    # (POST /api/auth/users), authenticated as the deployment admin. The
+    # password sent is the SAME one this script writes into qm's .env.
+    Write-Host "`nEnsuring the Pacgate bridge account exists (via admin /api/auth/users)..." -ForegroundColor Cyan
+    $adminLoginBody = Join-Path $env:TEMP "qm-admin-login-$PID.json"
+    $bundleEnv = Join-Path $PSScriptRoot ".env"
+    $adminPassword = $null
+    foreach ($line in (Get-Content $bundleEnv -ErrorAction SilentlyContinue)) {
+        if ($line -match '^PACGATE_API_PASSWORD=(.+)$') { $adminPassword = $Matches[1].Trim() }
+        if ($line -match '^PACGATE_API_EMAIL=(.+)$') { $adminEmailEnv = $Matches[1].Trim() }
+    }
+    if (-not $adminPassword -or -not $adminEmailEnv) {
+        Write-Host "[WARN] bundle .env lacks PACGATE_API_*; skipping bridge account check." -ForegroundColor Yellow
+        Write-Host "       Provision the bridge account manually via POST /api/auth/users." -ForegroundColor Yellow
+    }
+    else {
+        [System.IO.File]::WriteAllText($adminLoginBody, (@{ email = $adminEmailEnv; password = $adminPassword } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+        $loginResp = $null
+        try { $loginResp = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $adminLoginBody -TimeoutSec 20 } catch { }
+        Remove-Item $adminLoginBody -Force -ErrorAction SilentlyContinue
+        if (-not $loginResp -or -not $loginResp.token) {
+            Write-Host "[WARN] could not log in as the bundle admin ($adminEmailEnv); skipping bridge account check." -ForegroundColor Yellow
+        }
+        else {
+            $hdr = @{ Authorization = "Bearer $($loginResp.token)" }
+            $bridgeExists = $false
+            try {
+                $users = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Headers $hdr -TimeoutSec 20
+                foreach ($u in @($users)) { if ($u.email -eq $bridgeEmail) { $bridgeExists = $true } }
+            } catch { }
+            if ($bridgeExists) {
+                Write-Host "[OK] Bridge account exists: $bridgeEmail" -ForegroundColor Green
+            }
+            else {
+                $mkBody = Join-Path $env:TEMP "qm-mkuser-$PID.json"
+                [System.IO.File]::WriteAllText($mkBody, (@{ email = $bridgeEmail; password = $plainPassword; role = 'attorney' } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+                try {
+                    $created = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Method Post -Headers $hdr -ContentType 'application/json' -InFile $mkBody -TimeoutSec 20
+                    Write-Host "[OK] Bridge account created: $bridgeEmail (user_id $($created.user_id))" -ForegroundColor Green
+                }
+                catch {
+                    Write-Host "[WARN] bridge account creation failed - first sandbox tool call will 401 until it exists." -ForegroundColor Yellow
+                }
+                finally { Remove-Item $mkBody -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    }
+
     # 9. Next steps
     Write-Host "`n=== QM Bootstrap Complete ===" -ForegroundColor Green
     Write-Host "`nNext steps:" -ForegroundColor Cyan

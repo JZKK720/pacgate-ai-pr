@@ -34,4 +34,11 @@ COPY tools/pacgate-qm/pacgate-qm /usr/local/bin/pacgate-qm
 COPY tools/pacgate-qm/pacgate_qm.py /usr/local/bin/pacgate_qm.py
 COPY tools/firecrawl-qm/firecrawl-qm /usr/local/bin/firecrawl-qm
 COPY tools/firecrawl-qm/firecrawl_qm.py /usr/local/bin/firecrawl_qm.py
+# Belt-and-braces CR strip (plan 025 D-2): a CRLF working tree (autocrlf
+# checkouts on Windows/macOS) makes `#!/usr/bin/env bash\r` fail at runtime
+# with “env: 'bash\r': No such file or directory”. .gitattributes now forces
+# LF for sandbox/tools/**, but builders on old clones skip that — stripping
+# here makes the image correct regardless of the checkout it was built from.
+RUN sed -i 's/\r$//' /usr/local/bin/pacgate-qm /usr/local/bin/firecrawl-qm \
+    || sed -i 's/\r$//' /usr/local/bin/*-qm
 RUN chmod -R a+rx /usr/local/bin
