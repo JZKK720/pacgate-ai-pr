@@ -12,6 +12,7 @@ mod search;
 mod state;
 mod text_extract;
 mod workflows;
+mod workspace;
 
 pub use error::ApiError;
 pub use memory_scope::{check_memory_scope, MemoryScopeViolation, MEMORY_MAX_BYTES};
@@ -84,6 +85,13 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/matters/:id/documents",
             get(matters::list_matter_documents),
+        )
+        // Matter workspace — one aggregated view of a matter's documents,
+        // extraction records, and RAG/sanitizer chunk status (design-gap fix
+        // 2026-10-05; see workspace.rs for why this exists).
+        .route(
+            "/api/matters/:id/workspace",
+            get(workspace::get_matter_workspace),
         )
         // Workflows
         .route("/api/workflows", get(workflows::list_workflows))

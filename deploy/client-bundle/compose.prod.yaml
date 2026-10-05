@@ -131,6 +131,13 @@ services:
       GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:8089,http://localhost:8090}
     volumes:
       - ./data:/data
+      # Pacgate (office-lane fix 2026-10-05): officecli's MCP defaults its
+      # output path to /mnt/user-data/workspace (upstream Claude-style
+      # convention, what agents are guided to choose) but the directory does
+      # not exist in the 0.1.22 image, so document creation failed with
+      # "Could not find a part of the path". Mount a persistent folder so
+      # officecli outputs survive recreation and land in ./data/office.
+      - ./data/office:/mnt/user-data/workspace
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
       - ./deer-flow-extensions-config.json:/app/deer-flow-extensions-config.json:ro
       # Pacgate: add a unified generated-outputs listing endpoint
@@ -167,6 +174,15 @@ services:
       # Firecrawl tools) race across loops and cancel the subprocess spawn,
       # hanging the run. Sharing one loop eliminates the cross-loop race.
       - ./patches/deer-flow-sync.py:/app/backend/packages/harness/deerflow/tools/sync.py:ro
+      # Pacgate (design-gap fix 2026-10-05): present_files additionally mirrors
+      # each presented deliverable into the matter's permanent document store
+      # (POST /api/documents; a best-effort COPY - the panel behavior is
+      # unchanged, failures are logged in the tool message, never thrown).
+      # The per-thread outputs dir is container-internal (see the
+      # ./data/deer-flow mount below), so presented files would otherwise be
+      # lost whenever the image is rebuilt; this keeps lawyer-visible
+      # deliverables in tenants/<t>/matters/<m>/docs/.
+      - ./patches/deer-flow-present-file.py:/app/backend/packages/harness/deerflow/tools/builtins/present_file_tool.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix (see compose.bundle.yaml for the rationale).
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
@@ -211,6 +227,10 @@ services:
       PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
       PACGATE_MCP_PORT: "8000"
       PACGATE_MCP_TIMEOUT: "60"
+      # Default matter for pacgate_read_memory / pacgate_write_memory so the
+      # chat agent can address the deployment's scoped matter without knowing
+      # the UUID (mirrors the deer-flow service's PACGATE_MATTER_ID above).
+      PACGATE_MATTER_ID: ${PACGATE_MATTER_ID}
     restart: unless-stopped
 
   # ocr-service: PaddleOCR extraction for scanned documents (plan 019).

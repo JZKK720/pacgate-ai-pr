@@ -66,6 +66,20 @@ services:
       # could never boot. This is a SECOND hardcoded copy of a value that
       # qm.config.jsonc also owns - keep the two in step when repinning.
       FLY_BASE_IMAGE: ${FLY_BASE_IMAGE:-ghcr.io/jzkk720/pacgate-sandboxes@sha256:52e867fcb195f07c5ff32fc78e8ac3f35d000ebd5f34d6c8d792c602f6eae65b}
+      # plan 025 (live E2E 2026-10-05): with SANDBOX_BACKEND=local, the core's
+      # local-sandbox runtime reads LOCAL_SANDBOX_IMAGE (default
+      # `qm-sandbox-local:latest`, which nothing builds) — FLY_BASE_IMAGE is
+      # inert on this backend (upstream local-sandbox.ts:95 + config.ts:339).
+      # The local backend ALSO needs the image to run the exec daemon
+      # (microvm-agent on :8080) — the published tooling image does NOT (its
+      # CMD is an idle sleep loop), so LOCAL_SANDBOX_IMAGE points at the
+      # exec-daemon wrapper built from deploy/qm-pacgate/sandbox-local/ (base:
+      # this digest). Machine-local tag; rebuilt with that Dockerfile.
+      LOCAL_SANDBOX_IMAGE: ${LOCAL_SANDBOX_IMAGE:-qm-pacgate-sandbox-local:latest}
+      # Required for the local backend to reach the core API from the sandbox at
+      # http://<core-container>:8080 (local-sandbox.ts:166-175); without it the
+      # sandbox targets 127.0.0.1:<port> which resolves inside the core itself.
+      QM_CORE_CONTAINER: qm-pacgate-core
       FLY_SANDBOX_APP_NAME: pacgate-sandboxes
       SANDBOX_BACKEND: local
       DEPLOYMENT_LAYER: /layer
@@ -90,6 +104,15 @@ services:
       # configured Ollama model (glm-5.3-flash:cloud) at MODEL_BASE_URL instead
       # of the hardcoded api.openai.com catalog entry. Durable across recreation.
       - ./patch/pi-models.ts:/app/src/model/pi-models.ts:ro
+      # Pacgate fix (tape-verified 2026-10-05): upstream local-sandbox daemon()
+      # fetches the exec daemon via the docker PUBLISH (127.0.0.1:<hostport>).
+      # Works when core runs on the docker host; broken when core runs in this
+      # container - the publish binds the VM/host loopback, not core's netns,
+      # so every call "Connection refused" -> "exec daemon never became
+      # reachable: fetch failed", and the teardown path then stop(-t2)-killed
+      # the sandbox (exit 137). This override resolves the sandbox IP on its
+      # bridge (routable from core) and prefers it; loopback remains fallback.
+      - ./patch/local-sandbox.ts:/app/src/sandbox/local-sandbox.ts:ro
       # plan 025: the SANDBOX_BACKEND=local launch path shells the docker CLI
       # inside this container (handbook §7.4), which upstream never wired: the
       # Alpine core ships no docker binary and no socket. Provide BOTH halves:

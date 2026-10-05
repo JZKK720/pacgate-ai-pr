@@ -81,9 +81,27 @@ $ApiImage = if ($ApiImage) { $ApiImage } else {
     "ghcr.io/jzkk720/pacgate-api:$ver"
 }
 Write-Output "api image: $ApiImage"
+
+# The DB password. The script runs against the LIVE pacgate-db on the compose
+# network, whose password comes from PACGATE_DB_PASSWORD in the bundle .env -
+# install.ps1 (and the handbook) tell operators to REPLACE the
+# change-me-to-a-strong-password placeholder, and the pilot machine did. With
+# the old hardcoded literal, the e2e API container died on DB connection and
+# reported 11 cascading FAILs that looked like sanitizer defects (verified
+# 2026-10-05: same container + the .env password -> /health ok immediately).
+# Read the real value from .env; fall back to the placeholder for machines
+# that still run the stock default.
+$DbPassword = 'change-me-to-a-strong-password'
+$bundleEnv = Join-Path $repoRoot 'deploy\client-bundle\.env'
+if (Test-Path $bundleEnv) {
+    foreach ($line in (Get-Content $bundleEnv -ErrorAction SilentlyContinue)) {
+        if ($line -match '^PACGATE_DB_PASSWORD=(.+)$') { $DbPassword = $Matches[1].Trim() }
+    }
+}
+
 docker run -d --name pacgate-api-e2e --network client-bundle_default `
   -p 127.0.0.1:8097:8080 `
-  -e "DATABASE_URL=postgres://pacgate:change-me-to-a-strong-password@pacgate-db:5432/pacgate" `
+  -e "DATABASE_URL=postgres://pacgate:${DbPassword}@pacgate-db:5432/pacgate" `
   -e "DATA_DIR=/data/tenants" `
   -e "OCR_SERVICE_URL=http://pacgate-ocr-e2e:8100" `
   -e "OLLAMA_BASE_URL=http://host.docker.internal:11434" `
@@ -95,16 +113,32 @@ $health = Invoke-RestMethod -Uri "http://127.0.0.1:8097/health" -TimeoutSec 5
 Check "api boots" ($health -eq 'ok')
 
 # 3. Seed + login + matter.
-cmd /c "docker exec pacgate-api-e2e pacgate-seed --db-url postgres://pacgate:change-me-to-a-strong-password@pacgate-db:5432/pacgate 2>&1" | Out-Null
+cmd /c "docker exec pacgate-api-e2e pacgate-seed --db-url postgres://pacgate:${DbPassword}@pacgate-db:5432/pacgate 2>&1" | Out-Null
+# The seed creates the seed account as a TENANT admin only (users.role=admin)
+# but leaves the PLATFORM role (users.system_role) at 'user' - verified by
+# decoding the seed JWT (claims: role=admin, system_role=user). The admin
+# provisioning route this script now relies on (POST /api/auth/users) checks
+# system_role, so without this step the provision call returns 403 and the
+# restore-refusal assertion silently degrades to a missing-auth refusal.
+# Idempotent: escalate the seed identity to platform admin before login.
+cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -c `"UPDATE users SET system_role='admin' WHERE email='seed@pacgate.local'`"" 2>&1 | Out-Null
 $login = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/auth/login" -Method Post -Body '{"email":"seed@pacgate.local","password":"seed-password-123"}' -ContentType "application/json"
 $hdr = @{ Authorization = "Bearer $($login.token)" }
 $matter = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/matters" -Method Post -Headers $hdr -Body '{"name":"Sanitizer E2E","description":"plan 020 proof"}' -ContentType "application/json"
 Check "matter created" ($null -ne $matter.id)
 
-# 4. Register a non-admin user for the restore-refusal assertion.
+# 4. Provision a non-admin user for the restore-refusal assertion.
+#
+# This used to POST /api/auth/register (open registration). Since 0.1.22 the
+# register route is first-user-only (DEFECT-pacgate-api-open-registration.md):
+# it refuses once any user exists, and seed@ already does. Registration is now
+# refused and the REMEDY ships with the gate: POST /api/auth/users lets a
+# verified admin create the account (commit ebac082). Creating the attorney
+# through that route keeps the restore-refusal assertion honest - the refusal
+# must be ROLE-based, not merely missing-auth.
 try {
-    Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/auth/register" -Method Post -Body '{"email":"attorney-e2e@pacgate.local","password":"attorney-pass-123","role":"attorney"}' -ContentType "application/json" | Out-Null
-} catch { }
+    Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/auth/users" -Method Post -Headers $hdr -Body '{"email":"attorney-e2e@pacgate.local","password":"attorney-pass-123","role":"attorney"}' -ContentType "application/json" | Out-Null
+} catch { Write-Output "  attorney provision note: $($_.Exception.Message)" }
 $attorneyLogin = $null
 try {
     $attorneyLogin = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/auth/login" -Method Post -Body '{"email":"attorney-e2e@pacgate.local","password":"attorney-pass-123"}' -ContentType "application/json"

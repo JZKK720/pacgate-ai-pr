@@ -1458,4 +1458,365 @@ mod tests {
             "unauthenticated request to protected route should return 401"
         );
     }
+
+    /// The matter-workspace rollup (workspace.rs): one response gathering the
+    /// matter's documents, extraction records, and RAG/sanitizer lane status.
+    ///
+    /// Requires a running Postgres with pgvector. Run with `--ignored` like the
+    /// other integration tests.
+    ///
+    /// Covers:
+    ///   1. a fresh matter answers 200 with empty sections (aggregation must
+    ///      not require every lane to have data)
+    ///   2. after an upload, documents[] carries the uploaded document with
+    ///      its sanitization_state (which drives the egress gate)
+    ///   3. the owner tenant reads it; a second tenant reads it as 404
+    ///   4. RAG rollup stays empty (no chunks ingested in this flow) and
+    ///      extractions stay empty (no ocr-service) - the response must
+    ///      DEGRADE, not fail, when a lane has no data
+    #[tokio::test]
+    #[ignore]
+    async fn matter_workspace_rollup() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(3)
+            .connect(&test_db_url())
+            .await
+            .expect("failed to connect to test Postgres — is it running?");
+
+        pacgate_tenant::run_migrations(&pool)
+            .await
+            .expect("failed to run tenant migrations");
+        run_rag_migrations_if_available(&pool).await;
+
+        let tenant_id: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO tenants (name, slug) VALUES ($1, $2)
+             ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id",
+        )
+        .bind("Workspace Test Firm")
+        .bind(format!("workspace-firm-{}", uuid::Uuid::new_v4().simple()))
+        .fetch_one(&pool)
+        .await
+        .expect("failed to seed workspace-test tenant");
+
+        let other_tenant_id: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO tenants (name, slug) VALUES ($1, $2)
+             ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id",
+        )
+        .bind("Workspace Test Firm Two")
+        .bind(format!("workspace-firm-two-{}", uuid::Uuid::new_v4().simple()))
+        .fetch_one(&pool)
+        .await
+        .expect("failed to seed second workspace-test tenant");
+
+        let email = format!("workspace-{}@pacgate.test", uuid::Uuid::new_v4().simple());
+        let other_email = format!(
+            "workspace-other-{}@pacgate.test",
+            uuid::Uuid::new_v4().simple()
+        );
+        let password = "workspace-pass-123";
+
+        let config = Arc::new(pacgate_api::AppConfig {
+            data_dir: std::path::PathBuf::from(TEST_DATA_DIR),
+            max_upload_mb: 50,
+            jwt_secret: "test-secret-key".to_string(),
+            default_tenant: "workspace-test".to_string(),
+            workflows_dir: None,
+            ocr_service_url: None,
+            ner_model_dir: None,
+            allow_registration: true,
+        });
+
+        let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
+            pool.clone(),
+            &config.data_dir,
+        ));
+
+        let auth = Arc::new(pacgate_auth::AuthService::new(
+            config.jwt_secret.clone(),
+            pool.clone(),
+        ));
+        let tenant_id_core = pacgate_core::TenantId(tenant_id);
+        let other_tenant_id_core = pacgate_core::TenantId(other_tenant_id);
+        auth.register(
+            &tenant_id_core,
+            &email,
+            password,
+            "attorney",
+            "user",
+            Some("Workspace Tester"),
+        )
+        .await
+        .expect("failed to create workspace-test user");
+        auth.register(
+            &other_tenant_id_core,
+            &other_email,
+            password,
+            "attorney",
+            "user",
+            Some("Other Tenant Tester"),
+        )
+        .await
+        .expect("failed to create second-tenant user");
+
+        let state = pacgate_api::AppState {
+            agent_loop: Arc::new(pacgate_agent::AgentLoop::new(
+                {
+                    let router = Arc::new(pacgate_llm::LlmRouter::new(
+                        pacgate_core::ModelConfig::default_local(),
+                        std::collections::HashMap::new(),
+                    ));
+                    router
+                },
+                Arc::new(pacgate_agent::ToolDispatcher::new(
+                    doc_store.clone() as Arc<dyn pacgate_core::DocumentStore>,
+                    Arc::new(StubWorkflowForWorkspace),
+                    Arc::new(StubKbForWorkspace),
+                )),
+            )),
+            router: Arc::new(pacgate_llm::LlmRouter::new(
+                pacgate_core::ModelConfig::default_local(),
+                std::collections::HashMap::new(),
+            )),
+            dispatcher: Arc::new(pacgate_agent::ToolDispatcher::new(
+                doc_store.clone() as Arc<dyn pacgate_core::DocumentStore>,
+                Arc::new(StubWorkflowForWorkspace),
+                Arc::new(StubKbForWorkspace),
+            )),
+            config,
+            doc_store,
+            matter_store: Arc::new(pacgate_tenant::MatterStore::new(pool.clone())),
+            tenant_store: Arc::new(pacgate_tenant::TenantStore::new(pool.clone())),
+            auth,
+            search: Arc::new(pacgate_search::default_router()),
+            rag: None,
+            embedding: pacgate_rag::EmbeddingService::new("http://127.0.0.1:1", "nomic-embed-text"),
+            db: pool,
+            sanitize_slots: Arc::new(tokio::sync::Semaphore::new(
+                pacgate_api::SANITIZE_MAX_CONCURRENT,
+            )),
+        };
+
+        let app = pacgate_api::build_router(state);
+
+        // Login both users.
+        let login = |email: &str| {
+            let app = app.clone();
+            let body = serde_json::to_vec(&serde_json::json!({
+                "email": email,
+                "password": password
+            }))
+            .unwrap();
+            async move {
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/api/auth/login")
+                            .header("content-type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "login should pass");
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                json["token"].as_str().expect("login token present").to_string()
+            }
+        };
+        let token = login(&email).await;
+        let other_token = login(&other_email).await;
+
+        // Fresh matter (owner tenant).
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/matters")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "name": "Workspace Test Matter"
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "matter create passes");
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let matter_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let matter_id = matter_json["id"].as_str().expect("matter id").to_string();
+
+        // 1. Fresh matter: 200 with empty sections.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/matters/{matter_id}/workspace"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a fresh matter's workspace view must answer 200 with empty sections"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let fresh: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            fresh["matter_id"].as_str(),
+            Some(matter_id.as_str()),
+            "rollup must carry the matter id"
+        );
+        assert_eq!(
+            fresh["documents"].as_array().map(|a| a.len()),
+            Some(0),
+            "fresh matter has no documents"
+        );
+        assert_eq!(
+            fresh["extractions"].as_array().map(|a| a.len()),
+            Some(0),
+            "fresh matter has no extraction records"
+        );
+        assert_eq!(
+            fresh["rag_documents"].as_array().map(|a| a.len()),
+            Some(0),
+            "fresh matter has no RAG rollup rows"
+        );
+
+        // 2. Upload a document; the workspace view must list it with its
+        //    sanitization_state.
+        let boundary = "----wsp";
+        let prefix = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"matter_id\"\r\n\r\n{matter_id}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"summary.md\"\r\nContent-Type: text/markdown\r\n\r\n"
+        );
+        let suffix = format!("\r\n--{boundary}--\r\n");
+        let mut body = prefix.into_bytes();
+        body.extend_from_slice(b"# Workspace rollup proof");
+        body.extend_from_slice(suffix.as_bytes());
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/documents")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "upload passes");
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let uploaded: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let document_id = uploaded["id"].as_str().expect("document id").to_string();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/matters/{matter_id}/workspace"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let with_doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let docs = with_doc["documents"].as_array().expect("documents array");
+        assert_eq!(docs.len(), 1, "the uploaded document appears");
+        // The name is the file STEM, not the raw filename: upload_bytes (the
+        // same store every other document route reads through) strips the
+        // extension and keeps it in the `format` column - verified 2026-10-05
+        // by reading store.rs. The workspace view reports what the store holds.
+        assert_eq!(docs[0]["name"], "summary");
+        assert_eq!(docs[0]["format"], "markdown");
+        assert_eq!(docs[0]["id"].as_str(), Some(document_id.as_str()));
+        // The state drives the egress gate - the workspace view exposes it.
+        assert_eq!(
+            docs[0]["sanitization_state"], "pending",
+            "a fresh upload reads as pending in the workspace rollup"
+        );
+        // Extractions and RAG stay empty (no ocr-service, no chunks) - the
+        // response must degrade, not fail.
+        assert_eq!(
+            with_doc["extractions"].as_array().map(|a| a.len()),
+            Some(0),
+            "no extraction records yet"
+        );
+        assert_eq!(
+            with_doc["rag_documents"].as_array().map(|a| a.len()),
+            Some(0),
+            "no RAG rollup rows yet"
+        );
+
+        // 3. The OTHER tenant reads the same URL as 404 (tenant boundary).
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/matters/{matter_id}/workspace"))
+                    .header("authorization", format!("Bearer {other_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "cross-tenant workspace view must be hidden, not leaked"
+        );
+    }
+
+    struct StubWorkflowForWorkspace;
+    #[async_trait::async_trait]
+    impl pacgate_core::WorkflowStore for StubWorkflowForWorkspace {
+        async fn get_prompt(&self, _: &str) -> pacgate_core::Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    struct StubKbForWorkspace;
+    #[async_trait::async_trait]
+    impl pacgate_core::KbStore for StubKbForWorkspace {
+        async fn search(
+            &self,
+            _: &pacgate_core::MatterId,
+            _: &str,
+            _: u32,
+        ) -> pacgate_core::Result<Vec<pacgate_core::KbChunk>> {
+            Ok(Vec::new())
+        }
+    }
 }

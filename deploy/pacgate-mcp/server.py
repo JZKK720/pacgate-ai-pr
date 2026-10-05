@@ -45,6 +45,13 @@ Exposed tools:
                                (GET /api/documents/:id/sanitize-status)
     pacgate_sanitize_text      — sanitize raw text through the job pipeline
                                (POST /api/documents + POST .../sanitize)
+    pacgate_read_memory        — read a matter's working memory
+                               (GET /api/matters/:id/memory)
+    pacgate_write_memory       — write a matter's working memory (revision-guarded)
+                               (POST /api/matters/:id/memory, optional If-Match)
+    pacgate_get_workspace      — one aggregated view of a matter (documents +
+                               extraction records + RAG/sanitizer rollup)
+                               (GET /api/matters/:id/workspace)
 
     (pacgate_restore is deliberately NOT exposed: restore is client-side only,
      design 3.5 - no chat turn can re-hydrate placeholders.)
@@ -314,6 +321,65 @@ def pacgate_list_matters() -> str:
 
 
 @mcp.tool()
+def pacgate_read_memory(matter_id: str | None = None) -> str:
+    """Read a matter's working memory (procedural notes about the matter).
+
+    Matter memory is NOT the document knowledge base - it is small,
+    revision-controlled working notes scoped to one matter (e.g. task
+    checklists, current status). Prefer this over pacgate_kb_search when the
+    user asks about "matter memory" or what the team has recorded so far.
+
+    Args:
+        matter_id: The UUID of the matter. Defaults to PACGATE_MATTER_ID from
+            the environment (the deployment's scoped matter).
+    """
+    mid = matter_id or os.environ.get("PACGATE_MATTER_ID")
+    if not mid:
+        return json.dumps({"error": "no matter_id given and PACGATE_MATTER_ID is not set"})
+    client = get_client()
+    resp = client.get(f"/api/matters/{mid}/memory")
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_write_memory(
+    content: str,
+    matter_id: str | None = None,
+    if_match: int | None = None,
+) -> str:
+    """Write a matter's working memory, with lost-update protection.
+
+    Sends If-Match: <revision> when given; pacgate-api refuses (409) when the
+    memory changed since that revision, refusing to silently overwrite a
+    concurrent editor.
+
+    Args:
+        content: The new memory content (plain text working notes).
+        matter_id: The UUID of the matter. Defaults to PACGATE_MATTER_ID.
+        if_match: The revision previously read via pacgate_read_memory,
+            sent as If-Match. Omit for an unconditional first write.
+    """
+    mid = matter_id or os.environ.get("PACGATE_MATTER_ID")
+    if not mid:
+        return json.dumps({"error": "no matter_id given and PACGATE_MATTER_ID is not set"})
+    client = get_client()
+    headers = {"If-Match": str(if_match)} if if_match is not None else {}
+    resp = client.post(
+        f"/api/matters/{mid}/memory",
+        json={"content": content},
+        headers=headers,
+    )
+    if resp.status_code in (409, 422):
+        return json.dumps(
+            {"error": f"pacgate-api {resp.status_code}", "detail": resp.text},
+            ensure_ascii=False,
+        )
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 def pacgate_list_documents(matter_id: str) -> str:
     """List documents for a specific matter.
 
@@ -328,6 +394,29 @@ def pacgate_list_documents(matter_id: str) -> str:
     _handle_error(resp)
     results = resp.json()
     return json.dumps(results, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_get_workspace(matter_id: str | None = None) -> str:
+    """Get the unified matter workspace: everything one matter holds in one response.
+
+    The aggregated view (GET /api/matters/:id/workspace): the document list
+    with per-document sanitization state, OCR extraction records (pages,
+    engine, incomplete flag), and the RAG store rollup (chunk counts +
+    sanitization states per document). Use this FIRST to survey what a matter
+    has before picking documents to read or searching the KB.
+
+    Args:
+        matter_id: The UUID of the matter. Defaults to PACGATE_MATTER_ID from
+            the environment (the deployment's scoped matter).
+    """
+    mid = matter_id or os.environ.get("PACGATE_MATTER_ID")
+    if not mid:
+        return json.dumps({"error": "no matter_id given and PACGATE_MATTER_ID is not set"})
+    client = get_client()
+    resp = client.get(f"/api/matters/{mid}/workspace")
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
