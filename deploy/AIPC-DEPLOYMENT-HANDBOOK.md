@@ -2,6 +2,7 @@
 
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
 > Targets release 0.1.23 — handbook updated 2026-10-05
+> Chinese version: [AIPC-DEPLOYMENT-HANDBOOK-ZH.md](AIPC-DEPLOYMENT-HANDBOOK-ZH.md)
 > Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`.
 
 ## ⚠️ Significant findings (2026-09-02) — read before deploying AIPC #2
@@ -35,12 +36,14 @@ AIPC #2 must pull the **updated** code (see Stage 1) so it gets these fixes.
    gets 401 and the `/setup` page appears. **Use `docker compose restart deer-flow`** for
    config changes; only recreate if you accept losing the local DB (then re-run `/setup`).
 
-4. **QM sign-in needs a `RESEND_API_KEY`, not Outlook SMTP.** The old SMTP path
+4. **QM sign-in needs an email transport, not Outlook SMTP.** The old SMTP path
    (`smtp.office365.com` + app password) is broken — Microsoft retired Basic Auth / app
    passwords for Exchange Online (Sep 2025). `qm check` failed with
-   `535 5.7.139 Authentication unsuccessful`. **Fix:** qm's auth broker now uses the
-   **Resend** transport (`AUTH_EMAIL_TRANSPORT=resend`). You must supply a `RESEND_API_KEY`
-   in `deploy/qm-pacgate/.env` (see Stage 4).
+   `535 5.7.139 Authentication unsuccessful`. **Fix:** qm's auth broker now supports two
+   transports — **Mailpit SMTP catcher** (pilot; links land at `http://localhost:8025`, no
+   key needed) and **Resend** (production; supply `RESEND_API_KEY`). See Stage 4.
+   *(Originally this item said Resend was the only option; Stage 4's two-transport
+   setup supersedes it.)*
 
 5. **The qm web-ui cannot self-authenticate.** Its server (`/app/server/index.ts`) sets
    `AUTH_MODE = COOKIE_AUTH ? "dev" : "portal"`. Because `CORE_SIGNING_SECRET` is set,
@@ -105,7 +108,7 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 > live namespace is `jzkk720` and publishing moved there in plan 016. The old
 > `pacgate-ai/...-frontend-pacgate:0.1.0` row was also labelled "Published" while
 > returning **404** - it never resolved. All five `jzkk720/*` images at the current
-> pin (0.1.20, table above) return HTTP 200 anonymously.
+> pin (0.1.23, table above) return HTTP 200 anonymously.
 
 **Historical release table (retained for provenance, superseded):**
 
@@ -264,7 +267,8 @@ curl http://localhost:8089/version
 curl http://localhost:8089/pacgate/health
 ```
 
-Expected: all five containers running (pacgate-db, pacgate-api, deer-flow, openviking, nginx); `/version` returns
+Expected: all eight containers running (pacgate-db, pacgate-api, deer-flow,
+deer-flow-frontend, pacgate-mcp, ocr-service, openviking, nginx); `/version` returns
 `{"version":"0.1.23","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
 
 > **Do not probe `/health` at the nginx root.** nginx routes `/` to the deer-flow frontend
@@ -399,7 +403,7 @@ Verify qm:
 ```powershell
 # Open http://localhost:8182  (web-ui) — requires a portal identity token
 # Open http://localhost:8181  (portal) — the sign-in front door
-# Sign in with the admin email (magic link via Resend)
+# Sign in with the admin email (magic link via the configured transport; Mailpit in pilot)
 # Send a test message
 # Ask: "List available pacgate workflows"
 ```
@@ -413,8 +417,7 @@ Verify qm:
 > `NODE_ENV=development` + `ALLOW_UNAUTHENTICATED_CORE=1` and **no** `CORE_SIGNING_SECRET`,
 > and `qm-pacgate-web-ui` with **no** `CORE_SIGNING_SECRET`. Then `POST /signin` works
 > directly at `:8182` with `{"user":"<principal>"}` and no Resend key is needed. This is
-> **not** production-correct (no auth) — use it only for a single-user pilot. See
-> `deer-flow/docs/pacgate/QM-WEBUI-8182-SIGNIN-FIX-PLAN.md` for the exact commands.
+> **not** production-correct (no auth) — use it only for a single-user pilot.
 
 ## Stage 5: Verify deer-flow (both machines)
 
@@ -655,10 +658,15 @@ qm (co-working workspace):
 
 ### Register new users
 
+`POST /api/auth/register` is **first-user-only** and returns 403 after the bootstrap
+account (see Stage 3). Create every later account through the admin route:
+
 ```powershell
-# /pacgate prefix required - see the note in Stage 3.
+# /pacgate prefix required - see the note in Stage 3. Bearer = admin's token
+# from POST /pacgate/api/auth/login (see Stage 3 for the login step).
 $body = @{email="<user>@pacgate-law.com"; password="<password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/users" -Method POST `
+  -Headers @{Authorization="Bearer <admin-token>"} -Body $body -ContentType "application/json"
 ```
 
 ### Backup the database
@@ -712,5 +720,3 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 | `deploy/qm-pacgate/qm.config.jsonc` | qm local deployment config |
 | `deploy/SETUP-AND-OPERATIONS.md` | Full 3-day on-site install guide (reference) |
 | `deploy/DEPLOYMENT-GUIDE.md` | Engineer-level deployment details (reference) |
-| `deer-flow/docs/pacgate/QM-WEBUI-8182-SIGNIN-FIX-PLAN.md` | QM sign-in + model-routing fix plan (diagnosis + exact commands) |
-| `deer-flow/docs/pacgate/QM-WEBUI-8182-AUTH-DIAGNOSIS.md` | QM portal-auth bottleneck diagnosis |

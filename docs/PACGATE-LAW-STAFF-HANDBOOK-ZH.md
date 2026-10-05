@@ -3,6 +3,7 @@
 > 以通俗语言说明如何使用贵所的 AI 助手。
 > 面向律师、律师助理、行政人员及合伙人。无需任何技术背景。
 > 1.1 版 - 2026年10月5日（对应 Pacgate-ai 发布版 v0.1.23）
+> 英文版本：[PACGATE-LAW-STAFF-HANDBOOK.md](PACGATE-LAW-STAFF-HANDBOOK.md)
 
 ---
 

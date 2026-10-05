@@ -2,6 +2,7 @@
 
 > 在每台机器上克隆仓库，运行相同的安装步骤，两台机器即可完全运行 deer-flow 研究与 qm 协作。
 > 版本 0.1.23 - 2026-10-05
+> 英文版本：[AIPC-DEPLOYMENT-HANDBOOK.md](AIPC-DEPLOYMENT-HANDBOOK.md)
 > 前置条件：Docker Desktop、Ollama、Node.js 24+。`install.ps1` 会拉取 `ollama-models.txt` 中列出的模型。
 
 ## ⚠️ 重要发现（2026-09-02）— 部署 AIPC #2 前请先阅读
@@ -9,10 +10,11 @@
 以下问题是在 AIPC #1 试点期间发现的，**已在本仓库中修复**。
 AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修复。
 
-> **2026-09-15 更新。** 两个仓库现在均为**公开**，且内容**完全一致**
-> （`origin/main` = fork `main`）。此前“避免使用较旧的 `JZKK720/pacgate-ai-pr`
-> main”的提示已不再适用——`origin/main` 已包含 fork 的全部提交及合并提交
-> `832d84e`。两者均可克隆。详见 `plans/012-master-release-namespace.md`。
+> **2026-09-23 更新（取代 2026-09-15 的「两者均可克隆」提示）。** 两个仓库已**不再一致**
+> —— `pacgate-ai/pacgate-ai-pr` 落后 26 个提交，缺少 workflow 接线修复（`b7fc540`、
+> `039afdc`），克隆 fork 会得到 **10 个内置工作流，而不是公司的 222 个**，且不会报错。
+> **请克隆 `JZKK720/pacgate-ai-pr`**（见 Stage 1）。向哪个仓库推送发布标签，仍决定
+> 镜像进入哪个 GHCR 命名空间——见 `plans/012-master-release-namespace.md`。
 
 1. **deer-flow 代理无法查询 pacgate 的法律数据库。** 根本原因：没有工具接入
    pacgate-api 的 `/api/kb/search`（RAG）或 `/api/search`（法律连接器），且
@@ -34,12 +36,13 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
    **配置变更请使用 `docker compose restart deer-flow`**；只有在你接受丢失本地
    数据库时才重建（然后重新运行 `/setup`）。
 
-4. **QM 登录需要 `RESEND_API_KEY`，而不是 Outlook SMTP。** 旧的 SMTP 路径
+4. **QM 登录需要邮件传输，而不是 Outlook SMTP。** 旧的 SMTP 路径
    （`smtp.office365.com` + 应用密码）已失效——微软已于 2025 年 9 月停用
    Exchange Online 的基本身份验证 / 应用密码。`qm check` 失败并返回
    `535 5.7.139 Authentication unsuccessful`。**修复：** qm 的 auth 代理现在使用
    **Resend** 传输（`AUTH_EMAIL_TRANSPORT=resend`）。你必须在
-   `deploy/qm-pacgate/.env` 中提供 `RESEND_API_KEY`（见 Stage 4）。
+   `deploy/qm-pacgate/.env` 中提供 `RESEND_API_KEY`（见 Stage 4）。此条最初称
+   Resend 是唯一选项，Stage 4 的双传输设置已取代——试点用 Mailpit，无需密钥。
 
 5. **qm web-ui 无法自行认证。** 其服务器（`/app/server/index.ts`）设置
    `AUTH_MODE = COOKIE_AUTH ? "dev" : "portal"`。因为设置了 `CORE_SIGNING_SECRET`，
@@ -99,7 +102,7 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
-> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*:0.1.19` 镜像匿名拉取均返回 HTTP 200。
+> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.23，见上表）匿名拉取均返回 HTTP 200。
 
 **历史发布表（保留以追溯，已被取代）：**
 
@@ -246,11 +249,17 @@ OPENVIKING_API_KEY=<生成一个 32 字符十六进制字符串>
 
 ```powershell
 docker compose -f compose.prod.yaml ps
-curl http://localhost:8089/health
+curl http://localhost:8089/version
+curl http://localhost:8089/pacgate/health
 ```
 
-预期：五个容器全部运行（pacgate-db、pacgate-api、deer-flow、openviking、nginx），
-且 `/health` 返回 `ok`。
+预期：八个容器全部运行（pacgate-db、pacgate-api、deer-flow、deer-flow-frontend、
+pacgate-mcp、ocr-service、openviking、nginx），`/version` 返回
+`{"version":"0.1.23","revision":"<git sha>"}`，且 `/pacgate/health` 返回 `ok`。
+
+> **不要在 nginx 根路径探测 `/health`。** nginx 按设计将 `/` 路由到 deer-flow 前端，
+> `curl http://localhost:8089/health` 会返回前端的 404 页面——看似失败，实为正确路由。
+> `/version` 也在根路径（映射到 API 的 `/build-info`）；只有 `/pacgate/*` 路径会到达 API。
 
 ## Stage 3：初始化租户并开通账号（两台机器）
 
@@ -368,7 +377,7 @@ node_modules\.bin\qm.cmd up
 ```powershell
 # 打开 http://localhost:8182  (web-ui) — 需要 portal 身份令牌
 # 打开 http://localhost:8181  (portal) — 登录前门
-# 使用管理员邮箱登录（通过 Resend 的魔法链接）
+# 使用管理员邮箱登录（魔法链接经配置的邮件传输；试点为 Mailpit）
 # 发送一条测试消息
 # 询问："List available pacgate workflows"
 ```
@@ -382,8 +391,7 @@ node_modules\.bin\qm.cmd up
 > `ALLOW_UNAUTHENTICATED_CORE=1` 且**不设置** `CORE_SIGNING_SECRET` 重建
 > `qm-pacgate-core`，并用**不设置** `CORE_SIGNING_SECRET` 重建 `qm-pacgate-web-ui`。
 > 然后 `POST /signin` 直接在 `:8182` 用 `{"user":"<principal>"}` 工作，且无需
-> Resend 密钥。这**不是**生产正确配置（无认证）——仅用于单用户试点。确切命令见
-> `deer-flow/docs/pacgate/QM-WEBUI-8182-SIGNIN-FIX-PLAN.md`。
+> Resend 密钥。这**不是**生产正确配置（无认证）——仅用于单用户试点。
 
 ## Stage 5：验证 deer-flow（两台机器）
 
@@ -475,8 +483,8 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 
 ### 核心栈
 
-- [ ] `docker compose -f compose.prod.yaml ps` 显示 5 个服务运行（含 openviking）
-- [ ] `curl http://localhost:8089/health` 返回 `ok`
+- [ ] `docker compose -f compose.prod.yaml ps` 显示 8 个服务运行（含 openviking、pacgate-mcp、ocr-service、deer-flow-frontend）
+- [ ] `curl http://localhost:8089/version` 返回 0.1.23；`curl http://localhost:8089/pacgate/health` 返回 `ok`
 - [ ] `curl http://localhost:1933/health` 返回健康 JSON
 - [ ] Postgres 有 `pacgate-law` 租户
 - [ ] 管理员用户可以在 `http://localhost:8089/api/auth/login` 登录
@@ -613,9 +621,15 @@ qm（协作工作空间）：
 
 ### 注册新用户
 
+`/api/auth/register` **仅限首位用户**，引导账号创建后一律返回 403（见 Stage 3）。
+此后的每个账号通过管理员路由创建：
+
 ```powershell
+# /pacgate 前缀必填——见 Stage 3 的说明。Bearer = 管理员令牌
+# (自 POST /pacgate/api/auth/login 获得，见 Stage 3 登录步骤)
 $body = @{email="<user>@pacgate-law.com"; password="<password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/users" -Method Post `
+  -Headers @{Authorization="Bearer <admin-token>"} -Body $body -ContentType "application/json"
 ```
 
 ### 备份数据库
@@ -677,5 +691,3 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 | `deploy/qm-pacgate/qm.config.jsonc` | qm 本地部署配置 |
 | `deploy/SETUP-AND-OPERATIONS.md` | 完整的 3 天现场安装指南（参考） |
 | `deploy/DEPLOYMENT-GUIDE.md` | 工程师级部署细节（参考） |
-| `deer-flow/docs/pacgate/QM-WEBUI-8182-SIGNIN-FIX-PLAN.md` | QM 登录 + 模型路由修复计划（诊断 + 确切命令） |
-| `deer-flow/docs/pacgate/QM-WEBUI-8182-AUTH-DIAGNOSIS.md` | QM portal 认证瓶颈诊断 |

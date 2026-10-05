@@ -2,7 +2,7 @@
 
 > 面向律师事务所技术团队与运维工程师
 > 版本 0.2.0 — 2026-10-05 (Pacgate-ai v0.1.23)
-> 中文版（PDF） | 英文版：[deer-flow-openviking-pacgate-handbook.md](deer-flow-openviking-pacgate-handbook.md)
+> 中文版（PDF 见 `./pdf/`）
 
 ---
 
@@ -30,11 +30,11 @@
 
 | 组件 | 端口 | 职责 | 实现 |
 |---|---|---|---|
-| **deer-flow** | 8001 | 研究工作空间：多步骤检索、文件分析、报告生成 | `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3`（包装镜像） |
+| **deer-flow** | 8001 | 研究工作空间：多步骤检索、文件分析、报告生成 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.23` |
 | **deer-flow-frontend** | 8090 | Next.js 前端，重写 `/api/*` 到 deer-flow 网关 | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.23`（构建时烘焙网关地址） |
 | **OpenViking** | 1933 | 长期记忆：结构化记忆、语义检索、跨会话上下文 | `ghcr.io/volcengine/openviking` |
-| **pacgate-mcp** | 8000 | 向 deer-flow 暴露 RAG + 法律连接器 + 文档/工作流（FastMCP） | `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` |
-| **pacgate-api** | 8080 | 法律元数据：案件、文档、工作流、RAG、连接器 | `ghcr.io/pacgate-ai/pacgate-api:0.1.3`（Rust） |
+| **pacgate-mcp** | 8000 | 向 deer-flow 暴露 RAG + 法律连接器 + 文档/工作流（FastMCP） | `ghcr.io/jzkk720/pacgate-mcp:0.1.23` |
+| **pacgate-api** | 8080 | 法律元数据：案件、文档、工作流、RAG、连接器 | `ghcr.io/jzkk720/pacgate-api:0.1.23`（Rust） |
 | **pacgate-nginx** | 8089 | 统一入口，路由 `/`、`/api/`、`/pacgate/` | `nginx:1.27-alpine` |
 | **pacgate-db** | 5432 | 元数据数据库（租户、案件、文档、审计、RAG） | `pgvector/pgvector:pg16` |
 | **Ollama** | 11434 | 本地/云路由模型 + embedding | Windows 原生 |
@@ -188,7 +188,7 @@ pacgate-api 的数据库迁移定义了核心表：
 
 ### 5.4 工作流模板
 
-pacgate-api 暴露 **10 个法律工作流模板**：
+pacgate-api 的 `GET /api/workflows` 暴露 **222 个法律工作流模板（46 类，含上述 10 类经典示例）**。模板存于 `pacgate-ai/workflows/`，由构建过程迁移入库；`GET /api/workflows?category=&search=` 可按分类或关键词过滤：
 
 | 分类 | 工作流 | 步骤数 |
 |---|---|---|
@@ -218,7 +218,7 @@ pacgate-api 暴露 **10 个法律工作流模板**：
 
 ### 5.5 pacgate-mcp 桥
 
-`pacgate-mcp`（FastMCP，端口 8000）向 deer-flow 暴露 **10 个工具**，**deer-flow 永远看不到凭据**（认证在 pacgate-api 内部完成）：
+`pacgate-mcp`（FastMCP，端口 8000）向 deer-flow 暴露 **19 个工具**，**deer-flow 永远看不到凭据**（认证在 pacgate-api 内部完成）：
 
 | 工具 | 说明 |
 |---|---|
@@ -232,6 +232,11 @@ pacgate-api 暴露 **10 个法律工作流模板**：
 | `pacgate_list_workflows` | 列出工作流模板（`GET /api/workflows`） |
 | `pacgate_get_workflow` | 获取某工作流模板的步骤（`GET /api/workflows/:id`） |
 | `pacgate_execute_workflow` | 运行某工作流模板（`POST /api/workflows/:id/execute`） |
+| `pacgate_read_memory` / `pacgate_write_memory` | 读取/写入某案件的结构化记忆（`GET/POST /api/matters/:id/memory`） |
+| `pacgate_get_workspace` | 案件工作区汇总：文档 + OCR 抽取 + RAG 一次取回（`GET /api/matters/:id/workspace`） |
+| `pacgate_convert_document` | 文档格式转换与生成（docx/markdown 等，经 OfficeCLI） |
+| `pacgate_ocr_document` / `pacgate_ocr_batch` | 单个/批量 OCR 抽取（PaddleOCR） |
+| `pacgate_sanitize_document` / `pacgate_verify_sanitized` / `pacgate_sanitize_text` | 脱敏处理与 T1-T4 分级校验 |
 
 > 新增的工具（案件、文档、工作流）让 deer-flow 不仅能**检索**法律知识，还能**访问文档库**、**读取/写入文件**并**运行预置工作流模板**——消除了之前"deer-flow 只能查询、无法触碰文档与模板"的架构缺口。
 
@@ -246,16 +251,15 @@ pacgate-api 暴露 **10 个法律工作流模板**：
 - Docker Desktop（WSL2 后端）
 - Ollama（Windows 原生）已拉取模型：`nomic-embed-text` 及法律模型
 - Node.js 24+（供 qm 使用，若需）
-- 访问私有 GitHub 仓库的权限
 
 ### 6.2 镜像
 
 | 组件 | 镜像 |
 |---|---|
-| pacgate-api | `ghcr.io/pacgate-ai/pacgate-api:0.1.3` |
-| deer-flow | `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.3` |
+| pacgate-api | `ghcr.io/jzkk720/pacgate-api:0.1.23` |
+| deer-flow | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.23` |
 | deer-flow-frontend | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.23` |
-| pacgate-mcp | `ghcr.io/pacgate-ai/pacgate-mcp:0.1.3` |
+| pacgate-mcp | `ghcr.io/jzkk720/pacgate-mcp:0.1.23` |
 | nginx | `nginx:1.27-alpine` |
 | openviking | `ghcr.io/volcengine/openviking` |
 

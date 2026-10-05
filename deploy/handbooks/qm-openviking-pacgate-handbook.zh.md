@@ -2,7 +2,7 @@
 
 > 面向律师事务所技术团队与运维工程师
 > 版本 0.2.0 — 2026-10-05 (Pacgate-ai v0.1.23)
-> 中文版（PDF） | 英文版：[qm-openviking-pacgate-handbook.md](qm-openviking-pacgate-handbook.md)
+> 中文版（PDF 见 `./pdf/`）
 
 ---
 
@@ -34,9 +34,9 @@
 | **qm web-ui** | 8182 | 协作界面：会话、文件、审批 | `ghcr.io/yc-software/qm/web-ui` |
 | **qm admin** | 8183 | 管理控制台：用户、资源、审计 | `ghcr.io/yc-software/qm/admin` |
 | **qm core** | 8180 | 协作引擎：运行编排、pi harness、审批 | `ghcr.io/yc-software/qm/core` |
-| **qm auth** | 内部 | 认证代理（Resend/SMTP 登录链接） | `ghcr.io/yc-software/qm/auth` |
+| **qm auth** | 内部 | 认证代理（SMTP 登录链接；试点经 Mailpit，生产可配 Resend） | `ghcr.io/yc-software/qm/auth` |
 | **OpenViking** | 1933 | 长期记忆：结构化记忆、语义检索 | `ghcr.io/volcengine/openviking` |
-| **pacgate-api** | 8080 | 法律元数据：案件、文档、工作流、RAG | `ghcr.io/pacgate-ai/pacgate-api:0.1.14`（Rust） |
+| **pacgate-api** | 8080 | 法律元数据：案件、文档、工作流、RAG | `ghcr.io/jzkk720/pacgate-api:0.1.23`（Rust） |
 | **pacgate-nginx** | 8089 | 统一入口，`/pacgate/` 前缀 | `nginx:1.27-alpine` |
 | **Ollama** | 11434 | 本地/云路由模型 + embedding | Windows 原生 |
 
@@ -54,7 +54,7 @@
 | **pacgate-api 元数据** | `http://localhost:8089/pacgate/` | 机器对机器，由 pacgate-qm 工具调用 |
 
 **管理员账号**：
-- qm 的管理员邮箱为 **`pacgate.ai01@outlook.com`**（来自 `ADMIN_GRANTS`/`AUTH_ALLOWED_EMAILS`）。
+- qm 的管理员邮箱来自部署时的 `ADMIN_GRANTS`/`AUTH_ALLOWED_EMAILS` 设置（试点机当前使用 **`admin@pacgate-law.com`**，见 `deploy/client-bundle/qm-pacgate/.env`，以实际配置为准）。
 - **登录方式**：qm 使用**一次性登录魔链**（magic-link）。在门户 `http://localhost:8181` 输入管理员邮箱，系统发送登录链接；开发/测试环境下该链接发送到 **Mailpit**（`http://localhost:8025`），在发起登录的**同一浏览器**中打开链接并确认。
 - **重置管理员**：若 `admin_grants` 表为空（登录提示 "This deployment isn't set up yet"），向数据库种入管理员（见第 7.1 节）。
 
@@ -181,7 +181,7 @@ pacgate-api 的 RAG 存储使用 Ollama 的 `nomic-embed-text` 作为 embedding 
 
 ### 5.4 工作流模板
 
-pacgate-api 暴露 **10 个法律工作流模板**：
+pacgate-api 的 `GET /api/workflows` 暴露 **222 个法律工作流模板（46 类，含上述 10 类经典示例）**。可用 `?category=&search=` 过滤：
 
 | 分类 | 工作流 | 步骤数 |
 |---|---|---|
@@ -282,15 +282,15 @@ PUT /admin/api/scopes/org:pacgate/base-model   body: {"modelId":"glm-5.3-flash:c
 
 ### 7.4 沙箱：报 "requires a running Docker daemon"
 
-**症状**：`SANDBOX_BACKEND=local` 时报"需要运行中的 Docker daemon（是否在运行 Docker Desktop？）"，但 Docker 明明在运行。
-**根因**：`SANDBOX_BACKEND=local` 让 qm core 在**容器内部**运行 `docker` CLI。但 qm 的 docker 后端**不挂载** `docker.sock`，且 core 镜像是 Alpine，**没有** docker 二进制。所以 preflight 必然失败（错误信息具有误导性）。
-**修复**：需要给 core 挂载 `docker.sock` 并安装 docker CLI，或切换后端（`sprites`/`aws`）。目前未接线。
+**症状**：`SANDBOX_BACKEND=local` 时报"需要运行中的 Docker daemon"，但 Docker 明明在运行。
+**根因**：qm core 在**容器内部**运行 `docker` CLI，需要挂载宿主的 `docker.sock` 与 docker CLI。
+**修复**（已在 `deploy/qm-pacgate/compose.qm.yaml` 完成）：core 现已挂载 `./patch/docker-cli/docker:/usr/local/bin/docker:ro` 与 `/var/run/docker.sock`，并将 `./patch/local-sandbox.ts` 只读挂载到 `/app/src/sandbox/local-sandbox.ts`。该补丁让沙箱经**容器 IP**（`docker inspect` 解析）直连 exec daemon——修复了旧的 `127.0.0.1:<hostport>` 回环死路，并会把 `FLY_RESIDENT_ENV_*` 前缀变量经 `docker run -e` 透传（`PACGATE_API_URL` 由此进入沙箱）。
 
 ### 7.5 沙箱镜像不存在
 
 **症状**：`local sandbox image ... not found`。
-**根因**：配置中固定的镜像 `localhost:5000/pacgate-sandboxes@sha256:...` 本地不存在，`localhost:5000` registry 不可达。
-**修复**：`npm exec qm -- sandbox build`（构建 `pacgate-sandbox:local`），或修正配置中的镜像 pin。
+**根因**：旧配置固定在 `localhost:5000` registry，该地址不可达（已废弃，见 `deploy/DEFECT-qm-sandbox-image-unobtainable.md`）。
+**修复**（已完成）：`qm.config.jsonc` 的 sandbox 镜像现固定为 `ghcr.io/jzkk720/pacgate-sandboxes@sha256:52e867fc…`（公开可拉取）。如需重建，仍可运行 `npm exec qm -- sandbox build && npm exec qm -- sandbox publish`。
 
 ---
 
