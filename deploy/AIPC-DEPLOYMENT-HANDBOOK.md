@@ -1,7 +1,7 @@
 # Pacgate AI - Two-AIPC Deployment Handbook
 
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
-> Targets release 0.1.20 - handbook updated 2026-09-28
+> Targets release 0.1.23 — handbook updated 2026-10-05
 > Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`.
 
 ## ⚠️ Significant findings (2026-09-02) — read before deploying AIPC #2
@@ -93,11 +93,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.22` | Published, public. |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.22` | Published, public. Exposes 10 MCP tools to deer-flow. |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.22` | Published, public. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.22` | Published, public. |
-| `ghcr.io/jzkk720/ocr-service:0.1.22` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
+| `ghcr.io/jzkk720/pacgate-api:0.1.23` | Published, public. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.23` | Published, public. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.23` | Published, public. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.23` | Published, public. |
+| `ghcr.io/jzkk720/ocr-service:0.1.23` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed
@@ -265,25 +265,33 @@ curl http://localhost:8089/pacgate/health
 ```
 
 Expected: all five containers running (pacgate-db, pacgate-api, deer-flow, openviking, nginx); `/version` returns
-`{"version":"0.1.20","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
+`{"version":"0.1.23","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
 
 > **Do not probe `/health` at the nginx root.** nginx routes `/` to the deer-flow frontend
 > by design, so `curl http://localhost:8089/health` returns the frontend's 404 page - that
 > reads as a failure but is correct routing. `/version` is also at the root (mapped to the
 > API's `/build-info`); only `/pacgate/*` paths reach the API.
 
-## Stage 3: Seed the tenant and register users (both machines)
+## Stage 3: Seed the tenant and provision accounts (both machines)
 
-> **`install.ps1` now does this automatically (step 6a).** On a current install
-> you do not need to run anything on this page - it is kept because the manual
-> path is still useful for recovery, and because the commands below are what the
-> installer runs. Check the install output for
+> **`install.ps1` now does this automatically (step 6a).** On a current install you
+> do not need to run anything on this page - it is kept for recovery, and the
+> commands below are what the installer runs. Check the install output for
 > `[OK] tenant 'default-firm' present` and `[OK] admin '...' registered`.
 
-On each machine, seed the default tenant and register the admin user:
+### How accounts work since 0.1.22 (read before provisioning people)
+
+- `POST /api/auth/register` is **first-user-only**: it creates exactly one account on a
+  fresh deployment (the bootstrap admin) and refuses afterwards with 403.
+- Every account after the first is created by the admin through
+  **`POST /api/auth/users`** (Bearer = the admin's token).
+- Research workspace sign-in = email + password. Collaboration (qm) sign-in = one-time
+  emailed links allowlisted via `AUTH_ALLOWED_EMAILS`.
+
+On each machine, seed the default tenant, then let the installer bootstrap the admin:
 
 ```powershell
-# Seed the tenant.
+# Seed the tenant (idempotent).
 #
 # THE SLUG MUST MATCH PACGATE_TENANT_ID. It defaults to "default-firm", and the
 # registration below looks the tenant up by that slug. An earlier version of this
@@ -295,22 +303,25 @@ On each machine, seed the default tenant and register the admin user:
 # That reads like a database fault and is really a naming mismatch. If you set
 # PACGATE_TENANT_ID to something else in .env, use that value here instead.
 docker exec pacgate-db psql -U pacgate -d pacgate -c "INSERT INTO tenants (name, slug) SELECT 'Default Firm', 'default-firm' WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = 'default-firm');"
-
-# Register the admin user
-$body = @{email="admin@pacgate-law.com"; password="<strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 ```
 
-Register a qm bridge service account (needed by qm to authenticate with pacgate-api):
+Provision an attorney user (run by the admin once the admin account exists):
 
 ```powershell
-# NOTE the /pacgate prefix. The un-prefixed /api/auth/register is routed to the
-# frontend and rejected with 403 "Cross-site auth request denied", which reads
-# like a credentials or CORS fault and is really a missing path segment. An
-# earlier version of this page omitted it.
-$body = @{email="qm-bridge@pacgate.local"; password="<strong-bridge-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+$login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" -Method Post `
+  -Body '{"email":"admin@pacgate-law.com","password":"<admin-password>"}' `
+  -ContentType "application/json"
+$body = @{email="<attorney-email>"; password="<attorney-password>"; role="attorney"} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/users" -Method Post `
+  -Headers @{Authorization="Bearer $($login.token)"} -Body $body -ContentType "application/json"
 ```
+
+Register the qm bridge service account (the installer does this; manual for recovery).
+Same admin-provisioned route, same shape as above, with `email="qm-bridge@pacgate-law.com"`.
+
+For the qm collaboration surface: set `AUTH_ALLOWED_EMAILS` (comma-separated) and
+`ADMIN_GRANTS=<email>:org_admin` in `deploy/client-bundle/qm-pacgate/.env`, then re-run
+`setup-qm.ps1`.
 
 ## Stage 3.5: Verify OpenViking memory service (both machines)
 
@@ -356,19 +367,20 @@ The script prompts for:
 
 The script generates signing secrets, creates `.env` in the qm-pacgate directory, validates the config with `qm check`, and builds the sandbox image with `qm sandbox build`.
 
-**QM sign-in requires a Resend API key.** The qm auth broker delivers sign-in magic links
-via **Resend** (`AUTH_EMAIL_TRANSPORT=resend`), not Outlook SMTP (Microsoft retired Basic
-Auth / app passwords for Exchange Online). Before `qm up` will start `portal`+`auth`, set
-`RESEND_API_KEY` in `deploy/qm-pacgate/.env`:
+**QM sign-in needs an email transport.** The qm auth broker delivers sign-in
+one-time links. Two supported transports:
+
+- **Local/pilot topology (Mailpit SMTP catcher):** `SMTP_HOST=mailpit
+  SMTP_PORT=1025 AUTH_EMAIL_TRANSPORT=smtp SMTP_TLS=none`. Links LAND IN THE MAILPIT
+  INBOX — open `http://localhost:8025` to pick up a sign-in link in a pilot. No
+  real email is sent.
+- **Production topology (Resend):** `AUTH_EMAIL_TRANSPORT=resend` with `RESEND_API_KEY`
+  in `deploy/qm-pacgate/.env`, and `AUTH_EMAIL_FROM` set to a Resend-verified sender
+  (an Outlook address is not verified; Microsoft retired Basic Auth/app passwords for
+  Exchange Online, so raw Outlook SMTP is NOT a supported transport):
 
 ```
 RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-Also set `AUTH_EMAIL_FROM` to a **Resend-verified sender** (an Outlook address is not
-verified). Either verify a real domain (e.g. `pacgate-law.com`) in Resend, or use Resend's
-test sender for now:
-```
 AUTH_EMAIL_FROM="PacGate <onboarding@resend.dev>"
 ```
 

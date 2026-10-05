@@ -2,7 +2,7 @@
 
 > How to use your firm's AI assistant, in plain language.
 > For attorneys, paralegals, secretaries, and partners. No technical knowledge needed.
-> Version 1.0 — 2026-08-30
+> Version 1.1 — 2026-10-05 (matches Pacgate-ai release v0.1.23)
 > 中文版本：[PACGATE-LAW-STAFF-HANDBOOK-ZH.md](PACGATE-LAW-STAFF-HANDBOOK-ZH.md)
 
 ---
@@ -30,10 +30,14 @@ Both workspaces see the same matters and the same documents. Think of them as tw
 
 1. Open Chrome or Edge.
 2. Go to the address your IT administrator gave you (it looks like `http://192.168.x.x:8089`).
-3. Sign in with the email and password your administrator set up for you.
-4. Pick a workspace. You'll be asked to choose or create a **matter** — see next section.
+3. Pick a workspace. You'll be asked to choose or create a **matter** — see next section.
 
-If your password doesn't work, or you've never received one, contact your firm administrator. There is no self-service password reset in this system yet.
+**How you sign in depends on the door you pick - both give you a personal identity, and your actions are logged under your name:**
+
+- **Research workspace** (the deep-research door): sign in with the email and password your administrator set up for you. There is no self-sign-up - your administrator creates accounts one person at a time.
+- **Team workspace** (the collaboration door): type your firm email address; the system emails you a **one-time sign-in link**. Click it from your inbox and you are in. No password to remember or reset. Only people on your administrator's allowlist receive links - if the system says your address can't sign in, ask to be added.
+
+If anything fails: a wrong password needs your administrator (there is no self-service password reset); a missing allowance for the Team workspace also needs your administrator. Neither is a defect you can fix yourself, and neither puts your data at risk.
 
 ---
 
@@ -79,7 +83,13 @@ Ask for what you want shaped like a document:
 
 The assistant produces a real `.docx` file. It appears in the **artifacts panel** on the right of the chat — click to preview or download. Every document keeps its history: if it's edited later, the old versions stay available.
 
-### 4.5 What it's good at (and what it isn't)
+### 4.5 The matter workspace, and where shown documents go
+
+Everything a matter holds - every document (with its safety status), what the AI has read out of each file, and what has been indexed for search - is gathered in one view. Ask the assistant: **"Show me this matter's workspace."** It reports what the matter contains before you start.
+
+And a document the assistant produces and shows you is **kept with the matter automatically** - it stays available from the matter after the chat ends, to you and to everyone assigned to the matter, including after updates. You can always ask for it to be re-uploaded under a different name as well.
+
+### 4.6 What it's good at (and what it isn't)
 
 Strong: reading large volumes of your own documents, extracting terms into tables, comparing versions, first drafts of memos, research with traceable citations.
 

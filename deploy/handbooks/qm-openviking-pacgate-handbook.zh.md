@@ -1,7 +1,7 @@
 # qm + OpenViking + pacgate-ai 网关/RAG 集成手册
 
 > 面向律师事务所技术团队与运维工程师
-> 版本 0.1.0 — 2026-09-04
+> 版本 0.2.0 — 2026-10-05 (Pacgate-ai v0.1.23)
 > 中文版（PDF） | 英文版：[qm-openviking-pacgate-handbook.md](qm-openviking-pacgate-handbook.md)
 
 ---
@@ -302,4 +302,4 @@ PUT /admin/api/scopes/org:pacgate/base-model   body: {"modelId":"glm-5.3-flash:c
 
 ---
 
-> 本手册由 pacgate-ai 部署文档与运行环境自动整理生成。版本 0.1.0 — 2026-09-04。
+> 本手册由 pacgate-ai 部署文档与运行环境自动整理生成。版本 0.2.0 — 2026-10-05 (Pacgate-ai v0.1.23)。

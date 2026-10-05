@@ -1,7 +1,7 @@
 # Pacgate AI - 双 AIPC 部署手册
 
 > 在每台机器上克隆仓库，运行相同的安装步骤，两台机器即可完全运行 deer-flow 研究与 qm 协作。
-> 版本 0.1.4 - 2026-09-04
+> 版本 0.1.23 - 2026-10-05
 > 前置条件：Docker Desktop、Ollama、Node.js 24+。`install.ps1` 会拉取 `ollama-models.txt` 中列出的模型。
 
 ## ⚠️ 重要发现（2026-09-02）— 部署 AIPC #2 前请先阅读
@@ -91,11 +91,11 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.22` | 已发布，公开。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.22` | 已发布，公开。向 deer-flow 暴露 10 个 MCP 工具。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.22` | 已发布，公开。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.22` | 已发布，公开。 |
-| `ghcr.io/jzkk720/ocr-service:0.1.22` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
+| `ghcr.io/jzkk720/pacgate-api:0.1.23` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.23` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.23` | 已发布，公开。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.23` | 已发布，公开。 |
+| `ghcr.io/jzkk720/ocr-service:0.1.23` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
@@ -252,25 +252,43 @@ curl http://localhost:8089/health
 预期：五个容器全部运行（pacgate-db、pacgate-api、deer-flow、openviking、nginx），
 且 `/health` 返回 `ok`。
 
-## Stage 3：初始化租户并注册用户（两台机器）
+## Stage 3：初始化租户并开通账号（两台机器）
 
-在每台机器上，初始化默认租户并注册管理员用户：
+> **`install.ps1` 现已自动完成（step 6a）。** 在新版安装上无需手工执行，本节保留
+> 用于恢复场景，其中的命令与安装程序实际运行的命令一致。
+
+### 自 0.1.22 起的账号机制（开通人员前请先阅读）
+
+- `POST /api/auth/register` 仅限**首位用户**：在全新部署上只创建一个账号
+  （引导管理员），此后一律返回 403。
+- 此后的每个账号由管理员通过 **`POST /api/auth/users`** 创建（Bearer = 管理员令牌）。
+- 检索工作区登录 = 邮箱 + 密码；协作（qm）登录 = 一次性邮件链接，受
+  `AUTH_ALLOWED_EMAILS` 名单控制。
+
+先初始化租户，再由安装程序引导创建管理员：
 
 ```powershell
-# 初始化租户
-docker exec pacgate-db psql -U pacgate -c "INSERT INTO tenants (name, slug) VALUES ('Pacgate Law', 'pacgate-law');"
-
-# 注册管理员用户
-$body = @{email="admin@pacgate-law.com"; password="<strong-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+# 初始化租户（幂等，slug 必须与 PACGATE_TENANT_ID 匹配）
+docker exec pacgate-db psql -U pacgate -d pacgate -c "INSERT INTO tenants (name, slug) SELECT 'Default Firm', 'default-firm' WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = 'default-firm');"
 ```
 
-注册一个 qm 桥接服务账号（qm 需要它来向 pacgate-api 认证）：
+开通律师账号（管理员账号存在后执行）：
 
 ```powershell
-$body = @{email="qm-bridge@pacgate.local"; password="<strong-bridge-password>"} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
+$login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" -Method Post `
+  -Body '{"email":"admin@pacgate-law.com","password":"<admin-password>"}' `
+  -ContentType "application/json"
+$body = @{email="<attorney-email>"; password="<attorney-password>"; role="attorney"} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/users" -Method Post `
+  -Headers @{Authorization="Bearer $($login.token)"} -Body $body -ContentType "application/json"
 ```
+
+注册 qm 桥接服务账号（安装程序自动完成，此处保留手工方式用于恢复），
+使用相同的管理员开通路由：`email="qm-bridge@pacgate-law.com"`。
+
+协作工作区侧：在 `deploy/client-bundle/qm-pacgate/.env` 中设置
+`AUTH_ALLOWED_EMAILS`（逗号分隔）与 `ADMIN_GRANTS=<email>:org_admin`，
+然后重新运行 `setup-qm.ps1`。
 
 ## Stage 3.5：验证 OpenViking 记忆服务（两台机器）
 
@@ -315,16 +333,20 @@ cd C:\pacgate-ai-pr\deploy\client-bundle
 脚本会生成签名密钥，在 qm-pacgate 目录中创建 `.env`，用 `qm check` 验证配置，
 并用 `qm sandbox build` 构建沙箱镜像。
 
-**QM 登录需要 Resend API 密钥。** qm 的 auth 代理通过 **Resend**
-（`AUTH_EMAIL_TRANSPORT=resend`）投递登录魔法链接，而不是 Outlook SMTP
-（微软已停用 Exchange Online 的基本身份验证 / 应用密码）。在 `qm up` 启动
-`portal`+`auth` 之前，在 `deploy/qm-pacgate/.env` 中设置 `RESEND_API_KEY`：
+**QM 登录需要邮件传输。** qm 的 auth 代理发送一次性登录链接。支持两种传输：
+
+- **本地/试点拓扑（Mailpit SMTP 捕获器）：** `SMTP_HOST=mailpit SMTP_PORT=1025
+  AUTH_EMAIL_TRANSPORT=smtp SMTP_TLS=none`。链接落在 **Mailpit 收件箱**中——试点时
+  打开 `http://localhost:8025` 领取登录链接即可，不发送真实邮件。
+- **生产拓扑（Resend）：** `AUTH_EMAIL_TRANSPORT=resend` 并在
+  `deploy/qm-pacgate/.env` 中设置 `RESEND_API_KEY`，`AUTH_EMAIL_FROM` 使用
+  Resend 已验证的发件人（Outlook 地址不属于已验证；微软已停用 Exchange Online
+  的基本身份验证/应用密码，因此原生 Outlook SMTP 不受支持）：
 
 ```
 RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+AUTH_EMAIL_FROM="PacGate <onboarding@resend.dev>"
 ```
-
-同时将 `AUTH_EMAIL_FROM` 设置为 **Resend 已验证的发件人**（Outlook 地址未验证）。
 要么在 Resend 中验证一个真实域名（例如 `pacgate-law.com`），要么暂时使用 Resend
 的测试发件人：
 ```

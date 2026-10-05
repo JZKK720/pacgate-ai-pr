@@ -1,7 +1,7 @@
 # Pacgate-ai User Manual
 
 > For attorneys, paralegals, and partners at the law firm
-> Version 0.2.0 — 2026-08-30
+> Version 0.3.0 — 2026-10-05 (matches Pacgate-ai release v0.1.23)
 > 中文版：[USER-MANUAL-ZH.md](USER-MANUAL-ZH.md) | PDF: [EN](USER-MANUAL.pdf) / [ZH](USER-MANUAL-ZH.pdf)
 
 ## What Pacgate-ai is
@@ -35,11 +35,27 @@ You switch between them by clicking a different link in your browser. Both run o
 
 ### Logging in
 
-Your IT administrator will give you:
-- A username (usually your email)
-- A password
+The two workspaces sign you in differently. Both give you a real, personal identity - your actions are attributed to you in the audit trail.
 
-Enter these on the login page. Your session stays active until you log out or close the browser.
+**Research workspace (deer-flow) - username and password:**
+
+1. Click **"Research a matter"** on the landing page.
+2. If you are not signed in yet, the app shows the login page.
+3. Enter the username (usually your email) and the password your IT administrator gave you.
+4. Your session stays active until you log out or close the browser.
+
+There is **no self-registration** on the research workspace: accounts are created by your administrator, one person at a time. If you have no account yet, ask your IT administrator to provision one (they need only your name and your firm email).
+
+**Collaboration workspace (qm) - email sign-in link, no password:**
+
+1. Click **"Collaborate on a matter"** on the landing page.
+2. Enter your firm email address on the sign-in page.
+3. The system emails you a one-time sign-in link (valid for a short while; one use only).
+4. Open the link from your inbox - it completes the sign-in and opens the workspace. There is no password to remember or reset.
+
+Sign-in links only reach people on your administrator's allowlist. If "this address can't sign in" appears, you are not on the list yet - ask your administrator to add you.
+
+In both workspaces, your identity shows at the edge of the screen (your email in the sidebar / account chip). Sign out from there when sharing a machine.
 
 ---
 
@@ -85,8 +101,44 @@ The research workspace is for tasks that need deep analysis:
 
 **Generate a new document:**
 - Ask: "Generate a contract review memo for matter M-001 based on the research above"
-- The AI produces a `.docx` file via the document engine
+- The AI produces a `.docx` file via the document engine (Office documents via OfficeCLI; Word/Excel/PowerPoint all supported)
 - It appears as an artifact — click to download or preview
+
+**Convert between formats:**
+- "Convert this document to Markdown" — the AI converts `.docx` / `.pdf` / `.pptx` / `.xlsx` / `.html` to clean Markdown text you can quote or edit
+- The reverse also works: ask for Markdown converted to `.docx` or `.pdf` for delivery
+- Conversion is local; the document content never leaves the AI PC during conversion
+
+**Read text out of a scanned document (OCR extraction):**
+- Upload a scanned PDF or image of a document, then ask: "Read the text of this document"
+- The OCR engine reads the pages, records every text span with its page and position, and reports how complete the read was
+- If any page could not be parsed, the assistant says so plainly ("extraction incomplete") — a partial read is never presented as complete
+- Extraction results are kept per document version, so the same document is not re-read twice
+- Batch reading: "OCR every document in this matter" — the assistant works through a capped number of pages per run and reports the remaining budget
+
+**Sanitizing a document (preparing client material for outside processing):**
+
+This system can prepare a document so its client-identifying details are replaced before any outside model service processes it:
+
+1. Ask: "Sanitize this document" — the sanitizer agent runs the redaction pipeline
+2. The system replaces identifiers (ID numbers, phone numbers, names) with placeholders, records what was replaced in a sealed mapping, and reports the outcome plainly: verdict, how many replacements were made
+3. The sanitized version is what may then be quoted in chat or sent for outside processing; the original stays behind
+4. The mapping itself is not shown in chat; only an administrator can restore the original from it, and every restore is audit-logged
+5. A document that fails the check is marked blocked and cannot leave the machine
+
+**Where your documents live (the matter workspace):**
+
+Every document — uploaded, generated, or shown to you by the AI — is filed under its matter:
+
+```
+Your matter
+├── Documents (each with versions and a sanitization status)
+├── Extraction records (what the OCR has read)
+├── Deliverables shown in chat (kept automatically, named like the file you saw)
+└── Search index (which documents the assistant can quote from)
+```
+
+To see it: ask the assistant **"Show me this matter's workspace."** To retrieve any document: ask for it by name ("download the memo we drafted"), preview it in the artifacts panel, or browse the matter document list in the UI. Downloads of documents that carry client identity are held until their safety review passes — seeing "pending" on a fresh upload before its review is normal.
 
 **Version history:**
 - Every document has versions (v1, v2, v3...)
@@ -191,6 +243,26 @@ Every document is versioned:
 - When you or the AI edits it, it creates v2, v3, etc.
 - You can download or preview any version
 - The current version is always the latest
+
+### The matter workspace (one view of everything)
+
+Everything your matter holds is gathered in one place:
+
+- **Documents** - every uploaded or generated document, with its sanitization state (pending / sanitized / blocked) and current version
+- **Extraction records** - what the AI has read out of each document (page counts, whether any page failed), so you always know how complete the machine's view is
+- **Knowledge-base status** - which documents are indexed for search and whether they have been through the safety pipeline
+
+Ask the assistant in research mode: **"Show me the workspace for this matter."** It reads the aggregated view and reports what the matter holds before you start work - useful when picking up a matter someone else started.
+
+### Deliverables you are shown are saved for you
+
+When the AI produces a document and shows it in the artifacts panel, the system automatically keeps a copy filed under the matter - named like the file you saw (for example `presented-report.docx`). That means:
+
+- The deliverable you were shown remains available from the matter, not only in the chat that produced it
+- Other people working on the matter can find it; it is not locked to your session
+- It survives updates and restarts
+
+If you want the same file with your own name on it, ask the assistant to upload it as a named document instead - both paths are available.
 
 ### Citations
 
