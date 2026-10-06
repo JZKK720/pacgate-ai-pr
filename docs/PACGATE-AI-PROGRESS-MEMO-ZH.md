@@ -57,6 +57,7 @@
 ## 4. 未决事项
 
 - 不完整抽取 500 仍为已知缺陷，尚未修复（`deploy/DEFECT-incomplete-extraction-500.md`）——有意为之，客户端可见的状态码契约变更留给独立发布。
+- 脱敏规则可配置化（路线图事项，非缺陷）：Tier-1 规则编译在 `pacgate-redact` 内（确定性优先设计使然），当前不存在运行时规则管理接口。2026-10-06 由 deer-flow 的一次报告引出调查：其"CN_ID/USCC 规则缺失"的结论被驳斥（两条校验规则都在 `rules.rs`/`checksum.rs`，报告中测试值本身校验位无效），但调查暴露了真实的路线图缺口——客户若需要租户级自定义规则，没有通道。R1 现已关闭：跨辖区证件扩展集（`PASSPORT` E+字母+7 位/旧版 E+8 位、`HK_MO_PERMIT` H|M+10 位、须标签的 `TW_PERMIT` 8+2 位、须标签的 `LEGACY_ID` 15 位一代身份证、律师执业证号 17 位走 `REG_NO`）已随 recall fixtures 交付；测试 151/151 通过。仍未决：可配置规则通道（`rules.yaml` 随部署挂载 + 规则版本纳入 SHA-256 台账）是设计级的平台功能需求，不是缺陷修复——映射/版本含义需要独立方案，且已持久化映射中的占位符代码集在新增实体码时必须保持向后兼容。
 - QM 生命周期与 Windows：2026-10-06 解决。原"本地模型路由跨重建不持久"的表述对本机队不成立——`qm up`/`qm down` 在 Windows 上根本无法运行（CLI 的 `which()` 直接调 `/bin/sh` → `ENOENT`，已实测），唯一可用的生命周期是 `compose.qm.yaml`，它 bind-mount 了 `pi-models.ts` / `local-sandbox.ts` / docker-CLI 与 socket，模型路由与沙箱链路跨重建持久。手册（EN+ZH）已于 2026-10-06 更新：`qm.cmd up` 指引替换为 compose 路径。
 - ~~备忘录撰写时工作树仍带 `setup-qm.ps1` 与 `local-sandbox.ts` 的功能性编辑，待下一次发布批次提交~~ 已于 2026-10-06 关闭：提交 `307a048`（沙箱自动自愈 + 安装路径：sandbox-local 入库、docker-CLI 取回+SHA 校验、包装镜像构建），并附干净 clone 的首次 bootstrap 实证；`52c7da7` 关闭三个假绿门；`ddfa54e` 修复 PS 7-only 的 `?.`（在 PS 5.1 下 `install.ps1` 解析失败）；`83b1d2a` 修复 clone 实证抓到的 Join-Path 缺陷。
 
