@@ -83,8 +83,16 @@ else { Bad "protected route -> $p (expected 401/403)" }
 
 # ── Lane 2: pacgate-mcp (the 0.1.21 fix) ────────────────────────────────────
 Lane 'pacgate-mcp'
+# Tool count. The hardcoded '16' went stale at 5fc63e1 (workspace + present_files
+# tools, image and source both 19) - a hardcoded census rots on every tool
+# addition. The invariant that never rots: the RUNNING image and the REPO source
+# define the SAME number, and it is at least the 16 baseline. Drift in either
+# direction is the real defect (a stale image, or an unpushed source edit).
 $tools = (docker exec pacgate-mcp sh -c "grep -c 'def pacgate_' /app/server.py" 2>&1 | Out-String).Trim()
-if ($tools -eq '16') { Ok "16 MCP tool definitions present" } else { Bad "tool count = $tools (expected 16)" }
+$srcDir = Join-Path $PSScriptRoot '..\deploy\pacgate-mcp\server.py'
+$srcCount = if (Test-Path $srcDir) { (Select-String -Path $srcDir -Pattern 'def pacgate_').Count } else { -1 }
+if ([int]$tools -ge 16 -and $srcCount -eq [int]$tools) { Ok "$tools MCP tool definitions present (image == source, >= 16 baseline)" }
+else { Bad "tool count = $tools image / $srcCount source (expected equal and >= 16)" }
 $rl = (docker exec pacgate-mcp sh -c "grep -c _relogin /app/server.py" 2>&1 | Out-String).Trim()
 if ($rl -eq '2') { Ok 'the 0.1.21 401-retry fix is present in the RUNNING image' }
 else { Bad "401-retry fix absent ($rl)" }
@@ -115,8 +123,9 @@ with httpx.Client(timeout=20) as c:
 "@ 2>&1 | Out-String).Trim()
 if ($probe -match 'TOOLS=(\d+) PACGATE=(\d+)') {
     $total = [int]$Matches[1]; $pg = [int]$Matches[2]
-    if ($pg -eq 16) { Ok "MCP serves $pg pacgate tools ($total total in tools/list)" }
-    else { Bad "MCP served $pg pacgate tools, expected 16" }
+    # The served count must match the source census above, not a hardcoded 16.
+    if ($pg -eq [int]$tools) { Ok "MCP serves $pg pacgate tools ($total total in tools/list, matches source)" }
+    else { Bad "MCP served $pg pacgate tools over the wire, $tools in source (drift)" }
 } else { Bad "MCP probe failed: $probe" }
 
 # ── Lane 3: deer-flow-pacgate ───────────────────────────────────────────────

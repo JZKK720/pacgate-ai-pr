@@ -117,6 +117,13 @@ if (-not (Test-Path $deliveryDir)) {
 }
 else {
     # Blob SHAs at HEAD, parsed from ls-tree output: "<mode> blob <sha>\t<path>".
+    # Multiple tracked paths can share ONE filename (deploy root, handbooks/pdf,
+    # ...) with DIFFERENT blob SHAs on purpose - the handbooks copy is a
+    # different revision of the same document. A single name->path map chose one
+    # nondeterministically (last wins), which made the real copy-pair
+    # (deploy root <-> client-delivery) "differ at HEAD" and get skipped - the
+    # check asserted nothing and the truncation mutation passed unnoticed. The
+    # index therefore holds EVERY origin per filename.
     $headBlobs = @{}
     foreach ($line in (git ls-tree -r HEAD)) {
         if ($line -match '^\d+\s+blob\s+([0-9a-f]+)\t(.+)$') {
@@ -127,20 +134,28 @@ else {
     $nameIndex = @{}
     foreach ($p in $tracked) {
         if ($p -match 'client-delivery') { continue }
-        $nameIndex[[IO.Path]::GetFileName($p)] = $p
+        $name = [IO.Path]::GetFileName($p)
+        if (-not $nameIndex.ContainsKey($name)) { $nameIndex[$name] = @() }
+        $nameIndex[$name] += $p
     }
 
     $drift = @(); $skipped = @(); $compared = 0
     foreach ($copy in (Get-ChildItem $deliveryDir -Filter '*.pdf')) {
-        $origin = $nameIndex[$copy.Name]
-        if (-not $origin) { continue }
+        $candidates = $nameIndex[$copy.Name]
+        if (-not $candidates) { continue }
 
         $copyRel = ('deploy/client-delivery/docs/' + $copy.Name)
-        $wasIdentical = $headBlobs.ContainsKey($copyRel) -and
-                        $headBlobs.ContainsKey($origin) -and
-                        $headBlobs[$copyRel] -eq $headBlobs[$origin]
-
-        if (-not $wasIdentical) {
+        # The copy was MEANT to match whichever origin it is byte-identical to
+        # AT HEAD. With several candidates of differing revisions, a pair is a
+        # real copy-pair only when the copy's HEAD blob equals THAT origin's.
+        $origin = $null
+        $copyHead = if ($headBlobs.ContainsKey($copyRel)) { $headBlobs[$copyRel] } else { $null }
+        if ($copyHead) {
+            $identical = @($candidates | Where-Object { $headBlobs.ContainsKey($_) -and $headBlobs[$_] -eq $copyHead })
+            if ($identical.Count -eq 1) { $origin = $identical[0] }
+            elseif ($identical.Count -gt 1) { $origin = $identical[0] }
+        }
+        if (-not $origin) {
             $skipped += $copy.Name
             continue
         }

@@ -6,11 +6,33 @@ runnable with plain unittest:
     python -m unittest discover -s pacgate-adapters/python/tests -v
 """
 
+import importlib.util
 import sys
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+# The adapter imports httpx (client.py). The suite is stdlib-only by design,
+# so stub httpx like deerflow: every call the tests make goes through
+# unittest.mock.patch on the storage/client objects, never through a real
+# HTTP client, and production runs inside the deer-flow image where the real
+# module exists.
+if importlib.util.find_spec("httpx") is None:
+    _httpx_stub = types.ModuleType("httpx")
+    _httpx_stub.HTTPError = type("HTTPError", (Exception,), {})
+    _httpx_stub.Response = type("Response", (), {})
+    _httpx_stub.Client = type(
+        "Client",
+        (),
+        {
+            "__init__": lambda self, *a, **k: None,
+            "get": lambda self, *a, **k: MagicMock(),
+            "post": lambda self, *a, **k: MagicMock(),
+            "delete": lambda self, *a, **k: MagicMock(),
+        },
+    )
+    sys.modules.setdefault("httpx", _httpx_stub)
 
 # The adapter imports deerflow, which is a dependency of the deer-flow runtime,
 # not of this repo's venv. Stub it before import so the storage class's

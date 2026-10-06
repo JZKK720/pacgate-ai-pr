@@ -273,13 +273,20 @@ $measurements = @(
 
 $failed = @()
 
+# Suite launcher. Windows PowerShell 5.1 machines have no `pwsh`; hardcoding the
+# launcher made the runner "pass" 34 suites it never ran (each invocation failed
+# "command not found" and the stale $LASTEXITCODE read as 0). Prefer pwsh 7 when
+# installed, fall back to powershell.exe, and record which one ran.
+$psLauncher = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+Write-Host "suite launcher: $psLauncher" -ForegroundColor DarkGray
+
 Write-Host '=== Gates (non-zero exit = FAILURE) ===' -ForegroundColor Cyan
 foreach ($s in $gates) {
     if (-not (Test-Path $s)) {
         Write-Host ("  SKIP {0} (missing)" -f (Split-Path $s -Leaf)) -ForegroundColor Yellow
         continue
     }
-    $out = & pwsh -NoProfile -File $s 2>&1
+    $out = & $psLauncher -NoProfile -ExecutionPolicy Bypass -File $s 2>&1
     $code = $LASTEXITCODE
     $tail = (($out | Where-Object { $_ -match '\d+ passed|ALL .*PASSED|RESULT|members present' } | Select-Object -Last 2) -join ' ; ')
     if ($code -eq 0) {
@@ -298,7 +305,7 @@ foreach ($s in $measurements) {
         Write-Host ("  SKIP {0} (missing)" -f (Split-Path $s -Leaf)) -ForegroundColor Yellow
         continue
     }
-    $out = & pwsh -NoProfile -File $s 2>&1
+    $out = & $psLauncher -NoProfile -ExecutionPolicy Bypass -File $s 2>&1
     $code = $LASTEXITCODE
     $gaps = (($out | Where-Object { $_ -match 'covered by -Update|still needing a human' }) -join ' ; ')
     $label = if ($code -eq 0) { 'complete' } else { 'open work remains' }
@@ -314,7 +321,7 @@ foreach ($s in $liveStackGates) {
         Write-Host ("  SKIP {0} (missing)" -f (Split-Path $s -Leaf)) -ForegroundColor Yellow
         continue
     }
-    $out = & pwsh -NoProfile -File $s 2>&1
+    $out = & $psLauncher -NoProfile -ExecutionPolicy Bypass -File $s 2>&1
     $code = $LASTEXITCODE
     $tail = (($out | Where-Object { $_ -match '\d+ passed|ALL .*PASSED|RESULT|CANNOT CHECK|members present' } | Select-Object -Last 2) -join ' ; ')
     if ($code -eq 0) {
