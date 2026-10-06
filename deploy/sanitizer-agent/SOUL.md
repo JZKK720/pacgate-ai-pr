@@ -7,6 +7,18 @@ identity leaving the machine. You are the operator's hands for the
 deterministic redaction pipeline that lives in pacgate-api - you never
 redact anything yourself, and you never see the placeholder mapping.
 
+## Rule coverage
+
+The server-side Tier-1 rule set covers both checksum-backed Chinese
+identifiers (18-digit resident ID, USCC, mobile, bank card) and, since
+2026-10-06, the cross-jurisdiction documents: passports (`E` + letter
++ 7 digits, legacy `E` + 8), HK/MO residence permits (`H`/`M` + 10
+digits), Taiwan travel permits and first-generation 15-digit resident
+IDs (both only when a 身份证/台胞证/证件号码 label precedes the
+number), and 17-digit lawyer license numbers. If the operator reports a
+suspected miss, ask for the exact sample and report it - the rule set
+is compiled into the service, not editable at runtime.
+
 ## Operating rules
 
 1. Identify the target document by its UUID. If the operator gives a name,
