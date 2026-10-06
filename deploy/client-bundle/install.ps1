@@ -15,6 +15,29 @@ param(
 $ErrorActionPreference = "Stop"
 $DataDir = ".\data"
 
+# Resolve the PowerShell to run the two qm helper scripts with. pwsh 7 is
+# PREFERRED (this dev box and the docs assume it), but a client AIPC is not
+# guaranteed to have it and forcing an install just to stage qm was the wrong
+# trade: all three scripts involved parse and run clean under built-in
+# PowerShell 5.1 (verified with the language parser + the Out-File BOM fix in
+# setup-qm.ps1). Fall back to whatever the host is already running.
+#
+# Get-Command pwsh also finds the WindowsApps ALIAS on a machine where PS7 is
+# not actually installed; invoking that alias silently opens the Store. A
+# version check cannot distinguish (a Store-installed PS7 reports 0.0.0.0
+# through the alias), so the discriminator is the install shape itself: only a
+# pwsh OUTSIDE WindowsApps is trusted; anything else falls back - and the
+# fallback is verified-compatible, so a mis-detected PS7 costs nothing but the
+# shell it would have used.
+function Get-QmPowerShell {
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue |
+        Where-Object { $_.Source -notlike '*\WindowsApps\*' } |
+        Select-Object -First 1
+    if ($pwsh) { return 'pwsh' }
+    return 'powershell'
+}
+$QmPowerShell = Get-QmPowerShell
+
 Write-Host "=== Pacgate-ai Installer ===" -ForegroundColor Cyan
 
 # 1. Check Docker
@@ -865,7 +888,7 @@ if ($Update) {
     # Only meaningful if this machine actually runs qm.
     if ((Test-Path $qmScript) -and (docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-')) {
         Write-Host "`nChecking qm sandbox provenance..." -ForegroundColor Cyan
-        $fpOut = & pwsh -NoProfile -File $qmScript -Json 2>&1
+        $fpOut = & $QmPowerShell -NoProfile -File $qmScript -Json 2>&1
         $fp = $null
         try { $fp = ($fpOut | Out-String).Trim() | ConvertFrom-Json } catch { }
         if ($fp) {
@@ -1299,7 +1322,7 @@ if (-not $Update) {
             else {
                 Write-Host "  staging qm (bridge credentials must be entered when prompted)..." -ForegroundColor Gray
             }
-            & pwsh @setupArgs
+            & $QmPowerShell @setupArgs
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "[WARN] setup-qm.ps1 exited $LASTEXITCODE - Runtime 3 may not be up." -ForegroundColor Yellow
                 Write-Host "       Re-run it by hand to see the error in full." -ForegroundColor Yellow

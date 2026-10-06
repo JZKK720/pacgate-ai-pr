@@ -83,6 +83,8 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 - 两台 AIPC 上都运行 Ollama（`install.ps1` 会拉取它需要的模型）
 - 如果使用带 cloud 标签的 deepseek 模型，每台 AIPC 上完成 `ollama signin`
 - 两台 AIPC 上都安装 Node.js 24+（供 qm 使用）
+- PowerShell 7（`pwsh`）可选 —— 安装脚本优先使用它，缺失时回退到系统自带的
+  PowerShell 5.1；脚本本身与两种版本均兼容。
 - **无需 `docker login ghcr.io`**——Pacgate 运行时镜像以**公开** GHCR 包发布
   （见 Stage 0）。
 

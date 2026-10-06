@@ -3,7 +3,7 @@
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
 > Targets release 0.1.23 — handbook updated 2026-10-05
 > Chinese version: [AIPC-DEPLOYMENT-HANDBOOK-ZH.md](AIPC-DEPLOYMENT-HANDBOOK-ZH.md)
-> Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`.
+> Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`. PowerShell 7 (`pwsh`) is optional - the installer prefers it and falls back to built-in PowerShell 5.1, which everything it runs is compatible with.
 
 ## ⚠️ Significant findings (2026-09-02) — read before deploying AIPC #2
 

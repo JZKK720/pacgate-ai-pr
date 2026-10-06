@@ -348,7 +348,13 @@ PACGATE_API_EMAIL=$bridgeEmail
 PACGATE_API_PASSWORD=$plainPassword
 "@
 
-    $envContent | Out-File -FilePath ".env" -Encoding utf8 -NoNewline
+    # BOM-safe write. The previous `Out-File -Encoding utf8` is Windows
+    # PowerShell 5.1's BOM-add variant: it prepends EF BB BF, and docker compose
+    # interpolates the first key as "\ufeffPACGATE..." - the value silently
+    # doesn't resolve and the stack boots with an empty DATABASE_URL password.
+    # (BOM traps hit twice already in this workspace's sessions.) UTF8Encoding
+    # with $false explicitly means no BOM in BOTH PowerShell 5.1 and 7+.
+    [System.IO.File]::WriteAllText((Join-Path (Get-Location) '.env'), $envContent, [System.Text.UTF8Encoding]::new($false))
 
     # Secure the file
     if ($IsLinux -or $IsMacOS) {
