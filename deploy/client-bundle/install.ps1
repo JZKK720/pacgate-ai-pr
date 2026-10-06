@@ -1244,11 +1244,17 @@ if (-not $Update) {
                         # written to .env for it, or the account and the config
                         # would disagree - so this is reported, not papered over.
                         #
-                        # `?.` because a DNS failure, connection-refused, or timeout
-                        # leaves Response null; without it, the property access
-                        # throws and the operator sees a null-reference error instead
-                        # of the transport failure.
-                        $code = $_.Exception.Response?.StatusCode.value__
+                        # `?.` is PS7-only and install.ps1 must parse under the
+                        # Windows built-in PowerShell 5.1 too (the AIPC runbook
+                        # invokes .\install.ps1 without a pwsh prerequisite, and
+                        # a parse error kills the whole installer). Expand it
+                        # for both PS 5.1 and 7+: a DNS failure,
+                        # connection-refused, or timeout leaves Response null;
+                        # without the null guard the property access throws and
+                        # the operator sees a null-reference error instead of
+                        # the transport failure.
+                        $code = $null
+                        if ($_.Exception.Response) { $code = $_.Exception.Response.StatusCode.value__ }
                         if ($code -eq 409) {
                             Write-Host "  [OK] bridge account already exists" -ForegroundColor Green
                             Write-Host "       its password is whatever was set when it was created." -ForegroundColor Gray
