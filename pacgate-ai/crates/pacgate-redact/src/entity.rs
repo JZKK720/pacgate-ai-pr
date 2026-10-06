@@ -152,9 +152,17 @@ impl EntityType {
             EntityType::BankAccount
             | EntityType::BankCard
             | EntityType::Uscc
-            | EntityType::CnResidentId
-            | EntityType::LegacyIdNumber => PlaceholderPolicy::FormatPreserving,
+            | EntityType::CnResidentId => PlaceholderPolicy::FormatPreserving,
             // Nothing machine-parses a name, org, address or case number.
+            //
+            // LegacyIdNumber is FormatPreserving's poison: it has NO check
+            // digit, so a format-preserving placeholder still passes the same
+            // label-anchored rule that caught it, and the verifier then
+            // Block-s the whole document (measured 2026-10-06). Only
+            // checksum-backed values can be format-preserved without
+            // self-tripping - the fake placeholder fails the checksum the
+            // real value passed. Opaque for the legacy ID, the same way the
+            // 17-digit lawyer license (`REG_NO`) is already Opaque.
             _ => PlaceholderPolicy::Opaque,
         }
     }
