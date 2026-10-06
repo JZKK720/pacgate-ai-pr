@@ -111,6 +111,11 @@ services:
       # client's actual access origin (e.g. http://192.168.1.10:8089) or login
       # fails with "Cross-site auth request denied" (403). Comma-separated.
       GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:8089,http://localhost:8090}
+      # Pacgate (silent-no-reply fix 2026-10-06): bound the first-exchange title
+      # generation so a stalled Ollama cloud read cannot leave the pregel loop
+      # frozen mid-run with zero user-visible output (run c2a0ced4 evidence in
+      # .env comments). Value comes from .env: DEERFLOW_TITLE_INVOKE_TIMEOUT_S.
+      DEERFLOW_TITLE_INVOKE_TIMEOUT_S: ${DEERFLOW_TITLE_INVOKE_TIMEOUT_S:-8}
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
