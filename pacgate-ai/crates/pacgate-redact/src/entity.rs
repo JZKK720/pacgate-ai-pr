@@ -43,6 +43,11 @@ pub enum EntityType {
     BankCard,
     // Tier 1 - generic structured
     Email,
+    // Tier 1 - pattern-anchored cross-jurisdiction IDs (no checksum exists;
+    // the shape plus the mandatory letter prefix carries the structure).
+    Passport,
+    HkMoPermit,
+    TaiwanPermit,
     // Tier 2 - names and contact
     PersonName,
     OrgName,
@@ -52,6 +57,9 @@ pub enum EntityType {
     CaseNumber,
     RegistrationNumber,
     Location,
+    // Tier 3 - context-anchored: a bare 15-digit run is ambiguous, so the
+    // 身份证/证件 label is the only thing that makes it an identifier.
+    LegacyIdNumber,
     // Tier 4 - accounts and secrets
     BankAccount,
     Credential,
@@ -66,6 +74,9 @@ impl EntityType {
         EntityType::CnMobile,
         EntityType::BankCard,
         EntityType::Email,
+        EntityType::Passport,
+        EntityType::HkMoPermit,
+        EntityType::TaiwanPermit,
         EntityType::PersonName,
         EntityType::OrgName,
         EntityType::Landline,
@@ -73,6 +84,7 @@ impl EntityType {
         EntityType::CaseNumber,
         EntityType::RegistrationNumber,
         EntityType::Location,
+        EntityType::LegacyIdNumber,
         EntityType::BankAccount,
         EntityType::Credential,
         EntityType::IpAddress,
@@ -86,6 +98,9 @@ impl EntityType {
             EntityType::CnMobile => "CN_MOBILE",
             EntityType::BankCard => "BANK_CARD",
             EntityType::Email => "EMAIL",
+            EntityType::Passport => "PASSPORT",
+            EntityType::HkMoPermit => "HK_MO_PERMIT",
+            EntityType::TaiwanPermit => "TW_PERMIT",
             EntityType::PersonName => "PERSON",
             EntityType::OrgName => "ORG",
             EntityType::Landline => "LANDLINE",
@@ -93,6 +108,7 @@ impl EntityType {
             EntityType::CaseNumber => "CASE_NO",
             EntityType::RegistrationNumber => "REG_NO",
             EntityType::Location => "LOCATION",
+            EntityType::LegacyIdNumber => "LEGACY_ID",
             EntityType::BankAccount => "BANK_ACCOUNT",
             EntityType::Credential => "CREDENTIAL",
             EntityType::IpAddress => "IP",
@@ -109,15 +125,21 @@ impl EntityType {
             | EntityType::Uscc
             | EntityType::CnMobile
             | EntityType::BankCard
-            | EntityType::Email => Tier::One,
+            | EntityType::Email
+            | EntityType::Passport
+            | EntityType::HkMoPermit
+            | EntityType::TaiwanPermit => Tier::One,
             EntityType::PersonName
             | EntityType::OrgName
             | EntityType::Landline
             | EntityType::PostalAddress => Tier::Two,
-            EntityType::CaseNumber | EntityType::RegistrationNumber | EntityType::Location => {
-                Tier::Three
+            EntityType::CaseNumber
+            | EntityType::RegistrationNumber
+            | EntityType::Location
+            | EntityType::LegacyIdNumber => Tier::Three,
+            EntityType::BankAccount | EntityType::Credential | EntityType::IpAddress => {
+                Tier::Four
             }
-            EntityType::BankAccount | EntityType::Credential | EntityType::IpAddress => Tier::Four,
         }
     }
 
@@ -130,7 +152,8 @@ impl EntityType {
             EntityType::BankAccount
             | EntityType::BankCard
             | EntityType::Uscc
-            | EntityType::CnResidentId => PlaceholderPolicy::FormatPreserving,
+            | EntityType::CnResidentId
+            | EntityType::LegacyIdNumber => PlaceholderPolicy::FormatPreserving,
             // Nothing machine-parses a name, org, address or case number.
             _ => PlaceholderPolicy::Opaque,
         }
@@ -148,6 +171,40 @@ mod tests {
         assert_eq!(EntityType::Uscc.tier(), Tier::One);
         assert_eq!(EntityType::BankCard.tier(), Tier::One);
         assert_eq!(EntityType::CnMobile.tier(), Tier::One);
+    }
+
+    /// The Tier-1 extension set (2026-10-06): cross-jurisdiction permit and
+    /// passport numbers. No checksum exists for these anywhere, so the letter
+    /// prefix IS the anchor: a bare digit run never qualifies.
+    #[test]
+    fn tier_one_extension_is_pattern_anchored() {
+        assert_eq!(EntityType::Passport.tier(), Tier::One);
+        assert_eq!(EntityType::HkMoPermit.tier(), Tier::One);
+        assert_eq!(EntityType::TaiwanPermit.tier(), Tier::One);
+    }
+
+    /// A 15-digit legacy ID run has no checksum and an ambiguous shape, so it
+    /// is deliberately Tier 3 and only fires with a document-label context.
+    #[test]
+    fn legacy_15_digit_id_is_context_anchored_tier_three() {
+        assert_eq!(EntityType::LegacyIdNumber.tier(), Tier::Three);
+        assert_eq!(EntityType::LegacyIdNumber.code(), "LEGACY_ID");
+    }
+
+    #[test]
+    fn extension_codes_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for c in [
+            "PASSPORT",
+            "HK_MO_PERMIT",
+            "TW_PERMIT",
+            "LEGACY_ID",
+            "CN_ID",
+            "USCC",
+        ] {
+            assert!(seen.insert(c), "duplicate code: {c}");
+            assert!(EntityType::from_code(c).is_some(), "code not mapped: {c}");
+        }
     }
 
     #[test]

@@ -83,6 +83,67 @@ static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
         .expect("ipv4 regex is valid")
 });
 
+// ---------------------------------------------------------------------------
+// Tier-1 extension set (added 2026-10-06, plan R1): cross-jurisdiction
+// identifiers. None of these carry a checksum issued anywhere, so the letter
+// prefix is the structural anchor and a bare digit run never qualifies. The
+// formats are the published national rules, not guesses:
+//
+//   护照 (CN passport): "E" + one letter (I/O excluded) + 7 digits = 9 chars.
+//     Older passports remain "E" + 8 digits = 9 chars, same total length, so
+//     one alternation covers both without length drift.
+//   回乡证 (HkMoPermit): "H"(HK) or "M"(MO) + 8-digit lifetime number +
+//     2-digit reissue counter = 11 chars. 公安部 published format.
+//   台胞证 (TaiwanPermit): 8-digit number + optional 2-digit reissue counter.
+//     No letter exists, so it is Tier-1 only when LABELLED (see
+//     RE_PERMIT_ANCHOR below); standalone 8-10 digit runs are exactly what
+//     spec 8.4 forbids treating without context.
+// ---------------------------------------------------------------------------
+
+/// CN passport: `E` + letter (no I/O) + 7 digits, or legacy `E` + 8 digits.
+static RE_PASSPORT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"E[A-HJ-NPZ][0-9]{7}|E[0-9]{8}").expect("passport regex is valid"));
+
+/// 回乡证: `H`/`M` + 8 digits + 2-digit reissue counter.
+static RE_HK_MO_PERMIT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[HM][0-9]{10}").expect("hk/mo permit regex is valid"));
+
+/// 台胞证 requires a label; this anchor finds the label itself so the digit
+/// run right after it can be promoted to a Tier-1 match.
+static RE_PERMIT_ANCHOR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"台胞证(?:号码)?[:：]?").expect("taiwan permit anchor is valid"));
+
+static RE_PERMIT_DIGITS: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9]{8}(?:[0-9]{2})?").expect("permit digits regex is valid"));
+
+/// 15-digit legacy ID: 6-digit region + YYMMDD + 3-digit sequence. Matched
+/// against the ORIGINAL text (no separator normalisation) because no checksum
+/// exists to validate a de-grouped copy, and the label boundary test
+/// (same as landline) rejects a longer digit run after the match.
+///
+/// The label alternation covers the printed forms: 身份证 / 身份证号 /
+/// 身份证号码, 证件号码, and the 一代证 phrasings 旧身份证 / 旧行身份证
+/// with or without the 号码 suffix. The `号码?` groups stay per-branch
+/// because `号码?` binds to 码 only - lifting the suffix out of the
+/// branches would wrongly make 号 obligatory on every branch. The optional
+/// whitespace keeps `身份证 130503670401001` (space-separated) matching;
+/// `is_bounded` still rejects anything longer.
+static RE_LEGACY_ID_LABEL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:旧行?身份证(?:号码?)?|身份证(?:号码?)?|证件号码?)[:：\s]*")
+        .expect("legacy-id label regex is valid")
+});
+
+static RE_LEGACY_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[1-9][0-9]{14}").expect("legacy id regex is valid"));
+
+/// 律师执业证号: 17 digits, structurally fixed - kind(1) province(2)
+/// city(2) year(4) class(1) gender(1) serial(6). The label is the anchor;
+/// `is_bounded` rejects the 18th digit continuation.
+static RE_LAWYER_LABEL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"律师执业证(?:号码)?[:：\s]*").expect("lawyer label regex is valid"));
+
+static RE_LAWYER_NO: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9]{17}").expect("lawyer number regex is valid"));
 
 /// Ceiling on matches from one text, to turn a pathological input into a
 /// fatal error instead of unbounded memory growth.
@@ -326,6 +387,94 @@ impl Detector for TierOneDetector {
         if self.include_email {
             for m in RE_EMAIL.find_iter(text) {
                 self.push(&mut out, m, EntityType::Email, MatchSource::Pattern);
+            }
+        }
+
+        // Tier-1 extension (R1, 2026-10-06). Passport and the HK/MO permit
+        // carry their own mandatory letter prefix, so `is_bounded` alone is
+        // enough: a CJK label glued to the front is accepted, an ASCII letter
+        // or digit continuation is rejected.
+        for m in RE_PASSPORT.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::Passport, MatchSource::Pattern);
+        }
+
+        for m in RE_HK_MO_PERMIT.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::HkMoPermit, MatchSource::Pattern);
+        }
+
+        // 台胞证 has no letter prefix. The run is Tier-1 ONLY when the label
+        // sits immediately before it; a bare 8-10 digit run is never claimed.
+        // Matched on the ORIGINAL text - normalisation would fuse the label
+        // boundary ambiguously, and there is no checksum to validate.
+        let permit_spans: Vec<(usize, usize)> = RE_PERMIT_ANCHOR
+            .find_iter(text)
+            .map(|a| a.end())
+            .map(|end| (end, text.len()))
+            .collect();
+        for (label_end, _) in permit_spans {
+            let Some(rest) = text.get(label_end..) else {
+                continue;
+            };
+            if let Some(m) = RE_PERMIT_DIGITS.captures(rest) {
+                if let Some(c) = m.get(0) {
+                    let start = label_end + c.start();
+                    let end = label_end + c.end();
+                    if is_bounded(text, start, end) {
+                        self.push_span(
+                            &mut out,
+                            start,
+                            end,
+                            &text[start..end],
+                            EntityType::TaiwanPermit,
+                            MatchSource::Pattern,
+                        );
+                    }
+                }
+            }
+        }
+
+        // 15-digit legacy ID and 17-digit lawyer license: both are pure digit
+        // runs with NO checksum, so both need their label (spec 8.4: a bare
+        // digit rule must never stand). The label consumes the boundary on the
+        // left; `is_bounded` rejects a longer run on the right, so a
+        // 16th/18th digit continuation never matches.
+        for (label_re, digits_re, entity) in [
+            (
+                &RE_LEGACY_ID_LABEL,
+                &RE_LEGACY_ID,
+                EntityType::LegacyIdNumber,
+            ),
+            (
+                &RE_LAWYER_LABEL,
+                &RE_LAWYER_NO,
+                EntityType::RegistrationNumber,
+            ),
+        ] {
+            for a in label_re.find_iter(text) {
+                let Some(rest) = text.get(a.end()..) else {
+                    continue;
+                };
+                let Some(digits) = digits_re.find(rest) else {
+                    continue;
+                };
+                let start = a.end() + digits.start();
+                let end = a.end() + digits.end();
+                if is_bounded(text, start, end) {
+                    self.push_span(
+                        &mut out,
+                        start,
+                        end,
+                        &text[start..end],
+                        entity,
+                        MatchSource::Context,
+                    );
+                }
             }
         }
 
@@ -702,6 +851,209 @@ mod tests {
         assert!(
             with_port.iter().any(|m| m.entity == EntityType::IpAddress && m.text == "10.0.0.1"),
             "10.0.0.1:8080 (with port) MUST match the IP part"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Tier-1 extension set (R1, 2026-10-06): cross-jurisdiction identifiers.
+    // -------------------------------------------------------------------------
+
+    /// CN passport: modern `E` + letter (I/O excluded) + 7 digits, and legacy
+    /// `E` + 8 digits. Both are 9 chars total, confirmed 2026-10-06 against
+    /// the published national format.
+    #[test]
+    fn finds_passport_both_modern_and_legacy_shapes() {
+        let modern = TierOneDetector::new().detect("护照EA1234567 号码").unwrap();
+        assert!(
+            modern.iter().any(|m| m.entity == EntityType::Passport && m.text == "EA1234567"),
+            "modern passport E+letter+7 must be found; got {:?}",
+            modern.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        let legacy = TierOneDetector::new().detect("护照 E12345678 已过期").unwrap();
+        assert!(
+            legacy.iter().any(|m| m.entity == EntityType::Passport && m.text == "E12345678"),
+            "legacy passport E+8digits must be found; got {:?}",
+            legacy.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// I and O are excluded by the published rule (they read as 1 and 0), so
+    /// `EI`, `EO` must be rejected even though they are otherwise the same
+    /// length and shape.
+    #[test]
+    fn rejects_passport_prefixes_i_and_o() {
+        for text in ["护照EI1234567", "护照EO1234567"] {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                !found.iter().any(|m| m.entity == EntityType::Passport),
+                "false positive: {text} matched as a passport; got {:?}",
+                found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The passport "E" must not consume unrelated short strings. A single
+    /// letter followed by a 1-6 digit run is too short to be a passport.
+    #[test]
+    fn rejects_short_digit_runs_after_e() {
+        let found = TierOneDetector::new().detect("E级12345 甲").unwrap();
+        assert!(
+            !found.iter().any(|m| m.entity == EntityType::Passport),
+            "an E with a short digit run must not be a passport; got {:?}",
+            found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// 回乡证: `H`/`M` + 8-digit lifetime number + 2-digit reissue counter.
+    /// CJK adjacency must be accepted (label glued to the number is normal).
+    #[test]
+    fn finds_hk_mo_permit_with_cjk_adjacency() {
+        for (text, value) in [
+            ("回乡证H1234567800", "H1234567800"),
+            ("回乡证 M1234567802 号", "M1234567802"),
+        ] {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                found.iter().any(|m| m.entity == EntityType::HkMoPermit && m.text == value),
+                "HK/MO permit miss: {value} not found in {text}; got {:?}",
+                found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The permit prefix must not be claimed from inside a longer ASCII token
+    /// (the is_bounded guarantee), and an 11-digit run not starting H/M must
+    /// not be red-flagged as a permit.
+    #[test]
+    fn rejects_permit_inside_longer_token_or_wrong_prefix() {
+        let embedded = TierOneDetector::new().detect("AH1234567800").unwrap();
+        assert!(
+            !embedded.iter().any(|m| m.entity == EntityType::HkMoPermit),
+            "a permit inside a longer token must be rejected; got {:?}",
+            embedded.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // No letter prefix: the digit run is not a permit at all. It also
+        // must not be misread as anything else - it is just a bare digit run.
+        let bare = TierOneDetector::new().detect("编号 1234567800 项").unwrap();
+        assert!(
+            bare.iter().all(|m| m.entity != EntityType::HkMoPermit
+                && m.entity != EntityType::TaiwanPermit),
+            "a bare 10-digit run is not a permit; got {:?}",
+            bare.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// 台胞证: 8-digit number + optional 2-digit reissue counter. Tier-1
+    /// ONLY when the label sits immediately before the number - a bare run
+    /// is never claimed (spec 8.4).
+    #[test]
+    fn finds_taiwan_permit_only_when_labelled() {
+        let labelled = TierOneDetector::new().detect("台胞证12345678").unwrap();
+        assert!(
+            labelled.iter().any(|m| m.entity == EntityType::TaiwanPermit && m.text == "12345678"),
+            "labelled 8-digit permit must be found; got {:?}",
+            labelled.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        let counter = TierOneDetector::new().detect("台胞证号码:1234567890").unwrap();
+        assert!(
+            counter.iter().any(|m| m.entity == EntityType::TaiwanPermit && m.text == "1234567890"),
+            "labelled 10-digit permit with reissue counter must be found; got {:?}",
+            counter.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Same 8-digit run with NO label: not a permit.
+        let bare = TierOneDetector::new().detect("合同 12345678 中").unwrap();
+        assert!(
+            !bare.iter().any(|m| m.entity == EntityType::TaiwanPermit),
+            "an unlabelled digit run must not be a permit; got {:?}",
+            bare.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// 15-digit legacy ID: no checksum exists, so the 身份证/证件号码 label is
+    /// the anchor and a 16+ digit continuation is rejected by is_bounded.
+    #[test]
+    fn finds_legacy_15_digit_id_only_with_label() {
+        let labelled = TierOneDetector::new().detect("旧身份证130503670401001").unwrap();
+        assert!(
+            labelled
+                .iter()
+                .any(|m| m.entity == EntityType::LegacyIdNumber && m.text == "130503670401001"),
+            "labelled legacy 15-digit ID must be found; got {:?}",
+            labelled.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // 16 digits: the trailing digit makes is_bounded reject the match.
+        let sixteen = TierOneDetector::new().detect("证件号码1305036704010012").unwrap();
+        assert!(
+            !sixteen.iter().any(|m| m.entity == EntityType::LegacyIdNumber),
+            "a 16-digit continuation must be rejected; got {:?}",
+            sixteen.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // No label: a bare 15-digit run is an account/order number as far as
+        // the rules can tell - never claimed.
+        let bare = TierOneDetector::new().detect("编号130503670401001").unwrap();
+        assert!(
+            !bare.iter().any(|m| m.entity == EntityType::LegacyIdNumber),
+            "an unlabelled legacy ID run must not match; got {:?}",
+            bare.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Space-separated label form.
+        let spaced = TierOneDetector::new().detect("身份证 130503670401001").unwrap();
+        assert!(
+            spaced
+                .iter()
+                .any(|m| m.entity == EntityType::LegacyIdNumber && m.text == "130503670401001"),
+            "space-separated legacy ID must be found; got {:?}",
+            spaced.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// 律师执业证号: 17 digits with the structured kind/province/city/year/
+    /// class/gender/serial layout, matched only after the label.
+    #[test]
+    fn finds_lawyer_license_only_with_label() {
+        let labelled = TierOneDetector::new().detect("律师执业证号11101201810123456").unwrap();
+        assert!(
+            labelled
+                .iter()
+                .any(|m| m.entity == EntityType::RegistrationNumber
+                    && m.text == "11101201810123456"),
+            "labelled lawyer license must be found; got {:?}",
+            labelled.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // 18 digits: the extra digit kills the match via is_bounded.
+        let eighteen = TierOneDetector::new().detect("律师执业证号111012018101234567").unwrap();
+        assert!(
+            !eighteen.iter().any(|m| m.entity == EntityType::RegistrationNumber),
+            "an 18-digit continuation must be rejected; got {:?}",
+            eighteen.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// The extension rules must not regress the classes already covered.
+    /// An 18-digit resident ID must not partially match as a legacy ID: the
+    /// label anchor for the new rules requires the 15-digit count exactly,
+    /// and the existing checksum path handles the 18-digit form.
+    #[test]
+    fn existing_classes_keep_their_coverage() {
+        let text = "身份证 11010519491231002X 手机13812345678";
+        let found = TierOneDetector::new().detect(text).unwrap();
+        assert!(
+            found.iter().any(|m| m.entity == EntityType::CnResidentId),
+            "resident ID must still be found; got {:?}",
+            found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+        assert!(
+            found.iter().any(|m| m.entity == EntityType::CnMobile),
+            "mobile must still be found; got {:?}",
+            found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );
     }
 }

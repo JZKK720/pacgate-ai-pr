@@ -121,6 +121,53 @@ fn rule_layer_step_one_classes() {
     }
 }
 
+/// The R1 extension set (2026-10-06): passport, HK/MO permit, labelled
+/// Taiwan permit and labelled legacy 15-digit ID, sanitized end-to-end. The
+/// claim this row reports is the same as `rule_layer_step_one_classes`' -
+/// that the full pipeline (detect -> redact -> verify) removes these too,
+/// not just that the unit detector saw them.
+#[test]
+fn rule_layer_r1_cross_jurisdiction_ids() {
+    let fixtures = [
+        ("护照EA1234567 已核验", "EA1234567"),
+        ("护照E12345678 (旧版)", "E12345678"),
+        ("回乡证H1234567800", "H1234567800"),
+        ("台胞证12345678", "12345678"),
+        ("旧身份证130503670401001", "130503670401001"),
+        ("律师执业证号11101201810123456", "11101201810123456"),
+    ];
+    for (text, value) in fixtures {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            !out.contains(value),
+            "R1 miss: '{value}' survives sanitization in '{text}': {out}"
+        );
+    }
+}
+
+/// R1 precision guard: the shapes these new rules anchor on must not fire on
+/// unrelated token-adjacent runs, or the extension becomes a precision
+/// regression. `E级12345` is the trap found while developing the rule -
+/// `E` + a 6-digit run does NOT reach the 7/8-digit passport minimum.
+#[test]
+fn rule_layer_r1_false_positives_stay_rejected() {
+    let keep = [
+        "E级12345 甲",           // not a passport shape
+        "护照EI1234567",         // I excluded from the second letter
+        "护照EO1234567",         // O excluded from the second letter
+        "AH1234567800",          // permit inside a longer token
+        "编号130503670401001",    // legacy shape without a label
+        "合同12345678 中",        // permit shape without a label
+    ];
+    for text in keep {
+        let out = run(tier_one_detectors(), text);
+        assert!(
+            out.contains(text),
+            "false positive: '{text}' was altered by sanitization: {out}"
+        );
+    }
+}
+
 /// A document longer than one BERT window must sanitize, with a name that sits
 /// PAST the first window redacted.
 ///
