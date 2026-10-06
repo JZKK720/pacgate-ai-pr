@@ -400,7 +400,7 @@ PACGATE_API_PASSWORD=$plainPassword
             exit 1
         }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dockerCliPath) | Out-Null
-        tar -xzf $tgzPath -C (Join-Path $env:TEMP) "docker/docker"
+        tar -xzf $tgzPath -C $env:TEMP "docker/docker"
         Copy-Item (Join-Path $env:TEMP "docker\docker") $dockerCliPath -Force
         Remove-Item $tgzPath, (Join-Path $env:TEMP 'docker') -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "[OK] docker CLI staged: $dockerCliPath" -ForegroundColor Green
