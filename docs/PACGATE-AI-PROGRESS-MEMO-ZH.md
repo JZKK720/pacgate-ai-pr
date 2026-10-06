@@ -56,9 +56,9 @@
 
 ## 4. 未决事项
 
-- 不完整抽取 500 仍为已知缺陷，尚未修复（`deploy/DEFECT-incomplete-extraction-500.md`）。
-- QM 本地模型路由在 core 容器重建后仍不持久（已有文档化变通）。
-- 备忘录撰写时工作树仍带 `setup-qm.ps1` 与 `local-sandbox.ts` 的功能性编辑，待下一次发布批次提交。
+- 不完整抽取 500 仍为已知缺陷，尚未修复（`deploy/DEFECT-incomplete-extraction-500.md`）——有意为之，客户端可见的状态码契约变更留给独立发布。
+- QM 生命周期与 Windows：2026-10-06 解决。原"本地模型路由跨重建不持久"的表述对本机队不成立——`qm up`/`qm down` 在 Windows 上根本无法运行（CLI 的 `which()` 直接调 `/bin/sh` → `ENOENT`，已实测），唯一可用的生命周期是 `compose.qm.yaml`，它 bind-mount 了 `pi-models.ts` / `local-sandbox.ts` / docker-CLI 与 socket，模型路由与沙箱链路跨重建持久。手册（EN+ZH）已于 2026-10-06 更新：`qm.cmd up` 指引替换为 compose 路径。
+- ~~备忘录撰写时工作树仍带 `setup-qm.ps1` 与 `local-sandbox.ts` 的功能性编辑，待下一次发布批次提交~~ 已于 2026-10-06 关闭：提交 `307a048`（沙箱自动自愈 + 安装路径：sandbox-local 入库、docker-CLI 取回+SHA 校验、包装镜像构建），并附干净 clone 的首次 bootstrap 实证；`52c7da7` 关闭三个假绿门；`ddfa54e` 修复 PS 7-only 的 `?.`（在 PS 5.1 下 `install.ps1` 解析失败）；`83b1d2a` 修复 clone 实证抓到的 Join-Path 缺陷。
 
 ---
 

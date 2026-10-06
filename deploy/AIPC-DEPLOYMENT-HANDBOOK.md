@@ -369,7 +369,7 @@ The script prompts for:
 - Pacgate bridge email: `qm-bridge@pacgate.local`
 - Pacgate bridge password: the one you registered in Stage 3
 
-The script generates signing secrets, creates `.env` in the qm-pacgate directory, validates the config with `qm check`, and builds the sandbox image with `qm sandbox build`.
+The script generates signing secrets, creates `.env` in the qm-pacgate directory, validates the config with `qm check`, builds the sandbox image with `qm sandbox build`, fetches the static docker CLI the core shells (SHA-256 verified), and builds the `qm-pacgate-sandbox-local` exec-daemon wrapper image.
 
 **QM sign-in needs an email transport.** The qm auth broker delivers sign-in
 one-time links. Two supported transports:
@@ -391,12 +391,22 @@ AUTH_EMAIL_FROM="PacGate <onboarding@resend.dev>"
 Start qm:
 
 ```powershell
-cd C:\pacgate-ai-pr\deploy\qm-pacgate
-node_modules\.bin\qm.cmd up
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
+docker compose -f compose.qm.yaml up -d
 ```
 
-> **Note:** `npm exec qm -- up` may be blocked by the PowerShell execution policy
-> (`npm.ps1`). Use `node_modules\.bin\qm.cmd up` instead.
+> **Use compose, NOT `qm up`.** The `@yc-software/qm` CLI's docker lifecycle is
+> POSIX-only - its `which()` shells `/bin/sh`, which does not exist on Windows
+> (measured 2026-10-06: `execFileSync("/bin/sh", …)` → `ENOENT`), so `qm up`,
+> `qm down`, and `qm status` die with "docker not found on PATH" on every AIPC.
+> `compose.qm.yaml` describes the same topology (same names, volumes, network)
+> and additionally carries the Pacgate patches: `patch/pi-models.ts` and
+> `patch/local-sandbox.ts` are bind-mounted over the core's source, the static
+> docker CLI and the host docker socket are mounted, and the sandbox wrapper
+> image is wired. Those mounts survive every `down`/`up -d` cycle - the model
+> routing and the sandbox lane are durable through compose. Do NOT run
+> `docker compose -f compose.qm.yaml up -d` and a `qm up` against the same
+> directory (they would fight over the same named volumes and network).
 
 Verify qm:
 
@@ -555,12 +565,16 @@ docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml down
 
 # Start qm
-cd C:\pacgate-ai-pr\deploy\qm-pacgate
-npm exec qm -- up
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
+docker compose -f compose.qm.yaml up -d
 
-# Stop qm
-npm exec qm -- down
+# Stop qm (NO -v: .env and the volumes stay)
+docker compose -f compose.qm.yaml down
 ```
+
+> `qm up` / `qm down` cannot run on Windows (the CLI's `which()` shells
+> `/bin/sh` → ENOENT); compose is the only working qm lifecycle on the AIPC and
+> it carries the patches that keep model routing and the sandbox lane durable.
 
 ### Update to a new version
 
@@ -653,8 +667,12 @@ deer-flow (research workspace):
 2. Restart: `docker compose -f compose.prod.yaml restart deer-flow`
 
 qm (co-working workspace):
-1. Edit `qm-pacgate/qm.config.jsonc` - change `MODEL_NAME`
-2. Restart: `cd qm-pacgate && npm exec qm -- down && npm exec qm -- up`
+1. Edit `deploy/client-bundle/qm-pacgate/qm.config.jsonc` if the model set changes
+2. Recreate core (compose keeps the patch mounts, so the routing stays durable):
+   ```powershell
+   cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
+   docker compose -f compose.qm.yaml up -d --force-recreate core
+   ```
 
 ### Register new users
 
@@ -684,24 +702,12 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 
 ## Known limitations
 
-- **QM local-model routing is non-durable.** To make QM chat work against local
-  Ollama, a custom model entry (`glm-5.3-flash:cloud`) was added to the QM core's
-  `src/model/pi-models.ts` (in the container's writable layer). **This edit is
-  lost whenever the core container is recreated** (e.g. `qm up` after `qm down`,
-  or a manual `docker rm -f qm-pacgate-core`). After any recreate, `glm-5.3-flash:cloud`
-  disappears from `GET /v1/surface-config` → `webuiModels`, and chat turns return
-  403 "that model isn't available". To re-apply:
-  ```bash
-  # 1. Add the custom entry to MODEL_REGISTRY in /app/src/model/pi-models.ts
-  #    { id: "glm-5.3-flash:cloud", name: "GLM 5.3 Flash (Ollama)", fastMode: false,
-  #      webui: true, base: true,
-  #      custom: { template: "gpt-4.1-mini", baseUrl: "http://host.docker.internal:11434/v1" } }
-  # 2. Extend ModelEntry with optional custom:{template,baseUrl} and handle it in resolveModel()
-  # 3. Ensure OPENAI_API_KEY=ollama-local is set on the core (Ollama ignores the value)
-  # 4. Restart the core
-  ```
-  For a durable fix, commit the change to the qm source repo and rebuild the image,
-  or stand up a proxy (e.g. LiteLLM) that maps the openai provider to Ollama.
+- **`qm up` / `qm down` do not work on Windows.** The qm CLI's docker lifecycle
+  is POSIX-only: its `which()` runs `execFileSync("/bin/sh", …)`, which is
+  `ENOENT` on every Windows AIPC (measured 2026-10-06). Use the compose path
+  above (`docker compose -f compose.qm.yaml up -d`) - same topology, same
+  container names, and it carries the Pacgate patches, so nothing is lost
+  across recreates.
 - Each machine has its own independent Postgres and `./data/tenants/` directory. Matter data is not shared between machines unless you later add a private mesh and a sync or single-authority model.
 - The PkuLaw connector token is expired. Regenerate it at `https://mcp.pkulaw.com` and set `PKULAW_API_KEY` in `.env` if China-law search is needed during the pilot.
 - Four WASM crates (citation-check, clause-parser, doc-validator, rule-engine) remain stubs. These are future-blueprint work and do not affect Phase 1 pilot functionality.

@@ -56,9 +56,9 @@ Since the OCR extractor agent and the sanitizer agent were first provisioned on 
 
 ## 4. Open items
 
-- Incomplete-extraction 500 is recorded as a known defect, not yet fixed (`deploy/DEFECT-incomplete-extraction-500.md`).
-- QM local-model routing remains non-durable across core container rebuilds (documented workaround).
-- The working tree at memo time still carried `setup-qm.ps1` and `local-sandbox.ts` functional edits awaiting commit for the next release train.
+- Incomplete-extraction 500 is recorded as a known defect, not yet fixed (`deploy/DEFECT-incomplete-extraction-500.md`) — deliberate, client-visible contract change deferred to its own release.
+- QM lifecycle on Windows: resolved 2026-10-06. The old "non-durable routing across core rebuilds" note was wrong for this fleet - `qm up`/`qm down` cannot run on Windows at all (the CLI's `which()` shells `/bin/sh` → `ENOENT`, measured), so the only operative path is `compose.qm.yaml`, which bind-mounts `pi-models.ts` / `local-sandbox.ts` / docker-CLI + socket and keeps the routing and sandbox lane durable across recreates. Handbooks (EN+ZH) updated 2026-10-06: `qm.cmd up` instructions replaced with the compose path.
+- ~~The working tree at memo time still carried `setup-qm.ps1` and `local-sandbox.ts` functional edits awaiting commit~~ CLOSED 2026-10-06: committed `307a048` (sandbox auto-heal + install path: sandbox-local tracked, docker-CLI fetch+SHA-verify, wrapper build) with the clean-clone first-bootstrap proof; `52c7da7` closed the three false-green gates; `ddfa54e` fixed the PS 7-only `?.` that broke `install.ps1` parsing under PS 5.1; `83b1d2a` fixed the Join-Path bug the clone proof caught.
 
 ---
 

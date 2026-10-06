@@ -340,7 +340,8 @@ cd C:\pacgate-ai-pr\deploy\client-bundle
 - Pacgate 桥接密码：你在 Stage 3 中注册的那个
 
 脚本会生成签名密钥，在 qm-pacgate 目录中创建 `.env`，用 `qm check` 验证配置，
-并用 `qm sandbox build` 构建沙箱镜像。
+用 `qm sandbox build` 构建沙箱镜像，取得（SHA-256 校验后的）核心容器所需的
+静态 docker CLI，并构建 `qm-pacgate-sandbox-local` exec-daemon 包装镜像。
 
 **QM 登录需要邮件传输。** qm 的 auth 代理发送一次性登录链接。支持两种传输：
 
@@ -365,12 +366,20 @@ AUTH_EMAIL_FROM="PacGate <onboarding@resend.dev>"
 启动 qm：
 
 ```powershell
-cd C:\pacgate-ai-pr\deploy\qm-pacgate
-node_modules\.bin\qm.cmd up
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
+docker compose -f compose.qm.yaml up -d
 ```
 
-> **注意：** `npm exec qm -- up` 可能被 PowerShell 执行策略阻止（`npm.ps1`）。
-> 请改用 `node_modules\.bin\qm.cmd up`。
+> **请用 compose，不要用 `qm up`。** `@yc-software/qm` CLI 的 docker 生命周期
+> 只有 POSIX 一条路——它的 `which()` 直接执行 `/bin/sh`，在 Windows 上不存在
+> （2026-10-06 实测：`execFileSync("/bin/sh", …)` → `ENOENT`），所以 `qm up`、
+> `qm down`、`qm status` 在任何 AIPC 上都会报 "docker not found on PATH"。
+> `compose.qm.yaml` 描述的是同一套拓扑（同名容器、同名卷、同一网络），并且
+> 额外承载 Pacgate 补丁：`patch/pi-models.ts` 与 `patch/local-sandbox.ts`
+> bind-mount 覆盖核心源码、静态 docker CLI 与宿主 docker socket 均已挂载、
+> 沙箱包装镜像已接线。这些挂载在每次 `down`/`up -d` 循环中都保持不变——
+> 模型路由与沙箱链路在 compose 路径上是持久的。不要对同一目录同时运行
+> `docker compose -f compose.qm.yaml up -d` 和 `qm up`（两者会争抢同名卷与网络）。
 
 验证 qm：
 
@@ -492,7 +501,7 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 
 ### qm 协作
 
-- [ ] `npm exec qm -- status` 显示 qm 运行中
+- [ ] `docker compose -f compose.qm.yaml ps` 显示 qm 服务运行中
 - [ ] `http://localhost:8182` 加载 qm Web UI
 - [ ] 管理员可以登录
 - [ ] qm 可以列出 Pacgate 工作流类别
@@ -524,12 +533,16 @@ docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml down
 
 # 启动 qm
-cd C:\pacgate-ai-pr\deploy\qm-pacgate
-npm exec qm -- up
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
+docker compose -f compose.qm.yaml up -d
 
-# 停止 qm
-npm exec qm -- down
+# 停止 qm（去掉 -v：保留卷与数据）
+docker compose -f compose.qm.yaml down
 ```
+
+> `qm up` / `qm down` 在 Windows 上无法运行（CLI 的 `which()` 直接调
+> `/bin/sh` → ENOENT）；compose 是 AIPC 上唯一可用的 qm 生命周期，
+> 并且它承载了保证模型路由与沙箱链路持久的补丁。
 
 ### 更新到新版本
 
@@ -616,8 +629,12 @@ deer-flow（研究工作空间）：
 2. 重启：`docker compose -f compose.prod.yaml restart deer-flow`
 
 qm（协作工作空间）：
-1. 编辑 `qm-pacgate/qm.config.jsonc` — 更改 `MODEL_NAME`
-2. 重启：`cd qm-pacgate && npm exec qm -- down && npm exec qm -- up`
+1. 若模型集变更，编辑 `deploy/client-bundle/qm-pacgate/qm.config.jsonc`
+2. 重建核心（compose 保留补丁挂载，路由持久）：
+   ```powershell
+   cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
+   docker compose -f compose.qm.yaml up -d --force-recreate core
+   ```
 
 ### 注册新用户
 
@@ -647,23 +664,11 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 
 ## 已知限制
 
-- **QM 本地模型路由不可持久。** 为了让 QM 聊天针对本地 Ollama 工作，在 QM 核心的
-  `src/model/pi-models.ts`（容器可写层）中添加了一个自定义模型条目
-  （`glm-5.3-flash:cloud`）。**每当核心容器被重建时，此编辑都会丢失**（例如
-  `qm down` 后的 `qm up`，或手动 `docker rm -f qm-pacgate-core`）。任何重建后，
-  `glm-5.3-flash:cloud` 会从 `GET /v1/surface-config` → `webuiModels` 中消失，
-  聊天轮次返回 403 "that model isn't available"。要重新应用：
-  ```bash
-  # 1. 在 /app/src/model/pi-models.ts 的 MODEL_REGISTRY 中添加自定义条目
-  #    { id: "glm-5.3-flash:cloud", name: "GLM 5.3 Flash (Ollama)", fastMode: false,
-  #      webui: true, base: true,
-  #      custom: { template: "gpt-4.1-mini", baseUrl: "http://host.docker.internal:11434/v1" } }
-  # 2. 扩展 ModelEntry，增加可选 custom:{template,baseUrl}，并在 resolveModel() 中处理它
-  # 3. 确保核心上设置了 OPENAI_API_KEY=ollama-local（Ollama 忽略该值）
-  # 4. 重启核心
-  ```
-  要获得持久修复，请将更改提交到 qm 源码仓库并重建镜像，或搭建一个代理
-  （例如 LiteLLM）将 openai 提供方映射到 Ollama。
+- **`qm up` / `qm down` 在 Windows 上无法运行。** qm CLI 的 docker 生命周期
+  只有 POSIX 一条路：它的 `which()` 执行 `execFileSync("/bin/sh", …)`，在每台
+  Windows AIPC 上都是 `ENOENT`（2026-10-06 实测）。请使用上面的 compose 路径
+  （`docker compose -f compose.qm.yaml up -d`）——同样的拓扑与容器名，并且
+  承载 Pacgate 补丁，重建时不会丢失任何东西。
 - 每台机器都有自己的独立 Postgres 和 `./data/tenants/` 目录。除非你之后添加
   私有网格和同步或单一权威模型，否则事项数据不会在机器之间共享。
 - PkuLaw 连接器令牌已过期。在 `https://mcp.pkulaw.com` 重新生成，并在试点期间
