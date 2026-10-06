@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 # Valid stream_mode values for LangGraph's graph.astream()
 _VALID_LG_MODES = {"values", "updates", "checkpoints", "tasks", "debug", "messages", "custom"}
 
+# No-progress watchdog for the astream consumer. When the pregel loop's in-flight
+# task is cancelled internally (e.g. a stale-keep-alive LLM connection surfacing
+# as CancelledError inside a middleware), LangGraph can leave the astream
+# generator blocked with NO further activity: no checkpoints, no LLM calls, no
+# tool writes. Without this watchdog the run looks "running" forever and the
+# only escape is the user pressing STOP. The interval must comfortably exceed
+# the longest legitimate silent stretch (stream_chunk_timeout=300s on the local
+# long-context model plus provider retry budget), so the default is generous.
+_STREAM_IDLE_TIMEOUT_SECONDS = float(os.environ.get("DEERFLOW_STREAM_IDLE_TIMEOUT_S", "420") or 420)
+
 
 def _build_runtime_context(
     thread_id: str,
@@ -311,36 +321,76 @@ async def run_agent(
 
         logger.info("Run %s: streaming with modes %s (requested: %s)", run_id, lg_modes, requested_modes)
 
-        # 7. Stream using graph.astream
+        # 7. Stream using graph.astream.
+        #
+        # Both streaming branches wrap the `async for` with an idle watchdog:
+        # `asyncio.wait_for` on the underlying `__anext__()` coroutine. On
+        # timeout the generator is closed (releasing the pregel loop) and the
+        # run is marked errored so the SSE stream gets a real terminal event —
+        # instead of hanging forever like run df600939 (2026-10-06).
         if len(lg_modes) == 1 and not stream_subgraphs:
             # Single mode, no subgraphs: astream yields raw chunks
             single_mode = lg_modes[0]
-            async for chunk in agent.astream(graph_input, config=runnable_config, stream_mode=single_mode):
-                if record.abort_event.is_set():
-                    logger.info("Run %s abort requested — stopping", run_id)
-                    break
-                llm_error_fallback_message = llm_error_fallback_message or _extract_llm_error_fallback_message(chunk)
-                sse_event = _lg_mode_to_sse_event(single_mode)
-                await bridge.publish(run_id, sse_event, serialize(chunk, mode=single_mode))
+            aiter = agent.astream(graph_input, config=runnable_config, stream_mode=single_mode)
+            try:
+                while True:
+                    next_chunk = await asyncio.wait_for(aiter.__anext__(), timeout=_STREAM_IDLE_TIMEOUT_SECONDS)
+                    if record.abort_event.is_set():
+                        logger.info("Run %s abort requested — stopping", run_id)
+                        break
+                    llm_error_fallback_message = llm_error_fallback_message or _extract_llm_error_fallback_message(next_chunk)
+                    sse_event = _lg_mode_to_sse_event(single_mode)
+                    await bridge.publish(run_id, sse_event, serialize(next_chunk, mode=single_mode))
+            except StopAsyncIteration:
+                pass
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Run %s: no astream output for %.0fs — aborting (stalled pregel loop)",
+                    run_id,
+                    _STREAM_IDLE_TIMEOUT_SECONDS,
+                )
+                await run_manager.set_status(run_id, RunStatus.error, error="stream idle watchdog: no progress")
+                llm_error_fallback_message = llm_error_fallback_message or (
+                    "The agent graph stopped producing output and the run was aborted by the idle watchdog. Please retry."
+                )
+            finally:
+                await _aclose_aiter(aiter)
         else:
             # Multiple modes or subgraphs: astream yields tuples
-            async for item in agent.astream(
+            aiter = agent.astream(
                 graph_input,
                 config=runnable_config,
                 stream_mode=lg_modes,
                 subgraphs=stream_subgraphs,
-            ):
-                if record.abort_event.is_set():
-                    logger.info("Run %s abort requested — stopping", run_id)
-                    break
+            )
+            try:
+                while True:
+                    next_item = await asyncio.wait_for(aiter.__anext__(), timeout=_STREAM_IDLE_TIMEOUT_SECONDS)
+                    if record.abort_event.is_set():
+                        logger.info("Run %s abort requested — stopping", run_id)
+                        break
 
-                mode, chunk = _unpack_stream_item(item, lg_modes, stream_subgraphs)
-                if mode is None:
-                    continue
+                    mode, chunk = _unpack_stream_item(next_item, lg_modes, stream_subgraphs)
+                    if mode is None:
+                        continue
 
-                llm_error_fallback_message = llm_error_fallback_message or _extract_llm_error_fallback_message(chunk)
-                sse_event = _lg_mode_to_sse_event(mode)
-                await bridge.publish(run_id, sse_event, serialize(chunk, mode=mode))
+                    llm_error_fallback_message = llm_error_fallback_message or _extract_llm_error_fallback_message(chunk)
+                    sse_event = _lg_mode_to_sse_event(mode)
+                    await bridge.publish(run_id, sse_event, serialize(chunk, mode=mode))
+            except StopAsyncIteration:
+                pass
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Run %s: no astream output for %.0fs — aborting (stalled pregel loop)",
+                    run_id,
+                    _STREAM_IDLE_TIMEOUT_SECONDS,
+                )
+                await run_manager.set_status(run_id, RunStatus.error, error="stream idle watchdog: no progress")
+                llm_error_fallback_message = llm_error_fallback_message or (
+                    "The agent graph stopped producing output and the run was aborted by the idle watchdog. Please retry."
+                )
+            finally:
+                await _aclose_aiter(aiter)
 
         # 8. Final status
         if record.abort_event.is_set():
@@ -446,6 +496,22 @@ async def run_agent(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _aclose_aiter(aiter: Any) -> None:
+    """Close an async generator, tolerating CancelledError from its internals."""
+    aclose = getattr(aiter, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except asyncio.CancelledError:
+        # LangGraph's internal task cleanup can surface cancellation while
+        # unwinding a stalled generator; that is the shutdown path working
+        # as intended, not a failure.
+        pass
+    except Exception:
+        logger.debug("Failed to close astream iterator", exc_info=True)
 
 
 async def _call_checkpointer_method(checkpointer: Any, async_name: str, sync_name: str, *args: Any, **kwargs: Any) -> Any:

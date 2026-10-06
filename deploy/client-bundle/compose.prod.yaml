@@ -168,6 +168,10 @@ services:
       # Pacgate: inject conversation-history token estimate for auto-routing
       # (see compose.bundle.yaml for the rationale).
       - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
+      # Pacgate (hang fix 2026-10-06): bound the non-streaming title ainvoke()
+      # and make CancelledError fall back instead of freezing the pregel loop
+      # (run df600939: no output for 11 minutes; only STOP recovered it).
+      - ./patches/deer-flow-title-middleware.py:/app/backend/packages/harness/deerflow/agents/middlewares/title_middleware.py:ro
       # Pacgate: run sync tool invocations on a single shared background event
       # loop. The stock wrapper calls asyncio.run() per call (new loop each
       # time), so parallel tool calls to the same stdio MCP server (e.g. two
