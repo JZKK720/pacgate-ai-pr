@@ -19,3 +19,8 @@
 deploy/qm-pacgate/sandbox/tools/** text eol=lf
 deploy/qm-pacgate/tasks/** text eol=lf
 deploy/qm-pacgate/sandbox/Dockerfile text eol=lf
+# The exec-daemon wrapper (2026-10-05): its Dockerfile COPYs
+# microvm-agent.mjs into the wrapper image and the CMD runs it with node -
+# a CRLF checkout is harmless for node, but keep both files LF so the image
+# is byte-stable across platforms and the file stays diff-friendly.
+deploy/qm-pacgate/sandbox-local/** text eol=lf

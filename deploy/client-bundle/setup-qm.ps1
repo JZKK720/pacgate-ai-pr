@@ -375,58 +375,113 @@ PACGATE_API_PASSWORD=$plainPassword
     }
     Write-Host "[OK] Sandbox built" -ForegroundColor Green
 
+    # 8a-1. The docker CLI the core shells (plan 025: the local sandbox backend
+    # runs the docker CLI INSIDE the core container via a socket mount; the
+    # Alpine core ships no client). compose.qm.yaml mounts
+    # ./patch/docker-cli/docker from the deployment directory, but a 43 MB
+    # binary is deliberately not in git (plan 025 follow-up 3 chose vendor-or-
+    # fetch; fetch is what keeps the repo clone small). Fetch the official
+    # static client when the staged copy is absent, verify its SHA-256, and
+    # install just the client binary. dockerd/runc are NOT installed here - the
+    # core must never run a daemon.
+    $dockerCliPath = Join-Path (Get-Location) 'patch\docker-cli\docker'
+    if (-not (Test-Path $dockerCliPath)) {
+        $dockerVer = '28.5.2'
+        $tgzName = "docker-$dockerVer.tgz"
+        $expectSha = 'ea90cfd12e1eeb12aa1c971741adb8bd4ed88e2a574eaac13f5029a1dbc6300d'
+        $url = "https://download.docker.com/linux/static/stable/x86_64/$tgzName"
+        Write-Host "`nFetching the static docker CLI ($dockerVer) for the core container..." -ForegroundColor Cyan
+        $tgzPath = Join-Path $env:TEMP $tgzName
+        Invoke-WebRequest -Uri $url -OutFile $tgzPath -TimeoutSec 300
+        $actualSha = (Get-FileHash $tgzPath -Algorithm SHA256).Hash.ToLower()
+        if ($actualSha -ne $expectSha) {
+            Write-Host "ERROR: docker CLI checksum mismatch: want $expectSha got $actualSha" -ForegroundColor Red
+            Write-Host "       Do NOT install an unverified binary. Check the version and update the hash." -ForegroundColor Red
+            exit 1
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dockerCliPath) | Out-Null
+        tar -xzf $tgzPath -C (Join-Path $env:TEMP) "docker/docker"
+        Copy-Item (Join-Path $env:TEMP "docker\docker") $dockerCliPath -Force
+        Remove-Item $tgzPath, (Join-Path $env:TEMP 'docker') -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK] docker CLI staged: $dockerCliPath" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[OK] docker CLI already present" -ForegroundColor DarkGray
+    }
+
+    # 8a-2. The LOCAL sandbox backend's exec-daemon wrapper image
+    # (plan 025, live E2E 2026-10-05). SANDBOX_BACKEND=local reads
+    # LOCAL_SANDBOX_IMAGE=qm-pacgate-sandbox-local:latest: the published
+    # pacgate-sandboxes image only carries the TOOLING (its CMD is an idle
+    # sleep loop) while the local backend requires an exec daemon (microvm-
+    # agent on :8080). Nothing else builds this image, so a fresh AIPC would
+    # fail preflight with "image not found" at the first sandbox call. Build it
+    # from the tracked wrapper (deploy/qm-pacgate/sandbox-local/). The build is
+    # idempotent; a re-run reuses cached layers.
+    if (Test-Path 'sandbox-local\Dockerfile') {
+        Write-Host "`nBuilding the sandbox exec-daemon wrapper (qm-pacgate-sandbox-local:latest)..." -ForegroundColor Cyan
+        docker buildx build --platform linux/amd64 --provenance=false --load `
+            -t qm-pacgate-sandbox-local:latest sandbox-local
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: sandbox-local wrapper build failed - the SANDBOX_BACKEND=local lane will not boot." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[OK] Wrapper image built" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[WARN] sandbox-local\Dockerfile not staged - cannot build the exec-daemon wrapper." -ForegroundColor Yellow
+        Write-Host "       The sandbox lane will fail preflight until this image exists." -ForegroundColor Yellow
+    }
+
     # 8b. Ensure the Pacgate bridge account exists in pacgate-api.
     #
     # WHY THIS EXISTS (plan 025, found live 2026-10-04/05): with open
     # registration closed (0.1.22), nothing mints the bridge account on a fresh
     # DB - the first sandbox tool call then 401s with "invalid email or
-    # password" even though qm's .env carries valid-shaped credentials. The
-    # account is created idempotently through the documented admin route
-    # (POST /api/auth/users), authenticated as the deployment admin. The
-    # password sent is the SAME one this script writes into qm's .env.
-    Write-Host "`nEnsuring the Pacgate bridge account exists (via admin /api/auth/users)..." -ForegroundColor Cyan
-    $adminLoginBody = Join-Path $env:TEMP "qm-admin-login-$PID.json"
-    $bundleEnv = Join-Path $PSScriptRoot ".env"
-    $adminPassword = $null
-    foreach ($line in (Get-Content $bundleEnv -ErrorAction SilentlyContinue)) {
-        if ($line -match '^PACGATE_API_PASSWORD=(.+)$') { $adminPassword = $Matches[1].Trim() }
-        if ($line -match '^PACGATE_API_EMAIL=(.+)$') { $adminEmailEnv = $Matches[1].Trim() }
-    }
-    if (-not $adminPassword -or -not $adminEmailEnv) {
-        Write-Host "[WARN] bundle .env lacks PACGATE_API_*; skipping bridge account check." -ForegroundColor Yellow
-        Write-Host "       Provision the bridge account manually via POST /api/auth/users." -ForegroundColor Yellow
-    }
-    else {
-        [System.IO.File]::WriteAllText($adminLoginBody, (@{ email = $adminEmailEnv; password = $adminPassword } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
-        $loginResp = $null
-        try { $loginResp = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $adminLoginBody -TimeoutSec 20 } catch { }
-        Remove-Item $adminLoginBody -Force -ErrorAction SilentlyContinue
-        if (-not $loginResp -or -not $loginResp.token) {
-            Write-Host "[WARN] could not log in as the bundle admin ($adminEmailEnv); skipping bridge account check." -ForegroundColor Yellow
+    # password" even though qm's .env carries valid-shaped credentials.
+    #
+    # Method note (fixed 2026-10-05 after live re-run): earlier this step
+    # GET-listed /api/auth/users to check existence - but that route is
+    # POST-only (405 on GET; there is NO user-list route in the API), so the
+    # existence check always failed silently and duplicate creation 500ed on
+    # the users_tenant_id_email_key constraint. The correct idempotent probe
+    # is the BRIDGE'S OWN LOGIN: 200 proves the account exists AND that the
+    # password matches what this script writes into qm's .env; any failure →
+    # attempt creation once and report honestly.
+    Write-Host "`nEnsuring the Pacgate bridge account works (login probe, then create if missing)..." -ForegroundColor Cyan
+    $pairBody = Join-Path $env:TEMP "qm-pair-$PID.json"
+    $mkBody  = Join-Path $env:TEMP "qm-mkuser-$PID.json"
+    try {
+        [System.IO.File]::WriteAllText($pairBody, (@{ email = $bridgeEmail; password = $plainPassword } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+        $bridgeLogin = $null
+        try { $bridgeLogin = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $pairBody -TimeoutSec 20 } catch { }
+        if ($bridgeLogin -and $bridgeLogin.token) {
+            Write-Host "[OK] Bridge account already works: $bridgeEmail" -ForegroundColor Green
         }
         else {
-            $hdr = @{ Authorization = "Bearer $($loginResp.token)" }
-            $bridgeExists = $false
+            [System.IO.File]::WriteAllText($mkBody, (@{ email = $bridgeEmail; password = $plainPassword; role = 'attorney' } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
             try {
-                $users = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Headers $hdr -TimeoutSec 20
-                foreach ($u in @($users)) { if ($u.email -eq $bridgeEmail) { $bridgeExists = $true } }
-            } catch { }
-            if ($bridgeExists) {
-                Write-Host "[OK] Bridge account exists: $bridgeEmail" -ForegroundColor Green
+                $created = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Method Post -ContentType 'application/json' -InFile $mkBody -TimeoutSec 20
+                Write-Host "[OK] Bridge account created: $bridgeEmail (user_id $($created.user_id))" -ForegroundColor Green
             }
-            else {
-                $mkBody = Join-Path $env:TEMP "qm-mkuser-$PID.json"
-                [System.IO.File]::WriteAllText($mkBody, (@{ email = $bridgeEmail; password = $plainPassword; role = 'attorney' } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
-                try {
-                    $created = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Method Post -Headers $hdr -ContentType 'application/json' -InFile $mkBody -TimeoutSec 20
-                    Write-Host "[OK] Bridge account created: $bridgeEmail (user_id $($created.user_id))" -ForegroundColor Green
+            catch {
+                # Duplicate on a re-run lands here with a 500 unique-constraint
+                # body. Re-probe login to distinguish "exists, password matches"
+                # (fine) from "exists, password DIFFERS from .env" (real problem).
+                $bridgeLogin = $null
+                try { $bridgeLogin = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $pairBody -TimeoutSec 20 } catch { }
+                if ($bridgeLogin -and $bridgeLogin.token) {
+                    Write-Host "[OK] Bridge account exists (password matches .env): $bridgeEmail" -ForegroundColor Green
                 }
-                catch {
-                    Write-Host "[WARN] bridge account creation failed - first sandbox tool call will 401 until it exists." -ForegroundColor Yellow
+                else {
+                    Write-Host "[WARN] bridge account creation failed and login does not match - the first sandbox tool call will 401." -ForegroundColor Yellow
+                    Write-Host "       Fix: reset the bridge password in pacgate-api, or update qm's .env PACGATE_API_* to the working credential." -ForegroundColor Yellow
                 }
-                finally { Remove-Item $mkBody -Force -ErrorAction SilentlyContinue }
             }
         }
+    }
+    finally {
+        Remove-Item $pairBody, $mkBody -Force -ErrorAction SilentlyContinue
     }
 
     # 9. Next steps

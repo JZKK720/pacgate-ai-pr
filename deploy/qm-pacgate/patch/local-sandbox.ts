@@ -234,10 +234,64 @@ export function createLocalSandbox(workspace: WorkspaceStore, opts: LocalSandbox
     await waitDaemon(name);
   }
 
+  // Pacgate (2026-10-05, "network not found" incident): a parked sandbox whose
+  // qm-net-* network was deleted (destroy teardown that network-rm-ed while a
+  // concurrent rm -f lost the race, or manual cleanup) fails docker start
+  // FOREVER - the container record pins the dead network ID, so every later
+  // exec dies with `network <id> not found` and only manual cleanup recovers
+  // it. Heal exactly that state instead of failing: when start reports the
+  // network missing, replace the container in place. The scope volume
+  // (qm-home-*) survives the recreate, so files stay; only the parked
+  // process state is lost.
+  function isNetworkMissingStart(r: { stderr: string }): boolean {
+    return /failed to set up container networking|network .+ not found/i.test(r.stderr);
+  }
+
+  function handleScratchOf(name: string): boolean {
+    return name.startsWith("qm-scratch-") || !![...scratchByKey.values()].includes(name);
+  }
+
+  async function recreateContainerWithVolume(name: string, scope: string | undefined, scratch: boolean): Promise<void> {
+    await dexec(["rm", "-f", name]);
+    await dexec(["network", "rm", localNetworkName(name)]).catch(swallowAs("local-sandbox: heal network rm", undefined));
+    if (scratch) {
+      // Scratch containers never mount a scope volume; recreate the same way
+      // ensureScratch does so the healed shape matches the original.
+      await runContainer(name, undefined, false);
+      return;
+    }
+    const volume = localVolumeName(scope ?? name);
+    const hadVolume = (await dexec(["volume", "inspect", volume])).code === 0;
+    if (!hadVolume) {
+      const created = await dexec(["volume", "create", volume]);
+      if (created.code !== 0) throw new Error(`docker volume create ${volume} failed: ${created.stderr.trim()}`);
+    }
+    await runContainer(name, scope, true);
+  }
+
   async function ensureRunning(name: string): Promise<void> {
-    const state = await containerState(name);
+    let state = await containerState(name);
     if (!state) throw new Error(`local sandbox container ${name} is gone`);
-    if (!state.running) await startContainer(name);
+    if (!state.running) {
+      try {
+        await startContainer(name);
+      } catch (err) {
+        if (!isNetworkMissingStart({ stderr: errMessage(err) })) throw err;
+        if (!staleWarned) {
+          staleWarned = true;
+          console.warn(`[local-sandbox] sandbox ${name}: network is gone - recreating the container in place`);
+        }
+        // Scratch containers are named qm-scratch-<slug> (localScratchName IS
+        // the container name), which survives core restarts where the
+        // scratchByKey map is empty; map lookup alone would misclassify them
+        // and heal a scratch box onto a scope volume.
+        const scope = scopeByContainer.get(name);
+        const scratch = handleScratchOf(name);
+        await recreateContainerWithVolume(name, scope, scratch);
+      }
+      state = await containerState(name);
+      if (!state?.running) throw new Error(`local sandbox ${name}: network-missing recreate did not start the container`);
+    }
   }
 
   async function execRaw(name: string, command: string, timeoutSec: number, signal?: AbortSignal): Promise<ExecResult> {
@@ -504,11 +558,12 @@ export function createLocalSandbox(workspace: WorkspaceStore, opts: LocalSandbox
 
         if (handle.scratch) {
           for (const [k, name] of scratchByKey) if (name === handle.id) scratchByKey.delete(k);
-          if (tdOpts?.destroy) await dexec(["rm", "-f", handle.id]);
-          else await dexec(["rm", "-f", handle.id]).catch(swallowAs("local-sandbox: scratch rm", undefined));
-          await dexec(["network", "rm", localNetworkName(handle.id)]).catch(
-            swallowAs("local-sandbox: scratch network rm", undefined),
-          );
+          await dexec(["rm", "-f", handle.id]).catch(swallowAs("local-sandbox: scratch rm", undefined));
+          const gone = (await dexec(["inspect", "-f", "{{.Id}}", handle.id])).code !== 0;
+          if (gone)
+            await dexec(["network", "rm", localNetworkName(handle.id)]).catch(
+              swallowAs("local-sandbox: scratch network rm", undefined),
+            );
           portByName.delete(handle.id);
           ipByContainer.delete(handle.id);
           return;
@@ -517,10 +572,25 @@ export function createLocalSandbox(workspace: WorkspaceStore, opts: LocalSandbox
         if (tdOpts?.keepWarm) return;
 
         if (tdOpts?.destroy) {
-          await dexec(["rm", "-f", handle.id]).catch(swallowAs("local-sandbox: destroy rm", undefined));
-          await dexec(["network", "rm", localNetworkName(handle.id)]).catch(
-            swallowAs("local-sandbox: destroy network rm", undefined),
-          );
+          const rm = await dexec(["rm", "-f", handle.id]).catch(() => ({ code: 1, stderr: "rm -f threw", stdout: "" }));
+          // Pacgate (the "network not found" incident, 2026-10-05): network rm
+          // is only safe when the container record is actually gone. If rm -f
+          // failed, deleting the network strands the stopped container on a
+          // dead network ID and every later `docker start` fails forever.
+          const gone = (await dexec(["inspect", "-f", "{{.Id}}", handle.id])).code !== 0;
+          if (gone) {
+            await dexec(["network", "rm", localNetworkName(handle.id)]).catch(
+              swallowAs("local-sandbox: destroy network rm", undefined),
+            );
+          }
+          else {
+            opts.onError?.({
+              category: "sandbox_park",
+              code: "destroy_rm_incomplete",
+              message: `destroy teardown: container ${handle.id} could not be removed (${rm.stderr.trim()}); network ${localNetworkName(handle.id)} left in place`,
+              ...(scopeByContainer.get(handle.id) ? { scopeLabel: scopeByContainer.get(handle.id)! } : {}),
+            });
+          }
           const scope = scopeByContainer.get(handle.id);
           if (scope)
             await dexec(["volume", "rm", localVolumeName(scope)]).catch(
