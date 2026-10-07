@@ -1,6 +1,10 @@
 # Plan 023 — deer-flow 2.1 upgrade (prepare now, execute at GA)
 
-**Status:** PREP IN PROGRESS. Blocked on upstream `v2.1.0` GA for execution.
+**Status:** TRIGGER FIRED - `v2.1.0` GA released (`f6e747be`, verified on
+2026-10-07). §1.5 audit executed at the GA tag: **exit 0** - every bind-mount
+path still exists, 575-line delta vs 7,153 upstream churn, encodings OK
+(replace this line's predecessor when execution completes). The §2 rebase
+execution is the remaining work item, unchanged.
 **Trigger:** the non-rc `v2.1.0` tag appears on `bytedance/deer-flow`, or
 `ghcr.io/bytedance/deer-flow-backend:v2.1.0` resolves to a new digest. Verified
 absent as of 2026-09-21 (only `v2.1.0-rc0` exists), so the trigger is unambiguous.
