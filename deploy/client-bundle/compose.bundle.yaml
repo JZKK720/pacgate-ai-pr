@@ -145,6 +145,11 @@ services:
       # so a 40K-token prompt does not choke the local GPU; small surfaces stay
       # on the local default.
       - ./patches/deer-flow-agent.py:/app/backend/packages/harness/deerflow/agents/lead_agent/agent.py:ro
+      # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
+      # (langchain-openai renames it to max_completion_tokens, which Ollama's
+      # /v1 endpoint ignores - background calls then generate to EOS and hog
+      # the single runner slot while chat runs queue behind them).
+      - ./patches/deer-flow-model-factory.py:/app/backend/packages/harness/deerflow/models/factory.py:ro
       # Pacgate: inject the conversation-history token estimate into the run
       # config so auto-routing can distinguish simple chats (local) from large
       # multi-step research runs (cloud), instead of relying only on the constant

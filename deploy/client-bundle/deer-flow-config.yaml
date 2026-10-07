@@ -28,16 +28,74 @@
 # `model '<tag>' not found`. `:cloud` tags are exempt - they need no local weights.
 # scripts/audit-model-tags.ps1 enforces this.
 
+# Pacgate 2026-10-07: nemotron-3.5-lightning is now the DEFAULT. It is the most
+# capable local MOE (1M context, tools + thinking) and benchmarked clean end to
+# end. CRITICAL: its max_tokens MUST stay at 8192 or below. Nemotron's thinking
+# channel can run unbounded on this Ollama build - with the previous 16384 cap it
+# burned the entire budget on thinking tokens, produced no visible content, and
+# tripped deer-flow's 420s stall detector ("no astream output ... aborting").
+# Verified 2026-10-07: num_predict 300/1024 -> clean stop, correct content;
+# unset/16384 -> 14k+ token thinking loops with empty content.
+# Why 8192 and not lower: nemotron generates at ~24 t/s on the 8060S iGPU, so
+# 8192 tokens is ~5.7 min of worst-case generation - inside the 420s stall
+# detector's window only because thinking tokens stream continuously and reset
+# it. 4096 was tested first but is too tight for heavy research runs (thinking +
+# long answers share one budget). Do NOT raise back to 16384.
 models:
+  - name: nemotron-3.5-lightning-30b-local
+    display_name: Nemotron 3.5 Lightning 30B (Local)
+    description: Default. Most capable local MOE (1M tokens). Supports thinking + tools. max_tokens capped to prevent thinking loops.
+    use: langchain_openai:ChatOpenAI
+    model: nemotron-3.5-lightning:30b-a3b
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 8192
+    temperature: 0.1
+    supports_thinking: true
+    # Long thinking pauses on a 30B reasoning model — raise the stream chunk
+    # timeout so the gateway does not drop the connection mid-thought.
+    stream_chunk_timeout: 300
+
   - name: gemma4-12b-local
     display_name: Gemma 4 12B (Local)
-    description: Local Gemma model. Default for research (schema-valid structured/tool calls).
+    description: Fast local model. Reliable structured/tool calls. Used for background memory updates.
     use: langchain_openai:ChatOpenAI
     model: gemma4:12b-it-qat
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+
+  # Dedicated memory-update model. Referenced by memory.model_name below.
+  # Background memory updates run OUTSIDE any user-visible run, so a runaway
+  # generation here hogs the single Ollama runner slot and stalls every chat
+  # (observed 2026-10-07: 43k+ token loop). Memory facts are short JSON - a hard
+  # 2048 cap is generous and cannot loop meaningfully.
+  - name: gemma4-12b-memory
+    display_name: Gemma 4 12B (Memory, capped)
+    description: Internal model for background memory updates. Hard 2048-token cap. Safe to pick for short tasks.
+    use: langchain_openai:ChatOpenAI
+    model: gemma4:12b-it-qat
+    api_key: ollama
+    base_url: http://host.docker.internal:11434/v1
+    max_tokens: 2048
+    temperature: 0.1
+
+  # Pacgate 2026-10-07 (rev 2): qwen3.8:27b DEMOTED from the picker. Benchmark
+  # on the 8060S iGPU (warm, ~3k ctx): dense 27B = 26 t/s gen / 225 t/s
+  # ingestion, vs nemotron MOE 81/1080 and ornith MOE 64/1263. The dense model
+  # is 3-5x slower on BOTH axes and strictly dominated by the two MOEs. It
+  # remains pre-pulled (pacgate-api Mid workflow tier uses it - do NOT remove
+  # from ollama-models.txt) but is no longer a deer-flow chat option.
+  # - name: qwen3.8-27b-local
+  #   display_name: Qwen 3.8 27B (Local)
+  #   description: Dense local model. Slower than the MOEs (26 t/s vs 64-81).
+  #   use: langchain_openai:ChatOpenAI
+  #   model: qwen3.8:27b-mtp-q4_K_M
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
 
   - name: ornith-1.5-9b-local
     display_name: Ornith 1.5 9B (Local)
@@ -74,23 +132,6 @@ models:
   #   max_tokens: 8192
   #   temperature: 0.1
 
-  # Nemotron 3.5 Lightning 30B — longest-context local model (1M context window).
-  # Supports tools + thinking. Heavier (32.9B, Q4_K_M) so it is NOT the default;
-  # select it in the chat model picker for long-context research runs.
-  - name: nemotron-3.5-lightning-30b-local
-    display_name: Nemotron 3.5 Lightning 30B (Local)
-    description: Longest-context local model (1M tokens). Supports thinking + tools. Best for deep multi-step research.
-    use: langchain_openai:ChatOpenAI
-    model: nemotron-3.5-lightning:30b-a3b
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 16384
-    temperature: 0.1
-    supports_thinking: true
-    # Long thinking pauses on a 30B reasoning model — raise the stream chunk
-    # timeout so the gateway does not drop the connection mid-thought.
-    stream_chunk_timeout: 300
-
   # Gemma 4 26B — heavier local model (28GB on host) for complex reasoning
   # WITHOUT cloud egress. Not the default (slower on the 16GB dGPU); pick it
   # for long-context legal analysis that must stay fully on-device.
@@ -111,27 +152,19 @@ models:
     stream_chunk_timeout: 300
 
   # ── Cloud-routed models (via ollama.com / `ollama signin`) ────────────────
-  # These tags have no weight layers on disk (size "-"); inference routes to
-  # ollama.com. Auth rides the `ollama signin` OAuth session — no API key. Add
-  # them as OPTIONS so users can pick local OR cloud per workload; local stays
-  # default. Requires `ollama signin` on the AIPC.
-  - name: deepseek-v4-flash-0731-cloud
-    display_name: DeepSeek V4 Flash 0731 (Cloud)
-    description: Fast cloud model for quick research iterations and high-throughput drafting.
+  # Pacgate 2026-10-07 (rev 2, per user choice): the cloud roster is the TWO
+  # FLASH models - deepseek-v4.1-flash and glm-5.3-flash - chosen for speed and
+  # lower cost. The heavier tags (deepseek-v4-pro:cloud, glm-5.3:cloud) were
+  # dropped from the picker; re-add a models: entry if a workload ever needs
+  # them. Context for the earlier removal: the ollama.com account hit its
+  # WEEKLY usage limit (account-wide, all cloud models fail identically; resets
+  # weekly or needs credits at ollama.com/settings). Local stays default;
+  # escalation stays local; picking cloud is always a deliberate act.
+  - name: deepseek-v4.1-flash-cloud
+    display_name: DeepSeek V4.1 Flash (Cloud)
+    description: Fast cloud model for quick research iterations and high-throughput drafting. Requires ollama signin; subject to ollama.com weekly limits.
     use: langchain_openai:ChatOpenAI
-    model: deepseek-v4-flash:0731-cloud
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
-    supports_thinking: true
-    stream_chunk_timeout: 120
-
-  - name: deepseek-v4-pro-cloud
-    display_name: DeepSeek V4 Pro (Cloud)
-    description: Heavier cloud model for complex research and legal reasoning.
-    use: langchain_openai:ChatOpenAI
-    model: deepseek-v4-pro:cloud
+    model: deepseek-v4.1-flash:cloud
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
@@ -141,7 +174,7 @@ models:
 
   - name: glm-5.3-flash-cloud
     display_name: GLM 5.3 Flash (Cloud)
-    description: Fast cloud model for research and drafting. VLM-capable (vision) so view_image is registered. Cloud-tagged via Ollama. NOTE - this is no longer the auto-escalation target; escalation is local since 2026-09-25. Select it explicitly to use it.
+    description: Fast cloud model for research and drafting. VLM-capable (vision) so view_image is registered. Requires ollama signin; subject to ollama.com weekly limits.
     use: langchain_openai:ChatOpenAI
     model: glm-5.3-flash:cloud
     api_key: ollama
@@ -182,12 +215,27 @@ models:
 # chooses it explicitly. Only the AUTOMATIC path changed.
 model_routing:
   enabled: true
-  local_model: gemma4-12b-local
+  # Pacgate 2026-10-07: nemotron is now BOTH the default and the escalation
+  # target. Its 1M context makes the old gemma4-overflow escalation redundant -
+  # the model that overflows at 40k tokens is no longer the one holding the
+  # conversation. local_model and cloud_model point at the same entry; the
+  # schema key name is unchanged (renaming would break deer-flow's config).
+  local_model: nemotron-3.5-lightning-30b-local
   # LOCAL, not cloud. Renaming this key would break deer-flow's config schema, so
   # it is still called cloud_model; read it as "the escalation target".
   cloud_model: nemotron-3.5-lightning-30b-local
   message_token_threshold: 40000
   tool_count_threshold: 200
+
+# Pacgate 2026-10-07: pin background memory updates to a dedicated capped model.
+# The memory updater runs OUTSIDE user-visible runs; without a pin it used the
+# first config model with no generation cap, and a confused run looped 43k+
+# tokens on the single Ollama runner slot, stalling every chat in the session.
+# gemma4-12b-memory carries a hard 2048 max_tokens so this class of loop cannot
+# recur. (MemoryConfig.model_name, deerflow/agents/memory/updater.py.)
+memory:
+  storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
+  model_name: gemma4-12b-memory
 
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
@@ -259,8 +307,7 @@ database:
   backend: sqlite
   sqlite_dir: .deer-flow/data
 
-memory:
-  storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
+# memory: moved above (line ~200) - merged with the model_name pin, 2026-10-07.
 # Expose the custom-agent management API over HTTP (plan 021): the
 # sanitizer-agent provision.ps1 needs POST/PUT /api/agents to register
 # the 'sanitizer' agent. Auth still required (Better-Auth session).
