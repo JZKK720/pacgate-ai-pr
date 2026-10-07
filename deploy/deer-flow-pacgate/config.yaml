@@ -33,43 +33,56 @@ models:
     max_tokens: 8192
     temperature: 0.1
 
-  - name: qwen3.8-27b-local
-    display_name: Qwen 3.8 27B (Local GPU)
-    description: Local Qwen model, GPU-accelerated. No cloud dependency.
+  # Pacgate 2026-10-07: qwen3.8 DEMOTED from the picker. Benchmark on the 8060S
+  # iGPU (warm, ~3k ctx): dense 27B = 26 t/s gen / 225 t/s ingestion, vs
+  # nemotron MOE 81/1080 and ornith MOE 64/1263. Strictly dominated by the MOEs.
+  # It remains pre-pulled for the pacgate-api Mid workflow tier.
+  # - name: qwen3.8-27b-local
+  #   display_name: Qwen 3.8 27B (Local GPU)
+  #   description: Dense local model. Slower than the MOEs (26 t/s vs 64-81).
+  #   use: langchain_openai:ChatOpenAI
+  #   model: qwen3.8:27b-mtp-q4_K_M
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
+
+  # Dedicated memory-update model (referenced by memory.model_name above).
+  # Background memory updates run OUTSIDE user-visible runs; a hard 2048 cap
+  # means a confused run cannot loop meaningfully. Memory facts are short JSON.
+  - name: gemma4-12b-memory
+    display_name: Gemma 4 12B (Memory, capped)
+    description: Internal model for background memory updates. Hard 2048-token cap.
     use: langchain_openai:ChatOpenAI
-    model: qwen3.8:27b-mtp-q4_K_M
+    model: gemma4:12b-it-qat
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
+    max_tokens: 2048
     temperature: 0.1
 
   # ── CLOUD: reachable only by EXPLICIT selection ───────────────────────────
   # These have no weight layers on disk; inference routes to ollama.com. Auth
   # rides the `ollama signin` OAuth session. Selecting one is a deliberate choice;
   # nothing here routes to them by default.
-  - name: deepseek-v4-flash-0731-cloud
-    display_name: DeepSeek V4 Flash 0731 (Ollama)
+  # Pacgate 2026-10-07 (rev 2): cloud roster = the TWO FLASH models (fast and
+  # cheap). deepseek-v4.1-flash replaces the retired v4-flash:0731 tag; the
+  # heavier deepseek-v4-pro:cloud was dropped from the picker. The ollama.com
+  # account hit its WEEKLY usage limit (account-wide; resets weekly or needs
+  # credits at ollama.com/settings) - cloud entries fail until then.
+  - name: deepseek-v4.1-flash-cloud
+    display_name: DeepSeek V4.1 Flash (Ollama)
     description: Fast legal execution model. Cloud-tagged via Ollama - prompt text leaves the machine.
     use: langchain_openai:ChatOpenAI
-    model: deepseek-v4-flash:0731-cloud
+    model: deepseek-v4.1-flash:cloud
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    supports_thinking: true
+    stream_chunk_timeout: 120
 
-  - name: deepseek-v4-pro-cloud
-    display_name: DeepSeek V4 Pro (Ollama)
-    description: Heavier model for complex research tasks. Cloud-tagged via Ollama - prompt text leaves the machine.
-    use: langchain_openai:ChatOpenAI
-    # Was `deepseek-v4-pro:0813-cloud`, which no artifact pre-pulls and which
-    # nothing on a client machine serves. `:cloud` tags need no local weights, but
-    # a tag that does not exist on ollama.com still 404s with no fallback, so this
-    # now matches the tag the client config and ollama-models.txt both use.
-    model: deepseek-v4-pro:cloud
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
+  # deepseek-v4-pro:cloud dropped from the picker 2026-10-07 (rev 2, flash-only
+  # cloud roster). Re-add a models: entry if a workload needs the heavy tier.
 
   - name: glm-5.3-flash-cloud
     display_name: GLM 5.3 Flash (Cloud)
@@ -143,3 +156,9 @@ tool_search:
 
 memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
+  # Pacgate 2026-10-07: pin background memory updates to a capped model. The
+  # memory updater runs OUTSIDE user-visible runs; without a pin it uses the
+  # first config model with no generation cap, and a confused run can loop tens
+  # of thousands of tokens on the single Ollama runner slot, stalling every
+  # chat. gemma4-12b-memory carries a hard 2048 max_tokens (entry below).
+  model_name: gemma4-12b-memory
