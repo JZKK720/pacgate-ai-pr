@@ -1,8 +1,34 @@
 # Plan 026 — AIPC dev-box sync to origin/main + 0.1.24 upgrade evaluation
 
 **Date:** 2026-10-07
-**Machine:** dev box (pacgate-ai-pr workspace root = live install)
+**Machine:** AIPC No.2 (`PACGATE-AI02`, Tailscale 100.125.239.97) — dev box, workspace root = live install
 **Trigger:** user request — full sync + merge with JZKK720 upstream origin/main, verify + evaluate a plan for full upgrade implementation, preserve local metadata (vectorDB, architectures, workflows, templates), do not break the harness wire-up (deer-flow ↔ pacgate-api ↔ pacgate-mcp ↔ qm ↔ openviking).
+
+---
+
+## 0. EXECUTED (2026-10-07, same day) — upgrade is 4/5 DONE, audit green
+
+**Stack state after execution:**
+
+| Service | Image | State |
+| --- | --- | --- |
+| pacgate-api | **0.1.24** (rev 04ce1c6) | Up, login OK, 222 workflows, register gate CLOSED (403) |
+| pacgate-mcp | **0.1.24** | Up, 19 tools (image == source), 401-retry fix present |
+| ocr-service | **0.1.24** | Up, paddleocr weights volume mounted |
+| deer-flow-frontend | **0.1.24** | Up, branded, :8090 serves 200 |
+| deer-flow (backend) | 0.1.20 | Up — image pull blocked by network throttle (see §2.2) |
+| openviking / pacgate-db / pacgate-nginx | unchanged (digest-pinned / pg16 / nginx) | Up, healthy |
+| qm stack (7 containers) | unchanged | Up, pi-models patch intact (grep -c = 2) |
+
+**Audit results (post-upgrade):**
+
+- Full gate suite (`run-all-checks.ps1`): **35/35 gates PASS** (was 34/35 before the admin-role fix below), including smoke-full-stack 18 pass/0 fail, empty-extraction 15/15, text-native-sanitize 59/59, workflow library served (222/46), staleness probe 8/8, auth-provisioning 8/8.
+- Legal-journey E2E on the upgraded stack: **19/19 assertions, all lanes verified** (incl. the merged deer-flow sign-in lane + OpenViking MCP recall).
+- One data fix applied during the audit: the bootstrap admin row predated the 0.1.21 role fix (`role='attorney', system_role='user'`); applied the installer's own documented upgrade SQL (`UPDATE users SET system_role='admin' WHERE email=…`, guarded to the service account) → auth-provisioning gate went 3/5 → 8/8.
+
+**Wire-up verified after upgrade:** login → `/pacgate/api/matters` → `/pacgate/api/workflows` (222), deer-flow setup-status 200, frontend 200, openviking health ok, qm `/healthz` 200, MCP container up, 15 workflow YAMLs mounted on the new pacgate-api.
+
+**Remaining (1 of 5 services):** `deer-flow-pacgate:0.1.24` (3.49 GB) could not be pulled — GHCR blob CDN throttled to ~0.07 MB/s during this window (measured: 21 MB in 316 s from inside a container; docker pull receives zero bytes for 10+ min at a time). 40 automated retries over 20 min all stalled at "Pulling fs layer". The 0.1.20 backend remains serving (all lanes green on it). **To finish:** when the network recovers, `docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.24` then `docker compose -f deploy/client-bundle/compose.prod.yaml --env-file deploy/client-bundle/.env up -d --pull never deer-flow` — nothing else changes.
 
 ---
 
