@@ -39,6 +39,11 @@ param(
     [string]$QmUrl = 'http://localhost:8181',
     [string]$OpenVikingUrl = 'http://localhost:1933',
     [int]$OcrTimeoutSec = 180,
+    # OpenViking content/write with wait=true blocks on VLM semantic extraction.
+    # gemma4:12b-it-q8_0 (13 GB, 64K ctx) measured 200 s on a cold/busy model
+    # (2026-09-29), so 90 s produced a false SKIP with an empty HTTP status.
+    # 300 s covers a cold start with headroom; the search call stays fast.
+    [int]$OpenVikingTimeoutSec = 300,
     # Fail the run if a lane is unreachable instead of SKIPping it. Use on a
     # machine where qm + OpenViking are expected, so a silent absence is caught.
     [switch]$RequireAllLanes
@@ -81,12 +86,17 @@ Step '0. Preflight'
 if (-not (Test-Path $EnvFile)) { Die "credentials file not found: $EnvFile - cannot authenticate, so cannot check." 2 }
 
 $email = $null; $password = $null
-$ovKey = $null
+$ovKey = $null; $ovRootKey = $null
 foreach ($line in Get-Content $EnvFile) {
-    if ($line -match '^PACGATE_API_EMAIL=(.+)$')      { $email    = $Matches[1].Trim() }
-    if ($line -match '^PACGATE_API_PASSWORD=(.+)$')   { $password = $Matches[1].Trim() }
-    if ($line -match '^OPENVIKING_ROOT_API_KEY=(.+)$') { $ovKey   = $Matches[1].Trim() }
+    if ($line -match '^PACGATE_API_EMAIL=(.+)$')       { $email     = $Matches[1].Trim() }
+    if ($line -match '^PACGATE_API_PASSWORD=(.+)$')    { $password  = $Matches[1].Trim() }
+    if ($line -match '^OPENVIKING_ROOT_API_KEY=(.+)$') { $ovRootKey = $Matches[1].Trim() }
+    if ($line -match '^OPENVIKING_USER_API_KEY=(.+)$') { $ovKey     = $Matches[1].Trim() }
 }
+# The MCP lane (step 10) accepts either principal. Prefer the account-USER key
+# when .env has one (it is the correct principal for tenant-scoped surfaces);
+# fall back to the root key, which upstream verified works on /mcp remember/find.
+if (-not $ovKey) { $ovKey = $ovRootKey }
 # Never echo a secret - only whether it is present.
 if (-not $email -or -not $password) { Die 'PACGATE_API_EMAIL / PACGATE_API_PASSWORD missing from .env.' 2 }
 Ok 'credentials readable (values not printed)'
@@ -243,13 +253,54 @@ try {
     Ok "connector health: $($avail.Count) of $(@($connHealth).Count) available ($($avail.name -join ', '))"
 } catch { Die "search/health failed: $($_.Exception.Message)" }
 
-# ── 9. qm co-work ───────────────────────────────────────────────────────────
-Step '9. qm co-work'
+# ── 9. deer-flow sign-in surface ────────────────────────────────────────────
+# deer-flow has its OWN auth (SQLite user store under data/deer-flow/users,
+# /api/v1/auth/*), separate from pacgate-api's. The .env admin credentials are
+# the PACGATE-API principal; they are NOT deer-flow credentials. The deer-flow
+# admin is created interactively via /initialize on first boot, so no script can
+# know its password - and this journey must not pretend to. What CAN be asserted
+# without credentials is that the sign-in surface is alive and correctly gated:
+#   - setup-status answers (the auth service is up)
+#   - /login/local with a wrong password returns 401 invalid_credentials, NOT
+#     403 CSRF and NOT 5xx. A 403 here means the Origin gate is misconfigured
+#     (the browser would be locked out); a 5xx means the auth service is broken.
+# This is the lane that was silently absent: every earlier run reported
+# "all lanes verified" while deer-flow's actual sign-in path had zero coverage.
+Step '9. deer-flow sign-in surface'
+$dfBase = ($BaseUrl -replace '/pacgate$', '')
+try {
+    $setup = Invoke-RestMethod -Uri "$dfBase/api/v1/auth/setup-status" -TimeoutSec 10
+    Ok "deer-flow auth service up (needs_setup=$($setup.needs_setup))"
+} catch { Die "deer-flow setup-status failed: $($_.Exception.Message)" }
+try {
+    # Form data, not JSON - OAuth2PasswordRequestForm. JSON yields 422, which
+    # proves nothing about the credential path (same lesson as
+    # test-auth-registration-gate.ps1).
+    $null = Invoke-WebRequest -Uri "$dfBase/api/v1/auth/login/local" -Method Post `
+        -Headers @{ Origin = $dfBase } `
+        -ContentType 'application/x-www-form-urlencoded' `
+        -Body 'username=journey-probe@invalid.test&password=definitely-wrong' `
+        -UseBasicParsing -TimeoutSec 10
+    Die 'deer-flow /login/local accepted a wrong password - the credential gate is broken.' 1
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    $detail = "$($_.ErrorDetails.Message)"
+    if ($code -eq 401 -and $detail -match 'invalid_credentials') {
+        Ok 'deer-flow sign-in gate live: wrong password -> 401 invalid_credentials'
+    } elseif ($code -eq 403) {
+        Die "deer-flow /login/local returned 403 (CSRF/origin gate misconfigured - a browser cannot sign in). Detail: $detail" 1
+    } else {
+        Die "deer-flow /login/local returned HTTP $code (expected 401 invalid_credentials). Detail: $detail" 1
+    }
+}
+
+# ── 9b. qm co-work ──────────────────────────────────────────────────────────
 # The portal is an OIDC front door: EVERY path answers 401 {"error":"sign in"}
 # until a browser session exists, so probing "/" can never tell "qm is down"
 # from "qm is up and gated" - it reads as down either way. /healthz is the
 # unauthenticated liveness surface (200 while the portal serves). Verified
 # against the running stack: 8181/healthz -> 200, 8181/ -> 401.
+Step '9b. qm co-work'
 $qmUp = $false
 $qmWhy = ''
 try {
@@ -333,11 +384,15 @@ if ($ovUp) {
         $wrote = ($w.result.content[0].text -match 'Stored|committed')
 
         # RECALL: extraction is ASYNCHRONOUS - the embedding pass runs after the
-        # write returns (measured ~45-60s on this box). A synchronous read is the
-        # wrong test design, so poll find() until the marker surfaces or the
-        # budget expires. A timeout is a real failure, not a SKIP: the write was
-        # accepted, so silence means the extraction lane is not completing.
-        $deadline = (Get-Date).AddSeconds(180)
+        # write returns (measured ~45-60s warm on this box). A synchronous read
+        # is the wrong test design, so poll find() until the marker surfaces or
+        # the budget expires. A timeout is a real failure, not a SKIP: the write
+        # was accepted, so silence means the extraction lane is not completing.
+        # Budget is 300s, not 180s: gemma4:12b-it-q8_0 (13 GB, 64K ctx) measured
+        # 200 s on a cold/busy model (2026-09-29), so 180s produced a false
+        # failure with the service perfectly healthy. 300s covers a cold start
+        # with headroom.
+        $deadline = (Get-Date).AddSeconds(300)
         while ((Get-Date) -lt $deadline) {
             $f = Invoke-OvMcp @{ jsonrpc = '2.0'; id = 2; method = 'tools/call'; params = @{
                 name = 'find'; arguments = @{ query = $probe } } }
@@ -345,7 +400,7 @@ if ($ovUp) {
             Start-Sleep -Seconds 10
         }
         if (-not $recallOk) {
-            $recallWhy = if ($wrote) { 'write accepted but the marker did not surface within 180s - the extraction lane is not completing' }
+            $recallWhy = if ($wrote) { 'write accepted but the marker did not surface within 300s - the extraction lane is not completing (cold gemma4 measured 200s; 300s covers it)' }
                          else { 'the remember write was not accepted' }
         }
     } catch {
