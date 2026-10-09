@@ -95,11 +95,12 @@ mod tests {
             "changing this changes peak memory: 393 MiB per concurrent sanitize \
              job, measured 2026-09-27. Re-measure before raising it."
         );
-        assert!(
-            SANITIZE_MAX_CONCURRENT * 393 < 1024,
-            "keep the detector-memory peak under 1 GiB: {} x 393 MiB",
-            SANITIZE_MAX_CONCURRENT
-        );
+        const {
+            assert!(
+                SANITIZE_MAX_CONCURRENT * 393 < 1024,
+                "keep the detector-memory peak under 1 GiB"
+            );
+        }
     }
 }
 

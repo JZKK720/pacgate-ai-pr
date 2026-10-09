@@ -96,7 +96,7 @@ fn collect_text_files(dir: &Path) -> Vec<PathBuf> {
                     .and_then(|e| e.to_str())
                     .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("txt"))
                     .unwrap_or(false);
-                let excluded = EXCLUDE_FILENAMES.iter().any(|x| name == *x)
+                let excluded = EXCLUDE_FILENAMES.contains(&name)
                     || EXCLUDE_SUFFIXES
                         .iter()
                         .any(|s| name.to_lowercase().ends_with(s));

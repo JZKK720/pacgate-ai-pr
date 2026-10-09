@@ -142,6 +142,7 @@ class PacgateApi:
         json: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         files: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         """Send a request; on 401 re-login once and retry exactly once.
 
@@ -149,6 +150,9 @@ class PacgateApi:
         passing a headers dict built by the caller would resend the expired one
         and 401 again. Retrying is safe because pacgate-api rejects an expired
         token before the handler runs, so a 401 means nothing was executed.
+
+        `timeout` overrides the client default for one call (used by the
+        sanitize endpoints, whose NER pass legitimately runs for minutes).
         """
 
         def send() -> httpx.Response:
@@ -168,6 +172,8 @@ class PacgateApi:
                 kwargs["data"] = data
             if files is not None:
                 kwargs["files"] = files
+            if timeout is not None:
+                kwargs["timeout"] = timeout
             return self._client.request(method, f"{self.base_url}{path}", **kwargs)
 
         resp = send()
@@ -177,11 +183,18 @@ class PacgateApi:
             resp = send()
         return resp
 
-    def get(self, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
-        return self._request("GET", path, params=params)
+    def get(
+        self, path: str, params: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> httpx.Response:
+        return self._request("GET", path, params=params, timeout=timeout)
 
-    def post(self, path: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        return self._request("POST", path, json=json)
+    def post(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> httpx.Response:
+        return self._request("POST", path, json=json, timeout=timeout)
 
     def delete(self, path: str) -> httpx.Response:
         return self._request("DELETE", path)
@@ -670,6 +683,15 @@ def pacgate_ocr_document(document_id: str) -> str:
 # for the remaining pages).
 OCR_BATCH_PAGE_LIMIT_DEFAULT = 200
 
+# Per-request timeout override for endpoints that legitimately run for many
+# minutes. Measured 2026-10-08: a full-document sanitize runs BERT NER over
+# every 500-token window TWICE (detect + verify) - a 144-chunk doc took
+# ~655s server-side. The default client timeout (PACGATE_MCP_TIMEOUT, 60s)
+# aborted those calls mid-job; the dropped HTTP connection kills the handler
+# future, so the doc stayed `pending` and NO progress was ever made. The
+# override must exceed the composed nginx 720s read timeout chain.
+SANITIZE_TIMEOUT_S = float(os.environ.get("PACGATE_SANITIZE_TIMEOUT", "700"))
+
 
 def _batch_page_limit() -> int:
     raw = os.environ.get("PACGATE_OCR_BATCH_PAGE_LIMIT", "")
@@ -727,6 +749,16 @@ def pacgate_ocr_batch(matter_id: str, max_pages: int | None = None) -> str:
                 {"document_id": document_id, "name": doc.get("name"), "status": "failed", "error": str(e)[:200]}
             )
             continue
+        except httpx.HTTPError as e:
+            # Transport-level failures (connection reset, timeout) measured
+            # 2026-10-08 on the first batch call after idle: the failure is
+            # per-request, so record it and keep going instead of aborting
+            # the whole batch; the caller can re-run (cache makes re-runs of
+            # already-extracted docs free).
+            processed.append(
+                {"document_id": document_id, "name": doc.get("name"), "status": "failed", "error": f"transport: {e}"[:200]}
+            )
+            continue
         pages_used += int(outcome.get("pages", 0))
         processed.append(
             {
@@ -771,6 +803,11 @@ def pacgate_sanitize_document(
     be downloaded or retrieved until a human decides. Restore is NOT exposed
     through MCP; it is a client-side operator action in pacgate-api.
 
+    LONG-RUNNING: large documents can take several minutes (the sanitizer
+    re-verifies with the same detector set it redacted with). This call uses
+    its own long timeout; do not reduce PACGATE_SANITIZE_TIMEOUT below the
+    nginx /pacgate/ proxy_read_timeout.
+
     Args:
         document_id: The UUID of the document to sanitize.
         data_level: T1|T2|T3|T4 (default T3). T4 always requires human review.
@@ -784,6 +821,7 @@ def pacgate_sanitize_document(
     resp = client.post(
         f"/api/documents/{document_id}/sanitize",
         json={"data_level": data_level},
+        timeout=SANITIZE_TIMEOUT_S,
     )
     _handle_error(resp)
     return json.dumps(resp.json(), ensure_ascii=False, indent=2)
@@ -839,6 +877,7 @@ def pacgate_sanitize_text(text: str, data_level: str = "T3") -> str:
     resp = client.post(
         f"/api/documents/{doc['id']}/sanitize",
         json={"data_level": data_level},
+        timeout=SANITIZE_TIMEOUT_S,
     )
     _handle_error(resp)
     outcome = resp.json()

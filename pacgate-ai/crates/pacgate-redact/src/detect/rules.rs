@@ -108,6 +108,24 @@ static RE_PASSPORT: Lazy<Regex> =
 static RE_HK_MO_PERMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[HM][0-9]{10}").expect("hk/mo permit regex is valid"));
 
+/// 往来港澳通行证 (electronic card, mainland residents): `C` + 8 digits =
+/// 9 chars. Gap found by client testing 2026-10-08: `C12345678` sailed
+/// through sanitize untouched because the 回乡证 rule only claims `H`/`M`
+/// prefixes. The `C` prefix is the published card number shape; a bare
+/// 8-digit run is never claimed (same discipline as 台胞证 - the C anchor
+/// below is only for the LABELLED legacy forms).
+static RE_HK_MO_TRAVEL_PERMIT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"C[0-9]{8}").expect("hk/mo travel permit regex is valid"));
+
+/// 往来港澳通行证 label anchor, for paper-era numbers that may be shorter
+/// than the card shape (e.g. `C1234567`). A bare C+7-digit run stays
+/// unclaimed; the label must say 港澳 for it to count.
+static RE_TRAVEL_PERMIT_ANCHOR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"港澳(?:通行证|居民来往内地通行证)(?:号码|编号)?[:：]?\s*").expect("travel permit anchor is valid"));
+
+static RE_TRAVEL_PERMIT_C: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"C[0-9]{7,8}").expect("travel permit C number regex is valid"));
+
 /// 台胞证 requires a label; this anchor finds the label itself so the digit
 /// run right after it can be promoted to a Tier-1 match.
 static RE_PERMIT_ANCHOR: Lazy<Regex> =
@@ -406,6 +424,45 @@ impl Detector for TierOneDetector {
                 continue;
             }
             self.push(&mut out, m, EntityType::HkMoPermit, MatchSource::Pattern);
+        }
+
+        // 往来港澳通行证 card number: `C` + 8 digits, bounded like the
+        // passport/回乡证 shapes above (a longer ASCII token claiming a C
+        // prefix is rejected there and here for the same reason).
+        for m in RE_HK_MO_TRAVEL_PERMIT.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::HkMoPermit, MatchSource::Pattern);
+        }
+
+        // Labelled legacy form: 港澳通行证[: ]C1234567 (possibly 7 digits on
+        // older cards). Same label-anchored discipline as 台胞证 - the label,
+        // not the shape, is what makes a short run an identifier.
+        let travel_spans: Vec<usize> = RE_TRAVEL_PERMIT_ANCHOR
+            .find_iter(text)
+            .map(|a| a.end())
+            .collect();
+        for label_end in travel_spans {
+            let Some(rest) = text.get(label_end..) else {
+                continue;
+            };
+            if let Some(m) = RE_TRAVEL_PERMIT_C.captures(rest) {
+                if let Some(c) = m.get(0) {
+                    let start = label_end + c.start();
+                    let end = label_end + c.end();
+                    if is_bounded(text, start, end) {
+                        self.push_span(
+                            &mut out,
+                            start,
+                            end,
+                            &text[start..end],
+                            EntityType::HkMoPermit,
+                            MatchSource::Context,
+                        );
+                    }
+                }
+            }
         }
 
         // 台胞证 has no letter prefix. The run is Tier-1 ONLY when the label
@@ -942,6 +999,51 @@ mod tests {
                 && m.entity != EntityType::TaiwanPermit),
             "a bare 10-digit run is not a permit; got {:?}",
             bare.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    /// 往来港澳通行证 card number: `C` + 8 digits, found in a client probe
+    /// 2026-10-08 (`C12345678` was NOT redacted before this rule existed).
+    /// The bare C+7 short form is only claimed WITH the 港澳 label.
+    #[test]
+    fn finds_hk_mo_travel_permit_card_shape() {
+        let found = TierOneDetector::new().detect("通行证号码 C12345678 有效").unwrap();
+        assert!(
+            found.iter().any(|m| m.entity == EntityType::HkMoPermit && m.text == "C12345678"),
+            "C+8 card permit must be found; got {:?}",
+            found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Glued CJK label also accepted (same adjacency rule as 回乡证).
+        let glued = TierOneDetector::new().detect("港澳通行证C12345678").unwrap();
+        assert!(
+            glued.iter().any(|m| m.entity == EntityType::HkMoPermit && m.text == "C12345678"),
+            "glued C+8 card permit must be found; got {:?}",
+            glued.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // A C+8 run inside a longer ASCII token is NOT a permit (is_bounded).
+        let embedded = TierOneDetector::new().detect("XC1234567899").unwrap();
+        assert!(
+            !embedded.iter().any(|m| m.entity == EntityType::HkMoPermit),
+            "embedded C+8 must be rejected; got {:?}",
+            embedded.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // C+7 without the label stays unclaimed (too short to trust C alone).
+        let short_bare = TierOneDetector::new().detect("见 C1234567 条").unwrap();
+        assert!(
+            !short_bare.iter().any(|m| m.entity == EntityType::HkMoPermit),
+            "bare C+7 must NOT be a permit; got {:?}",
+            short_bare.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // C+7 WITH the label IS claimed (paper-era form).
+        let short_labelled = TierOneDetector::new().detect("港澳通行证：C1234567").unwrap();
+        assert!(
+            short_labelled.iter().any(|m| m.entity == EntityType::HkMoPermit && m.text == "C1234567"),
+            "labelled C+7 must be found; got {:?}",
+            short_labelled.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );
     }
 

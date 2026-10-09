@@ -769,22 +769,6 @@ impl AgentLoop {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn system_prompt_includes_matter_context() {
-        let matter_id =
-            MatterId(uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap());
-
-        let prompt = build_system_prompt(None, Some(&matter_id));
-
-        assert!(prompt.contains("CURRENT MATTER CONTEXT"));
-        assert!(prompt.contains(&matter_id.as_str()));
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Citation extraction from assistant response text
 // ─────────────────────────────────────────────────────────────────────────────
@@ -835,4 +819,20 @@ fn extract_citations(text: &str) -> Vec<CitationRef> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_prompt_includes_matter_context() {
+        let matter_id =
+            MatterId(uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap());
+
+        let prompt = build_system_prompt(None, Some(&matter_id));
+
+        assert!(prompt.contains("CURRENT MATTER CONTEXT"));
+        assert!(prompt.contains(&matter_id.as_str()));
+    }
 }

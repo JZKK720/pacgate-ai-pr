@@ -922,9 +922,7 @@ fn element_value_ci(xml: &str, field: &str) -> Option<String> {
             search_at = after;
             continue;
         }
-        let Some(gt_rel) = lower[after..].find('>') else {
-            return None;
-        };
+        let gt_rel = lower[after..].find('>')?;
         let tag_body = &lower[after..after + gt_rel];
         // `local` is the name after any `ns:` prefix.
         let local = tag_body.split(':').next_back().unwrap_or(tag_body);
@@ -1412,6 +1410,7 @@ mod tests {
     ///      two records have different fixed sizes before the filename (30 vs 46),
     ///      and pinning that count inside the helper hid a wrong-offset bug while
     ///      saying nothing about whether the archive was still openable.
+    ///
     /// The assertions that make this fixture meaningful live in the test below, on
     /// the archive's own observable behaviour.
     fn zip_of_with_unopenable_entry(parts: &[(&str, &str)], target: &str) -> Vec<u8> {
