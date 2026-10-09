@@ -13,6 +13,9 @@
 #
 # This file uses the SHARED environment variables from .env (same as compose.prod.yaml).
 
+# Pin the Compose project name (same hazard as compose.prod.yaml: without it the
+# project derives from the directory name and a second checkout shares this
+# stack's named volumes). Found by the v0.1.25 clean-clone proof. Do NOT remove.
 name: pacgate-ai-bundle
 
 services:

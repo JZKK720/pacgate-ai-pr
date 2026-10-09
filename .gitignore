@@ -164,3 +164,11 @@ sync-fork-discard-warning.png
 sync-fork-no-update.png
 sync-fork-after.png
 .git-commit-msg.tmp
+
+# Session scratch files (audit probes, one-off verification scripts)
+/_*.ps1
+/_*.txt
+/_*.json
+/_*.py
+/_*.sh
+/_*.md

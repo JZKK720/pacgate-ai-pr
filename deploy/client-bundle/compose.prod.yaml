@@ -4,6 +4,13 @@
 # qm (co-working workspace) runs SEPARATELY via `qm up` from the qm-pacgate/
 # deployment directory. See setup-qm.ps1 for qm bootstrap.
 
+# Pin the Compose project name. Without it, Compose derives the project from the
+# DIRECTORY name ("client-bundle"), so any second checkout on the same machine
+# converges on the SAME named volumes (pacgate-db-data) — a fresh .env password
+# then 401s against the volume's existing admin user, which looks exactly like
+# data loss. Found by the v0.1.25 clean-clone proof (2026-10-09). Do NOT remove.
+name: pacgate-ai-bundle
+
 services:
   pacgate-db:
     image: pgvector/pgvector:pg16

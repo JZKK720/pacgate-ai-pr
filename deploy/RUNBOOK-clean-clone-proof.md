@@ -58,6 +58,16 @@ git remote -v      # MUST be JZKK720. The fork is 26 behind and deploys a defect
 
 **Pass:** `origin` is `JZKK720/pacgate-ai-pr`, and HEAD is `4f9329e` or newer.
 
+> **Volume-sharing hazard (found by proof run 3, 2026-10-09):** both the dev repo
+> and this proof clone derive the Compose project name from the directory
+> (`client-bundle`), so the proof stack attaches to the DEV `pacgate-db-data`
+> volume. A fresh `.env` password then 401s against the volume's existing admin
+> user — which looks exactly like a broken install but is volume inheritance.
+> `compose.prod.yaml` now pins `name: pacgate-ai-bundle` to make this explicit;
+> if you are on a tree older than that pin, either sync the dev `.env`
+> credentials into the proof `.env` (the volume owns the password) or take the
+> dev stack down for the whole proof.
+
 ### Step 2 — create `.env` from the template
 
 ```powershell

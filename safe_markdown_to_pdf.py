@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import shutil
 from pathlib import Path
 
 import markdown
@@ -349,11 +350,48 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Convert markdown to a viewer-safe PDF.")
     parser.add_argument("source", help="Source markdown file")
     parser.add_argument("target", nargs="?", help="Output PDF file")
+    parser.add_argument(
+        "--sync-delivery",
+        action="store_true",
+        help=(
+            "After rendering, refresh the copy under deploy/client-delivery/docs/ "
+            "when one already exists there. Only a byte-identical-at-render-time "
+            "copy is refreshed: same-name PDFs that were never copies (different "
+            "revisions produced by different pipelines) are left alone, so this "
+            "cannot overwrite an unrelated document."
+        ),
+    )
     args = parser.parse_args()
 
     source = Path(args.source)
     target = Path(args.target) if args.target else source.with_suffix(".pdf")
     convert_markdown_to_pdf(source, target)
+
+    if args.sync_delivery:
+        delivery_copy = Path("deploy/client-delivery/docs") / target.name
+        if delivery_copy.exists():
+            was_identical = (
+                target.exists()
+                and _sha256(target) == _sha256(delivery_copy)
+            )
+            if was_identical:
+                shutil.copyfile(target, delivery_copy)
+                print(f"delivery copy refreshed: {delivery_copy}")
+            else:
+                print(
+                    f"delivery copy {delivery_copy} differs from the fresh render "
+                    "(different document revision) - left untouched"
+                )
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 if __name__ == "__main__":

@@ -42,8 +42,10 @@ param(
     # OpenViking content/write with wait=true blocks on VLM semantic extraction.
     # gemma4:12b-it-q8_0 (13 GB, 64K ctx) measured 200 s on a cold/busy model
     # (2026-09-29), so 90 s produced a false SKIP with an empty HTTP status.
-    # 300 s covers a cold start with headroom; the search call stays fast.
-    [int]$OpenVikingTimeoutSec = 300,
+    # 420 s covers a cold start plus a busy Main model (nemotron 25.9 GB VRAM
+    # can starve gemma4 during concurrent chat); 300 s was measured marginal
+    # during the v0.1.25 audit (2026-10-09). The search call stays fast.
+    [int]$OpenVikingTimeoutSec = 420,
     # Fail the run if a lane is unreachable instead of SKIPping it. Use on a
     # machine where qm + OpenViking are expected, so a silent absence is caught.
     [switch]$RequireAllLanes
@@ -388,11 +390,12 @@ if ($ovUp) {
         # is the wrong test design, so poll find() until the marker surfaces or
         # the budget expires. A timeout is a real failure, not a SKIP: the write
         # was accepted, so silence means the extraction lane is not completing.
-        # Budget is 300s, not 180s: gemma4:12b-it-q8_0 (13 GB, 64K ctx) measured
+        # Budget is 420s, not 180s: gemma4:12b-it-q8_0 (13 GB, 64K ctx) measured
         # 200 s on a cold/busy model (2026-09-29), so 180s produced a false
-        # failure with the service perfectly healthy. 300s covers a cold start
-        # with headroom.
-        $deadline = (Get-Date).AddSeconds(300)
+        # failure with the service perfectly healthy. 300s proved marginal
+        # during the v0.1.25 audit (2026-10-09) when the Main model competes
+        # for VRAM; 420s covers cold start plus a busy extraction lane.
+        $deadline = (Get-Date).AddSeconds(420)
         while ((Get-Date) -lt $deadline) {
             $f = Invoke-OvMcp @{ jsonrpc = '2.0'; id = 2; method = 'tools/call'; params = @{
                 name = 'find'; arguments = @{ query = $probe } } }
@@ -400,7 +403,7 @@ if ($ovUp) {
             Start-Sleep -Seconds 10
         }
         if (-not $recallOk) {
-            $recallWhy = if ($wrote) { 'write accepted but the marker did not surface within 300s - the extraction lane is not completing (cold gemma4 measured 200s; 300s covers it)' }
+            $recallWhy = if ($wrote) { 'write accepted but the marker did not surface within 420s - the extraction lane is not completing (cold gemma4 measured 200s; 420s covers cold start plus a busy Main model)' }
                          else { 'the remember write was not accepted' }
         }
     } catch {
