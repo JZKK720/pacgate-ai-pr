@@ -1420,7 +1420,7 @@ mod model_config_tests {
         let configs = ModelConfig::default_local_with_base_url(base);
         assert_eq!(configs.len(), 3);
 
-        let tiers: Vec<_> = configs.iter().map(|c| c.tier.clone()).collect();
+        let tiers: Vec<_> = configs.iter().map(|c| c.tier).collect();
         assert_eq!(tiers, vec![LlmTier::Main, LlmTier::Mid, LlmTier::Low]);
 
         for cfg in &configs {

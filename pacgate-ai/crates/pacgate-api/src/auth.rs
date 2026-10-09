@@ -289,8 +289,6 @@ pub async fn register(
         ));
     }
 
-    let is_first = decision == RegistrationDecision::CreateFirstAccount;
-
     let is_first = existing == 0;
     if is_first {
         tracing::warn!(

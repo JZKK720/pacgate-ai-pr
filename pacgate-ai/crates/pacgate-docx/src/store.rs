@@ -481,6 +481,73 @@ fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
     }
 }
 
+impl FsDocumentStore {
+    /// Read a stored document as text, honouring the format.
+    ///
+    /// `std::fs::read_to_string` treats every byte in the file as UTF-8, so a
+    /// DOCX (a ZIP archive) fails with "stream did not contain valid UTF-8" -
+    /// measured 2026-10-08 on the Firm KB research memo: the agent lane's
+    /// read_document tool surfaced `StorageError` for every binary document
+    /// even though extraction (OOXML zip scan) handles the same file fine.
+    /// The failure was invisible at upload time because downloads go through
+    /// `download_bytes`, which is binary-safe; only the text-read path broke.
+    ///
+    /// Text-native formats keep the strict `from_utf8` read (a `.txt` that is
+    /// not UTF-8 SHOULD error - see pacgate-api text_extract.rs for the same
+    /// reasoning). Binary formats route through this crate's extractor so the
+    /// agent's `read_document`/`find_in_document` see extracted text rather
+    /// than an error or raw base64.
+    fn read_text(
+        path: &std::path::Path,
+        format: pacgate_core::DocumentFormat,
+    ) -> pacgate_core::Result<String> {
+        let bytes = std::fs::read(path).map_err(|e| {
+            pacgate_core::PacgateError::StorageError(format!(
+                "failed to read {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        use pacgate_core::DocumentFormat;
+        match format {
+            DocumentFormat::Docx | DocumentFormat::Xlsx | DocumentFormat::Pptx => {
+                // The OOXML zip-scan text reader this crate ships. A package
+                // that is NOT actually a zip (corrupt upload) still errors -
+                // StorageError keeps the fail-closed contract.
+                let text = crate::parser::extract_text(&bytes).map_err(|e| {
+                    pacgate_core::PacgateError::StorageError(format!(
+                        "binary text extraction failed for {}: {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+                if text.trim().is_empty() {
+                    // An empty extraction IS a finding, not silence: the agent
+                    // would otherwise read "" and conclude the document is empty.
+                    tracing::warn!(
+                        path = %path.display(),
+                        "binary document extracted to empty text; review panel should confirm"
+                    );
+                }
+                Ok(text)
+            }
+            DocumentFormat::Pdf => Err(pacgate_core::PacgateError::StorageError(
+                "PDF has no native text layer in this store; use the OCR/convert lane for text"
+                    .to_string(),
+            )),
+            // Txt / Markdown / Html are UTF-8 by definition.
+            _ => String::from_utf8(bytes).map_err(|e| {
+                pacgate_core::PacgateError::StorageError(format!(
+                    "failed to read {}: {}",
+                    path.display(),
+                    e
+                ))
+            }),
+        }
+    }
+}
+
 #[async_trait]
 impl DocumentStore for FsDocumentStore {
     #[instrument(skip(self))]
@@ -490,14 +557,8 @@ impl DocumentStore for FsDocumentStore {
             .await
             .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
         let path = self.abs_path(&doc.storage_path);
-        debug!(path = %path.display(), "reading document");
-        std::fs::read_to_string(&path).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!(
-                "failed to read {}: {}",
-                path.display(),
-                e
-            ))
-        })
+        debug!(path = %path.display(), format = ?doc.format, "reading document");
+        Self::read_text(&path, doc.format)
     }
 
     #[instrument(skip(self))]
@@ -507,13 +568,7 @@ impl DocumentStore for FsDocumentStore {
             .await
             .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
         let path = self.abs_path(&doc.storage_path);
-        std::fs::read_to_string(&path).map_err(|e| {
-            pacgate_core::PacgateError::StorageError(format!(
-                "failed to read {}: {}",
-                path.display(),
-                e
-            ))
-        })
+        Self::read_text(&path, doc.format)
     }
 
     #[instrument(skip(self))]
@@ -716,5 +771,75 @@ impl DocumentStore for FsDocumentStore {
             docs.push(new_doc);
         }
         Ok(docs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pacgate_core::DocumentFormat;
+
+    /// The regression this fixes: `read_to_string` on a DOCX (a ZIP) fails
+    /// with "stream did not contain valid UTF-8" - the exact error the client
+    /// healthcheck saw on 研究备忘录_先例检索结果_v1.0.docx. read_text must
+    /// extract the text instead of treating the archive as UTF-8 text.
+    #[test]
+    fn read_text_extracts_ooxml_instead_of_erroring_on_binary() {
+        // A real DOCX-shaped zip: word/document.xml with a text run, built
+        // through the same entry point create_from_structure uses.
+        let structure = serde_json::json!({
+            "title": "研究备忘录",
+            "sections": [
+                { "type": "heading", "level": 1, "text": "一、研究问题" },
+                { "type": "paragraph", "text": "先例检索结果：合同受阻（force majeure）条款分析。" }
+            ]
+        });
+        let docx = crate::builder::build_from_structure(&structure).expect("docx builds");
+
+        let dir = std::env::temp_dir().join(format!("pacgate-read-text-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("memo.docx");
+        std::fs::write(&path, &docx).expect("write docx");
+
+        let out = FsDocumentStore::read_text(&path, DocumentFormat::Docx);
+        std::fs::remove_dir_all(&dir).ok();
+
+        let text = out.expect("docx read must extract, not error on binary");
+        assert!(
+            text.contains("研究备忘录") || text.contains("先例检索"),
+            "extracted text must carry the document content; got {text:?}"
+        );
+    }
+
+    /// Text-native formats must keep the strict UTF-8 contract: a .txt with
+    /// invalid UTF-8 errors (fail closed), it is not silently lossy.
+    #[test]
+    fn read_text_txt_still_requires_utf8() {
+        let dir = std::env::temp_dir().join(format!("pacgate-read-txt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("bad.txt");
+        std::fs::write(&path, [0xff, 0xfe, 0x01]).expect("write txt");
+
+        let out = FsDocumentStore::read_text(&path, DocumentFormat::Txt);
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(out.is_err(), "invalid-UTF-8 txt must error, not go lossy");
+    }
+
+    /// A PDF has no in-store text extractor; the honest answer is an error
+    /// that names the right lane, not empty text and not raw binary.
+    #[test]
+    fn read_text_pdf_names_the_ocr_lane() {
+        let dir = std::env::temp_dir().join(format!("pacgate-read-pdf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("scan.pdf");
+        std::fs::write(&path, b"%PDF-1.7 minimal").expect("write pdf");
+
+        let out = FsDocumentStore::read_text(&path, DocumentFormat::Pdf);
+        std::fs::remove_dir_all(&dir).ok();
+        let err = out.expect_err("pdf text read must direct to the OCR lane");
+        assert!(
+            err.to_string().contains("OCR"),
+            "error should point at the OCR/convert lane; got {err}"
+        );
     }
 }

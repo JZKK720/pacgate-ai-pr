@@ -15,7 +15,6 @@ use crate::ledger::RedactionLedger;
 use crate::mapping::{JobId, Mapping, MappingVersion};
 use crate::policy::{decide, PolicyDecision};
 use crate::replace::Redactor;
-use crate::verify::verify;
 use crate::RedactResult;
 
 pub struct SanitizeOutcome {
@@ -76,8 +75,48 @@ impl Sanitizer {
         // across calls within this job.
         let redaction = self.redactor.redact(text, &matches)?;
 
-        // VERIFY - same detector set, replayed against the output.
-        let verification = verify(&redaction.text, &self.detectors);
+        // VERIFY - same detector set, replayed against the output, through the
+        // SAME noise reduction the redaction used, PLUS one exclusion that
+        // only the pipeline can make: any span the redactor itself just wrote.
+        //
+        // Two residue sources are pipeline artefacts, not leaks, and a raw
+        // replay counts both - measured 2026-10-08:
+        //   1. Format-preserving placeholders re-fire their own detector. A
+        //      card 4111111111111111 -> 0000000000000018 is Luhn-VALID by
+        //      construction (placeholder.rs), so the replayed BankCard check
+        //      finds a "surviving card" and the verdict is Block with zero
+        //      real residue. The compliance prompts guide held for review
+        //      with 191 clean replacements on every run for this shape.
+        //   2. Candidates the NoiseFilter dropped (an overlapping inner span
+        //      under a longer one, a public case citation) stay in the text
+        //      ON PURPOSE; the raw replay re-finds them as residue.
+        // Both are the pipeline disagreeing with itself. The reduction
+        // removes exactly those two classes; a REAL survivor (text that the
+        // detectors found but redaction missed) is not inside a minted span
+        // and is not suppressible noise, so it still blocks. Fail-closed
+        // paths (empty detector set, detector error) run BEFORE the
+        // reduction and stay intact (see verify.rs).
+        let placeholder_spans: Vec<(usize, usize)> = redaction
+            .applied
+            .iter()
+            .filter(|a| a.entity.policy() != crate::entity::PlaceholderPolicy::Remove)
+            .map(|a| (a.start, a.end))
+            .collect();
+        let noise = &self.noise;
+        let verification = crate::verify::verify_reduced(&redaction.text, &self.detectors, |r| {
+            let kept: Vec<crate::Match> = r
+                .iter()
+                .filter(|m| {
+                    // Keep anything that is not fully inside a minted
+                    // placeholder span.
+                    !placeholder_spans
+                        .iter()
+                        .any(|(s, e)| m.start >= *s && m.end <= *e)
+                })
+                .cloned()
+                .collect();
+            crate::detect::noise::drop_public_citations(&redaction.text, noise.apply(&redaction.text, kept))
+        });
 
         // Build this job's mapping from the allocator's accumulated state, so
         // documents processed earlier in the job are still restorable.
@@ -198,6 +237,40 @@ mod tests {
             .restore(&out.text, out.mapping.version())
             .unwrap();
         assert_eq!(restored, "联系电话 a@b.com 已确认");
+    }
+
+    /// Regression for the 2026-10-08 phantom-block, both measured sources:
+    ///   1. A format-preserving placeholder re-fires its own detector: card
+    ///      4111111111111111 redacts to 0000000000000018, which is Luhn-VALID
+    ///      by construction, so the raw replay found a "surviving card" and
+    ///      blocked a single-card sentence (`verdict=block, redactions=1`,
+    ///      measured on the live API). The compliance prompts guide held for
+    ///      review with 191 clean replacements on every run for this shape.
+    ///   2. Candidates the NoiseFilter dropped (inner overlap, public
+    ///      citation) stay in the text on purpose; the raw replay re-found
+    ///      them as residue.
+    ///
+    /// The verify replay must therefore ignore spans the redactor itself
+    /// minted, and apply the same noise reduction, while still blocking on a
+    /// REAL survivor.
+    #[test]
+    fn a_clean_redaction_is_not_blocked_by_its_own_placeholders() {
+        // Single Luhn-valid card: the placeholder is guaranteed valid-Luhn,
+        // so the raw replay would re-detect it and the pre-fix pipeline
+        // returned Block. Post-fix, the minted span is excluded and this is
+        // a clean pass.
+        let text = "卡号 4111111111111111 已核";
+        let mut s = Sanitizer::new(tier_one_detectors(), MappingVersion::CURRENT);
+        let out = s.sanitize(text, DataLevel::T3ProjectSpecific).unwrap();
+
+        assert!(
+            !out.text.contains("4111111111111111"),
+            "the card must be redacted; got {:?}",
+            out.text
+        );
+        assert_eq!(out.ledger.verdict(), Verdict::Pass, "placeholder self-must not block");
+        assert!(out.decision.allow_auto_pass);
+        assert!(!out.decision.require_human_review);
     }
 
     #[test]

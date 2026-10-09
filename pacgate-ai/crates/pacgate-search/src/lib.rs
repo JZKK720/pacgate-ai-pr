@@ -960,8 +960,8 @@ impl DataSourceConnector for YuanDianConnector {
                     .and_then(|json| {
                         // Response shape: {"code":200, "data":[{title, content, url, ...}]}
                         json.get("data")?.as_array().map(|arr| {
-                            arr.iter().filter_map(|item| {
-                                Some(SearchResult {
+                            arr.iter().map(|item| {
+                                SearchResult {
                                     title:       item.get("title")
                                         .or_else(|| item.get("ftmc"))
                                         .and_then(|v| v.as_str())
@@ -985,7 +985,7 @@ impl DataSourceConnector for YuanDianConnector {
                                         .and_then(|v| v.as_str())
                                         .map(String::from),
                                     metadata:    Some(item.clone()),
-                                })
+                                }
                             }).collect()
                         })
                     })
@@ -1093,8 +1093,8 @@ impl DataSourceConnector for PkuLawConnector {
                             .and_then(|c| c.as_array())
                             .or_else(|| result.as_array());
                         items.map(|arr| {
-                            arr.iter().filter_map(|item| {
-                                Some(SearchResult {
+                            arr.iter().map(|item| {
+                                SearchResult {
                                     title:       item.get("title")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
@@ -1116,7 +1116,7 @@ impl DataSourceConnector for PkuLawConnector {
                                         .and_then(|v| v.as_str())
                                         .map(String::from),
                                     metadata:    Some(item.clone()),
-                                })
+                                }
                             }).collect()
                         })
                     })

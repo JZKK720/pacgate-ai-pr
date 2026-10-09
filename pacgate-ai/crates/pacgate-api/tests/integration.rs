@@ -1416,7 +1416,7 @@ mod tests {
             config,
             doc_store: Arc::new(pacgate_docx::FsDocumentStore::new(
                 pool.clone(),
-                &std::path::PathBuf::from(TEST_DATA_DIR),
+                std::path::PathBuf::from(TEST_DATA_DIR),
             )),
             matter_store: Arc::new(pacgate_tenant::MatterStore::new(pool.clone())),
             tenant_store: Arc::new(pacgate_tenant::TenantStore::new(pool.clone())),
@@ -1436,7 +1436,7 @@ mod tests {
         // the router. The HTTP download route is gated (design 5.1) and refuses
         // an unsanitized document, so proving persisted bytes requires reading
         // through the store - the same method the route calls after its gate.
-        let doc_store_for_asserts = state.doc_store.clone();
+        let _doc_store_for_asserts = state.doc_store.clone();
 
         let app = pacgate_api::build_router(state);
 
@@ -1562,13 +1562,10 @@ mod tests {
 
         let state = pacgate_api::AppState {
             agent_loop: Arc::new(pacgate_agent::AgentLoop::new(
-                {
-                    let router = Arc::new(pacgate_llm::LlmRouter::new(
-                        pacgate_core::ModelConfig::default_local(),
-                        std::collections::HashMap::new(),
-                    ));
-                    router
-                },
+                Arc::new(pacgate_llm::LlmRouter::new(
+                    pacgate_core::ModelConfig::default_local(),
+                    std::collections::HashMap::new(),
+                )),
                 Arc::new(pacgate_agent::ToolDispatcher::new(
                     doc_store.clone() as Arc<dyn pacgate_core::DocumentStore>,
                     Arc::new(StubWorkflowForWorkspace),

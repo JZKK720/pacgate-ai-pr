@@ -66,10 +66,21 @@ function Invoke-Step([string]$Label, [scriptblock]$Cmd) {
 
 $Selected = if ($Only) { $Only.Split(',') | ForEach-Object { $_.Trim() } } else { @("api", "mcp", "deerflow", "frontend") }
 
+# Source revision for the api's /version route. CI passes github.sha
+# (build-ghcr.yml); a local build must pass the same thing or the running
+# container reports revision "unknown" and the staleness probe / smoke
+# /version lane cannot verify what is actually deployed.
+$SourceRevision = (git rev-parse HEAD).Trim()
+if (-not $SourceRevision) {
+    Write-Host "ERROR: git rev-parse HEAD failed - cannot stamp PAC_SOURCE_REVISION." -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "=== Pacgate GHCR build ($Tag) ===" -ForegroundColor Cyan
 Write-Host "  Root: $Root"
 Write-Host "  Namespace: $Ns  (from GHCR_NAMESPACE)"
 Write-Host "  Selected: $($Selected -join ', ')"
+Write-Host "  Source revision: $SourceRevision"
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: docker not found." -ForegroundColor Red
     exit 1
@@ -78,7 +89,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 # ── 1. pacgate-api (Rust) ────────────────────────────────────────────────────
 if ($Selected -contains "api") {
     Invoke-Step "pacgate-api" {
-        docker build -f (Join-Path $Root "pacgate-ai/Dockerfile") -t "$Prefix/pacgate-api:$Tag" (Join-Path $Root "pacgate-ai")
+        docker build --build-arg "PAC_SOURCE_REVISION=$SourceRevision" -f (Join-Path $Root "pacgate-ai/Dockerfile") -t "$Prefix/pacgate-api:$Tag" (Join-Path $Root "pacgate-ai")
     }
     if ($Push) { Invoke-Step "push pacgate-api" { docker push "$Prefix/pacgate-api:$Tag" } }
 }

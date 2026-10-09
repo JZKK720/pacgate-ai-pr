@@ -45,6 +45,34 @@ pub struct Verification {
 /// errors, or the detector set is empty (we would be asserting safety with no
 /// evidence).
 pub fn verify(redacted: &str, detectors: &[Box<dyn Detector>]) -> Verification {
+    verify_reduced(redacted, detectors, identity_reduce)
+}
+
+/// Identity reduction: keep every surviving match.
+fn identity_reduce(residue: &[Match]) -> Vec<Match> {
+    residue.to_vec()
+}
+
+/// `verify` with a reduction step applied to the residue before deciding.
+///
+/// Why this exists: the redaction pipeline suppresses noise (overlapping
+/// inner spans, public citations) BEFORE replacing, so those spans are
+/// deliberately left in the text. A raw replay counts them as residue and
+/// blocks a document that was redacted cleanly - measured 2026-10-08 on the
+/// Firm KB compliance prompts guide, where 191 clean replacements produced a
+/// phantom-residue `block`. The reduction passed here is the SAME one the
+/// redaction used (noise.rs header: "the verifier replays this same
+/// reduction"), so the verifier and the redactor agree on what is deliberate.
+///
+/// Fail-closed paths are unchanged and run BEFORE the reduction: an empty
+/// detector set and a detector error are Block regardless of what the
+/// reduction would say, because those are assertions of "cannot certify",
+/// not "this specific span survived".
+pub fn verify_reduced(
+    redacted: &str,
+    detectors: &[Box<dyn Detector>],
+    reduce: impl Fn(&[Match]) -> Vec<Match>,
+) -> Verification {
     let mut notes: Vec<String> = Vec::new();
 
     if detectors.is_empty() {
@@ -80,16 +108,28 @@ pub fn verify(redacted: &str, detectors: &[Box<dyn Detector>]) -> Verification {
         }
     }
 
-    let verdict = if residue.is_empty() {
+    let reduced = reduce(&residue);
+    if reduced.len() != residue.len() {
         notes.push(format!(
-            "{} detector(s) reported no residue",
-            detectors.len()
+            "noise replay: {} of {} surviving matches dropped by the same suppressor the redaction used",
+            residue.len() - reduced.len(),
+            residue.len()
         ));
+    }
+
+    let verdict = if reduced.is_empty() {
+        if residue.is_empty() {
+            notes.push(format!(
+                "{} detector(s) reported no residue",
+                detectors.len()
+            ));
+        }
         Verdict::Pass
     } else {
         Verdict::Block
     };
 
+    let mut residue = reduced;
     residue.sort_by_key(|m| (m.start, m.end));
 
     Verification {

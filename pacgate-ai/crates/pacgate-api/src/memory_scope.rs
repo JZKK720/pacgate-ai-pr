@@ -31,7 +31,7 @@
 //! holding a contract dump is out of scope even when no single value matches a
 //! pattern, and size is the only check that sees that.
 
-use pacgate_redact::detect::{tier_one_detectors, Detector};
+use pacgate_redact::detect::tier_one_detectors;
 
 /// Ceiling on a memory payload.
 ///
