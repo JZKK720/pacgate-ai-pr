@@ -253,6 +253,30 @@ memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
   model_name: gemma4-12b-memory
 
+# Pacgate 2026-10-09: ENABLE conversation summarization. Root cause this
+# fixes: summarization was UNCONFIGURED (null -> disabled by default), so
+# long threads grew unbounded. The trigger counts MESSAGE tokens only
+# (~16k for 50 msgs) while real per-call input is ~83k (12k tools+system +
+# 16k messages + cloud overhead), so the old 48k threshold was structurally
+# unreachable - summarization never fired and every call re-sent the full
+# 83k context (1.3-1.7M tokens burned per document run, 60-120s per call).
+# All three 2026-10-08 stalls ("no astream output for 420s") happened at
+# input=64-65k - exactly the 65536-token ctx slot Ollama allocates.
+# 12000 message-tokens engages after ~40 messages; keep=12000 preserves the
+# recent verbatim context. No model_name pin: the summarizer runs on the
+# default chat model (same runner slot, no VRAM swap). Verified live
+# 2026-10-09: hook fired, summary executed, next model call input bounded
+# 32,770 (was 83k).
+summarization:
+  enabled: true
+  trigger:
+    - type: tokens
+      value: 12000
+  keep:
+    type: tokens
+    value: 12000
+  trim_tokens_to_summarize: 8000
+
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
   # Pacgate: opt in to host bash for the LocalSandboxProvider. This is the
