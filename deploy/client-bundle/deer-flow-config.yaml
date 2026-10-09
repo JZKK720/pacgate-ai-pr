@@ -170,6 +170,18 @@ models:
     max_tokens: 8192
     temperature: 0.1
     supports_thinking: true
+    # Pacgate 2026-10-09: both cloud models burn the ENTIRE max_tokens budget
+    # on invisible reasoning tokens when thinking is not suppressed (verified:
+    # 8192 completion tokens -> 36K chars of reasoning, ZERO content,
+    # finish_reason=length). deer-flow's lead agent runs with
+    # thinking_enabled=False, but without when_thinking_disabled nothing is
+    # sent to suppress the reasoning channel. Verified fix: Ollama 0.40.1's
+    # OpenAI endpoint honors reasoning_effort=none (content-only, 0 reasoning
+    # tokens); think:false and thinking.type=disabled are IGNORED on that
+    # endpoint. Raising the cap does NOT help (16384 -> still all reasoning).
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
     stream_chunk_timeout: 120
 
   - name: glm-5.3-flash-cloud
@@ -183,6 +195,10 @@ models:
     temperature: 0.1
     supports_thinking: true
     supports_vision: true
+    # Same reasoning-burn fix as deepseek above (verified 2026-10-09).
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
     stream_chunk_timeout: 120
 
 # ── Automatic model routing: escalation stays LOCAL ─────────────────────────

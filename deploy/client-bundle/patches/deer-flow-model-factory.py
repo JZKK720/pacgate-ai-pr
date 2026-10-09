@@ -139,6 +139,13 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
         if model_config.when_thinking_disabled is not None:
             # User-provided disable settings take full precedence
             model_settings_from_config.update(model_config.when_thinking_disabled)
+            # Pacgate 2026-10-09: when_thinking_disabled may set reasoning_effort
+            # (e.g. "none" for Ollama cloud models). The caller (lead agent) also
+            # passes reasoning_effort as a constructor kwarg (None when the UI
+            # did not pick one) -> ChatOpenAI() got multiple values for keyword
+            # argument 'reasoning_effort'. Config wins; drop the caller kwarg.
+            if "reasoning_effort" in model_config.when_thinking_disabled:
+                kwargs.pop("reasoning_effort", None)
         elif has_thinking_settings and effective_wte.get("extra_body", {}).get("thinking", {}).get("type"):
             # OpenAI-compatible gateway: thinking is nested under extra_body
             model_settings_from_config["extra_body"] = _deep_merge_dicts(
