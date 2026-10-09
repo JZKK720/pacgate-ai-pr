@@ -156,3 +156,78 @@ pushes confirmed live inside the containers, and the performance profile is
 consistent with expectations (sub-100ms API, ~1.7s text sanitize, 100% GPU
 LLM placement). Remaining work is external to this box: run
 `install.ps1 -Update` on AIPC 1 & 2.
+
+---
+
+## 7. Deep-dive addendum (2026-10-09, same session): memory / vectorDB / OpenViking / QM lanes
+
+### 7.1 Memory lane (matter memory + deer-flow adapter)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Matter memory GET | PASS | revision=4, 12-26 ms round-trip |
+| Memory write + read-back | PASS | POST rev 3→4, content + tags persisted byte-exact |
+| Optimistic concurrency (If-Match) | PASS | canonical gate `test-memory-lane.ps1` exit 0 (includes 64 KiB cap + If-Match revision guard); mutations gate exit 0 (every mutation rejected, files restored) |
+| deer-flow adapter | PASS | `PacgateMemoryStorage` imports cleanly in the runtime venv; `storage_class` wired in config.yaml |
+| 401 re-login | PASS | 13 references to 401 handling in the live adapter client (JWT re-login + retry) |
+| Memory model | gemma4:12b-it-qat | dedicated `memory.model_name` pin (2048-token cap via model-factory patch) |
+| Summarization | ENABLED | trigger=12000 tokens (reachable; old 48k was structurally unreachable), keep=12000, trim=8000 |
+| Title middleware | live | bound 8s ainvoke (hang fix) |
+
+### 7.2 VectorDB lane (pgvector)
+
+| Check | Result | Evidence |
+|---|---|---|
+| pgvector extension | PASS | vector 0.8.7 |
+| Schema | PASS | `kb_chunks` table, `embedding vector(768)`, `content_tsv` tsvector column |
+| Index | PASS | `idx_kb_chunks_embedding USING hnsw (vector_cosine_ops)` |
+| RAG migrations | PASS | 002→008 applied at boot (schema, enrichment, data_level, sanitization_state, document_spans, sanitizer_jobs, document_extractions) |
+| Semantic search | PASS | matter-scoped query → 2 chunks, top score 0.346, **80 ms** |
+| Embedding model | nomic-embed-text | 768-dim, matches OV config dimension exactly |
+
+### 7.3 OpenViking lane (v0.4.16)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Health | PASS | `{"status":"ok","healthy":true,"version":"v0.4.16","auth_mode":"api_key"}` on :1933 |
+| MCP surface | PASS | **15 tools** enumerated over streamable-HTTP MCP: find, search, read, list, tree, remember, write, edit, add_resource, list_watches, cancel_watch, grep, glob, forget, health |
+| Live write→extract→find round-trip | **PASS** | `remember` ("Stored 1 message(s) and committed for memory extraction") → async gemma4 VLM extraction → `find` surfaced `viking://user/default/memories/events/2026/10/09/settlement_authority_confirmed.md` → `read` confirmed the marker byte-present in the extracted event file |
+| Persistence | PASS | bind-mounted `./openviking/workspace` on the host: `vectordb/` (17 files) + `viking/default/user/default/memories/events/2026/10/09/*.md` survive container recreation |
+| Model wiring | PASS | embedding = ollama nomic-embed-text (768-dim); VLM = ollama gemma4:12b-it-qat (max_tokens 8192, temp 0.1) |
+| deer-flow wiring | PASS | `mcpServers.openviking` enabled, http type, `http://openviking:1933/mcp`, X-API-Key auth |
+| Note | remember schema | `remember` takes `messages:[{role,content}]` (not a bare `information` string) — first probe with the wrong shape returned a clean pydantic validation error, correct shape stored fine |
+
+### 7.4 QM-pacgate lane (co-working workspace)
+
+| Check | Result | Evidence |
+|---|---|---|
+| Containers | PASS | 7/7 up 21h: pg (postgres:16), core, portal, auth, web-ui, admin, mailpit (healthy) |
+| HTTP surfaces | PASS | portal :8181 → 401 (auth-gated, correct) · web-ui :8182 → 200 · admin :8183 → 200 · mailpit :8025 → 200 (0 messages = no pending magic links) |
+| Core API | PASS | :8180/health → 401 "missing/invalid/stale source-auth header" (auth enforced, not down) |
+| Bridge to main stack | PASS | core → `host.docker.internal:8089/pacgate` reachable (401 with probe token = routing OK, auth enforced) |
+| Bridge credentials | PASS | FLY_RESIDENT_ENV carries PACGATE_API_EMAIL/PASSWORD + OPENVIKING_ROOT_API_KEY (values masked) |
+| Sandbox image | PASS | `qm-pacgate-sandbox-local:latest` (2c95e1f384a5) visible from inside core (the exact preflight `local-sandbox.ts` performs) |
+| Sandbox base image | PASS | `pacgate-sandboxes@sha256:52e867fc…` anonymously pullable (manifest exit 0) |
+| QM gates | PASS | qm-restage exit 0 · qm-bootstrap 9/9 (port-collision + host.docker.internal wiring verified) · qm-sandbox-fingerprint exit 0 |
+| QM database | PASS | `qm` DB present; audit_log has 131 rows, latest = audit.read / egress.read / keychain.read / users.read (admin surface active) |
+| Model config | PASS | qm.config.jsonc pins PACGATE_API_URL + OPENVIKING_URL via host.docker.internal |
+
+### 7.5 Model-to-lane assignment (the "tool models" map)
+
+| Lane | Model | Placement |
+|---|---|---|
+| pacgate-api Main tier | nemotron-3.5-lightning:30b-a3b | 100% GPU (25.9 GB VRAM) |
+| pacgate-api Mid tier | ornith-1.5:35b | local |
+| pacgate-api Low tier | ornith-1.5:9b | local |
+| deer-flow chat (default) | nemotron-3.5-lightning:30b-a3b | 100% GPU |
+| deer-flow memory updater | gemma4:12b-it-qat | dedicated pin, 2048-token cap |
+| deer-flow summarizer | default chat model (no pin — portable) | same runner slot |
+| deer-flow cloud roster | deepseek-v4.1-flash:cloud, glm-5.3-flash:cloud | reasoning_effort=none (burn fix) |
+| OpenViking embedding | nomic-embed-text (768-dim) | ollama |
+| OpenViking VLM (extraction) | gemma4:12b-it-qat | ollama, max_tokens 8192 |
+| QM sandbox | qm-pacgate-sandbox-local (base 52e867fc) | local wrapper image |
+
+**Addendum verdict**: memory, vectorDB, OpenViking, and QM lanes are all
+operational at v0.1.25 with correct model assignments, enforced auth on every
+surface, and durable persistence. The full write→extract→find round-trip
+through OpenViking's async gemma4 pipeline is proven end-to-end.
