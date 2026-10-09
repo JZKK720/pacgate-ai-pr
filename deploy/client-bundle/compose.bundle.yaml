@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.24
+    image: ghcr.io/jzkk720/pacgate-api:0.1.25
     container_name: pacgate-api
     depends_on: [pacgate-db]
     # Memory ceiling as defence in depth behind the in-process admission bound
@@ -90,7 +90,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.24
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.25
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -165,6 +165,17 @@ services:
       # Firecrawl tools) race across loops and cancel the subprocess spawn,
       # hanging the run. Sharing one loop eliminates the cross-loop race.
       - ./patches/deer-flow-sync.py:/app/backend/packages/harness/deerflow/tools/sync.py:ro
+      # Pacgate 2026-10-08: prefix-aware skill allowed-tools matching. Skills
+      # declare bare MCP server names (pkulaw, yuandian-law, pacgate) but tool
+      # names are prefixed (pkulaw_*, pacgate_pacgate_*); exact-match filtering
+      # dropped ALL 137 MCP tools once any skill declared allowed-tools (agent
+      # left with bash/read_file only). The patch matches exact or
+      # "<normalized-declaration>_" prefixes.
+      - ./patches/deer-flow-tool-policy.py:/app/backend/packages/harness/deerflow/skills/tool_policy.py:ro
+      # Pacgate 2026-10-08: exclude skill-reviewer eval fixtures
+      # (*/evals/fixtures/) from skill discovery - they are test data, not
+      # user-facing skills (5 phantom skills, one with an empty allowed-tools).
+      - ./patches/deer-flow-skill-storage.py:/app/backend/packages/harness/deerflow/skills/storage/skill_storage.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix. MCP server keys like "yuandian-law" produce tool names
       # "yuandian-law_yuandian_rh_ft_search" that models hallucinate as
@@ -178,7 +189,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.24
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     environment:
@@ -190,7 +201,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.24
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.25
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -205,7 +216,7 @@ services:
   # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
   # The ~1.5GB PaddleOCR model downloads on FIRST EXTRACTION, not at build.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.1.24
+    image: ghcr.io/jzkk720/ocr-service:0.1.25
     container_name: ocr-service
     environment:
       # Python logging rejects lowercase level names.
