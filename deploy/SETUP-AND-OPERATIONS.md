@@ -64,30 +64,30 @@ cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 # a tag that was never created, so that push could only fail.
 
 # Build pacgate-api (Rust 1.94 multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.1.22 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/jzkk720/pacgate-api:0.1.25 -f pacgate-ai/Dockerfile ./pacgate-ai
 
 # Build pacgate-mcp bridge
-docker build -t ghcr.io/jzkk720/pacgate-mcp:0.1.22 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
+docker build -t ghcr.io/jzkk720/pacgate-mcp:0.1.25 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
 
 # Build deer-flow wrapper
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.22 -f deploy/deer-flow-pacgate/Dockerfile .
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.1.25 -f deploy/deer-flow-pacgate/Dockerfile .
 
 # Build ocr-service (first-class since 0.1.16)
-docker build -t ghcr.io/jzkk720/ocr-service:0.1.22 -f deploy/ocr-service/Dockerfile ./deploy/ocr-service
+docker build -t ghcr.io/jzkk720/ocr-service:0.1.25 -f deploy/ocr-service/Dockerfile ./deploy/ocr-service
 
 # Build deer-flow frontend (gateway URL baked in)
 .\deploy\build-frontend.ps1 -Push
 
 # Push images
-docker push ghcr.io/jzkk720/pacgate-api:0.1.22
-docker push ghcr.io/jzkk720/pacgate-mcp:0.1.22
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.22
-docker push ghcr.io/jzkk720/ocr-service:0.1.22
-docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.22
+docker push ghcr.io/jzkk720/pacgate-api:0.1.25
+docker push ghcr.io/jzkk720/pacgate-mcp:0.1.25
+docker push ghcr.io/jzkk720/deer-flow-pacgate:0.1.25
+docker push ghcr.io/jzkk720/ocr-service:0.1.25
+docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25
 
 # Verify pullable
-docker pull ghcr.io/jzkk720/pacgate-api:0.1.22
-docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.22
+docker pull ghcr.io/jzkk720/pacgate-api:0.1.25
+docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.1.25
 ```
 
 Note: qm does NOT have a Docker image — it runs via `qm up` from the
@@ -382,11 +382,11 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 
 | Image | Contains | Base |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.22` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.22` | deer-flow backend + Python adapter (176 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.22` | pacgate-api MCP bridge (10 tools) | `python:3.12-slim` |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.22` | deer-flow Next.js research UI | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.1.22` | PaddleOCR extraction service | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.1.25` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.25` | deer-flow backend + Python adapter (176 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.25` | pacgate-api MCP bridge (10 tools) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25` | deer-flow Next.js research UI | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.1.25` | PaddleOCR extraction service | `python:3.12-slim` |
 
 ### 8.2 Data flow
 
