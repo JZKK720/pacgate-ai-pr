@@ -198,6 +198,17 @@ services:
       # lost whenever the image is rebuilt; this keeps lawyer-visible
       # deliverables in tenants/<t>/matters/<m>/docs/.
       - ./patches/deer-flow-present-file.py:/app/backend/packages/harness/deerflow/tools/builtins/present_file_tool.py:ro
+      # Pacgate 2026-10-08: prefix-aware skill allowed-tools matching. Skills
+      # declare bare MCP server names (pkulaw, yuandian-law, pacgate) but tool
+      # names are prefixed (pkulaw_*, pacgate_pacgate_*); exact-match filtering
+      # dropped ALL 137 MCP tools once any skill declared allowed-tools (agent
+      # left with bash/read_file only). The patch matches exact or
+      # "<normalized-declaration>_" prefixes.
+      - ./patches/deer-flow-tool-policy.py:/app/backend/packages/harness/deerflow/skills/tool_policy.py:ro
+      # Pacgate 2026-10-08: exclude skill-reviewer eval fixtures
+      # (*/evals/fixtures/) from skill discovery - they are test data, not
+      # user-facing skills (5 phantom skills, one with an empty allowed-tools).
+      - ./patches/deer-flow-skill-storage.py:/app/backend/packages/harness/deerflow/skills/storage/skill_storage.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix (see compose.bundle.yaml for the rationale).
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
