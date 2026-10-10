@@ -185,6 +185,12 @@ services:
       # "yuandian_law_yuandian_rh_ft_search", causing "not a valid tool" loops.
       # Function names must be underscore-separated for reliable tool-calling.
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
+      # Pacgate (memory-card crash fix 2026-10-10): normalize the matter-memory
+      # payload to the deer-flow memory shape on load(). The raw matter payload
+      # ({content, revision, tags}) left MemoryResponse defaults as "" and the
+      # frontend's formatTimeAgo("") threw RangeError: Invalid time value,
+      # killing the settings memory card. Bind-mounted until upstreamed.
+      - ./patches/pacgate-adapter-storage.py:/app/adapters/pacgate_deerflow_adapter/storage.py:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).

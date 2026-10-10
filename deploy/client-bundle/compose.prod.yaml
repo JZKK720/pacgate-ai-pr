@@ -224,6 +224,12 @@ services:
       # invalidates it, so every memory/artifact call 401s until deer-flow
       # restarts. The patch re-logins once on 401 and retries.
       - ./patches/pacgate-adapter-client.py:/app/adapters/pacgate_deerflow_adapter/client.py:ro
+      # Pacgate (memory-card crash fix 2026-10-10): normalize the matter-memory
+      # payload to the deer-flow memory shape on load(). The raw matter payload
+      # ({content, revision, tags}) left MemoryResponse defaults as "" and the
+      # frontend's formatTimeAgo("") threw RangeError: Invalid time value,
+      # killing the settings memory card. Bind-mounted until upstreamed.
+      - ./patches/pacgate-adapter-storage.py:/app/adapters/pacgate_deerflow_adapter/storage.py:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).
