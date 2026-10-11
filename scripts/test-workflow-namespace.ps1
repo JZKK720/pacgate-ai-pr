@@ -185,36 +185,67 @@ Assert-True ($nsBlock.Success -and
 # and nothing re-checked them afterwards.
 #
 # This is the same class as the `elif` and `tr` traps noted above: the check must
-# assert the PROPERTY (no hardcoded namespace in the build path), not one
+# assert the PROPERTY (no hardcoded namespace in the local tooling), not one
 # spelling of it. It also permits the string inside a COMMENT, because the
 # comments now deliberately record the old value - deleting the history to
 # satisfy a linter would lose the reason the fix exists.
-$buildScripts = @(
-    'deploy/build-images.ps1',
-    'deploy/build-frontend.ps1'
-)
-foreach ($bs in $buildScripts) {
-    if (-not (Test-Path $bs)) {
+#
+# It WAS a hardcoded two-file list, and that list was itself the gap. On
+# 2026-10-11 `scripts/report-ghcr-digests.ps1` was still querying `pacgate-ai/*`
+# and reported HTTP 404 for every version tag of a perfectly healthy release -
+# a false alarm with exactly the same root cause as the 2026-09-18 build-path
+# bug, in a file the list did not name. A guard whose coverage is a list can
+# only ever catch what someone remembered to add to it.
+#
+# So the scan is now by PROPERTY over every local script, with two exclusions,
+# each a false positive rather than a licence:
+#
+#   - `ghcr.io/v2/...` is the registry API PATH, not a namespace. The segment
+#     after `v2` is interpolated, which makes those files namespace-agnostic by
+#     construction. They must not be flagged.
+#   - `scripts/test-workflow-mutations.ps1` deliberately rewrites a CORRECT pin
+#     INTO the wrong namespace to prove the consistency check above still
+#     detects it. There, the wrong value is the instrument.
+$wrongNs = @{}
+$exempt = @('scripts/test-workflow-mutations.ps1')
+foreach ($dir in @('scripts', 'deploy')) {
+    $dirPath = Join-Path $repoRoot $dir
+    if (-not (Test-Path -LiteralPath $dirPath)) { continue }
+    $files = @(Get-ChildItem -LiteralPath $dirPath -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @('.ps1', '.psm1', '.py', '.sh') })
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($repoRoot.Length + 1).Replace('\', '/')
+        if ($exempt -contains $rel) { continue }
+        # Strip line comments, so documenting the old namespace is not itself a
+        # failure, then drop the `ghcr.io/v2/` API path so it cannot masquerade
+        # as one.
+        $codeLines = Get-Content -LiteralPath $f.FullName | ForEach-Object { ($_ -split '#')[0] }
+        $code = ($codeLines -join "`n") -replace 'ghcr\.io/v2/', ''
+        $found = @([regex]::Matches($code, 'ghcr\.io/([A-Za-z0-9_-]+)/') |
+            ForEach-Object { $_.Groups[1].Value } |
+            Where-Object { $_ -ne 'jzkk720' } | Sort-Object -Unique)
+        if ($found.Count -gt 0) { $wrongNs[$rel] = $found }
+    }
+}
+# Label states the CONDITION being asserted, not the failure. Phrasing it as
+# the failure made a PASS print "hardcodes a GHCR namespace other than
+# jzkk720 (found: )" - which reads as a failure and briefly did fool this
+# run's own output. A gate whose success message describes the defect it is
+# checking for is unreadable at exactly the moment it matters.
+Assert-True ($wrongNs.Count -eq 0) `
+    'no local script references a GHCR namespace other than jzkk720'
+foreach ($rel in ($wrongNs.Keys | Sort-Object)) {
+    Write-Host "         $rel -> $($wrongNs[$rel] -join ', ') - read the namespace from GHCR_NAMESPACE instead" -ForegroundColor DarkGray
+}
+
+# The build path is stricter: it must READ the value rather than restate it.
+foreach ($bs in @('deploy/build-images.ps1', 'deploy/build-frontend.ps1')) {
+    $bsPath = Join-Path $repoRoot $bs
+    if (-not (Test-Path -LiteralPath $bsPath)) {
         Assert-True $false "build script $bs must exist (namespace guard cannot check what is missing)"
         continue
     }
-    # Strip line comments before scanning, so documenting the old namespace is
-    # not itself a failure.
-    $codeLines = Get-Content $bs | ForEach-Object { ($_ -split '#')[0] }
-    $code = ($codeLines -join "`n")
-    $hardcoded = [regex]::Matches($code, 'ghcr\.io/([A-Za-z0-9_-]+)/')
-    $wrong = @($hardcoded | ForEach-Object { $_.Groups[1].Value } |
-        Where-Object { $_ -ne 'jzkk720' } | Sort-Object -Unique)
-    # Label states the CONDITION being asserted, not the failure. Phrasing it as
-    # the failure made a PASS print "hardcodes a GHCR namespace other than
-    # jzkk720 (found: )" - which reads as a failure and briefly did fool this
-    # run's own output. A gate whose success message describes the defect it is
-    # checking for is unreadable at exactly the moment it matters.
-    Assert-True ($wrong.Count -eq 0) `
-        "$bs uses only the jzkk720 GHCR namespace"
-    if ($wrong.Count -ne 0) {
-        Write-Host "         found: $($wrong -join ', ') - read the namespace from GHCR_NAMESPACE instead" -ForegroundColor DarkGray
-    }
+    $code = ((Get-Content -LiteralPath $bsPath | ForEach-Object { ($_ -split '#')[0] }) -join "`n")
     Assert-True ($code -match 'GHCR_NAMESPACE' -or $code -match 'Resolve-GhcrNamespace') `
         "$bs reads GHCR_NAMESPACE so its tags follow the release authority"
 }

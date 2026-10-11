@@ -119,6 +119,21 @@ $mutations = @(
        From = 'ghcr.io/jzkk720/pacgate-api'
        To   = 'ghcr.io/pacgate-ai/pacgate-api'
        Want = 'all 8 pins (4 images x 2 compose files) use the workflow namespace' }
+
+    # The property scan that replaced $buildScripts needs its own mutation, or it
+    # is decoration by this file's own rule. The mutation above targets COMPOSE;
+    # nothing above targets a SCRIPT reference, which is the new scan's job.
+    #
+    # The anchor is a real default-image literal in a real script under
+    # scripts/, so flipping its namespace makes it reference an image the release
+    # does not publish - exactly the defect class $buildScripts could not see.
+    # Deliberately NOT a comment line: the scan strips comments, so a mutation
+    # there would not apply and would be reported as a failure, not a pass.
+    @{ N = 'a script references a non-publishing namespace'
+       File = 'scripts/test-initialize-gate.ps1'
+       From = 'ghcr.io/jzkk720/deer-flow-pacgate:0.1.17'
+       To   = 'ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.17'
+       Want = 'no local script references a GHCR namespace other than jzkk720' }
 )
 
 # --- the coverage table itself ---------------------------------------------

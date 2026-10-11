@@ -3,8 +3,30 @@
 #       (pacgate_config.py, /app/skills/public, nginx+supervisor, ports 2026/8001/3000)
 #   (B) pacgate-ai/pacgate-ai-pr wrapper      -> wrapped upstream backend + separate frontend
 param(
-    [string]$Image = 'ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10'
+    # Empty = ghcr.io/<release namespace>/deer-flow-pacgate:latest, with the
+    # namespace read from the workflow's GHCR_NAMESPACE. This default used to be
+    # a literal `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10` - the read-only
+    # mirror plus a tag two releases old - so it silently inspected a stale image
+    # from a namespace that publishes nothing.
+    [string]$Image = ''
 )
+
+# 'Stop' is scoped to namespace resolution only. It is deliberately relaxed again
+# below: the probe is a `docker run ... 2>&1`, and on Windows PowerShell 5.1 a
+# native command writing to stderr becomes a TERMINATING error under 'Stop' even
+# with 2>&1. A missing marker inside a container is normal output for a
+# fingerprinting tool, not a reason to abort.
+$ErrorActionPreference = 'Stop'
+if (-not $Image) {
+    $Ns = 'jzkk720'
+    $wf = Join-Path (Split-Path -Parent $PSScriptRoot) '.github/workflows/build-ghcr.yml'
+    if (Test-Path -LiteralPath $wf) {
+        $m = Select-String -LiteralPath $wf -Pattern '^\s*GHCR_NAMESPACE:\s*(\S+)' | Select-Object -First 1
+        if ($m) { $Ns = $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    $Image = "ghcr.io/$Ns/deer-flow-pacgate:latest"
+}
+$ErrorActionPreference = 'Continue'
 
 $probe = @'
 echo "--- pacgate-layer python modules ---"
