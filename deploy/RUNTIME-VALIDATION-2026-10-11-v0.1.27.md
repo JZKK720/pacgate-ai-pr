@@ -362,6 +362,47 @@ documents it creates" while no DELETE call existed anywhere in the file. The
 claim was false for the whole 0.1.26 and 0.1.27 validation runs; those runs left
 their matters behind, which is why the cleanup baseline is not zero.
 
+### 6.6 The residue those false claims left, and its removal
+
+Fixing the claims does not remove what the old runs already wrote. A read of the
+database before the purge found **12 matters / 46 documents**: the two legitimate
+working matters (`Default Working Matter`, 1 doc; `Original Working Matter
+(pre-reset)`, 21 docs) plus **10 orphan matter rows** carrying 24 documents
+between them.
+
+The three sweep gates that create matters - `test-legal-journey.ps1` (L424/L426),
+`test-empty-extraction-gate.ps1` (L406/L408) and `test-text-native-sanitize.ps1`
+(L823/L825) - all delete theirs, so the 10 orphans are not current sweep leaks.
+They are residue from before L327's "cannot bind Headers" delete bug was fixed,
+plus the two probes above. Recorded rather than assumed: it is worth knowing
+which leaks are live and which are historic, because only the live ones need a
+code fix.
+
+Removal used an explicit name-pattern scope, not `DELETE FROM matters`:
+`\u5c65\u7ea6\u6d4b\u8bd5` (the CJK probe's matter name), `probe-*`, `journey-*`,
+`txtnative-*`, and `emptygate-<8hex>`. Dry run matched 10 of 12, leaving both
+named working matters untouched. Applied: **12 matters / 46 documents -> 2 matters
+/ 22 documents**, every delete returning 200, and **0 orphan document rows**
+(a document row whose matter no longer exists). Documents were deleted before
+their matter in every case, because `MatterStore::delete` has no cascade and
+would otherwise have stranded the rows.
+
+The purge is also what surfaced O23 - see below.
+
+Deleting 10 matter rows with 24 documents removed the files and the rows, but
+left **26 matter directories on disk against 2 live matters**, every one with 0
+files. `delete_document_family` (`store.rs:307-334`) only calls
+`std::fs::remove_file` for each version and then runs the SQL DELETE; nothing
+calls `remove_dir_all`, and `ensure_docs_dir` (`store.rs:375`) creates the tree
+without anyone owning its teardown. The matter route compounds it: a bare
+`DELETE FROM matters` leaves the docs directories under it with no owner at all.
+This is live behaviour, not historic residue - matter
+`d695282b-8f0d-4b6d-b33f-7b20b39130e5` was created and deleted minutes earlier and
+left its shell. Recorded as O23; the directories are empty and harmless, so this
+is cosmetic debt rather than a correctness bug, and `remove_dir_all` would need
+to be scoped carefully to avoid racy deletion of a directory another request is
+writing into.
+
 ## 7. The fix, as shipped
 
 Four source changes, all in this release.
@@ -440,6 +481,7 @@ Ordered by what would bite a client first.
 | O20 | LOW | A stale legacy deer-flow store remains at `/data/data/deer-flow/` from before the bind mount. |
 | O21 | LOW | `hermes-gateway` reports unhealthy; the `qm-*` services are up. Unclear whether these are in scope for "all pipelines". |
 | O22 | LOW | `DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce. |
+| O23 | LOW | `delete_document_family` (`pacgate-docx/src/store.rs:307`) removes each version's file and its rows but never the containing directories, so every document family leaves a permanent empty `matters/<matter>/docs/` shell behind. Measured live: 26 matter directories on disk against 2 live matters, all 0 files. Compounded by the matter route having no cascade, so deleting a matter strands its docs' directories too. |
 
 ### Retracted
 
