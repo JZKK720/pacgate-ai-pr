@@ -412,6 +412,7 @@ Ordered by what would bite a client first.
 | 13 | MEDIUM | The namespace guard scanned only two hardcoded build scripts, so the digest script's wrong namespace could not be caught by the gate that exists to catch exactly that. Now a property scan. See 10.6. |
 | 14 | LOW | The CJK probe's header claimed it "removes the matter and documents it creates" while the file contained no DELETE call at all. Every validation run through 0.1.27 leaked its matter. Cleanup is now real and the safety net is falsified in both abort orders. See 6.5. |
 | 15 | LOW | `probe-format-lanes.py` caught every fixture failure per format and continued, so a missing `python-docx` printed "fixture FAILED", skipped the whole `.docx` lane, and the probe still exited 0. `ImportError` now exits 2. See 10.7. |
+| 16 | LOW | `probe-format-lanes.py` deleted its matter only on the success path, so any early `die()` stranded the row - the origin of the orphan `probe-<id>` matters. Cleanup is now on `atexit` and falsified. See 10.7. |
 
 ### Open
 
@@ -763,6 +764,14 @@ but to make its own claim about cleanup testable. Its cleanup path was then
 falsified in both abort orders; see §6.5. A probe that adds an assertion about
 its own side effects should also add a mutation that fails it, and here the
 mutation was the leak itself.
+
+**`probe-format-lanes.py` had the same defect, found by its own evidence.**
+Its `api.delete(f"/api/matters/{matter_id}")` sat on the success path only, so
+every early `die()` - unreachable stack, missing credentials, failed matter
+create - exited 2 and stranded the matter. Orphan `probe-<id>` rows in the
+database are that bug's fingerprint. Cleanup is now registered with `atexit`
+and falsified the same way: an injected abort after matter creation exits 2 and
+still returns the matter count to baseline.
 
 ## 11. How to re-run
 
