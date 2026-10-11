@@ -384,7 +384,7 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 |---|---|---|
 | `ghcr.io/jzkk720/pacgate-api:0.1.27` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | deer-flow backend + Python adapter (176 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | pacgate-api MCP bridge (10 tools) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | pacgate-api MCP bridge (19 tools) | `python:3.12-slim` |
 | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | deer-flow Next.js research UI | `node:22-alpine` |
 | `ghcr.io/jzkk720/ocr-service:0.1.27` | PaddleOCR extraction service | `python:3.12-slim` |
 

@@ -15,7 +15,7 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
 - Auth (JWT + argon2 + SOUL resolver middleware)
 - pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.1.27` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
 - deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` (public)
-- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.1.27` (public; exposes 10 MCP tools incl. documents/workflows)
+- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.1.27` (public; exposes 19 MCP tools incl. documents/workflows)
 - deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` (public; gateway URL baked in at build time)
 - OCR service image: `ghcr.io/jzkk720/ocr-service:0.1.27` (public; PaddleOCR extraction, first-class since 0.1.16)
 - qm collaboration bridge validated (Python CLI, HARNESS=pi, real Ollama)
@@ -82,7 +82,7 @@ Pacgate runtime images are **public** (anonymous pull verified). The source repo
 | Image | Contents | Base |
 |-------|----------|------|
 | `ghcr.io/jzkk720/pacgate-api:0.1.27` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | pacgate-api MCP bridge (10 tools incl. documents/workflows) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | pacgate-api MCP bridge (19 tools incl. documents/workflows) | `python:3.12-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
 | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
 | `ghcr.io/jzkk720/ocr-service:0.1.27` | PaddleOCR extraction service (first-class since 0.1.16) | `python:3.12-slim` |
