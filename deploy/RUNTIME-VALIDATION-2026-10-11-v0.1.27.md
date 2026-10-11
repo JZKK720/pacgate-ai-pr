@@ -375,6 +375,9 @@ Ordered by what would bite a client first.
 | 8 | MEDIUM | `safe_markdown_to_pdf.py --sync-delivery` compared hashes after overwriting the target, so it could never refresh a copy and reported "different document revision" for every genuine copy pair. This is why defect 7 was never fixable by the tool. See 10.3. |
 | 9 | MEDIUM | `test-version-marker.ps1` aborted before reporting a single assertion on Windows PowerShell 5.1: native stderr writes are terminating under `$ErrorActionPreference='Stop'`, including inside `finally`. Invisible on PowerShell 7. See 10.3. |
 | 10 | LOW | `test-workflow-namespace.ps1` read its answer out of a whole output blob, so container noise could surface as a bogus NAMESPACE failure. See 10.4. |
+| 11 | MEDIUM | `report-ghcr-digests.ps1` hardcoded the retired `pacgate-ai` mirror namespace, so every version tag returned 404 while `:latest` resolved to a 0.1.14-era build - the output still looked half-healthy. It also omitted `ocr-service` from the release set. See 10.6. |
+| 12 | LOW | `identify-deerflow-image.ps1` defaulted to `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10` - a mirror-only tag two releases old - so its fingerprint described an image no release produces. See 10.6. |
+| 13 | MEDIUM | The namespace guard scanned only two hardcoded build scripts, so the digest script's wrong namespace could not be caught by the gate that exists to catch exactly that. Now a property scan. See 10.6. |
 
 ### Open
 
@@ -384,7 +387,7 @@ Ordered by what would bite a client first.
 | O2 | HIGH | `install.ps1` bootstraps `pacgate-api` only. It never provisions the deer-flow admin, so a fresh AIPC cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize` with credentials matching `.env`. |
 | O3 | MEDIUM | The release path is a manual two-phase commit. The version bump and the image pins cannot land together, because a pin can only reference an image that already exists. `verify-delivery-state.ps1` is necessarily RED in between. Nothing enforces that phase 2 happens. |
 | O4 | MEDIUM | Storage paths are double-nested: storage root is `/data/tenants` and `storage_path` already begins with `tenants/`, giving `/data/tenants/tenants/<tenant>/...`. |
-| O5 | MEDIUM | `README-BUILD.md` still shows `ghcr.io/pacgate-ai/<image>` and `git push fork` in its Option A example, contradicting the pinned `jzkk720` namespace documented later in the same file. |
+| O5 | MEDIUM | ~~`README-BUILD.md` still shows `ghcr.io/pacgate-ai/<image>` and `git push fork` in its Option A example.~~ **FIXED this pass - see 10.6.** The live-guidance sections now name `jzkk720`; the clearly-labelled "Historical / superseded" sections are left as record. |
 | O6 | MEDIUM | 8 doc files still publish the 0.1.25 version table two releases later. |
 | O7 | MEDIUM | `test-pdf-freshness.ps1` section 1 compares mtimes, not content, so it cannot detect a content-stale PDF whose mtime is newer - which is how the Chinese handbook stayed stale for two releases. See 10.5. |
 | O8 | LOW | `compose.prod.yaml:10-13` documents the `name: pacgate-ai-bundle` project pin with "Do NOT remove", but nothing enforces it. Composing with `-p` under a different name orphans the volumes. |
@@ -456,6 +459,14 @@ Measurements from the same run: `audit-aipc-update-coverage.ps1` complete
 open work. The four live-stack gates also passed: `test-empty-extraction-gate`
 (15/15), `test-text-native-sanitize` (59/59), `smoke-full-stack` ("every
 reachable lane passed"), `test-auth-provisioning-gate` (8/8).
+
+Four suites are outside that runner and were run by hand. Three pass and are
+recorded in 10.6: `report-ghcr-digests.ps1` (exit 0, five images),
+`probe-mcp-workflow-count.py` (in-container, exit 0, 222 workflows),
+`test-legal-journey.ps1` (`full legal journey PASSED`, 19 assertions, exit 0).
+The fourth - `test-legal-journey.ps1`'s first failure - is recorded there too:
+it was my scratch compose copy's nested `workflows/workflows/` layout, not a
+repo defect. The repo tree serves 222 workflows.
 
 ### 10.1 What the first sweep found
 
@@ -549,6 +560,122 @@ Promoting the content check into section 1 is a separate change; the ad-hoc
 version used here is `git log -1 --format=%ct -- <path>` per file, comparing
 markdown against PDF commit time.
 
+### 10.6 The GHCR namespace drift - found by extending the sweep
+
+Two suites outside `run-all-checks.ps1` disagreed about whether 0.1.27 was
+published: `probe-mcp-workflow-count.py` failed with `ConnectError [WinError
+10061]` and `report-ghcr-digests.ps1` reported `4 image(s) NOT pullable at
+0.1.27` with **HTTP 404** on the version tag.
+
+**Both were invocation artefacts, not release failures.**
+
+`probe-mcp-workflow-count.py` binds `127.0.0.1:8000` and must run inside
+`pacgate-mcp`; run from the host it cannot connect by construction. Re-run
+in-container it passes: **222 workflows, 46 categories, 220 of 222 carrying
+non-ASCII names** - independent confirmation that the UTF-8 workflow library is
+being served, which is the client-locale property this release cares about.
+
+`report-ghcr-digests.ps1` was a **real defect, in the tooling.** Line 45 built
+its URL as `"$Repo = pacgate-ai/$img"` - the retired read-only mirror. The
+mirror is **frozen at 0.1.14** and has received no push since the namespace
+inversion in plan 016:
+
+| namespace | 0.1.14 | 0.1.17 | 0.1.25 | 0.1.26 | 0.1.27 | latest |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pacgate-ai` (mirror) | 200 | 404 | 404 | 404 | 404 | 200 |
+| `jzkk720` (authority) | - | - | - | 200 | 200 | 200 |
+
+That table is the trap: the mirror's `:latest` still resolves, to a stale
+0.1.14-era build, so the script's output looked *half healthy* - `latest` rows
+green, version rows 404 - instead of obviously broken. And **404 cannot be
+distinguished** from "this tag was never built", which is why this read as a
+failed release rather than a wrong URL.
+
+The fix adds a `-Namespace` parameter and resolves `GHCR_NAMESPACE` from
+`.github/workflows/build-ghcr.yml` with the same fallback and warning as
+`deploy/build-images.ps1` - the build script had this identical defect fixed on
+2026-09-18; the digest script was missed. It also adds the missing fifth image
+(`ocr-service`) and `-UseBasicParsing`, without which `-Method Head` throws a
+`NullReferenceException` on Windows PowerShell 5.1 and the `catch` printed a
+**blank** status.
+
+Verified on both hosts, `EXIT=0`:
+
+```
+=== GHCR state for 0.1.27 (namespace jzkk720) ===
+
+  image                            0.1.27       latest       sync
+  -------------------------------- ------------ ------------ ----
+  pacgate-api                      sha256:cd9ca sha256:cd9ca yes
+  pacgate-mcp                      sha256:79199 sha256:79199 yes
+  ocr-service                      sha256:d67e8 sha256:d67e8 yes
+  deer-flow-pacgate                sha256:9fbe5 sha256:9fbe5 yes
+  deer-flow-frontend-pacgate       sha256:6f55b sha256:6f55b yes
+```
+
+**Why the gate did not catch it.** `test-workflow-namespace.ps1` - the gate that
+exists to protect exactly this invariant - scanned a hardcoded list of two
+scripts, `deploy/build-images.ps1` and `deploy/build-frontend.ps1`. Both were
+correct; the digest script was simply not on the list. **A list can only catch
+what someone remembered to add.** It is now a property scan: every `.ps1`,
+`.psm1`, `.py` and `.sh` under `scripts/` and `deploy/`, comments stripped, with
+`ghcr.io/v2/` removed first so the registry API path cannot masquerade as a
+namespace.
+
+Nine scripts match `ghcr.io/<ns>/` only as that API path - the segment after
+`v2` is interpolated, so they are namespace-agnostic by construction and must be
+excluded structurally rather than by allowlist. Two genuine offenders remained:
+
+- `scripts/report-ghcr-digests.ps1` - fixed above.
+- `scripts/identify-deerflow-image.ps1` - defaulted to
+  `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10`. Probed: `jzkk720/...:0.1.10`
+  is 404 and `:0.1.27` is 200, while the mirror's `:0.1.10` is 200. The tool was
+  fingerprinting a mirror-only image two releases old. It now resolves
+  `ghcr.io/<GHCR_NAMESPACE>/deer-flow-pacgate:latest` at runtime; verified on
+  both hosts, resolving and pulling `sha256:9fbe527...`.
+
+`scripts/test-workflow-mutations.ps1` stays exempt: it holds the deliberate
+mutation whose *anchor* had to be inverted when the authority moved, because
+anchoring on the old value made the mutation unable to apply - and a mutation
+that cannot apply is indistinguishable from a defect that cannot be detected.
+
+Assertion count moves 42 -> 41 (two per-file namespace assertions become one
+aggregate), verified **41 passed / 0 failed, exit 0** on PowerShell 7.6.6 and
+Windows PowerShell 5.1.
+
+The new assertion carries its own mutation, because this codebase's standard is
+that an assertion nothing can fail is decoration. `test-workflow-mutations.ps1`
+now rewrites a real default-image literal in `scripts/test-initialize-gate.ps1`
+from `jzkk720` to `pacgate-ai` and requires the scan to go red by name. Result:
+**11 passed / 0 failed** in the namespace section (was 10), and the suite exits 0.
+
+> **Operational note - the mutation harness is not concurrency-safe.** Two
+> mutation runs were started against the same working tree and clobbered each
+> other: the harness mutates files **in place** and restores from a byte
+> snapshot, with no lock. The result was a spurious `3 passed, 1 failed` on
+> `restored files pass the full suite` - a green suite reported red because
+> another process was mid-mutation. The serial re-run passed 4/4. Nothing was
+> left mutated (verified: workflow, compose, `install.ps1` and
+> `test-initialize-gate.ps1` all hold their correct values), but a failure from
+> this harness should be re-run serially before it is believed.
+
+Residual fragility worth naming: the exemption list is now one entry instead of
+the two-file allowlist being the gap, but it is still a list. A future script
+whose namespace is *intentionally* different needs an exemption, and each
+exemption re-opens the original hole a little. The per-file diagnostic loop
+still prints which file is which, so attribution survives the aggregate
+assertion.
+
+Also fixed in this pass: `deploy/README-BUILD.md` (O5) - the live-guidance
+sections still instructed readers to expect `ghcr.io/pacgate-ai/<image>`, said
+the GHCR owner override "resolves to the pinned `pacgate-ai` namespace", listed
+four images rather than five, and gave a verification snippet against the
+mirror at tag `0.1.3`. Those now name `jzkk720`, and the snippet documents that
+the OCI `Accept` header is required and that `-UseBasicParsing` is required on
+PowerShell 5.1. The sections explicitly headed "Historical / superseded" are
+left untouched - they are the record of the model this one replaced, and
+rewriting them would destroy the evidence of the inversion.
+
 ## 11. How to re-run
 
 ```powershell
@@ -564,6 +691,23 @@ docker compose -f deploy\client-bundle\compose.prod.yaml up -d --force-recreate 
 pwsh -File .\deploy\client-bundle\smoke-deer-flow-outputs.ps1 -BaseUrl http://localhost:8090 -ThreadId <uuid>
 python .\deploy\client-bundle\e2e-audit.py
 pwsh -File .\scripts\verify-delivery-state.ps1
+
+# gate coverage - run the mutation suites SERIALLY. They mutate files in place
+# and restore from a snapshot with no lock, so two concurrent runs clobber each
+# other and report a green suite as red.
+pwsh -File .\scripts\test-workflow-namespace.ps1     # 41 assertions
+pwsh -File .\scripts\test-workflow-mutations.ps1     # 11 + 4 + 4 mutations
+pwsh -File .\scripts\report-ghcr-digests.ps1 -Version 0.1.27
+```
+
+Suites outside `run-all-checks.ps1`, all verified on the 0.1.27 stack:
+
+```powershell
+pwsh -File .\scripts\test-legal-journey.ps1           # 19 assertions
+pwsh -File .\scripts\report-ghcr-digests.ps1          # 5 images, tag == latest
+# must run INSIDE pacgate-mcp - it binds 127.0.0.1:8000 there:
+docker cp scripts\probe-mcp-workflow-count.py pacgate-mcp:/tmp/
+docker exec pacgate-mcp python3 /tmp/probe-mcp-workflow-count.py
 ```
 
 The CJK probe lives outside the repo at `%TEMP%\pacgate-cjk-live\cjk-live-probe.py`.
