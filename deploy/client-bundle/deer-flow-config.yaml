@@ -199,6 +199,20 @@ models:
     supports_reasoning_effort: true
     when_thinking_disabled:
       reasoning_effort: none
+    # Pacgate 2026-10-10: the burn ALSO happens on the thinking-ENABLED path.
+    # Verified live (Ollama 0.40.1/0.40.2, /v1 endpoint): glm-5.3-flash:cloud
+    # with reasoning_effort=medium burns the whole budget on invisible
+    # reasoning (433 chars reasoning, 0 content, finish_reason=length);
+    # low/default burn everything invisibly (0 content, 0 reasoning,
+    # finish=length). ONLY reasoning_effort=none produces content (430 chars).
+    # deepseek-v4.1-flash:cloud handles medium fine (content=2, finish=stop),
+    # so this override is glm-specific. The factory merges
+    # when_thinking_enabled into model_settings AFTER the caller kwargs
+    # (model_class(**kwargs, **model_settings)), so this wins over the UI's
+    # reasoning_effort=medium default. Thinking never actually worked for glm
+    # via Ollama /v1 - forcing none here makes the picker entry usable.
+    when_thinking_enabled:
+      reasoning_effort: none
     stream_chunk_timeout: 120
 
 # ── Automatic model routing: escalation stays LOCAL ─────────────────────────

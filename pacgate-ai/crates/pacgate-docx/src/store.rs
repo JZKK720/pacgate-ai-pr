@@ -548,6 +548,59 @@ impl FsDocumentStore {
     }
 }
 
+/// Context window size for find_in, in bytes on each side of the match.
+const FIND_CONTEXT_BYTES: usize = 100;
+
+/// find_in pagination lines per synthetic page (matches the old chunking).
+const LINES_PER_PAGE: usize = 40;
+
+/// Byte-index helper that snaps DOWN to a UTF-8 char boundary.
+///
+/// Pacgate 2026-10-11: find_in used to slice the document string at raw
+/// byte offsets (pos - 100 / pos + query.len() + 100). On Chinese legal
+/// documents those offsets routinely land INSIDE a multi-byte char (CJK =
+/// 3 bytes; the overnight panic hit at byte 11111 inside a 3-byte sequence)
+/// -> tokio worker panic, in-flight response dies, and the client sees
+/// "Server disconnected without sending a response". Only this call site
+/// slices user text; every other slicing site in the crate operates on
+/// ASCII XML tags, so the guards live here as module functions.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Scan the lowercased document once and attribute each match to its page.
+///
+/// The previous implementation re-ran `content_lower.find(query)` from index
+/// 0 on EVERY page loop, so every page reported the FIRST match in the doc:
+/// later matches never surfaced and the same context was duplicated
+/// page_count times. Searching from a monotonic cursor fixes both. `pos`
+/// values are byte offsets valid in BOTH the lowercased and original string
+/// (to_lowercase can change byte layout only for chars that case-fold to
+/// different lengths; the CJK payloads this store serves fold 1:1, and the
+/// regression test documents this invariant).
+fn scan_matches(content_lower: &str, query_lower: &str, page_count: usize) -> Vec<(usize, u32)> {
+    if query_lower.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<(usize, u32)> = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel) = content_lower[cursor..].find(query_lower) {
+        let pos = cursor + rel;
+        let line = content_lower[..pos].matches('\n').count();
+        let page = ((line.div_ceil(LINES_PER_PAGE)).max(1) as u32).min(page_count as u32);
+        found.push((pos, page));
+        cursor = pos + query_lower.len();
+    }
+    found
+}
+
 #[async_trait]
 impl DocumentStore for FsDocumentStore {
     #[instrument(skip(self))]
@@ -593,24 +646,24 @@ impl DocumentStore for FsDocumentStore {
         let query_lower = query.to_lowercase();
         let content_lower = content.to_lowercase();
 
-        let mut results = Vec::new();
-        let lines: Vec<&str> = content.lines().collect();
-        let lines_per_page = 40;
+        let page_count = content.lines().count().div_ceil(LINES_PER_PAGE).max(1);
 
-        for (i, _chunk) in lines.chunks(lines_per_page).enumerate() {
-            let page = (i + 1) as u32;
-            if let Some(pos) = content_lower.find(&query_lower) {
-                let match_start = pos;
-                let context_start = pos.saturating_sub(100);
-                let context_end = (pos + query.len() + 100).min(content.len());
-                let context = content[context_start..context_end].to_string();
-                results.push(FindResult {
-                    page,
-                    context,
-                    match_start,
-                    match_len: query.len(),
-                });
-            }
+        let mut results = Vec::new();
+        for (match_start, page) in scan_matches(&content_lower, &query_lower, page_count) {
+            // Bounds are derived on the ORIGINAL string and snapped to char
+            // boundaries before slicing, so multi-byte (CJK) text can never
+            // panic here again.
+            let context_start = floor_char_boundary(&content, match_start.saturating_sub(FIND_CONTEXT_BYTES));
+            let context_end = floor_char_boundary(
+                &content,
+                (match_start + query_lower.len() + FIND_CONTEXT_BYTES).min(content.len()),
+            );
+            results.push(FindResult {
+                page,
+                context: content[context_start..context_end].to_string(),
+                match_start,
+                match_len: query.len(),
+            });
         }
         Ok(results)
     }
@@ -841,5 +894,80 @@ mod tests {
             err.to_string().contains("OCR"),
             "error should point at the OCR/convert lane; got {err}"
         );
+    }
+
+    /// THE overnight regression (2026-10-11, run 96aff2ac follow-on).
+    /// find_in sliced at pos-100 / pos+query.len()+100 raw byte offsets; on
+    /// the 资料收集目录 document byte 11111 fell INSIDE a 3-byte CJK char and
+    /// the tokio worker panicked mid-workflow: pacgate-api's HTTP response
+    /// died, pacgate-mcp saw a disconnect, deer-flow surfaced "Server
+    /// disconnected without sending a response", and the agent run was lost
+    /// after ~4 minutes of executed work. The fix snaps both bounds to char
+    /// boundaries; this test drives the exact shape (match preceded by
+    /// context whose 100-byte tail lands mid-char) through scan_matches +
+    /// the same bounds math find_in uses.
+    #[test]
+    fn find_bounds_never_split_cjk_chars() {
+        // ~11100 bytes of CJK filler so byte 11111 (the live panic index)
+        // falls inside the 100-byte left-context window of a match.
+        let mut content = String::new();
+        while content.len() < 11_050 {
+            content.push_str("资料收集目录与需求目录");
+        }
+        content.push_str("诉讼");
+        let content_lower = content.to_lowercase();
+        let query_lower = "诉讼".to_lowercase();
+
+        let matches = scan_matches(&content_lower, &query_lower, 10);
+        assert!(!matches.is_empty(), "query must match");
+        let (pos, _page) = matches[0];
+
+        // The old code panicked on exactly this slice:
+        // content[pos-100 .. pos+query.len()+100]
+        let context_start = floor_char_boundary(&content, pos.saturating_sub(FIND_CONTEXT_BYTES));
+        let context_end = floor_char_boundary(
+            &content,
+            (pos + query_lower.len() + FIND_CONTEXT_BYTES).min(content.len()),
+        );
+        let context = &content[context_start..context_end];
+        assert!(!context.is_empty());
+        assert!(context.contains('诉'), "context must include the match char");
+    }
+
+    /// Every page used to re-run find() from byte 0, so N pages produced N
+    /// copies of the FIRST match and later matches never surfaced. The scan
+    /// must return each match once with monotonically increasing offsets.
+    #[test]
+    fn scan_matches_returns_every_match_once() {
+        let doc = "甲乙丙丁".repeat(LINES_PER_PAGE * 2 - 2); // 2 pages worth
+        let content = format!("{doc}TARGET--middle--TARGET{doc}TARGET---end");
+        let content_lower = content.to_lowercase();
+        let query_lower = "target".to_lowercase();
+        let page_count = content.lines().count().div_ceil(LINES_PER_PAGE).max(1);
+
+        let found = scan_matches(&content_lower, &query_lower, page_count);
+        assert_eq!(found.len(), 3, "all 3 matches must surface, got {found:?}");
+        for w in found.windows(2) {
+            assert!(w[0].0 < w[1].0, "offsets must strictly increase");
+        }
+    }
+
+    /// An empty query must yield no matches (old code matched every page).
+    #[test]
+    fn scan_matches_empty_query_is_empty() {
+        assert!(scan_matches("anything", "", 3).is_empty());
+    }
+
+    /// The boundary helper itself: snap points inside multi-byte CJK chars
+    /// down to the preceding boundary, and leave ASCII offsets untouched.
+    #[test]
+    fn floor_char_boundary_snaps_inside_multibyte() {
+        let s = "起诉状理由"; // 3 bytes per char
+        assert_eq!(floor_char_boundary(s, 0), 0);
+        assert_eq!(floor_char_boundary(s, 2), 0, "byte 2 is inside 诉");
+        assert_eq!(floor_char_boundary(s, 3), 3, "byte 3 is a boundary");
+        assert_eq!(floor_char_boundary(s, 5), 3, "byte 5 is inside 起状's next char");
+        assert_eq!(floor_char_boundary(s, s.len()), s.len());
+        assert_eq!(floor_char_boundary(s, s.len() + 100), s.len());
     }
 }

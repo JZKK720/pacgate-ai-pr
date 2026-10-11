@@ -135,6 +135,17 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
             raise ValueError(f"Model {name} does not support thinking. Set `supports_thinking` to true in the `config.yaml` to enable thinking.") from None
         if effective_wte:
             model_settings_from_config.update(effective_wte)
+            # Pacgate 2026-10-10: same kwarg-collision guard as the
+            # when_thinking_disabled branch below, mirrored for the
+            # thinking-ENABLED path. when_thinking_enabled may set
+            # reasoning_effort (e.g. "none" for glm-5.3-flash:cloud, whose
+            # thinking channel burns the entire max_tokens budget on Ollama's
+            # /v1 endpoint even when thinking is requested). The caller (lead
+            # agent) also passes reasoning_effort as a constructor kwarg ->
+            # ChatOpenAI() got multiple values for keyword argument
+            # 'reasoning_effort'. Config wins; drop the caller kwarg.
+            if "reasoning_effort" in effective_wte:
+                kwargs.pop("reasoning_effort", None)
     if not thinking_enabled:
         if model_config.when_thinking_disabled is not None:
             # User-provided disable settings take full precedence
