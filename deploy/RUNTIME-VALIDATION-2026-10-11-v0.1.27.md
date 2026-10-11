@@ -32,10 +32,13 @@ around the fix.
 | CJK DOCX end-to-end probe on published 0.1.27 | **PASS - 26/26, zero failures** |
 | UTF-8 / CJK integrity (the client requirement) | PASS |
 | Published 0.1.27 artifact pulled onto this stack | **PASS** - `revision 32171f4`, `version 0.1.27` |
+| Full local gate sweep (`run-all-checks.ps1`) | **PASS** - all 34 gates, 4 live-stack gates separately |
 
 The only failing area in the whole pass is the behaviour on 0.1.26, which is the
 defect this release corrects. Everything measured against 0.1.27 is green, on
-the shipped artifact.
+the shipped artifact. The first sweep reported 4 gate failures; all four are
+root-caused in section 10, and three of them were real defects - including a
+stale client-facing handbook PDF that the mtime-based gate had passed.
 
 ### 1.1 Publication and visibility
 
@@ -96,21 +99,24 @@ All seven stack services are pinned to the 0.1.27 release images, and
 | Service | Image | Running |
 | --- | --- | --- |
 | `pacgate-api` | `ghcr.io/jzkk720/pacgate-api:0.1.27` | 0.1.27 |
-| `pacgate-mcp` | `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | pulled, 0.1.27 |
-| `ocr-service` | `ghcr.io/jzkk720/ocr-service:0.1.27` | pull retrying (see note) |
+| `pacgate-mcp` | `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | 0.1.27 |
+| `ocr-service` | `ghcr.io/jzkk720/ocr-service:0.1.27` | 0.1.27 |
 | `pacgate-db` | postgres (volume `client-bundle_pacgate-db-data`) | n/a |
-| `deer-flow` | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | pull retrying (see note) |
-| `deer-flow-frontend` | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | pull retrying (see note) |
+| `deer-flow` | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | 0.1.27 |
+| `deer-flow-frontend` | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | 0.1.27 |
 | `nginx` | local conf, `/pacgate/` prefix rewrite | n/a |
+
+All five release images report `org.opencontainers.image.revision` =
+`32171f4fce3ea31f43b9662366be429772a5bef5`, the commit the `v0.1.27` tag points
+at, so every running service is the built revision and not a stale local tag.
 
 > **Pull note.** This host's Docker Desktop resolves `ghcr.io` through a direct
 > connection with no HTTPS proxy, and several pulls of the larger layers
 > (~500 MB) died mid-stream with `unexpected EOF` / `lookup ghcr.io: no such
-> host`. The pulls are retried until they land; the registry is fine, the link
-> is not stable. `pacgate-api` is 956 MB and pulled clean on the second attempt.
-> No code or contract change is implied - the pins are already correct, and the
-> remaining services are byte-identical images to those `verify-delivery-state.ps1`
-> already validated anonymously.
+> host`. The pulls were retried until they landed; the registry is fine, the
+> link is not stable. `pacgate-api` is 956 MB and pulled clean on the second
+> attempt. No code or contract change is implied by this - the pins were already
+> correct.
 
 `pacgate-db` was force-recreated after an earlier compose-ownership conflict
 left it attached to a different project. Data survived; no re-initialisation
@@ -365,32 +371,37 @@ Ordered by what would bite a client first.
 | 4 | MEDIUM | Revision ids were hardcoded to `1`/`2`, colliding across successive edits. |
 | 5 | MEDIUM | The 0.1.26 image reported `version 0.1.25` - the workspace manifest was never bumped. Fixed by the 0.1.27 bump. |
 | 6 | LOW | `diff.rs` had no test coverage at all. Now 11 tests. |
+| 7 | MEDIUM | Both AIPC-DEPLOYMENT-HANDBOOK PDFs were stale, and the `client-delivery` copies shipped pre-0.1.27 content. The Chinese one had been stale since 0.1.23 without the mtime-based gate noticing. Re-rendered. See 10.2. |
+| 8 | MEDIUM | `safe_markdown_to_pdf.py --sync-delivery` compared hashes after overwriting the target, so it could never refresh a copy and reported "different document revision" for every genuine copy pair. This is why defect 7 was never fixable by the tool. See 10.3. |
+| 9 | MEDIUM | `test-version-marker.ps1` aborted before reporting a single assertion on Windows PowerShell 5.1: native stderr writes are terminating under `$ErrorActionPreference='Stop'`, including inside `finally`. Invisible on PowerShell 7. See 10.3. |
+| 10 | LOW | `test-workflow-namespace.ps1` read its answer out of a whole output blob, so container noise could surface as a bogus NAMESPACE failure. See 10.4. |
 
 ### Open
 
 | # | Severity | Finding |
 | --- | --- | --- |
-| 7 | HIGH | `DEFECT-initialize-bootstrap-token.md` - the `/initialize` guard is inert by default. Still open. |
-| 8 | HIGH | `install.ps1` bootstraps `pacgate-api` only. It never provisions the deer-flow admin, so a fresh AIPC cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize` with credentials matching `.env`. |
-| 9 | MEDIUM | The release path is a manual two-phase commit. The version bump and the image pins cannot land together, because a pin can only reference an image that already exists. `verify-delivery-state.ps1` is necessarily RED in between. Nothing enforces that phase 2 happens. |
-| 10 | MEDIUM | Storage paths are double-nested: storage root is `/data/tenants` and `storage_path` already begins with `tenants/`, giving `/data/tenants/tenants/<tenant>/...`. |
-| 11 | MEDIUM | `README-BUILD.md` still shows `ghcr.io/pacgate-ai/<image>` and `git push fork` in its Option A example, contradicting the pinned `jzkk720` namespace documented later in the same file. |
-| 12 | MEDIUM | 8 doc files still publish the 0.1.25 version table two releases later. |
-| 13 | LOW | `compose.prod.yaml:10-13` documents the `name: pacgate-ai-bundle` project pin with "Do NOT remove", but nothing enforces it. Composing with `-p` under a different name orphans the volumes. |
-| 14 | LOW | No unique DB constraint on `(matter_id, name, version)`. |
-| 15 | LOW | `store.rs::apply_edit` uses `doc.version + 1` while `apply_edit_to_family` uses `latest_version(...) + 1`. Editing a non-tip id can collide. |
-| 16 | LOW | `diff.rs` hardcodes `word/document.xml`; `text_extract.rs` uses `declared_main_part()`. A DOCX with a nonstandard main part would be written and read through different paths. |
-| 17 | LOW | `find_in_document` is agent-internal with no HTTP route or MCP tool, so it cannot be probed directly. |
-| 18 | LOW | Workflow templates pass `queries` while the tool expects `query`. |
-| 19 | LOW | `parser.rs` joins runs with no separator; `text_extract.rs` now joins conditionally. Divergent policies on the same file format. |
-| 20 | LOW | `apply_tracked_edit` wraps errors with `.context("patch document.xml")`, which masks the inner cause in `err.to_string()`. Use `{err:#}` when debugging. |
-| 21 | LOW | The `quick-xml` workspace dependency has zero use sites. |
-| 22 | LOW | `/pacgate/version` does not exist; the revision marker is `/pacgate/build-info`. Worth an alias. |
-| 23 | LOW | `smoke-deer-flow-outputs.ps1` cannot self-provision a thread. |
-| 24 | LOW | The `X-CSRF-Token` requirement on gateway mutations is undocumented. |
-| 25 | LOW | A stale legacy deer-flow store remains at `/data/data/deer-flow/` from before the bind mount. |
-| 26 | LOW | `hermes-gateway` reports unhealthy; the `qm-*` services are up. Unclear whether these are in scope for "all pipelines". |
-| 27 | LOW | `DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce. |
+| O1 | HIGH | `DEFECT-initialize-bootstrap-token.md` - the `/initialize` guard is inert by default. Still open. |
+| O2 | HIGH | `install.ps1` bootstraps `pacgate-api` only. It never provisions the deer-flow admin, so a fresh AIPC cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize` with credentials matching `.env`. |
+| O3 | MEDIUM | The release path is a manual two-phase commit. The version bump and the image pins cannot land together, because a pin can only reference an image that already exists. `verify-delivery-state.ps1` is necessarily RED in between. Nothing enforces that phase 2 happens. |
+| O4 | MEDIUM | Storage paths are double-nested: storage root is `/data/tenants` and `storage_path` already begins with `tenants/`, giving `/data/tenants/tenants/<tenant>/...`. |
+| O5 | MEDIUM | `README-BUILD.md` still shows `ghcr.io/pacgate-ai/<image>` and `git push fork` in its Option A example, contradicting the pinned `jzkk720` namespace documented later in the same file. |
+| O6 | MEDIUM | 8 doc files still publish the 0.1.25 version table two releases later. |
+| O7 | MEDIUM | `test-pdf-freshness.ps1` section 1 compares mtimes, not content, so it cannot detect a content-stale PDF whose mtime is newer - which is how the Chinese handbook stayed stale for two releases. See 10.5. |
+| O8 | LOW | `compose.prod.yaml:10-13` documents the `name: pacgate-ai-bundle` project pin with "Do NOT remove", but nothing enforces it. Composing with `-p` under a different name orphans the volumes. |
+| O9 | LOW | No unique DB constraint on `(matter_id, name, version)`. |
+| O10 | LOW | `store.rs::apply_edit` uses `doc.version + 1` while `apply_edit_to_family` uses `latest_version(...) + 1`. Editing a non-tip id can collide. |
+| O11 | LOW | `diff.rs` hardcodes `word/document.xml`; `text_extract.rs` uses `declared_main_part()`. A DOCX with a nonstandard main part would be written and read through different paths. |
+| O12 | LOW | `find_in_document` is agent-internal with no HTTP route or MCP tool, so it cannot be probed directly. |
+| O13 | LOW | Workflow templates pass `queries` while the tool expects `query`. |
+| O14 | LOW | `parser.rs` joins runs with no separator; `text_extract.rs` now joins conditionally. Divergent policies on the same file format. |
+| O15 | LOW | `apply_tracked_edit` wraps errors with `.context("patch document.xml")`, which masks the inner cause in `err.to_string()`. Use `{err:#}` when debugging. |
+| O16 | LOW | The `quick-xml` workspace dependency has zero use sites. |
+| O17 | LOW | `/pacgate/version` does not exist; the revision marker is `/pacgate/build-info`. Worth an alias. |
+| O18 | LOW | `smoke-deer-flow-outputs.ps1` cannot self-provision a thread. |
+| O19 | LOW | The `X-CSRF-Token` requirement on gateway mutations is undocumented. |
+| O20 | LOW | A stale legacy deer-flow store remains at `/data/data/deer-flow/` from before the bind mount. |
+| O21 | LOW | `hermes-gateway` reports unhealthy; the `qm-*` services are up. Unclear whether these are in scope for "all pipelines". |
+| O22 | LOW | `DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce. |
 
 ### Retracted
 
@@ -431,7 +442,114 @@ These are the properties the fix must not have broken, checked explicitly.
   (`text_extract::extract_text_native` vs `pacgate-docx`), so a probe of one
   does not cover the other.
 
-## 10. How to re-run
+## 10. Full local gate sweep
+
+`scripts/run-all-checks.ps1` was run to completion on the fully-0.1.27 stack,
+after the fixes below landed.
+
+```
+ALL 34 GATES PASSED (4 live-stack gate(s) checked separately)
+```
+
+Measurements from the same run: `audit-aipc-update-coverage.ps1` complete
+(11 of 11 covered, 0 needing a human), `test-workflow-library-served.ps1` - no
+open work. The four live-stack gates also passed: `test-empty-extraction-gate`
+(15/15), `test-text-native-sanitize` (59/59), `smoke-full-stack` ("every
+reachable lane passed"), `test-auth-provisioning-gate` (8/8).
+
+### 10.1 What the first sweep found
+
+The same sweep was run before these fixes and reported **36 pass / 4 fail out of
+40**. The failures are the interesting part: three were real defects, one was a
+known flake, and one of the three was hiding a second defect underneath it.
+
+| Gate | What it actually was |
+| --- | --- |
+| `test-pdf-freshness.ps1` (+ `-mutations`) | **Real.** A client-facing document was stale - see 10.2. |
+| `test-version-marker.ps1` | **Real, in the gate itself.** It crashed on Windows PowerShell 5.1 before reporting a single assertion - see 10.3. |
+| `test-workflow-namespace.ps1` | **Known flake, now fixed.** 41/1 under load, 42/0 standalone - see 10.4. |
+
+The suite runner prefers `pwsh` and falls back to `powershell`. The reason that
+matters: this script hardcoded `pwsh` once and consequently "passed" 34 suites
+it never ran, because each invocation failed with "command not found" and the
+stale `$LASTEXITCODE` read as 0. Gate scripts must therefore be correct on both
+editions, not just the one the author used.
+
+### 10.2 The stale AIPC handbook PDFs (client-facing)
+
+Both handbooks' markdown was bumped to 0.1.27 by the release, but their PDFs
+were never re-rendered, so the `deploy/client-delivery/docs/` copies shipped
+pre-0.1.27 content. The gate caught the English pair by mtime.
+
+The Chinese PDF was worse, and the gate could **not** see it: it passed on
+mtime while carrying 0.1.23-era content, because its last commit (`6b38de1`,
+2026-10-06) predates three later edits to the markdown (`f950c09` and
+`b3ba91e` for 0.1.25, `2565018` for 0.1.27). A content-based audit over all 22
+tracked md/pdf pairs - `git log -1 --format=%ct` per file, comparing markdown
+commit time against PDF commit time - confirms these two handbooks are the only
+stale pairs; the other 20 are fine.
+
+Both are now re-rendered, and both `client-delivery` copies refreshed.
+
+### 10.3 Two defects in the tooling that was supposed to catch this
+
+**`safe_markdown_to_pdf.py --sync-delivery` could never refresh a copy.** It
+decided copy identity *after* `convert_markdown_to_pdf()` had already
+overwritten the target, so `_sha256(target) == _sha256(delivery_copy)` was
+unsatisfiable for a genuine copy pair: a fresh render carries a new random PDF
+`/ID` and a new timestamp, so the bytes never match the copy. The flag always
+reported "different document revision" and silently left the copy untouched.
+
+This is why the stale handbooks had never been refreshable. Renders are **not
+byte-deterministic**: two runs over identical markdown give the same length but
+different SHA256, differing only in the `/ID` array and
+`/CreationDate`+`/ModDate`. Any byte-identity check on a rendered PDF must
+compare against a **pre-render** copy, never a fresh render - which is what the
+fix does. Had this not been found, the handbook staleness would have recurred
+at every release.
+
+**`test-version-marker.ps1` aborted before reporting anything on PowerShell
+5.1.** Windows PowerShell 5.1 promotes **any** native stderr write to a
+**terminating** error while `$ErrorActionPreference` is `'Stop'` - even with
+`2>&1 | Out-Null` or `2>$null`. PowerShell 7 does not. This script deliberately
+probes things that fail at first (a Python traceback until the stub binds,
+`nginx -t` warnings, and `wget -S`, which prints response headers to stderr),
+and its `Cleanup` removes networks that may legitimately be absent. On 5.1 the
+throw escaped from `finally`, so the run ended "0 passed, 1 failed" with an
+unexplained `harness error: Traceback ...` instead of an assertion result.
+
+`docker network rm <missing>` reproduces it; `docker rm -f <missing>` does not.
+The fix adds an `Invoke-Native` helper that saves and restores
+`$ErrorActionPreference`, forces `'Continue'`, and returns `{Exit, Text}`, then
+routes every native call through it. Verified 6/6 exit 0 on **both** PowerShell
+7.6.6 and 5.1.26100.9549, with no container or network left behind.
+
+### 10.4 The namespace flake
+
+`test-workflow-namespace.ps1` read its answer out of a whole output blob, so a
+line of container-start noise could reach `$parts[0]` and surface as a bogus
+NAMESPACE assertion failure - the same misleading signature already documented
+in the script from 2026-10-03. The answer is now the last line shaped like the
+script's five pipe-separated fields. Dropping noise cannot hide a real
+regression: the probe always echoes the same five fields, so a logic break
+still changes the values the assertions check.
+
+Verified 42/0 exit 0 three times standalone, **and 42/0 inside the full sweep
+under load** - which is precisely where it used to break.
+
+### 10.5 Remaining gate weakness
+
+`test-pdf-freshness.ps1` section 1 compares **mtimes**, not content, so it
+cannot detect a content-stale PDF whose mtime is newer - exactly the Chinese
+handbook's case, which passed while stale. Section 2 is stronger: it compares
+`git ls-tree -r HEAD` blob SHAs, so a pair byte-identical at HEAD is "meant to
+be identical" and any drift fails.
+
+Promoting the content check into section 1 is a separate change; the ad-hoc
+version used here is `git log -1 --format=%ct -- <path>` per file, comparing
+markdown against PDF commit time.
+
+## 11. How to re-run
 
 ```powershell
 # from the repo root
