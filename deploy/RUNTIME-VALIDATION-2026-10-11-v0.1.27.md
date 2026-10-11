@@ -191,14 +191,22 @@ Operational notes discovered while running these:
 
 ## 6. The CJK end-to-end probe - the actual gate
 
-The probe (`cjk-live-probe.py`, 26 assertions) exercises the real production
-path against the running stack: upload a Chinese DOCX, apply two anchored
-tracked edits, read the text back, accept the changes, and read again. It
-asserts byte-exact round trips and scans container logs for char-boundary
-panics.
+The probe (`scripts/cjk-live-probe.py`, 28 assertions) exercises the real
+production path against the running stack: upload a Chinese DOCX, apply two
+anchored tracked edits, read the text back, accept the changes, read again,
+then delete what it created. It asserts byte-exact round trips and scans
+container logs for char-boundary panics.
 
 All Chinese text in the probe source is written as `\uXXXX` escapes so the
 probe itself cannot be corrupted by a console code page.
+
+**It cleans up after itself.** Each run creates its own matter and document
+family, and deletes both on the way out - documents first, because
+`delete_document_family` drops the files and every version row for that
+document name while `MatterStore::delete` is a bare `DELETE FROM matters` with
+no cascade. The deletion is registered with `atexit`, so a failed assertion, an
+early `sys.exit` and an unhandled exception all still clean up; that safety net
+is verified by falsification (see 6.5), not assumed.
 
 ### 6.1 On shipped 0.1.26 - FAIL
 
@@ -278,9 +286,10 @@ docker inspect pacgate-api                       -> ghcr.io/jzkk720/pacgate-api:
                                                     version  0.1.27
 GET /pacgate/build-info   (Bearer)               -> {"revision":"32171f4fce3a...","version":"0.1.27"}
 
-python cjk-live-probe.py
-EXIT=0   TOTAL=26  PASS=26  FAIL=0
+python scripts/cjk-live-probe.py
+EXIT=0   TOTAL=28  PASS=28  FAIL=0
 failures: []
+matters 12 -> 12, documents 46 -> 46   (no leak)
 ```
 
 The image label and the running process agree, and both resolve to `32171f4`
@@ -296,11 +305,12 @@ artifact:
 | `edited_tip_context_preserved` | FAIL - `has_tail:false`, `has_tail2:false` | **PASS - all five true** |
 | `accepted_text_is_exact` | FAIL - 18 vs 76 chars | **PASS - 76/76, 228/228 bytes** |
 
-The other 23 assertions passed on both, including `login_json_token`,
+The other 25 assertions passed on both, including `login_json_token`,
 `versions_after_two_edits`, `edited_tip_retains_original_until_accept`,
 `accepted_deleted_cjk_removed`, `accepted_cjk_survives_intact`,
 `accepted_not_incomplete`, and `no_char_boundary_panics_in_logs` (all four
-containers `clean`).
+containers `clean`). The 0.1.26 run predates `cleanup_document_deleted` and
+`cleanup_matter_deleted`, which is why that column reads 23 passed of 26.
 
 **Structural proof from the published artifact.** Fresh `docker cp` of the two
 versions this run produced, then a raw `word/document.xml` comparison against
@@ -329,6 +339,28 @@ The rest of the stack was exercised on the published pins as well:
 | `smoke-deer-flow-outputs.ps1` | **PASS**, exit 0 - listing `200`, enrichment present, download `200` (62 bytes) |
 | `e2e-audit.py` | **PASS**, exit 0 - 5/5 (`login`, `create_thread`, `upload_docx`, `auto_convert_md_present`, `converted_md_readable`) |
 | `GET /pacgate/health` | `ok` |
+
+### 6.5 The probe's own cleanup, verified by falsification
+
+A probe that claims to clean up and does not is worse than one that never
+claimed it, so the deletion path is tested rather than trusted. The signal is
+the row count - assertions can pass while a leaked matter sits in the database.
+
+| Case | Trigger | Result |
+| --- | --- | --- |
+| Happy path | normal run, cleanup at step 9b | `28/28`, exit 0, `matters 12 -> 12`, `documents 46 -> 46` |
+| Abort before document | injected `raise` after the matter exists | exit 1; `matters 12 -> 12`, `documents 46 -> 46` |
+| Abort after document | injected `raise` at step 9b, matter **and** document live | exit 1; `matters 12 -> 12`, `documents 46 -> 46` |
+
+Both abort cases exit non-zero and still leave the database at its baseline, so
+the `atexit` net covers the two orders that matter: matter-only, and
+matter-plus-document. The net is idempotent - the happy path clears each id as
+it deletes it, so the later `atexit` pass is a no-op.
+
+This replaced a header line that asserted the probe "removes the matter and
+documents it creates" while no DELETE call existed anywhere in the file. The
+claim was false for the whole 0.1.26 and 0.1.27 validation runs; those runs left
+their matters behind, which is why the cleanup baseline is not zero.
 
 ## 7. The fix, as shipped
 
@@ -378,6 +410,8 @@ Ordered by what would bite a client first.
 | 11 | MEDIUM | `report-ghcr-digests.ps1` hardcoded the retired `pacgate-ai` mirror namespace, so every version tag returned 404 while `:latest` resolved to a 0.1.14-era build - the output still looked half-healthy. It also omitted `ocr-service` from the release set. See 10.6. |
 | 12 | LOW | `identify-deerflow-image.ps1` defaulted to `ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.10` - a mirror-only tag two releases old - so its fingerprint described an image no release produces. See 10.6. |
 | 13 | MEDIUM | The namespace guard scanned only two hardcoded build scripts, so the digest script's wrong namespace could not be caught by the gate that exists to catch exactly that. Now a property scan. See 10.6. |
+| 14 | LOW | The CJK probe's header claimed it "removes the matter and documents it creates" while the file contained no DELETE call at all. Every validation run through 0.1.27 leaked its matter. Cleanup is now real and the safety net is falsified in both abort orders. See 6.5. |
+| 15 | LOW | `probe-format-lanes.py` caught every fixture failure per format and continued, so a missing `python-docx` printed "fixture FAILED", skipped the whole `.docx` lane, and the probe still exited 0. `ImportError` now exits 2. See 10.7. |
 
 ### Open
 
@@ -720,6 +754,16 @@ span coordinates. `mcp-probe.py` must run **inside `pacgate-mcp`** - it binds
 current MCP surface; `probe-mcp-workflow-count.py` measures the workflow
 library the same way on the same lane.
 
+**A fourth probe left the sweep for a different reason.** `cjk-live-probe.py`
+also needs a live stack, but unlike the three above it is the regression gate
+for the release-blocking defect, so it is tracked in `scripts/` rather than
+kept as a session artifact. It gained two assertions in this pass
+(`cleanup_document_deleted`, `cleanup_matter_deleted`) - not to test the product
+but to make its own claim about cleanup testable. Its cleanup path was then
+falsified in both abort orders; see §6.5. A probe that adds an assertion about
+its own side effects should also add a mutation that fails it, and here the
+mutation was the leak itself.
+
 ## 11. How to re-run
 
 ```powershell
@@ -761,9 +805,16 @@ docker cp scripts\mcp-probe.py pacgate-mcp:/tmp/
 docker exec pacgate-mcp python3 /tmp/mcp-probe.py
 docker cp scripts\probe-mcp-workflow-count.py pacgate-mcp:/tmp/
 docker exec pacgate-mcp python3 /tmp/probe-mcp-workflow-count.py
+
+# the CJK release gate - needs the live stack. Self-cleaning: it deletes the
+# matter and document family it creates, including on an aborted run.
+.\.venv\Scripts\python.exe .\scripts\cjk-live-probe.py    # 28 assertions
 ```
 
-The CJK probe lives outside the repo at `%TEMP%\pacgate-cjk-live\cjk-live-probe.py`.
-It is a local artifact, not shipped. If it is to be kept as a release gate it
-should move into `scripts/` and be run by CI - see the residual gap in
-`DEFECT-docx-tracked-edit-nesting.md`.
+The CJK probe now lives in the repo at `scripts/cjk-live-probe.py` and cleans up
+after itself. It is a release gate, not a shipped artifact, but it is tracked so
+it cannot be lost to temp cleanup. It is deliberately **not** in
+`run-all-checks.ps1`: it needs a live stack, and that suite's contract is that
+every member runs with no stack up. The honest CI proposal is a separate job
+that brings the compose file up and then runs the probe - see the residual gap
+in `DEFECT-docx-tracked-edit-nesting.md`.
