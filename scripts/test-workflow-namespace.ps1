@@ -291,18 +291,30 @@ echo "`$ns|`$src|`$warn|`$cred|`$cwarn"
         # Retry: a transient container-start hiccup must not read as a logic
         # failure. The content is identical each attempt, so a retry cannot change
         # the answer - it only removes infrastructure noise.
+        #
+        # The answer is taken as the LAST line shaped like the script's 5 pipe-
+        # separated fields, not the whole output blob. Under load docker can
+        # interleave a stderr line from the container start; with a whole-blob
+        # read that noise still splits into >=5 fields, so it survived the shape
+        # check and landed in $parts[0] - which is exactly how a container hiccup
+        # used to surface as a bogus NAMESPACE assertion failure. Dropping noise
+        # cannot hide a real regression: the workflow script always echoes the
+        # same 5 fields, so a logic break changes the VALUES, which the
+        # assertions below still check.
         $out = $null
+        $line = $null
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             $out = ($sh -replace "`r`n", "`n") | & docker run -i --rm alpine:3.20 sh -s 2>&1
-            $probe = ($out | Out-String).Trim()
-            # The script's last line is its answer: 5 pipe-separated fields.
-            if (($probe -split '\|').Count -ge 5) { break }
+            $line = (($out | Out-String) -split "`r?`n" |
+                Where-Object { ($_ -split '\|').Count -ge 5 } |
+                Select-Object -Last 1)
+            if ($line) { break }
             if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
         }
     }
     finally { $OutputEncoding = $prevEnc }
 
-    $line = ($out | Out-String).Trim()
+    $line = if ($line) { $line.Trim() } else { ($out | Out-String).Trim() }
     $parts = $line -split '\|'
     if ($parts.Count -lt 5) {
         # Could not check. Say so explicitly rather than letting a truncated line
