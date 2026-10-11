@@ -365,23 +365,31 @@ def main() -> None:
 
     source = Path(args.source)
     target = Path(args.target) if args.target else source.with_suffix(".pdf")
+    delivery_copy = Path("deploy/client-delivery/docs") / target.name
+
+    # Decide BEFORE rendering. Every render stamps a fresh timestamp and a fresh
+    # random document ID into the PDF, so a freshly written target can never be
+    # byte-identical to the delivery copy. Comparing after the render (which
+    # this used to do) therefore reported "different document revision" for
+    # every genuine copy-pair and silently never refreshed anything.
+    was_identical = (
+        args.sync_delivery
+        and target.exists()
+        and delivery_copy.exists()
+        and _sha256(target) == _sha256(delivery_copy)
+    )
+
     convert_markdown_to_pdf(source, target)
 
-    if args.sync_delivery:
-        delivery_copy = Path("deploy/client-delivery/docs") / target.name
-        if delivery_copy.exists():
-            was_identical = (
-                target.exists()
-                and _sha256(target) == _sha256(delivery_copy)
+    if args.sync_delivery and delivery_copy.exists():
+        if was_identical:
+            shutil.copyfile(target, delivery_copy)
+            print(f"delivery copy refreshed: {delivery_copy}")
+        else:
+            print(
+                f"delivery copy {delivery_copy} differs from the pre-render original "
+                "(different document revision) - left untouched"
             )
-            if was_identical:
-                shutil.copyfile(target, delivery_copy)
-                print(f"delivery copy refreshed: {delivery_copy}")
-            else:
-                print(
-                    f"delivery copy {delivery_copy} differs from the fresh render "
-                    "(different document revision) - left untouched"
-                )
 
 
 def _sha256(path: Path) -> str:
