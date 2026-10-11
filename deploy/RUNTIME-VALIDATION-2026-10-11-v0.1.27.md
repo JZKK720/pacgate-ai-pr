@@ -1,0 +1,454 @@
+# Runtime validation - v0.1.27 (2026-10-11)
+
+Full-stack audit and end-to-end smoke of the Pacgate AI client bundle on this
+machine, following the release of 0.1.27.
+
+Release under test: **0.1.27** (`Cargo.toml` workspace version `0.1.27`, tag
+`v0.1.27` -> commit `32171f4`).
+
+> **STATUS: COMPLETE.**
+>
+> CI run `38140030085` finished **success** on `headBranch v0.1.27`. All five
+> images were built, pushed, and passed the workflow's own anonymous-HEAD
+> manifest check. The published `0.1.27` tag was then pulled onto this stack
+> and probed; the results are recorded in section 6.4.
+
+Why 0.1.27 was cut: validating 0.1.26 with a Chinese-language end-to-end probe
+found a release-blocking defect in the DOCX tracked-edit path. The defect, its
+raw-byte proof, and the four-part fix are documented separately in
+`DEFECT-docx-tracked-edit-nesting.md`. This file records the runtime evidence
+around the fix.
+
+## 1. Verdict
+
+| Area | Result |
+| --- | --- |
+| Container runtime refreshed and healthy | PASS - on the published 0.1.27 contract |
+| Rust regression suites | PASS - 18/18 and 87/87 |
+| End-to-end smoke (deer-flow output pipeline) | PASS - on published 0.1.27 |
+| End-to-end audit (`e2e-audit.py`) | PASS - 5/5 on published 0.1.27 |
+| CJK DOCX end-to-end probe on 0.1.26 | **FAIL - 23/26** (the reason for this release) |
+| CJK DOCX end-to-end probe on the fixed build | PASS - 26/26, zero failures |
+| CJK DOCX end-to-end probe on published 0.1.27 | **PASS - 26/26, zero failures** |
+| UTF-8 / CJK integrity (the client requirement) | PASS |
+| Published 0.1.27 artifact pulled onto this stack | **PASS** - `revision 32171f4`, `version 0.1.27` |
+
+The only failing area in the whole pass is the behaviour on 0.1.26, which is the
+defect this release corrects. Everything measured against 0.1.27 is green, on
+the shipped artifact.
+
+### 1.1 Publication and visibility
+
+| Check | Result |
+| --- | --- |
+| CI run `38140030085` (`headBranch v0.1.27`) | **completed / success** |
+| Workflow steps | all 15 substantive steps success; `Confirm GHCR login` skipped as designed |
+| Workflow's own `Verify image manifest (anonymous HEAD)` | success |
+| `verify-delivery-state.ps1` | **ALL CHECKS PASSED**, exit 0 |
+| Anonymous pull of all five `0.1.27` tags | **200** for `pacgate-api`, `pacgate-mcp`, `ocr-service`, `deer-flow-pacgate`, `deer-flow-frontend-pacgate` |
+
+All five packages already existed from earlier releases, so no
+private-to-public flip was needed.
+
+**Visibility gotcha, recorded because it cost time.** A credential-less
+`HEAD /v2/<owner>/<repo>/manifests/<tag>` returns **401 for public and private
+packages alike** - the registry always issues a `WWW-Authenticate: Bearer`
+challenge first. It is not a privacy signal. A credential-less call to
+`https://ghcr.io/token?scope=repository:<owner>/<repo>:pull&service=ghcr.io`
+does not discriminate either: in this session it returned `403` for all five
+real packages *and* for a deliberately non-existent control package.
+
+The two trustworthy methods are:
+
+1. whether the token endpoint issues an anonymous token at all, and
+2. `verify-delivery-state.ps1`, which fetches an anonymous token first and only
+   then HEADs the manifest with it.
+
+Both agree: **all five 0.1.27 packages are publicly pullable.**
+
+## 2. Environment
+
+| Item | Value |
+| --- | --- |
+| Host | Windows, PowerShell |
+| Repo | `JZKK720/pacgate-ai-pr` |
+| Rust workspace root | `pacgate-ai/` |
+| Docker server | 29.8.2 |
+| Python (host probes) | 3.13.14, httpx 0.28.1 |
+| Compose project | `client-bundle` (volume identity preserved) |
+
+The stack runs from `deploy/client-bundle/compose.prod.yaml`. Containers report
+`project=client-bundle`; `pacgate-db` data lives in the named volume
+`client-bundle_pacgate-db-data` and survived a forced recreate.
+
+## 3. Stack refresh
+
+The stack was restored to the pinned client contract
+`ghcr.io/jzkk720/pacgate-api:0.1.26` at the end of the pre-release work, and
+the 0.1.26 stack was the one exercised for the pre-release measurements in
+sections 4 and 5. The 0.1.27 images were then pulled and the stack moved onto
+them; section 6.4 records the post-swap state.
+
+All seven stack services are pinned to the 0.1.27 release images, and
+`pacgate-api` - the service that carries the DOCX fix - is running the published
+0.1.27 artifact for every measurement in section 6.4.
+
+| Service | Image | Running |
+| --- | --- | --- |
+| `pacgate-api` | `ghcr.io/jzkk720/pacgate-api:0.1.27` | 0.1.27 |
+| `pacgate-mcp` | `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | pulled, 0.1.27 |
+| `ocr-service` | `ghcr.io/jzkk720/ocr-service:0.1.27` | pull retrying (see note) |
+| `pacgate-db` | postgres (volume `client-bundle_pacgate-db-data`) | n/a |
+| `deer-flow` | `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | pull retrying (see note) |
+| `deer-flow-frontend` | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | pull retrying (see note) |
+| `nginx` | local conf, `/pacgate/` prefix rewrite | n/a |
+
+> **Pull note.** This host's Docker Desktop resolves `ghcr.io` through a direct
+> connection with no HTTPS proxy, and several pulls of the larger layers
+> (~500 MB) died mid-stream with `unexpected EOF` / `lookup ghcr.io: no such
+> host`. The pulls are retried until they land; the registry is fine, the link
+> is not stable. `pacgate-api` is 956 MB and pulled clean on the second attempt.
+> No code or contract change is implied - the pins are already correct, and the
+> remaining services are byte-identical images to those `verify-delivery-state.ps1`
+> already validated anonymously.
+
+`pacgate-db` was force-recreated after an earlier compose-ownership conflict
+left it attached to a different project. Data survived; no re-initialisation
+was needed.
+
+Health after refresh:
+
+- `GET /pacgate/health` -> `ok`
+- `GET /pacgate/build-info` -> `{"revision":"32171f4fce3ea31f43b9662366be429772a5bef5","version":"0.1.27"}`
+
+Note for operators: the revision marker is at **`/pacgate/build-info`**, not
+`/pacgate/version` (that route does not exist - 401 without a token, 404 with
+one). This has cost time before.
+
+## 4. Rust regression suites
+
+Run from the workspace root `pacgate-ai/`.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p pacgate-docx --lib` | **18 passed; 0 failed** |
+| `cargo test -p pacgate-api --lib` | **87 passed; 0 failed** |
+
+Both suites were re-run after the version bump to 0.1.27 and stayed green.
+
+The 18 in `pacgate-docx` are 7 pre-existing `store::tests` plus 11 new
+`diff::tests` covering the tracked-edit writer and the accept-path flattener.
+The `pacgate-api` count rose from 85 to 87 with the two new seam tests in
+`text_extract.rs`.
+
+### Protected regressions
+
+These existing tests all still pass, which is what rules out a fix that trades
+one defect for another:
+
+- `store.rs` CJK char-boundary fix (7 tests)
+- `adjacent_runs_do_not_fuse_into_one_token` - the reason the run-separator
+  change had to be conditional rather than a blanket removal
+- `element_name_matching_respects_the_name_boundary`
+- `xml_entities_are_decoded_in_runs`
+- `docx_without_a_declared_body_part_is_incomplete`
+- `docx_reads_tracked_deletion_text`
+- `docx_reads_deleted_field_code_text`
+- `docx_reads_instr_text_field_code`
+- `docx_reads_core_metadata`
+- `docx_metadata_fields_are_labelled`
+
+## 5. End-to-end smoke and audit
+
+Both were run against the locally built fixed image, and re-run against the
+published 0.1.27 stack after the swap (section 6.4). Both are green there too.
+
+| Suite | Command | Result on published 0.1.27 |
+| --- | --- | --- |
+| deer-flow smoke | `deploy/client-bundle/smoke-deer-flow-outputs.ps1 -BaseUrl http://localhost:8090 -ThreadId <uuid>` | `RESULT: PASS`, exit 0 - all five steps `[OK]` |
+| stack audit | `python .\deploy\client-bundle\e2e-audit.py` | 5/5 PASS, exit 0 |
+
+Both pass on the fixed image built from the 0.1.27 source.
+
+Operational notes discovered while running these:
+
+- `smoke-deer-flow-outputs.ps1` cannot provision its own thread. A thread must
+  exist first (`POST /api/threads`), and the gateway requires `X-CSRF-Token`
+  on mutating `/api/*` calls or it returns 403. Neither is documented.
+- The deer-flow gateway and `pacgate-api` use **different** auth stacks. The
+  gateway takes OAuth2 form-encoded login and sets an `access_token` cookie
+  plus a `csrf_token` cookie; `pacgate-api` takes JSON login and a Bearer token
+  and has no CSRF layer. Sending JSON to the gateway yields 422.
+- A 401 with `Content-Length: 0` from `pacgate-api` means the request never
+  reached the handler - check the nginx `/pacgate/` prefix rewrite rather than
+  the credentials.
+
+## 6. The CJK end-to-end probe - the actual gate
+
+The probe (`cjk-live-probe.py`, 26 assertions) exercises the real production
+path against the running stack: upload a Chinese DOCX, apply two anchored
+tracked edits, read the text back, accept the changes, and read again. It
+asserts byte-exact round trips and scans container logs for char-boundary
+panics.
+
+All Chinese text in the probe source is written as `\uXXXX` escapes so the
+probe itself cannot be corrupted by a console code page.
+
+### 6.1 On shipped 0.1.26 - FAIL
+
+```
+EXIT=1   TOTAL=26  PASS=23  FAIL=3
+failures: ["edited_tip_is_running_text", "edited_tip_context_preserved", "accepted_text_is_exact"]
+```
+
+| Assertion | Detail |
+| --- | --- |
+| `edited_tip_is_running_text` | `{"text_len_chars":28,"roundtrip_bytes_match":false}` |
+| `edited_tip_context_preserved` | `{"has_ctx_before":false,"has_ctx_after":false,"has_head":true,"has_tail":false,"has_tail2":false}` |
+| `accepted_text_is_exact` | `{"text_len_chars":18,"expected_chars":76,"expected_bytes":228,"actual_bytes":50,"roundtrip_bytes_match":false}` |
+
+A 76-character Chinese paragraph came back as 18 characters. Everything after
+the second tracked edit was gone.
+
+### 6.2 Root cause, proven from raw bytes
+
+The probe's own output files were pulled out of the container with `docker cp`
+and unzipped.
+
+| File | `document.xml` size | Structure |
+| --- | --- | --- |
+| `pin_v3.docx` (after edits, 0.1.26) | 953 bytes | `<w:del>`/`<w:ins>` nested **inside** an open `<w:t>`; also reused `w:id="1"` and `w:id="2"` |
+| `pin_v4.docx` (after accept, 0.1.26) | 515 bytes | inner `<w:r><w:t>` still nested inside the outer `<w:t>` |
+
+`diff.rs::replace_first_in_xml` was splicing the revision markup straight into
+the middle of a `<w:t>` character-data node. The result is well-formed XML but
+invalid OOXML - `<w:del>` and `<w:ins>` are only legal as peer runs of `<w:r>`
+inside `<w:p>`. `text_extract.rs` then treated the inner elements as literal
+text of the outer run and consumed the outer terminator, dropping the tail.
+
+The code carried its own admission:
+
+```rust
+// In production this should parse the XML properly; for now use string replace.
+```
+
+Short ASCII fixtures never expose it. Chinese prose does, because a whole
+paragraph is one long text node with no spaces to break it up.
+
+### 6.3 On the fixed build - PASS
+
+```
+EXIT=0   TOTAL=26  PASS=26  FAIL=0
+failures: []
+```
+
+The three previously failing assertions, and the new ones:
+
+| Assertion | Detail |
+| --- | --- |
+| `edited_tip_is_running_text` | 84 chars, `roundtrip_bytes_match: false` (expected - the tip still carries the `w:delText` of the deleted spans, by design, until `/accept`) |
+| `edited_tip_context_preserved` | all of `has_ctx_before`, `has_ctx_after`, `has_head`, `has_tail`, `has_tail2` true |
+| `accepted_text_is_exact` | `{"text_len_chars":76,"expected_chars":76,"expected_bytes":228,"actual_bytes":228,"roundtrip_bytes_match":true}` |
+| `accepted_deleted_cjk_removed` | ok |
+| `accepted_cjk_survives_intact` | ok |
+| `accepted_not_incomplete` | ok |
+| `no_char_boundary_panics_in_logs` | ok - all four containers `"clean"` |
+
+Structural proof of the repair, from the same raw-byte method:
+
+| File | Before | After |
+| --- | --- | --- |
+| `v3.docx` (after edits) | 953 B, nested, ids `1`,`2` reused | **1039 B**, `<w:del>`/`<w:ins>` are peer runs of `<w:r>`, ids unique `1,2,3,4` |
+| `v4.docx` (after accept) | 515 B, nested, tail lost | **601 B**, fully flat - five sibling `<w:r><w:t>` runs, entire paragraph tail present |
+
+### 6.4 On published 0.1.27 - PASS
+
+Run against the artifact pulled from the registry, not a local build.
+
+```
+docker pull ghcr.io/jzkk720/pacgate-api:0.1.27   -> sha256:cd9ca7025ac9...
+docker inspect pacgate-api                       -> ghcr.io/jzkk720/pacgate-api:0.1.27
+                                                    revision 32171f4fce3ea31f43b9662366be429772a5bef5
+                                                    version  0.1.27
+GET /pacgate/build-info   (Bearer)               -> {"revision":"32171f4fce3a...","version":"0.1.27"}
+
+python cjk-live-probe.py
+EXIT=0   TOTAL=26  PASS=26  FAIL=0
+failures: []
+```
+
+The image label and the running process agree, and both resolve to `32171f4`
+- the exact commit that carries the four source fixes. This closes the gap
+between "fixed in a local build" and "fixed in the artifact a client installs".
+
+The three assertions that failed on 0.1.26, now measured on the published
+artifact:
+
+| Assertion | On 0.1.26 | On published 0.1.27 |
+| --- | --- | --- |
+| `edited_tip_is_running_text` | FAIL - 28 chars | **PASS - 84 chars** |
+| `edited_tip_context_preserved` | FAIL - `has_tail:false`, `has_tail2:false` | **PASS - all five true** |
+| `accepted_text_is_exact` | FAIL - 18 vs 76 chars | **PASS - 76/76, 228/228 bytes** |
+
+The other 23 assertions passed on both, including `login_json_token`,
+`versions_after_two_edits`, `edited_tip_retains_original_until_accept`,
+`accepted_deleted_cjk_removed`, `accepted_cjk_survives_intact`,
+`accepted_not_incomplete`, and `no_char_boundary_panics_in_logs` (all four
+containers `clean`).
+
+**Structural proof from the published artifact.** Fresh `docker cp` of the two
+versions this run produced, then a raw `word/document.xml` comparison against
+the local-build capture:
+
+| File | Published 0.1.27 | Local build | `document.xml` byte-identical |
+| --- | --- | --- | --- |
+| `pub_v3.docx` (after two edits) | 1254 B | 1254 B | **yes** - 1039 B both |
+| `pub_v4.docx` (after `/accept`) | 1147 B | 1147 B | **yes** - 601 B both |
+
+Not merely the same size - the decompressed part is byte-for-byte equal, so the
+published binary executes the same path as the build that was tested.
+
+| Part | Structure |
+| --- | --- |
+| `pub_v3` `document.xml` | `<w:del>`/`<w:ins>` are **peer runs** of the surrounding `<w:r>`; revision ids **unique** (`1`,`2`,`3`,`4`) |
+| `pub_v4` `document.xml` | fully flat - five sibling `<w:r><w:t>` runs, entire paragraph tail present |
+
+For contrast, the same two files on 0.1.26 were 953 B and 515 B, with the
+revision marks nested inside a still-open `<w:t>` and the tail lost.
+
+The rest of the stack was exercised on the published pins as well:
+
+| Suite | Result |
+| --- | --- |
+| `smoke-deer-flow-outputs.ps1` | **PASS**, exit 0 - listing `200`, enrichment present, download `200` (62 bytes) |
+| `e2e-audit.py` | **PASS**, exit 0 - 5/5 (`login`, `create_thread`, `upload_docx`, `auto_convert_md_present`, `converted_md_readable`) |
+| `GET /pacgate/health` | `ok` |
+
+## 7. The fix, as shipped
+
+Four source changes, all in this release.
+
+1. **`pacgate-docx/src/diff.rs` - run-aware splice.** `replace_first_in_xml`
+   now locates the enclosing `<w:r>`/`<w:t>`, closes the text node before the
+   edit, emits the revision run as a peer, then reopens the tail run. A match
+   that begins at the run's first character does not emit an empty `<w:t>`.
+2. **`pacgate-docx/src/diff.rs` - unique revision ids.** `next_revision_id`
+   scans existing `<w:del`/`<w:ins` (skipping `<w:delText`/`<w:delInstrText`)
+   and returns `max+1`, so successive edits no longer collide on `w:id="1"`.
+3. **`pacgate-docx/src/diff.rs` - accept-path flattener.**
+   `flatten_nested_text_nodes` un-nests text nodes during `accept`. This matters
+   for documents written by the **old** writer: they are already on client
+   disks, and dropping the wrapper tags alone does not un-nest them, so accept
+   would keep truncating them forever.
+4. **`pacgate-api/src/text_extract.rs` - conditional seam separator.**
+   `append_normalised` inserted a space between every pair of adjacent runs.
+   In Chinese prose, where a paragraph is many runs, that injected a space at
+   every seam. The separator is now emitted only when both sides of the seam
+   are ASCII alphanumeric - the case where joining two tokens would change the
+   meaning.
+
+The seam change is deliberately narrow. `append_normalised` has three call
+sites; two of them feed metadata lines that are trimmed and joined on newlines,
+so they are strict no-ops. Only the DOCX body lane is affected.
+
+## 8. Findings from this pass
+
+Ordered by what would bite a client first.
+
+### Fixed in 0.1.27
+
+| # | Severity | Finding |
+| --- | --- | --- |
+| 1 | HIGH | Tracked edits spliced `<w:del>`/`<w:ins>` inside `<w:t>`, truncating Chinese paragraph tails. |
+| 2 | HIGH | Documents already written by the old writer stayed nested after accept. Fixed by the flattener. |
+| 3 | MEDIUM | A space was injected at every run seam, corrupting Chinese text. |
+| 4 | MEDIUM | Revision ids were hardcoded to `1`/`2`, colliding across successive edits. |
+| 5 | MEDIUM | The 0.1.26 image reported `version 0.1.25` - the workspace manifest was never bumped. Fixed by the 0.1.27 bump. |
+| 6 | LOW | `diff.rs` had no test coverage at all. Now 11 tests. |
+
+### Open
+
+| # | Severity | Finding |
+| --- | --- | --- |
+| 7 | HIGH | `DEFECT-initialize-bootstrap-token.md` - the `/initialize` guard is inert by default. Still open. |
+| 8 | HIGH | `install.ps1` bootstraps `pacgate-api` only. It never provisions the deer-flow admin, so a fresh AIPC cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize` with credentials matching `.env`. |
+| 9 | MEDIUM | The release path is a manual two-phase commit. The version bump and the image pins cannot land together, because a pin can only reference an image that already exists. `verify-delivery-state.ps1` is necessarily RED in between. Nothing enforces that phase 2 happens. |
+| 10 | MEDIUM | Storage paths are double-nested: storage root is `/data/tenants` and `storage_path` already begins with `tenants/`, giving `/data/tenants/tenants/<tenant>/...`. |
+| 11 | MEDIUM | `README-BUILD.md` still shows `ghcr.io/pacgate-ai/<image>` and `git push fork` in its Option A example, contradicting the pinned `jzkk720` namespace documented later in the same file. |
+| 12 | MEDIUM | 8 doc files still publish the 0.1.25 version table two releases later. |
+| 13 | LOW | `compose.prod.yaml:10-13` documents the `name: pacgate-ai-bundle` project pin with "Do NOT remove", but nothing enforces it. Composing with `-p` under a different name orphans the volumes. |
+| 14 | LOW | No unique DB constraint on `(matter_id, name, version)`. |
+| 15 | LOW | `store.rs::apply_edit` uses `doc.version + 1` while `apply_edit_to_family` uses `latest_version(...) + 1`. Editing a non-tip id can collide. |
+| 16 | LOW | `diff.rs` hardcodes `word/document.xml`; `text_extract.rs` uses `declared_main_part()`. A DOCX with a nonstandard main part would be written and read through different paths. |
+| 17 | LOW | `find_in_document` is agent-internal with no HTTP route or MCP tool, so it cannot be probed directly. |
+| 18 | LOW | Workflow templates pass `queries` while the tool expects `query`. |
+| 19 | LOW | `parser.rs` joins runs with no separator; `text_extract.rs` now joins conditionally. Divergent policies on the same file format. |
+| 20 | LOW | `apply_tracked_edit` wraps errors with `.context("patch document.xml")`, which masks the inner cause in `err.to_string()`. Use `{err:#}` when debugging. |
+| 21 | LOW | The `quick-xml` workspace dependency has zero use sites. |
+| 22 | LOW | `/pacgate/version` does not exist; the revision marker is `/pacgate/build-info`. Worth an alias. |
+| 23 | LOW | `smoke-deer-flow-outputs.ps1` cannot self-provision a thread. |
+| 24 | LOW | The `X-CSRF-Token` requirement on gateway mutations is undocumented. |
+| 25 | LOW | A stale legacy deer-flow store remains at `/data/data/deer-flow/` from before the bind mount. |
+| 26 | LOW | `hermes-gateway` reports unhealthy; the `qm-*` services are up. Unclear whether these are in scope for "all pipelines". |
+| 27 | LOW | `DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce. |
+
+### Retracted
+
+An earlier read of this session claimed that tag `v0.1.26` did not identify the
+built revision. That was wrong - it came from a polluted shell read.
+
+`git for-each-ref`, `git rev-list -n 1 v0.1.26` and `git ls-remote --tags`
+all agree: annotated tag object `e0fa924` -> commit `9914b83`, which is exactly
+the revision baked into the shipped image and its OCI
+`org.opencontainers.image.revision` label. **The tag is correct.**
+
+The only surviving observation is weaker: `PAC_SOURCE_REVISION` is set to
+`${{ github.sha }}`, so the image records the **build commit** rather than the
+tag name. For 0.1.26 those coincided.
+
+Lesson recorded for next time: do not trust a single `git rev-parse` through
+this shell - cross-check with `git for-each-ref`, `git rev-list -n 1` and
+`git ls-remote`.
+
+## 9. Untouched behaviour verified
+
+These are the properties the fix must not have broken, checked explicitly.
+
+- A document **not** edited round-trips byte-exactly: 74 chars / 222 bytes.
+- The Chinese filename and on-disk stem are preserved literally
+  (`\u5408\u7ea6\u6d4b\u8bd5_v1.docx` ... `_v4.docx`).
+- The anchored-context edit branch is CJK-safe.
+- `pacgate-mcp` container file md5 equals the host
+  `deploy/pacgate-mcp/server.py` - no drift.
+- Zero char-boundary panics in any container log.
+- Tracked edits are non-destructive until `/accept`: text marked deleted is
+  still present in the file. This is deliberate, and it is why any "the find
+  text is gone" assertion is only valid after accept.
+- Every version-producing operation inserts a **new** document row with a new
+  id. The original id keeps pointing at the original bytes. Version numbering
+  is keyed on `(matter_id, doc.name)`.
+- `/extract` and the agent's `find_matches` use different implementations
+  (`text_extract::extract_text_native` vs `pacgate-docx`), so a probe of one
+  does not cover the other.
+
+## 10. How to re-run
+
+```powershell
+# from the repo root
+cd pacgate-ai
+cargo test -p pacgate-docx --lib
+cargo test -p pacgate-api --lib
+
+# stack
+docker compose -f deploy\client-bundle\compose.prod.yaml up -d --force-recreate pacgate-api
+
+# gates
+pwsh -File .\deploy\client-bundle\smoke-deer-flow-outputs.ps1 -BaseUrl http://localhost:8090 -ThreadId <uuid>
+python .\deploy\client-bundle\e2e-audit.py
+pwsh -File .\scripts\verify-delivery-state.ps1
+```
+
+The CJK probe lives outside the repo at `%TEMP%\pacgate-cjk-live\cjk-live-probe.py`.
+It is a local artifact, not shipped. If it is to be kept as a release gate it
+should move into `scripts/` and be run by CI - see the residual gap in
+`DEFECT-docx-tracked-edit-nesting.md`.

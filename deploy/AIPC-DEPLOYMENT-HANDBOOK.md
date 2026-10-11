@@ -1,7 +1,7 @@
 # Pacgate AI - Two-AIPC Deployment Handbook
 
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
-> Targets release 0.1.23 — handbook updated 2026-10-05
+> Targets release 0.1.27 - handbook updated 2026-10-11
 > Chinese version: [AIPC-DEPLOYMENT-HANDBOOK-ZH.md](AIPC-DEPLOYMENT-HANDBOOK-ZH.md)
 > Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`. PowerShell 7 (`pwsh`) is optional - the installer prefers it and falls back to built-in PowerShell 5.1, which everything it runs is compatible with.
 
@@ -96,11 +96,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.25` | Published, public. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.25` | Published, public. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.25` | Published, public. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25` | Published, public. |
-| `ghcr.io/jzkk720/ocr-service:0.1.25` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
+| `ghcr.io/jzkk720/pacgate-api:0.1.27` | Published, public. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | Published, public. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | Published, public. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | Published, public. |
+| `ghcr.io/jzkk720/ocr-service:0.1.27` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed
@@ -108,7 +108,7 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 > live namespace is `jzkk720` and publishing moved there in plan 016. The old
 > `pacgate-ai/...-frontend-pacgate:0.1.0` row was also labelled "Published" while
 > returning **404** - it never resolved. All five `jzkk720/*` images at the current
-> pin (0.1.23, table above) return HTTP 200 anonymously.
+> pin (0.1.27, table above) return HTTP 200 anonymously.
 
 **Historical release table (retained for provenance, superseded):**
 
@@ -269,7 +269,7 @@ curl http://localhost:8089/pacgate/health
 
 Expected: all eight containers running (pacgate-db, pacgate-api, deer-flow,
 deer-flow-frontend, pacgate-mcp, ocr-service, openviking, nginx); `/version` returns
-`{"version":"0.1.23","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
+`{"version":"0.1.27","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
 
 > **Do not probe `/health` at the nginx root.** nginx routes `/` to the deer-flow frontend
 > by design, so `curl http://localhost:8089/health` returns the frontend's 404 page - that

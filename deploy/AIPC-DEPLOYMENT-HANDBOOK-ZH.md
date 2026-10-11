@@ -1,7 +1,7 @@
 # Pacgate AI - 双 AIPC 部署手册
 
 > 在每台机器上克隆仓库，运行相同的安装步骤，两台机器即可完全运行 deer-flow 研究与 qm 协作。
-> 版本 0.1.23 - 2026-10-05
+> 版本 0.1.27 - 2026-10-11
 > 英文版本：[AIPC-DEPLOYMENT-HANDBOOK.md](AIPC-DEPLOYMENT-HANDBOOK.md)
 > 前置条件：Docker Desktop、Ollama、Node.js 24+。`install.ps1` 会拉取 `ollama-models.txt` 中列出的模型。
 
@@ -96,15 +96,15 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.25` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.25` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.25` | 已发布，公开。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25` | 已发布，公开。 |
-| `ghcr.io/jzkk720/ocr-service:0.1.25` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
+| `ghcr.io/jzkk720/pacgate-api:0.1.27` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.27` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.27` | 已发布，公开。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.27` | 已发布，公开。 |
+| `ghcr.io/jzkk720/ocr-service:0.1.27` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
-> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.23，见上表）匿名拉取均返回 HTTP 200。
+> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.27，见上表）匿名拉取均返回 HTTP 200。
 
 **历史发布表（保留以追溯，已被取代）：**
 
@@ -257,7 +257,7 @@ curl http://localhost:8089/pacgate/health
 
 预期：八个容器全部运行（pacgate-db、pacgate-api、deer-flow、deer-flow-frontend、
 pacgate-mcp、ocr-service、openviking、nginx），`/version` 返回
-`{"version":"0.1.23","revision":"<git sha>"}`，且 `/pacgate/health` 返回 `ok`。
+`{"version":"0.1.27","revision":"<git sha>"}`，且 `/pacgate/health` 返回 `ok`。
 
 > **不要在 nginx 根路径探测 `/health`。** nginx 按设计将 `/` 路由到 deer-flow 前端，
 > `curl http://localhost:8089/health` 会返回前端的 404 页面——看似失败，实为正确路由。
@@ -495,7 +495,7 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 ### 核心栈
 
 - [ ] `docker compose -f compose.prod.yaml ps` 显示 8 个服务运行（含 openviking、pacgate-mcp、ocr-service、deer-flow-frontend）
-- [ ] `curl http://localhost:8089/version` 返回 0.1.23；`curl http://localhost:8089/pacgate/health` 返回 `ok`
+- [ ] `curl http://localhost:8089/version` 返回 0.1.27；`curl http://localhost:8089/pacgate/health` 返回 `ok`
 - [ ] `curl http://localhost:1933/health` 返回健康 JSON
 - [ ] Postgres 有 `pacgate-law` 租户
 - [ ] 管理员用户可以在 `http://localhost:8089/api/auth/login` 登录
