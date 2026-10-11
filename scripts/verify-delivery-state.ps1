@@ -64,10 +64,19 @@ foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow
     $status = 'ERROR'
     try {
         $tok = Invoke-RestMethod -Uri "https://ghcr.io/token?scope=repository:$repo`:pull&service=ghcr.io" -Method Get
-        $r = Invoke-WebRequest -Uri "https://ghcr.io/v2/$repo/manifests/$V" -Method Head -Headers @{ Authorization = "Bearer $($tok.token)"; Accept = $accept }
+        # -UseBasicParsing is REQUIRED. Without it Windows PowerShell 5.1
+        # dispatches to the IE-based parser, which has no document to build for a
+        # HEAD response and throws NullReferenceException - so this gate failed on
+        # the default Windows shell while passing on PowerShell 7.
+        $r = Invoke-WebRequest -Uri "https://ghcr.io/v2/$repo/manifests/$V" -Method Head -UseBasicParsing -Headers @{ Authorization = "Bearer $($tok.token)"; Accept = $accept }
         $status = "$($r.StatusCode)"
     }
-    catch { $status = "$($_.Exception.Response.StatusCode.value__)" }
+    catch {
+        # A transport failure (DNS, TLS, timeout) leaves Response null; keep the
+        # ERROR marker so it is never confused with a real registry answer.
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code) { $status = "$code" } else { $status = "ERROR" }
+    }
     Line "${img}:$V" $status ($status -eq '200')
 }
 
