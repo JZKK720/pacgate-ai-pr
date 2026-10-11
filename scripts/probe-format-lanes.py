@@ -26,9 +26,15 @@ It is NOT wired into run-all-checks.ps1: it needs a live stack + OCR weights and
 costs ~10-20s on a cold OCR cache, so it is a diagnostic you run on demand.
 
 Usage:
+  pip install requests python-docx        # python-docx builds the .docx fixture
   python scripts/probe-format-lanes.py
   python scripts/probe-format-lanes.py --base-url http://localhost:8089/pacgate
   python scripts/probe-format-lanes.py --keep-artifacts
+
+The .docx fixture goes through python-docx rather than a hand-built zip, because
+a real client sends a real .docx. Both dependencies are imported lazily, so a
+missing one surfaces only when that format is reached - the usage block above
+is the list that matters.
 
 Exit: 0 = probe completed (whatever the findings), 2 = could not check.
 """
@@ -257,6 +263,13 @@ def main() -> int:
         row: dict[str, Any] = {"format": fmt, "filename": filename}
         try:
             blob = builder()
+        except ImportError as e:  # a missing dependency is not a finding about the stack
+            print(
+                f"FATAL: the {fmt} fixture needs a library that is not installed: {e}\n"
+                f"       pip install requests python-docx",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from e
         except Exception as e:  # a fixture builder failing is a probe problem
             row["error"] = f"fixture build failed: {e}"
             results.append(row)

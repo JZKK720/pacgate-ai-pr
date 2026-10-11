@@ -460,13 +460,14 @@ open work. The four live-stack gates also passed: `test-empty-extraction-gate`
 (15/15), `test-text-native-sanitize` (59/59), `smoke-full-stack` ("every
 reachable lane passed"), `test-auth-provisioning-gate` (8/8).
 
-Four suites are outside that runner and were run by hand. Three pass and are
+Several suites sit outside that runner and were run by hand. Three pass and are
 recorded in 10.6: `report-ghcr-digests.ps1` (exit 0, five images),
 `probe-mcp-workflow-count.py` (in-container, exit 0, 222 workflows),
 `test-legal-journey.ps1` (`full legal journey PASSED`, 19 assertions, exit 0).
-The fourth - `test-legal-journey.ps1`'s first failure - is recorded there too:
-it was my scratch compose copy's nested `workflows/workflows/` layout, not a
-repo defect. The repo tree serves 222 workflows.
+`test-legal-journey.ps1`'s first failure is recorded there too: it was my
+scratch compose copy's nested `workflows/workflows/` layout, not a repo defect.
+The repo tree serves 222 workflows. Three further diagnostic probes are
+recorded in 10.7, and all three pass.
 
 ### 10.1 What the first sweep found
 
@@ -676,6 +677,49 @@ PowerShell 5.1. The sections explicitly headed "Historical / superseded" are
 left untouched - they are the record of the model this one replaced, and
 rewriting them would destroy the evidence of the inversion.
 
+### 10.7 The three diagnostic probes outside the sweep
+
+`run-all-checks.ps1` deliberately does not run these - each needs a live stack,
+and one needs warm OCR weights. They were run by hand against the 0.1.27 stack
+and all three pass.
+
+| Probe | Result | Exit |
+|---|---|---|
+| `scripts\probe-format-lanes.py` | every supported format passes the sanitize gate | 0 |
+| `scripts\test-ocr-extraction.ps1` | PNG is OCR'd with coordinates; `incomplete == false` | 0 |
+| `scripts\mcp-probe.py` | MCP initializes and lists 19 tools | 0 |
+
+**The format-lanes probe disproves a claim in an earlier report.** That report
+asserted the sanitizer lane is "PDF only" and that `.docx`/`.txt` fail through a
+"text path in `extract.rs`". The probe carries a mechanism, so the mechanism is
+falsifiable, and it is false:
+
+| Format | Upload | Extract | `incomplete` | Sanitize | Redactions |
+|---|---|---|---|---|---|
+| `.pdf` | 200 | 200 | `false` | 200 | 2 |
+| `.docx` | 200 | 200 | `false` | 200 | 2 |
+| `.txt` | 200 | 200 | `false` | 200 | 2 |
+| `.md` | 200 | 200 | `false` | 200 | 2 |
+| `.png` | **400** | - | - | - | - |
+
+Only `.png` fails, and it fails at the **upload allowlist with an explicit 400**
+naming the supported set - not silently, and not through any text path. There is
+no PDF-only lane and no `extract.rs` defect here. The `pacgate_sanitize_text`
+MCP wire path independently returns `pass` with 2 redactions.
+
+This is the second belief in this file that a probe overturned by measuring
+instead of inferring (the first being the tag-provenance finding, retracted in
+§8). Both had a plausible mechanism and were wrong. The lesson is recorded
+rather than the conclusion alone: **a mechanism attached to a claim is what
+makes the claim testable - attach one, then run it before writing it down.**
+
+The OCR gate builds its fixture PNG inside the container because Pillow is
+there, and confirms `engine=paddleocr`, one span at `page=1`, and non-negative
+span coordinates. `mcp-probe.py` must run **inside `pacgate-mcp`** - it binds
+`127.0.0.1:8000`, which does not exist on the host. Its 19-tool list is the
+current MCP surface; `probe-mcp-workflow-count.py` measures the workflow
+library the same way on the same lane.
+
 ## 11. How to re-run
 
 ```powershell
@@ -705,7 +749,16 @@ Suites outside `run-all-checks.ps1`, all verified on the 0.1.27 stack:
 ```powershell
 pwsh -File .\scripts\test-legal-journey.ps1           # 19 assertions
 pwsh -File .\scripts\report-ghcr-digests.ps1          # 5 images, tag == latest
-# must run INSIDE pacgate-mcp - it binds 127.0.0.1:8000 there:
+pwsh -File .\scripts\test-ocr-extraction.ps1          # OCR, needs Docker
+
+# needs the repo venv plus `pip install requests python-docx` (python-docx is
+# how every fixture builder in this repo makes a real .docx)
+.\.venv\Scripts\python.exe .\scripts\probe-format-lanes.py
+
+# these two must run INSIDE pacgate-mcp - they bind 127.0.0.1:8000 there, which
+# does not exist on the host, so a host invocation fails with WinError 10061
+docker cp scripts\mcp-probe.py pacgate-mcp:/tmp/
+docker exec pacgate-mcp python3 /tmp/mcp-probe.py
 docker cp scripts\probe-mcp-workflow-count.py pacgate-mcp:/tmp/
 docker exec pacgate-mcp python3 /tmp/probe-mcp-workflow-count.py
 ```
