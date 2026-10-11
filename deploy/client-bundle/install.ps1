@@ -284,7 +284,9 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
         (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and $envVars['OPENVIKING_CONF_CONTENT']))
     if ($needsRender -and $envVars.ContainsKey('OPENVIKING_ROOT_API_KEY') -and
         $envVars['OPENVIKING_ROOT_API_KEY'] -notmatch '^change-me') {
-        $conf = Get-Content $ovTemplate -Raw
+        # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
+        # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
+        $conf = Get-Content $ovTemplate -Raw -Encoding UTF8
         $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
         $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
         # Append with an explicit leading newline: PowerShell 5.1's Add-Content
@@ -345,7 +347,9 @@ if (Test-Path $dfTemplate) {
             # placeholder is a no-op and leaves a literal ${...} in the rendered
             # file, which makes openviking return 401 and rolls back the entire MCP
             # tool load (deer-flow uses asyncio.gather). See handbook finding #2.
-            $df = (Get-Content $dfTemplate -Raw).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
+            # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
+            # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
+            $df = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
 
             $dfExisting = if (Test-Path $dfRendered) {
                 [System.IO.File]::ReadAllText((Join-Path $PWD $dfRendered))
@@ -486,7 +490,7 @@ else {
 # 5. Pull models (first install only)
 if (-not $Update) {
     Write-Host "`nPulling Ollama models (this takes a while on first run)..." -ForegroundColor Cyan
-    foreach ($model in Get-Content ollama-models.txt) {
+    foreach ($model in Get-Content ollama-models.txt -Encoding UTF8) {
         if ($model -and -not $model.StartsWith("#")) {
             Write-Host "  Pulling $model..." -ForegroundColor Yellow
             ollama pull $model
@@ -969,7 +973,9 @@ if ($Update) {
     # something rather than printed with nothing to check it against.
     $pinned = $null
     try {
-        $composeTxt = Get-Content compose.prod.yaml -Raw
+        # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
+        # ANSI/GBK; compose.prod.yaml carries Chinese comments.
+        $composeTxt = Get-Content compose.prod.yaml -Raw -Encoding UTF8
         $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+)\s*$')
         if ($m.Success) { $pinned = $m.Groups['v'].Value }
     }
