@@ -403,6 +403,38 @@ is cosmetic debt rather than a correctness bug, and `remove_dir_all` would need
 to be scoped carefully to avoid racy deletion of a directory another request is
 writing into.
 
+### 6.7 A doc claim the repo contradicted about itself
+
+Closing out the open-findings table turned up a defect that no gate covers: four
+documents described `pacgate-mcp` as exposing **10 MCP tools** while the live
+bridge enumerates **19**. The AIPC handbook already published 19, so the repo
+disagreed with itself - the same image was described two ways depending on which
+file a reader happened to open.
+
+Measured rather than inferred, because a tool count is exactly the kind of number
+that drifts silently. `scripts/mcp-probe.py` against the running container lists
+19, consistent with the `0.1.27` build-info revision the stack reports:
+
+| Source | Claimed |
+| --- | --- |
+| `scripts/mcp-probe.py` (live, in-container) | **19** |
+| `AIPC-DEPLOYMENT-HANDBOOK.md` / `-ZH.md` | 19 - already correct |
+| `README.md` (L18, L85) | ~~10~~ -> 19 |
+| `README-ZH.md` (L18, L87) | ~~10~~ -> 19 |
+| `SETUP-AND-OPERATIONS.md` (L387) | ~~10~~ -> 19 |
+| `SETUP-AND-OPERATIONS-ZH.md` (L384) | ~~10~~ -> 19 |
+
+All six sites corrected with English/Chinese parity preserved. Dated records that
+report the count as it was at their time of writing (`BENCHMARK-REPORT-2026-10-09-v0.1.25.md`
+says 15, `AUDIT-E2E-2026-10-01.md` says 16) are historical evidence, not live
+guidance, and are deliberately left alone.
+
+**No gate caught this, and none should be expected to.** A doc claim about a
+runtime count is not something a text-based gate can verify without becoming a
+live-stack gate. The honest mitigation is the same one that found it: fold a
+tool-count assertion into the MCP probe, which already runs against the live
+stack. That is a proposal, not a change made here.
+
 ## 7. The fix, as shipped
 
 Four source changes, all in this release.
@@ -459,12 +491,12 @@ Ordered by what would bite a client first.
 
 | # | Severity | Finding |
 | --- | --- | --- |
-| O1 | HIGH | `DEFECT-initialize-bootstrap-token.md` - the `/initialize` guard is inert by default. Still open. |
-| O2 | HIGH | `install.ps1` bootstraps `pacgate-api` only. It never provisions the deer-flow admin, so a fresh AIPC cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize` with credentials matching `.env`. |
+| O1 | HIGH | `DEFECT-initialize-bootstrap-token.md` - the `/initialize` guard is inert by default, and it **cannot be armed by config alone**. Proven this pass from the shipped bundle, not from source: the first-run wizard in the built frontend posts `{"email":...,"password":...}` with **no token field** (`fetch("/api/v1/auth/initialize",{method:"POST",...,body:JSON.stringify({email:v,password:b})})`, identical in all three chunks that carry it), and `grep -rl -i -e setup_token -e setuptoken -e PACGATE_SETUP /app/frontend/.next` returns **nothing**. So setting `PACGATE_SETUP_TOKEN` makes the wizard get 403 and the first admin can never be created through the UI - arming it alone is strictly worse than leaving it inert. Exposure window is narrow (fresh install, LAN, before an admin exists; the endpoint answers 409 once one does - verified live, `/api/v1/auth/setup-status` returns `{"needs_setup":false}`). Fix requires two coordinated changes: provision the token in both compose files and print it from `install.ps1`, **and** teach the wizard to send it, which means rebuilding the frontend image. Left open deliberately. |
+| O2 | ~~HIGH~~ LOW | ~~`install.ps1` bootstraps `pacgate-api` only. It never provisions the deer-flow admin, so a fresh AIPC cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize` with credentials matching `.env`.~~ **The second sentence was wrong and is retracted - see Retracted below.** What is true: `install.ps1` bootstraps `pacgate-api`'s admin (against Postgres, via the `/pacgate/` prefix) and leaves deer-flow's own admin to the upstream first-run wizard, which is present, reachable and self-driving: `/app/frontend/.next/server/app/(auth)/setup/page.js` is in the built image, `GET /api/v1/auth/setup-status` answers 200 on the live stack through both ports, `/setup` serves 200 through nginx, and the frontend redirects there on its own (`fetch("/api/v1/auth/setup-status").then(e=>e.json()).then(t=>{!e&&t.needs_setup&&d.push("/setup")})`). Residual gap is documentation only: `install.ps1`'s closing output lists `/`, `/api/` and `/research/` but never says the research lane starts with a one-time browser setup. Not worth fixing by pre-seeding - that would couple the installer to deer-flow's upstream SQLite schema (`/app/backend/.deer-flow/data/deerflow.db`, `SQLiteUserRepository`), which the `deer-flow-auth.py` patch already exists to avoid. |
 | O3 | MEDIUM | The release path is a manual two-phase commit. The version bump and the image pins cannot land together, because a pin can only reference an image that already exists. `verify-delivery-state.ps1` is necessarily RED in between. Nothing enforces that phase 2 happens. |
-| O4 | MEDIUM | Storage paths are double-nested: storage root is `/data/tenants` and `storage_path` already begins with `tenants/`, giving `/data/tenants/tenants/<tenant>/...`. |
+| O4 | MEDIUM | Storage paths are double-nested. Root cause proven this pass: `compose.prod.yaml` sets `DATA_DIR: /data/tenants`, but `tenant_dir` (`pacgate-tenant/src/lib.rs:23`) and `rel_path` (`store.rs:360`) already prefix `tenants/`, so both sides agree and the result is `/data/tenants/tenants/<tenant>/...`. Self-consistent, so nothing breaks - but the fix requires migrating every existing client's directory tree, which is why it is left open rather than folded into a patch release. |
 | O5 | MEDIUM | ~~`README-BUILD.md` still shows `ghcr.io/pacgate-ai/<image>` and `git push fork` in its Option A example.~~ **FIXED this pass - see 10.6.** The live-guidance sections now name `jzkk720`; the clearly-labelled "Historical / superseded" sections are left as record. |
-| O6 | MEDIUM | 8 doc files still publish the 0.1.25 version table two releases later. |
+| O6 | MEDIUM | ~~8 doc files still publish the 0.1.25 version table two releases later.~~ **FIXED this pass.** Re-measured before closing: `git grep -l 0.1.25 -- '*.md'` now returns **exactly two** files - this report, and `BENCHMARK-REPORT-2026-10-09-v0.1.25.md`, a dated record whose own filename carries the version. Zero live-guidance docs name 0.1.25. The same four files also described `pacgate-mcp` as exposing "10 MCP tools" against a live count of 19; corrected this pass - see 6.7. |
 | O7 | MEDIUM | `test-pdf-freshness.ps1` section 1 compares mtimes, not content, so it cannot detect a content-stale PDF whose mtime is newer - which is how the Chinese handbook stayed stale for two releases. See 10.5. |
 | O8 | LOW | `compose.prod.yaml:10-13` documents the `name: pacgate-ai-bundle` project pin with "Do NOT remove", but nothing enforces it. Composing with `-p` under a different name orphans the volumes. |
 | O9 | LOW | No unique DB constraint on `(matter_id, name, version)`. |
@@ -480,7 +512,7 @@ Ordered by what would bite a client first.
 | O19 | LOW | The `X-CSRF-Token` requirement on gateway mutations is undocumented. |
 | O20 | LOW | A stale legacy deer-flow store remains at `/data/data/deer-flow/` from before the bind mount. |
 | O21 | LOW | `hermes-gateway` reports unhealthy; the `qm-*` services are up. Unclear whether these are in scope for "all pipelines". |
-| O22 | LOW | `DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce. |
+| O22 | LOW | ~~`DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce.~~ **FIXED this pass.** The stanza is a deliberate record of an abandoned approach, but its `0.1.25` tag sat directly between two live `0.1.27` pins, so it read as a real pin. Now deliberately untagged. |
 | O23 | LOW | `delete_document_family` (`pacgate-docx/src/store.rs:307`) removes each version's file and its rows but never the containing directories, so every document family leaves a permanent empty `matters/<matter>/docs/` shell behind. Measured live: 26 matter directories on disk against 2 live matters, all 0 files. Compounded by the matter route having no cascade, so deleting a matter strands its docs' directories too. |
 
 ### Retracted
@@ -500,6 +532,29 @@ tag name. For 0.1.26 those coincided.
 Lesson recorded for next time: do not trust a single `git rev-parse` through
 this shell - cross-check with `git for-each-ref`, `git rev-list -n 1` and
 `git ls-remote`.
+
+
+**O2's original framing - RETRACTED 2026-10-11.** The row asserted that "a fresh AIPC
+cannot use deer-flow until someone runs a manual `POST /api/v1/auth/initialize`". That
+is not what the shipped system does. Measured counter-evidence:
+
+- deer-flow's users live in deer-flow's **own SQLite** store, not in `pacgate-api`'s
+  Postgres. In the running container, `/app/backend/.deer-flow/data/deerflow.db` holds
+  table `users` with the `admin@pacgate-law.com` row, written through
+  `SQLiteUserRepository` via `get_local_provider()`. The installer's
+  `/pacgate/api/auth/register` writes to Postgres - a different database.
+- The upstream first-run wizard **is** in the built frontend:
+  `/app/frontend/.next/server/app/(auth)/setup/page.js` exists, and the login page
+  redirects to it by itself when `needs_setup` is true.
+- It answers on the live stack: `GET /api/v1/auth/setup-status` -> 200
+  `{"needs_setup":false}` on both `:8090` and `:8089`, and `/setup` -> 200 through nginx.
+- So the browser wizard is the designed first-admin path for deer-flow, and it works.
+  `AIPC-DEPLOYMENT-HANDBOOK.md:33-37` already documents it ("then re-run `/setup`").
+
+`install.ps1` deliberately bootstraps **pacgate-api's** admin and leaves deer-flow's to
+the wizard. The real, much smaller gap is that the installer's closing output never
+mentions the one-time browser setup for the research lane. Downgraded to LOW, see O2
+above.
 
 ## 9. Untouched behaviour verified
 

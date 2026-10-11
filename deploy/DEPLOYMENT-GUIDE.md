@@ -188,7 +188,10 @@ services:
     # NOTE: this image does not exist and was never published. qm runs via
     # `qm up` from deploy/qm-pacgate/ (see §1.3 above), NOT as a compose service.
     # This stanza is retained only to document the abandoned approach.
-    image: ghcr.io/jzkk720/qm-pacgate:0.1.25
+    # Deliberately untagged: there is no qm-pacgate image in any registry, so a
+    # version tag here would read as a real pin sitting next to the live 0.1.27
+    # pins above. Do not add one.
+    image: ghcr.io/jzkk720/qm-pacgate
     container_name: qm
     depends_on: [pacgate-api]
     environment:
