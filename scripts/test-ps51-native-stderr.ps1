@@ -50,6 +50,19 @@ $clientScripts = @(
     'deploy/client-bundle/smoke-deer-flow-outputs.ps1'
 )
 
+# Scripts OUTSIDE the client bundle fixed for the same defect class. They never ship
+# to a client, but three are OPERATIONAL (release dispatch, GHCR login, MCP call) and
+# one is a SECURITY gate; every one of them silently did nothing under 5.1. They are
+# checked for the PowerShell 7-only parameter class only - they are dev-side and run
+# under pwsh, so they are not held to the client scripts' stderr-redirection rules.
+$repoScripts = @(
+    'scripts/ov-mcp-call.ps1'
+    'scripts/ghcr-login.ps1'
+    'scripts/dispatch-release-via-api.ps1'
+    'scripts/test-install-render.ps1'
+    'scripts/test-auth-provisioning-gate.ps1'
+)
+
 $pass = 0
 $fail = 0
 function Check($name, $cond, $detail = '') {
@@ -137,6 +150,23 @@ try {
         $path = Join-Path $repoRoot $rel
         $name = Split-Path $rel -Leaf
         if (-not (Test-Path $path)) { continue }
+        $exec = @()
+        $n = 0
+        foreach ($l in (Get-Content $path)) {
+            $n++
+            if ($l -match '^\s*#') { continue }
+            if ($l -match 'SkipHttpErrorCheck|StatusCodeVariable|AsHashtable|AsByteStream|ProgressAction|FollowSymlink') { $exec += $n }
+        }
+        Check "$name has no PowerShell 7-only parameters" ($exec.Count -eq 0) "lines: $($exec -join ', ')"
+    }
+
+    # The same class, in the repo-side scripts fixed alongside them.
+    Write-Host ''
+    Write-Host 'STATIC: no PowerShell 7-only parameters in the fixed repo scripts'
+    foreach ($rel in $repoScripts) {
+        $path = Join-Path $repoRoot $rel
+        $name = Split-Path $rel -Leaf
+        if (-not (Test-Path $path)) { Check "$name exists" $false $path; continue }
         $exec = @()
         $n = 0
         foreach ($l in (Get-Content $path)) {

@@ -103,7 +103,12 @@ if (`$d -notlike '*_stubs*') {
     if (Test-Path $rendered) {
         $txt = Get-Content $rendered -Raw
         Check 'placeholder substituted (no literal ${...})' (-not ($txt -match '\$\{OPENVIKING'))
-        Check 'no BOM written' (-not ((Get-Content $rendered -AsByteStream -TotalCount 3) -join ',' -eq '239,187,191'))
+        # -AsByteStream is PowerShell 7-only and throws ParameterBindingException on
+        # the built-in 5.1, so this check silently did not run on a client AIPC.
+        # [System.IO.File]::ReadAllBytes works on both shells.
+        $head = [System.IO.File]::ReadAllBytes($rendered)
+        $first3 = if ($head.Length -ge 3) { ($head[0..2] -join ',') } else { '' }
+        Check 'no BOM written' (-not ($first3 -eq '239,187,191'))
     }
     $mtime1 = if (Test-Path $rendered) { (Get-Item $rendered).LastWriteTimeUtc } else { $null }
     Write-Host ''

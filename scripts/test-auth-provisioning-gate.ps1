@@ -58,6 +58,40 @@ function Check($name, $cond, $detail = '') {
     }
 }
 
+# Probe an endpoint and return an object with StatusCode / Content / Headers, or
+# $null when the transport itself failed. No -SkipHttpErrorCheck.
+#
+# WHY: that parameter is PowerShell 7-only. Under the built-in Windows PowerShell 5.1
+# it raises ParameterBindingException BEFORE the request is sent, so on a client AIPC
+# this gate could never contact the API at all: the preflight below reported "health is
+# not answering" and every probe returned $null, so the gate exited 2 having verified
+# NOTHING. It was fail-safe (never a false PASS) but useless on the client's own shell.
+# Same class as the defect fixed in deploy/client-bundle/install.ps1 - see
+# deploy/DEFECT-ps51-native-stderr.md.
+#
+# The body of a non-2xx reply is read from $_.ErrorDetails.Message. Measured on both
+# shells: PS 5.1's HttpWebResponse stream reads EMPTY (PowerShell has already consumed
+# it) and PS 7's HttpResponseMessage.Content is DISPOSED by the time the catch runs.
+function Invoke-Probe {
+    param([string]$Method, [string]$Uri, $Headers, $Body)
+    $p = @{ Uri = $Uri; Method = $Method; TimeoutSec = 20; UseBasicParsing = $true }
+    if ($Headers) { $p.Headers = $Headers }
+    if ($Body)    { $p.Body = $Body; $p.ContentType = 'application/json' }
+    try {
+        $r = Invoke-WebRequest @p
+        return [pscustomobject]@{ StatusCode = [int]$r.StatusCode; Content = [string]$r.Content; Headers = $r.Headers }
+    }
+    catch {
+        $wr = $_.Exception.Response
+        if (-not $wr) { return $null }
+        return [pscustomobject]@{
+            StatusCode = [int]$wr.StatusCode
+            Content    = [string]$_.ErrorDetails.Message
+            Headers    = $null
+        }
+    }
+}
+
 $BaseUrl = "http://localhost:$Port/$Prefix"
 
 # A probe identity unique per run, so a leaked row is identifiable in the DB.
@@ -71,11 +105,8 @@ Write-Host "  target: $BaseUrl" -ForegroundColor Gray
 # ── Preflight: is the stack even up? ─────────────────────────────────────────
 # Exit 2 (CANNOT CHECK) rather than 1. A gate that fails when nothing is running
 # trains people to ignore it, and then it cannot warn them when something is.
-$preflight = $null
-try {
-    $preflight = Invoke-WebRequest -Uri "$BaseUrl/health" -TimeoutSec 10 -SkipHttpErrorCheck
-} catch { }
-if (-not $preflight -or $preflight.StatusCode -ne 200) {
+$preflight = Invoke-Probe -Method Get -Uri "$BaseUrl/health"
+if ($null -eq $preflight -or $preflight.StatusCode -ne 200) {
     Write-Host "[SKIP] CANNOT CHECK: $BaseUrl/health is not answering." -ForegroundColor Yellow
     Write-Host "       Start the stack (.\deploy\client-bundle\install.ps1) and re-run." -ForegroundColor Yellow
     exit 2
@@ -100,13 +131,7 @@ if (-not $adminEmail -or -not $adminPass) {
 
 # Returns the response object, or $null on a transport failure. Status codes are
 # read from the object, never inferred from an exception message.
-function Invoke-Probe {
-    param([string]$Method, [string]$Uri, $Headers, $Body)
-    $p = @{ Uri = $Uri; Method = $Method; SkipHttpErrorCheck = $true; TimeoutSec = 20 }
-    if ($Headers) { $p.Headers = $Headers }
-    if ($Body)    { $p.Body = $Body; $p.ContentType = 'application/json' }
-    try { return Invoke-WebRequest @p } catch { return $null }
-}
+# (Invoke-Probe is defined above the preflight so both paths share one implementation.)
 
 function Remove-ProbeAccount {
     if (-not $probeEmail) { return }

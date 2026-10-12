@@ -149,12 +149,17 @@ not work, measured on both shells: PS 5.1's `HttpWebResponse` stream reads
 ## The gate
 
 `scripts/test-ps51-native-stderr.ps1`, registered in `run-all-checks.ps1`.
-**28 assertions.**
+**33 assertions.**
 
 - **Static:** no executable `2>&1` survives in any client script; every
   `2>$null` / `*>` site is inside the helper; the helper is defined and used; and
   **no PowerShell 7-only parameter** (`-SkipHttpErrorCheck`, `-StatusCodeVariable`,
-  `-AsHashtable`, `-AsByteStream`, `-ProgressAction`, `-FollowSymlink`) appears.
+  `-AsHashtable`, `-AsByteStream`, `-ProgressAction`, `-FollowSymlink`) appears - in
+  the three client scripts **and** in the five repo-side scripts fixed alongside them
+  (`ov-mcp-call.ps1`, `ghcr-login.ps1`, `dispatch-release-via-api.ps1`,
+  `test-install-render.ps1`, `test-auth-provisioning-gate.ps1`). Those five are
+  checked for the parameter class only: they are dev-side and run under `pwsh`, so
+  they are not held to the client scripts' stderr-redirection rules.
 - **Dynamic:** both helpers are **extracted from `install.ps1` by AST** (so the
   gate cannot drift from the shipped implementation) and run under real
   `powershell.exe` 5.1 - the stderr helper must survive stderr, preserve
@@ -167,7 +172,10 @@ not work, measured on both shells: PS 5.1's `HttpWebResponse` stream reads
 
 Red-green verified. Against the pre-fix `install.ps1` the gate reports 5 executable
 `2>&1` lines, 19 unwrapped redirection sites, 0 helper definitions and 1
-PowerShell 7-only parameter (**line 742**, the register call).
+PowerShell 7-only parameter (**line 742**, the register call). Against the pre-fix
+repo scripts it flags **all five**: `ov-mcp-call.ps1:67`, `ghcr-login.ps1:27`,
+`dispatch-release-via-api.ps1:43`, `test-install-render.ps1:106`, and
+`test-auth-provisioning-gate.ps1:76,105`.
 
 ## Residual
 
@@ -175,6 +183,33 @@ PowerShell 7-only parameter (**line 742**, the register call).
   -Update` (or a fresh clone). **Machines already installed from 0.1.25-0.1.27
   have an empty database** and need the bootstrap re-run - `install.ps1 -Update`
   does this, or the browser wizard at `/setup`.
-- The other ~50 repo `.ps1` files carry the same pattern. Most are dev-side gates
-  run under `pwsh` 7, so they are lower risk; only the client-facing scripts were
-  fixed here.
+- **Measured blast radius (2026-10-13), replacing an earlier guess of "~50 files".**
+  A repo-wide scan for `$ErrorActionPreference = "Stop"` plus an unguarded
+  redirection, excluding `.git`/`node_modules`/`.venv`, over **170 `.ps1` files**
+  found **35**. Of those, only **four tracked files** carried the more dangerous
+  *PowerShell 7-only parameter* class (the defect-2 shape, which fails **silently**
+  rather than aborting) - and a **fifth, a security gate, was missed by that first
+  scan** because it sets `ErrorActionPreference = 'Continue'`, so it never met the
+  scan's precondition. All five are now fixed and covered by the gate:
+  `scripts/ov-mcp-call.ps1` (could not call the MCP server at all under 5.1),
+  `scripts/ghcr-login.ps1` (could not report token scopes), and
+  `scripts/dispatch-release-via-api.ps1` (could not dispatch a release) - all three
+  are **operational** - plus `scripts/test-install-render.ps1` (a BOM assertion that
+   silently did not run) and `scripts/test-auth-provisioning-gate.ps1`, which is the
+  worst of the five: under 5.1 its preflight reported "health is not answering" while
+  the stack was **up and healthy**, and every probe returned `$null`, so it exited 2
+  having verified **nothing**. It was fail-safe (never a false PASS) but it could not
+  check register-refusal, the admin role, or non-admin escalation on the client's own
+  shell. It now runs and passes 8/8 on both shells. The remaining 30 files are
+  *redirection*-only and all gates run under `pwsh`, so they are latent.
+- **`pacgate-docx/src/store.rs:774` (`apply_edit`) is a latent trap, not a live bug.**
+  It is the only one of six version-increment sites using `doc.version + 1` instead of
+  `latest_version(...) + 1`. The schema states the one-version-per-(matter, name)
+  invariant is *"enforced at application level"*, and `insert_doc_row` is a plain
+  `INSERT` with no conflict guard, so a duplicate version row would be accepted and the
+  file path would collide. **Reachability was traced and it is currently unreachable:**
+  the API's edit route calls `apply_edit_to_family` (the correct one), the only
+  `apply_edit` caller is the agent's `edit_document`, `list_for_matter` returns only the
+  latest version per name, and `read_document` **echoes back the id it was given** - so
+  the agent never learns an older revision's uuid. Left unchanged deliberately rather
+  than fixing an unreachable path; it is recorded here so it is not rediscovered.
