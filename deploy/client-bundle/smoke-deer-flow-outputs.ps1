@@ -29,6 +29,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Run a native command that may write to stderr WITHOUT the Windows built-in
+# PowerShell 5.1 turning that stderr into a terminating error.
+#
+# Same defect install.ps1 documents at length: under $ErrorActionPreference =
+# "Stop", PS 5.1 turns ANY native command that writes to stderr into a
+# TERMINATING error when a redirection is attached - `2>&1`, `2>$null` and `*>`
+# are all affected. PowerShell 7 does not. try/catch does not help (the rest of
+# the try block is skipped and the assignment is lost). This lowers the
+# preference for the duration of the scriptblock and restores it; $LASTEXITCODE
+# survives the boundary. A `2>$null` capture is byte-identical to PowerShell 7's.
+function Invoke-WithNativeStderr {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Script } finally { $ErrorActionPreference = $previous }
+}
+
 # ---------------------------------------------------------------------------
 # Resolve credentials from the bundle .env if not passed explicitly.
 # ---------------------------------------------------------------------------
@@ -121,9 +138,9 @@ print(json.dumps({"admin": admin, "threads": threads}))
 '@
 $adminPy | Set-Content -Path (Join-Path $env:TEMP "df-admin.py") -Encoding UTF8
 try {
-    docker cp (Join-Path $env:TEMP "df-admin.py") deer-flow:/tmp/df-admin.py 2>$null | Out-Null
+    Invoke-WithNativeStderr { docker cp (Join-Path $env:TEMP "df-admin.py") deer-flow:/tmp/df-admin.py 2>$null | Out-Null }
     # -w /app/backend so runtime_home() resolves to the same .deer-flow the server uses
-    $adminJson = docker exec -w /app/backend deer-flow /app/backend/.venv/bin/python /tmp/df-admin.py 2>$null | Select-Object -First 1
+    $adminJson = Invoke-WithNativeStderr { docker exec -w /app/backend deer-flow /app/backend/.venv/bin/python /tmp/df-admin.py 2>$null | Select-Object -First 1 }
     $adminData = $adminJson | ConvertFrom-Json
     $adminUserId = $adminData.admin
     $threadsFound = @($adminData.threads)
@@ -166,15 +183,12 @@ print("created:", f)
     $mkFile | Set-Content -Path (Join-Path $env:TEMP "df-mk.py") -Encoding UTF8
     $createdFile = "smoke-test-output.md"
     # Copy into container
-    docker cp (Join-Path $env:TEMP "df-mk.py") deer-flow:/tmp/df-mk.py 2>$null | Out-Null
+    Invoke-WithNativeStderr { docker cp (Join-Path $env:TEMP "df-mk.py") deer-flow:/tmp/df-mk.py 2>$null | Out-Null }
     # Use the venv python (system python3 lacks the app deps) and -w /app/backend so
     # runtime_home() matches the server's .deer-flow location.
-    # NOTE: relax $ErrorActionPreference so the venv python's stderr deprecation
-    # warning (LangChain) doesn't trigger the catch below.
-    $savedEap = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    docker exec -w /app/backend deer-flow /app/backend/.venv/bin/python /tmp/df-mk.py $usedThreadId $adminUserId 2>$null | Out-Null
-    $ErrorActionPreference = $savedEap
+    # The venv python writes a LangChain deprecation warning to stderr, which is
+    # why this goes through the helper rather than a bare call.
+    Invoke-WithNativeStderr { docker exec -w /app/backend deer-flow /app/backend/.venv/bin/python /tmp/df-mk.py $usedThreadId $adminUserId 2>$null | Out-Null }
     Write-Step "created smoke output file: $createdFile"
 } catch {
     Write-Step "could not create output file (may already exist): $($_.Exception.Message)"
@@ -255,11 +269,8 @@ if os.path.exists(f):
     print("removed")
 '@
         $rmFile | Set-Content -Path (Join-Path $env:TEMP "df-rm.py") -Encoding UTF8
-        docker cp (Join-Path $env:TEMP "df-rm.py") deer-flow:/tmp/df-rm.py 2>$null | Out-Null
-        $savedEap = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        docker exec -w /app/backend deer-flow /app/backend/.venv/bin/python /tmp/df-rm.py $usedThreadId $adminUserId 2>$null | Out-Null
-        $ErrorActionPreference = $savedEap
+        Invoke-WithNativeStderr { docker cp (Join-Path $env:TEMP "df-rm.py") deer-flow:/tmp/df-rm.py 2>$null | Out-Null }
+        Invoke-WithNativeStderr { docker exec -w /app/backend deer-flow /app/backend/.venv/bin/python /tmp/df-rm.py $usedThreadId $adminUserId 2>$null | Out-Null }
         Write-Ok "removed smoke test output file"
     } catch {
         Write-Step "cleanup skipped: $($_.Exception.Message)"

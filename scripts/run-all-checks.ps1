@@ -78,6 +78,14 @@ $gates = @(
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
+    # The three install tests above all run the installer under `pwsh` with a
+    # stub docker that prints NOTHING. A stub that never writes to stderr cannot
+    # reproduce a stderr-termination defect, and pwsh does not have the defect.
+    # This gate covers the gap: it asserts no unguarded redirection survives in
+    # the client scripts, then extracts the REAL helper from install.ps1 by AST
+    # and proves it survives stderr under Windows PowerShell 5.1 - with a control
+    # that shows the bare form still dies, so the test cannot pass vacuously.
+    'scripts/test-ps51-native-stderr.ps1'
     'scripts/test-workflow-namespace.ps1'
     # The workflow LIBRARY must be served, not the 10 built-in Rust definitions.
     # This one is STATIC - it reads compose files, needs no containers, no

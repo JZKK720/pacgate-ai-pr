@@ -38,6 +38,37 @@ function Get-QmPowerShell {
 }
 $QmPowerShell = Get-QmPowerShell
 
+# Run a native command that may write to stderr WITHOUT the Windows built-in
+# PowerShell 5.1 turning that stderr into a terminating error.
+#
+# THE DEFECT THIS EXISTS FOR (measured on this box, not theorised):
+#   This script sets $ErrorActionPreference = "Stop" (above). On PowerShell 5.1,
+#   ANY native command that writes to stderr becomes a TERMINATING error when a
+#   redirection is attached - `2>&1`, `2>$null` and `*>` are ALL affected.
+#   `docker compose up -d` writes its progress ("Volume ... Creating",
+#   "Container ... Running") to stderr on EVERY run, so the installer died at
+#   the compose-up step with a NativeCommandError and never reached the tenant
+#   or admin bootstrap. PowerShell 7 does not do this, which is why a dev box
+#   running pwsh never saw it and a client AIPC running the built-in shell did.
+#
+#   try/catch does NOT help: the error is caught, but the remainder of the try
+#   block is skipped and any assignment in flight is silently lost. Verified.
+#
+# WHAT THIS DOES: lowers the preference to "Continue" for the duration of the
+#   scriptblock so stderr is non-terminating, then restores it. $LASTEXITCODE is
+#   preserved across the boundary, so the explicit exit-code checks that follow
+#   still work. A `2>$null` capture is byte-identical to PowerShell 7's.
+#
+# WHAT THIS DOES NOT DO: it does not make a `2>&1 | Out-String` capture match
+#   PowerShell 7 - PS 5.1 still injects NativeCommandError decoration into that
+#   text. That is why the capture sites below use `2>$null`, never `2>&1`.
+function Invoke-WithNativeStderr {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Script } finally { $ErrorActionPreference = $previous }
+}
+
 Write-Host "=== Pacgate-ai Installer ===" -ForegroundColor Cyan
 
 # 1. Check Docker
@@ -45,7 +76,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: Docker Desktop not found. Install from https://docs.docker.com/desktop/" -ForegroundColor Red
     exit 1
 }
-docker info *>$null
+Invoke-WithNativeStderr { docker info *>$null }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Docker daemon not running. Start Docker Desktop." -ForegroundColor Red
     exit 1
@@ -147,7 +178,7 @@ if ($Update -and -not $SkipRepoPull) {
                 $before = (git rev-parse HEAD).Trim()
 
                 # Fetch first so we can decide without merging.
-                git fetch --quiet origin 2>$null
+                Invoke-WithNativeStderr { git fetch --quiet origin 2>$null }
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "[WARN] git fetch failed (offline?) - continuing with the current checkout." -ForegroundColor Yellow
                 }
@@ -156,7 +187,7 @@ if ($Update -and -not $SkipRepoPull) {
                     $remoteRef = "origin/$branch"
 
                     $behind = 0
-                    $counts = git rev-list --left-right --count "$remoteRef...$branch" 2>$null
+                    $counts = Invoke-WithNativeStderr { git rev-list --left-right --count "$remoteRef...$branch" 2>$null }
                     if ($LASTEXITCODE -eq 0 -and $counts) {
                         $behind = [int](($counts -split '\s+')[0])
                     }
@@ -188,10 +219,10 @@ if ($Update -and -not $SkipRepoPull) {
                         # hypothetical. ls-files is used instead of status
                         # because status COLLAPSES whole untracked directories to
                         # "dir/" and the names would never match.
-                        $untracked = @(git -c core.quotepath=false ls-files --others --exclude-standard 2>$null | Where-Object { $_ })
+                        $untracked = Invoke-WithNativeStderr { @(git -c core.quotepath=false ls-files --others --exclude-standard 2>$null | Where-Object { $_ }) }
                         $collisions = @()
                         if ($untracked.Count -gt 0) {
-                            $incoming = @(git -c core.quotepath=false diff --name-only --diff-filter=A "$before" "$remoteRef" 2>$null | Where-Object { $_ })
+                            $incoming = Invoke-WithNativeStderr { @(git -c core.quotepath=false diff --name-only --diff-filter=A "$before" "$remoteRef" 2>$null | Where-Object { $_ }) }
                             $collisions = @($untracked | Where-Object { $incoming -contains $_ })
                         }
 
@@ -230,7 +261,7 @@ if ($Update -and -not $SkipRepoPull) {
 
                                 # Name what changed, so an update is never silent. This
                                 # is the same principle as the config render below.
-                                $changed = git diff --name-only "$before" "$after" 2>$null
+                                $changed = Invoke-WithNativeStderr { git diff --name-only "$before" "$after" 2>$null }
                                 if ($changed) {
                                     Write-Host "     Files changed in this update:" -ForegroundColor DarkGray
                                     $changed | Select-Object -First 12 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
@@ -432,7 +463,7 @@ if ([string]::IsNullOrWhiteSpace($gwCors)) {
     # 8081 while compose declares 8089, and an AIPC may have either.
     $corsPort = $null
     try {
-        $corsPortOut = (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim()
+        $corsPortOut = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim() }
         if ($corsPortOut -match ':(\d+)\s*$') { $corsPort = $Matches[1] }
     } catch { $corsPort = $null }
     if (-not $corsPort) { $corsPort = '8089' }
@@ -691,7 +722,7 @@ function Invoke-Bootstrap {
     #
     # Match on SLUG, and use the same slug the lookup will use.
     $sql = "INSERT INTO tenants (name, slug) SELECT '$($tenantName -replace "'","''")', '$($tenantSlug -replace "'","''")' WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = '$($tenantSlug -replace "'","''")');"
-    $seedOut = docker exec pacgate-db psql -U pacgate -d pacgate -t -c $sql 2>&1
+    $seedOut = Invoke-WithNativeStderr { docker exec pacgate-db psql -U pacgate -d pacgate -t -c $sql 2>$null }
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] tenant '$tenantSlug' present (created if absent)" -ForegroundColor Green
     }
@@ -753,8 +784,8 @@ function Invoke-Bootstrap {
     # Guarded to the configured service account only. It never touches another
     # user, and it reports what it changed.
     $emailLiteral = $apiEmail -replace "'", "''"
-    $roleBefore = (docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
-        "SELECT system_role FROM users WHERE email = '$emailLiteral';" 2>&1 | Out-String).Trim()
+    $roleBefore = Invoke-WithNativeStderr { (docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
+        "SELECT system_role FROM users WHERE email = '$emailLiteral';" 2>$null | Out-String).Trim() }
 
     if ($roleBefore -eq 'admin') {
         Write-Host "  [OK] '$apiEmail' holds the platform admin role" -ForegroundColor Green
@@ -763,8 +794,8 @@ function Invoke-Bootstrap {
         Write-Host "  [INFO] '$apiEmail' exists but is NOT a platform admin (system_role='user')." -ForegroundColor Yellow
         Write-Host "         Promoting it: without this the provisioning route is unreachable," -ForegroundColor Yellow
         Write-Host "         because no principal on this machine would hold the admin role." -ForegroundColor Yellow
-        $upd = docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
-            "UPDATE users SET system_role = 'admin' WHERE email = '$emailLiteral' RETURNING email;" 2>&1 | Out-String
+        $upd = Invoke-WithNativeStderr { docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
+            "UPDATE users SET system_role = 'admin' WHERE email = '$emailLiteral' RETURNING email;" 2>$null | Out-String }
         if ($upd -match [regex]::Escape($apiEmail)) {
             Write-Host "  [OK] '$apiEmail' promoted to platform admin" -ForegroundColor Green
         }
@@ -786,7 +817,11 @@ function Invoke-Bootstrap {
 Write-Host "`nBootstrapping the default tenant and admin user..." -ForegroundColor Cyan
 # Same nginx-fronted path as provisioning: the API publishes no host port.
 $bootstrapped = $false
-docker compose -f compose.prod.yaml up -d pacgate-api pacgate-db nginx 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+Invoke-WithNativeStderr {
+    docker compose -f compose.prod.yaml up -d pacgate-api pacgate-db nginx | ForEach-Object {
+        Write-Host "    $_" -ForegroundColor DarkGray
+    }
+}
 $apiUp = $false
 foreach ($attempt in 1..30) {
     try {
@@ -824,7 +859,7 @@ Write-Host "[OK] Stack running" -ForegroundColor Green
 # 7a. Prove deer-flow is on the SANITIZED lane, not the fallback. This is the
 # only check that observes the running container rather than the configuration.
 if ($provisioned) {
-    $lane = docker exec deer-flow sh -c 'echo $PACGATE_MATTER_ID' 2>$null
+    $lane = Invoke-WithNativeStderr { docker exec deer-flow sh -c 'echo $PACGATE_MATTER_ID' 2>$null }
     if ($lane -and $lane.Trim().Length -gt 0) {
         Write-Host "[OK] deer-flow has PACGATE_MATTER_ID=$($lane.Trim())" -ForegroundColor Green
     }
@@ -842,7 +877,7 @@ if ($provisioned) {
 # reload the file. Reloading makes AIPC2 pick up ingress/proxy changes (e.g.
 # the resolver + variable proxy_pass fix) without a full recreate.
 Write-Host "`nReloading nginx config..." -ForegroundColor Cyan
-docker exec pacgate-nginx nginx -t *>$null
+Invoke-WithNativeStderr { docker exec pacgate-nginx nginx -t *>$null }
 if ($LASTEXITCODE -eq 0) {
     docker exec pacgate-nginx nginx -s reload
     Write-Host "[OK] nginx config reloaded" -ForegroundColor Green
@@ -890,9 +925,9 @@ if ($Update) {
 if ($Update) {
     $qmScript = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts/qm-sandbox-fingerprint.ps1'
     # Only meaningful if this machine actually runs qm.
-    if ((Test-Path $qmScript) -and (docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-')) {
+    if ((Test-Path $qmScript) -and (Invoke-WithNativeStderr { docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-' })) {
         Write-Host "`nChecking qm sandbox provenance..." -ForegroundColor Cyan
-        $fpOut = & $QmPowerShell -NoProfile -File $qmScript -Json 2>&1
+        $fpOut = Invoke-WithNativeStderr { & $QmPowerShell -NoProfile -File $qmScript -Json 2>$null }
         $fp = $null
         try { $fp = ($fpOut | Out-String).Trim() | ConvertFrom-Json } catch { }
         if ($fp) {
@@ -954,13 +989,13 @@ if ($Update) {
     # running container, which is authoritative when an override file was used.
     $frontPort = $null
     try {
-        $portOut = (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim()
+        $portOut = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim() }
         if ($portOut -match ':(\d+)\s*$') { $frontPort = $Matches[1] }
     }
     catch { }
     if (-not $frontPort) {
         try {
-            $insp = docker port pacgate-nginx 2>$null
+            $insp = Invoke-WithNativeStderr { docker port pacgate-nginx 2>$null }
             foreach ($l in @($insp)) { if ($l -match ':(\d+)\s*$') { $frontPort = $Matches[1]; break } }
         }
         catch { }
@@ -1032,7 +1067,7 @@ if ($Update) {
         # TWO distinct causes, and conflating them sends people down the wrong
         # path. An old image predates /build-info entirely, in which case the
         # answer is "this install is behind", not "wait for startup".
-        $img = (docker inspect pacgate-api --format '{{.Config.Image}}' 2>$null | Out-String).Trim()
+        $img = Invoke-WithNativeStderr { (docker inspect pacgate-api --format '{{.Config.Image}}' 2>$null | Out-String).Trim() }
         Write-Host "[WARN] Could not read $versionUrl; skipping the staleness check." -ForegroundColor Yellow
         if ($img -match 'jzkk720|:0\.1\.[0-9]$') {
             Write-Host "       The running image is $img" -ForegroundColor Yellow
@@ -1185,7 +1220,7 @@ if (-not $Update) {
     #     also matches `qm-mailpit`, so a lone mailpit container reported "qm is
     #     already running" and skipped everything.
     # Ask the actual question: has qm been bootstrapped AND is it up?
-    $qmRunning = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count -ge 6
+    $qmRunning = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count -ge 6
     if ($qmRunning) {
         Write-Host "[OK] qm is already running - left untouched" -ForegroundColor Green
     }
@@ -1346,9 +1381,9 @@ if (-not $Update) {
         if (Test-Path (Join-Path $qmDir 'compose.qm.yaml')) {
             # External network/volumes are declared `external: true`, so they must
             # exist before compose will start; compose does not create them.
-            docker network create qm-pacgate *>$null
-            docker volume create qm-pacgate-coredata *>$null
-            docker volume create qm-pacgate-pgdata *>$null
+            Invoke-WithNativeStderr { docker network create qm-pacgate *>$null }
+            Invoke-WithNativeStderr { docker volume create qm-pacgate-coredata *>$null }
+            Invoke-WithNativeStderr { docker volume create qm-pacgate-pgdata *>$null }
 
             Push-Location $qmDir
             try {
@@ -1357,7 +1392,7 @@ if (-not $Update) {
                     Start-Sleep -Seconds 15
                     # Same container filter as the guard above: `qm-pacgate-` counts
                     # the six stack services and excludes qm-mailpit.
-                    $qmUp = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count
+                    $qmUp = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count
                     if ($qmUp -ge 6) {
                         Write-Host "[OK] qm running ($qmUp containers)" -ForegroundColor Green
                     }
@@ -1402,7 +1437,7 @@ Write-Host ""
 # instead of prescribing steps the installer already took.
 Write-Host "QM (co-working workspace):" -ForegroundColor Cyan
 if (Test-Path (Join-Path $PSScriptRoot 'qm-pacgate/compose.qm.yaml')) {
-    $qmCount = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count
+    $qmCount = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count
     if ($qmCount -ge 6) {
         Write-Host "  Running ($qmCount containers). Sign in at http://localhost:8181" -ForegroundColor Gray
         Write-Host "  (8181 is the portal FRONT DOOR - it proxies to web-ui 8182 and" -ForegroundColor Gray
