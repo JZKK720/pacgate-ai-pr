@@ -1,5 +1,7 @@
 //! TenantStore and MatterStore — Postgres-backed CRUD for tenants and matters.
 
+use std::path::PathBuf;
+
 use pacgate_core::{Matter, MatterId, TenantId, UserId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
@@ -110,11 +112,30 @@ impl TenantStore {
 
 pub struct MatterStore {
     db: PgPool,
+    /// Root directory holding the `tenants/<t>/matters/<m>/` tree. `None` keeps
+    /// the store database-only, which is what unit tests that only exercise the
+    /// SQL want: they have no filesystem layout to clean up.
+    ///
+    /// This is needed because deleting a matter has to tear down its directory
+    /// too. The `documents` table cascades on `matter_id`, so the DELETE removes
+    /// the document ROWS; the files they pointed at are not in the database and
+    /// nothing else references them, so without this they survive on disk as
+    /// unreachable copies of client documents, inside a directory whose matter
+    /// no longer exists. Measured on the dev stack: every matter delete left both
+    /// the bytes and the directory behind, which is how the tree reached 26
+    /// matter directories against 2 live matters, all 0 files.
+    data_dir: Option<PathBuf>,
 }
 
 impl MatterStore {
     pub fn new(db: PgPool) -> Self {
-        Self { db }
+        Self { db, data_dir: None }
+    }
+
+    /// Same as [`MatterStore::new`], but also able to remove a matter's on-disk
+    /// directory when the matter is deleted.
+    pub fn with_data_dir(db: PgPool, data_dir: impl Into<PathBuf>) -> Self {
+        Self { db, data_dir: Some(data_dir.into()) }
     }
 
     #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str(), name = %name))]
@@ -195,6 +216,32 @@ impl MatterStore {
 
         if result.rows_affected() == 0 {
             return Err(TenantError::MatterNotFound(matter_id.as_str()));
+        }
+
+        // The row is gone, so this matter no longer exists and nothing can write
+        // into its directory again: `documents.matter_id` is a foreign key, so an
+        // insert naming this matter now fails rather than recreating the tree.
+        // That is what makes removing the directory safe *after* the commit, and
+        // it is why the order is commit-then-remove rather than remove-then-commit
+        // - a failed DELETE must not have already destroyed the bytes.
+        if let Some(data_dir) = &self.data_dir {
+            let dir = crate::matter_dir(data_dir, tenant_id, matter_id);
+            if dir.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&dir) {
+                    // Deliberately a warning, not an error. The matter row is
+                    // already gone, so the request succeeded; failing it here
+                    // would report a failure the caller cannot act on and would
+                    // invite a retry that now 404s. The residue is an orphan
+                    // directory, which is exactly what this cleanup exists to
+                    // prevent, so it is worth surfacing loudly in the log.
+                    tracing::warn!(
+                        matter_id = %matter_id.as_str(),
+                        dir = %dir.display(),
+                        error = %e,
+                        "matter deleted but its directory could not be removed"
+                    );
+                }
+            }
         }
         Ok(())
     }

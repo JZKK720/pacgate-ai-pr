@@ -398,10 +398,26 @@ without anyone owning its teardown. The matter route compounds it: a bare
 `DELETE FROM matters` leaves the docs directories under it with no owner at all.
 This is live behaviour, not historic residue - matter
 `d695282b-8f0d-4b6d-b33f-7b20b39130e5` was created and deleted minutes earlier and
-left its shell. Recorded as O23; the directories are empty and harmless, so this
-is cosmetic debt rather than a correctness bug, and `remove_dir_all` would need
-to be scoped carefully to avoid racy deletion of a directory another request is
-writing into.
+left its shell. Recorded as O23.
+
+The empty shells turned out to be the visible half of a worse defect. `MatterStore::delete`
+ran a bare `DELETE FROM matters`; `documents.matter_id` cascades, so the document ROWS
+went while the FILES stayed on disk - unreachable copies of client documents inside a
+directory whose matter no longer existed. The 26 directories were empty only because the
+purge had deleted each document family first; a matter deleted with documents still
+attached would have stranded the bytes too.
+
+Fixed at the matter level, which is the only scope that is safe: `docs/` is shared by every
+family in a matter (`ensure_docs_dir`, `store.rs:375-382`), so a per-family `remove_dir_all`
+would delete a directory other families are still writing into. `MatterStore` now takes an
+optional `data_dir` (`with_data_dir`) and removes the matter's whole tree after the DELETE
+commits - commit-then-remove, so a failed DELETE cannot have already destroyed the bytes.
+`MatterStore::new` is unchanged and stays database-only for callers with no filesystem
+layout. Regression test `matter_delete_removes_the_directory_and_its_document_files`
+asserts the directory and file exist BEFORE the delete, then that both are gone, that the
+row is gone, and that a second delete is still `MatterNotFound`. Red-green verified: with
+the cleanup block removed the test fails with `the matter directory survived the delete ...
+this is the O23 orphan`; restored, it passes.
 
 ### 6.7 A doc claim the repo contradicted about itself
 
@@ -513,7 +529,7 @@ Ordered by what would bite a client first.
 | O20 | LOW | A stale legacy deer-flow store remains at `/data/data/deer-flow/` from before the bind mount. |
 | O21 | LOW | `hermes-gateway` reports unhealthy; the `qm-*` services are up. Unclear whether these are in scope for "all pipelines". |
 | O22 | LOW | ~~`DEPLOYMENT-GUIDE.md:191` publishes a `qm-pacgate:0.1.25` image that `build-ghcr.yml` does not produce.~~ **FIXED this pass.** The stanza is a deliberate record of an abandoned approach, but its `0.1.25` tag sat directly between two live `0.1.27` pins, so it read as a real pin. Now deliberately untagged. |
-| O23 | LOW | `delete_document_family` (`pacgate-docx/src/store.rs:307`) removes each version's file and its rows but never the containing directories, so every document family leaves a permanent empty `matters/<matter>/docs/` shell behind. Measured live: 26 matter directories on disk against 2 live matters, all 0 files. Compounded by the matter route having no cascade, so deleting a matter strands its docs' directories too. |
+| O23 | LOW | ~~`delete_document_family` (`pacgate-docx/src/store.rs:307`) removes each version's file and its rows but never the containing directories, so every document family leaves a permanent empty `matters/<matter>/docs/` shell behind. Measured live: 26 matter directories on disk against 2 live matters, all 0 files. Compounded by the matter route having no cascade, so deleting a matter strands its docs' directories too.~~ **FIXED this pass.** The per-family half is cosmetic and was deliberately NOT changed: `docs/` is shared by every family in a matter (`ensure_docs_dir`, `store.rs:375-382`), so removing it per-family would delete a directory other families are still writing into. The real defect was the matter route, and it was worse than the empty shells suggested: `MatterStore::delete` ran a bare `DELETE FROM matters`, and `documents.matter_id` cascades, so the document ROWS went while the FILES stayed - unreachable copies of client documents inside a directory whose matter no longer existed. `MatterStore` now takes an optional `data_dir` (`with_data_dir`) and removes the matter's whole tree after the DELETE commits, in that order so a failed DELETE cannot have already destroyed the bytes. `MatterStore::new` is unchanged and stays database-only for callers with no filesystem layout. Regression test `matter_delete_removes_the_directory_and_its_document_files` asserts the directory and file exist BEFORE the delete, then that both are gone, that the row is gone, and that a second delete is still `MatterNotFound`. Red-green verified: with the cleanup block removed the test fails with `the matter directory survived the delete ... this is the O23 orphan`; restored, it passes. |
 
 ### Retracted
 

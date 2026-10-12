@@ -90,7 +90,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Create stores
     let doc_store = Arc::new(FsDocumentStore::new(pool.clone(), &config.data_dir));
-    let matter_store = Arc::new(MatterStore::new(pool.clone()));
+    let matter_store = Arc::new(MatterStore::with_data_dir(
+        pool.clone(),
+        config.data_dir.clone(),
+    ));
     let tenant_store = Arc::new(TenantStore::new(pool.clone()));
     let auth = Arc::new(pacgate_auth::AuthService::new(
         config.jwt_secret.clone(),

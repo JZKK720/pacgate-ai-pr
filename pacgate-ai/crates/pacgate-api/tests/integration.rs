@@ -130,7 +130,10 @@ mod tests {
             pool.clone(),
             &config.data_dir,
         ));
-        let matter_store = Arc::new(pacgate_tenant::MatterStore::new(pool.clone()));
+        let matter_store = Arc::new(pacgate_tenant::MatterStore::with_data_dir(
+            pool.clone(),
+            config.data_dir.clone(),
+        ));
         let tenant_store = Arc::new(pacgate_tenant::TenantStore::new(pool.clone()));
         let auth = Arc::new(pacgate_auth::AuthService::new(
             config.jwt_secret.clone(),
@@ -1418,7 +1421,10 @@ mod tests {
                 pool.clone(),
                 std::path::PathBuf::from(TEST_DATA_DIR),
             )),
-            matter_store: Arc::new(pacgate_tenant::MatterStore::new(pool.clone())),
+            matter_store: Arc::new(pacgate_tenant::MatterStore::with_data_dir(
+                pool.clone(),
+                std::path::PathBuf::from(TEST_DATA_DIR),
+            )),
             tenant_store: Arc::new(pacgate_tenant::TenantStore::new(pool.clone())),
             auth: Arc::new(pacgate_auth::AuthService::new("test-secret", pool.clone())),
             search: Arc::new(pacgate_search::default_router()),
@@ -1583,7 +1589,10 @@ mod tests {
             )),
             config,
             doc_store,
-            matter_store: Arc::new(pacgate_tenant::MatterStore::new(pool.clone())),
+            matter_store: Arc::new(pacgate_tenant::MatterStore::with_data_dir(
+                pool.clone(),
+                std::path::PathBuf::from(TEST_DATA_DIR),
+            )),
             tenant_store: Arc::new(pacgate_tenant::TenantStore::new(pool.clone())),
             auth,
             search: Arc::new(pacgate_search::default_router()),
@@ -1815,5 +1824,120 @@ mod tests {
         ) -> pacgate_core::Result<Vec<pacgate_core::KbChunk>> {
             Ok(Vec::new())
         }
+    }
+
+    /// Deleting a matter must remove its files, not just its rows (O23).
+    ///
+    /// `documents.matter_id` cascades, so the document ROWS go when the matter
+    /// goes. The files on disk are not in the database and nothing else points at
+    /// them, so they survived as unreachable copies of client documents inside a
+    /// directory whose matter no longer existed. Measured on the dev stack before
+    /// this test existed: every matter delete left both the bytes and the
+    /// directory, which is how the tree reached 26 matter directories against
+    /// 2 live matters, all 0 files.
+    ///
+    /// Asserts the whole way down rather than only at the end: the directory has
+    /// to exist BEFORE the delete, otherwise a broken fixture could make this pass
+    /// by never creating anything to clean up.
+    ///
+    /// Requires a running Postgres. Run with `--ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn matter_delete_removes_the_directory_and_its_document_files() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&test_db_url())
+            .await
+            .expect("failed to connect to test Postgres — is it running?");
+        pacgate_tenant::run_migrations(&pool)
+            .await
+            .expect("failed to run tenant migrations");
+
+        let data_dir = std::path::PathBuf::from(TEST_DATA_DIR);
+        let store = pacgate_tenant::MatterStore::with_data_dir(pool.clone(), data_dir.clone());
+
+        // A tenant and a user, because matters.created_by is NOT NULL.
+        let tenant_id = pacgate_core::TenantId(
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "INSERT INTO tenants (name, slug) VALUES ($1, $2)
+                 ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+                 RETURNING id",
+            )
+            .bind("O23 Test Firm")
+            .bind("o23-test-firm")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        );
+        let user_id = pacgate_core::UserId(
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "INSERT INTO users (tenant_id, email, role) VALUES ($1, $2, $3)
+                 ON CONFLICT (tenant_id, email) DO UPDATE SET role = EXCLUDED.role
+                 RETURNING id",
+            )
+            .bind(tenant_id.0)
+            .bind("o23@pacgate.test")
+            .bind("attorney")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        );
+
+        let matter = store
+            .create(
+                &tenant_id,
+                &format!("o23-{}", uuid::Uuid::new_v4()),
+                None,
+                None,
+                None,
+                &user_id,
+            )
+            .await
+            .expect("matter create");
+
+        // Put a file where a document version would live. Written directly rather
+        // than through FsDocumentStore because this test is about the matter
+        // teardown, and going through the upload path would need a full axum app.
+        let matter_dir = pacgate_tenant::matter_dir(&data_dir, &tenant_id, &matter.id);
+        let docs_dir = pacgate_tenant::docs_dir(&data_dir, &tenant_id, &matter.id);
+        std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+        let doc_file = docs_dir.join("o23-proof_v1.docx");
+        std::fs::write(&doc_file, b"o23 proof bytes").expect("write doc file");
+
+        assert!(
+            matter_dir.is_dir(),
+            "precondition: the matter directory must exist before the delete, \
+             otherwise this test could pass by never creating anything"
+        );
+        assert!(doc_file.is_file(), "precondition: the document file must exist");
+
+        store
+            .delete(&tenant_id, &matter.id)
+            .await
+            .expect("matter delete");
+
+        assert!(
+            !matter_dir.exists(),
+            "the matter directory survived the delete: {} — this is the O23 orphan",
+            matter_dir.display()
+        );
+
+        // The row must be gone too, so the teardown did not just move the problem.
+        let remaining = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM matters WHERE id = $1")
+            .bind(matter.id.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "the matter row must be gone");
+
+        // Deleting an already-deleted matter is still MatterNotFound, i.e. the
+        // filesystem cleanup did not change the not-found contract.
+        let again = store.delete(&tenant_id, &matter.id).await;
+        assert!(
+            again.is_err(),
+            "a second delete of the same matter must still be an error"
+        );
+
+        let _ = std::fs::remove_dir_all(&matter_dir);
     }
 }
