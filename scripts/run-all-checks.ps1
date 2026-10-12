@@ -267,6 +267,17 @@ $liveStackGates = @(
     # leave every other gate green. It needs the stack up (exit 2 when not), and it
     # creates and deletes a probe account to prove the boundary end to end.
     'scripts/test-auth-provisioning-gate.ps1'
+    # The ONLY end-to-end sanitizer proof: real OCR extraction of a document with a
+    # national ID and a phone number, then the full lifecycle - sanitize verdict,
+    # redaction, sealed mapping, chunk state, the download egress gate, restore
+    # refused to an attorney but allowed to an admin, and the ledger + audit rows.
+    # Registered 2026-10-13. The script's own comment records that it was NOT in
+    # this list, "which is why the rot went unnoticed": it had hardcoded the compose
+    # network 'client-bundle_default', which the `name: pacgate-ai-bundle` pin had
+    # renamed, so it died at `docker run` and reported eleven cascading FAILs that
+    # looked like sanitizer defects. It now derives the network from the running
+    # container, and exits 2 when the stack is not up.
+    'scripts/test-sanitizer-e2e.ps1'
 )
 
 $measurements = @(

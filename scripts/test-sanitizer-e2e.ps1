@@ -52,8 +52,24 @@ function Remove-E2EContainers {
 }
 Remove-E2EContainers
 
+# The compose network. This used to be the hardcoded literal
+# 'client-bundle_default' - the name Docker derives from the COMPOSE PROJECT,
+# which used to be inferred from the directory name. compose.prod.yaml now pins
+# `name: pacgate-ai-bundle` (the run-1 volume-collision fix), so the live network
+# is 'pacgate-ai-bundle_default' and `--network client-bundle_default` failed with
+# "network client-bundle_default not found". Derive it instead of guessing, so a
+# future rename cannot silently break this again.
+$Network = @(docker inspect pacgate-db --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>$null |
+    Where-Object { $_ }) | Select-Object -First 1
+if (-not $Network) {
+    Write-Output 'SKIP: pacgate-db is not running, so its compose network cannot be resolved.'
+    Write-Output '      Start the stack (.\deploy\client-bundle\install.ps1) and re-run.'
+    exit 2
+}
+Write-Output "compose network: $Network"
+
 # 1. OCR service (no host port needed; API reaches it over the compose net).
-docker run -d --name pacgate-ocr-e2e --network client-bundle_default ocr-service:local | Out-Null
+docker run -d --name pacgate-ocr-e2e --network $Network ocr-service:local | Out-Null
 # 2. API under test, wired to the live db + ocr + embeddings + NER weights.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $nerDir = Join-Path $repoRoot '.e2e-ner-model'
@@ -99,7 +115,7 @@ if (Test-Path $bundleEnv) {
     }
 }
 
-docker run -d --name pacgate-api-e2e --network client-bundle_default `
+docker run -d --name pacgate-api-e2e --network $Network `
   -p 127.0.0.1:8097:8080 `
   -e "DATABASE_URL=postgres://pacgate:${DbPassword}@pacgate-db:5432/pacgate" `
   -e "DATA_DIR=/data/tenants" `
