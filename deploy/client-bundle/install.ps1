@@ -69,6 +69,57 @@ function Invoke-WithNativeStderr {
     try { & $Script } finally { $ErrorActionPreference = $previous }
 }
 
+# Invoke an HTTP request and report its status code and body WITHOUT relying on
+# PowerShell 7-only parameters.
+#
+# THE DEFECT THIS EXISTS FOR (measured on this box, 2026-10-13, under the
+# client's built-in shell):
+#   `-SkipHttpErrorCheck` is a PowerShell 7 parameter. Windows PowerShell 5.1
+#   does not have it, so the call raises ParameterBindingException BEFORE any
+#   request leaves the machine:
+#       "A parameter cannot be found that matches parameter name 'SkipHttpErrorCheck'."
+#   The register call below sat inside `try { } catch { }` with nothing after it,
+#   so on a client AIPC the failure was SILENT: the response stayed $null, all
+#   15 retries failed identically, and the installer printed "could not register
+#   the admin" - after which matter provisioning could not authenticate either,
+#   so deer-flow fell back to unsanitized on-disk memory. On a pwsh 7 dev box the
+#   same code worked, which is why it survived. Same class as the native-stderr
+#   defect above: pwsh-7-only behaviour the client's shell does not have.
+#
+# A non-2xx response is returned as data rather than thrown. The body is read
+# from $_.ErrorDetails.Message, which carries it on BOTH shells. The obvious
+# alternatives do not: PS 5.1's HttpWebResponse stream reads EMPTY (PowerShell
+# has already consumed it) and PS 7's HttpResponseMessage.Content is DISPOSED by
+# the time the catch runs. Both measured on this box, 2026-10-13.
+function Invoke-ApiRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [string]$Method = 'Get',
+        [string]$Body,
+        [int]$TimeoutSec = 20
+    )
+    $result = [pscustomobject]@{ Status = $null; Body = ''; Error = $null }
+    try {
+        $r = if ($Body) {
+            Invoke-WebRequest -Uri $Uri -Method $Method -Body $Body `
+                -ContentType 'application/json' -TimeoutSec $TimeoutSec -UseBasicParsing
+        }
+        else {
+            Invoke-WebRequest -Uri $Uri -Method $Method -TimeoutSec $TimeoutSec -UseBasicParsing
+        }
+        $result.Status = [int]$r.StatusCode
+        $result.Body = [string]$r.Content
+    }
+    catch {
+        $wr = $_.Exception.Response
+        if ($wr) { $result.Status = [int]$wr.StatusCode }
+        $body = [string]$_.ErrorDetails.Message
+        if ($body) { $result.Body = $body }
+        if (-not $wr -and -not $body) { $result.Error = "$($_.Exception.Message)" }
+    }
+    return $result
+}
+
 Write-Host "=== Pacgate-ai Installer ===" -ForegroundColor Cyan
 
 # 1. Check Docker
@@ -732,21 +783,26 @@ function Invoke-Bootstrap {
     }
 
     # (2) The admin. Retry, because the API may still be applying migrations.
+    #
+    # Uses Invoke-ApiRequest: -SkipHttpErrorCheck is PowerShell 7-only and threw
+    # ParameterBindingException on PS 5.1, where the swallow-all catch below hid
+    # it. A 403 here is the normal "the first account already exists" answer from
+    # this route (it is first-user-only), not a failure - see the message check.
     $registered = $false
     $alreadyThere = $false
+    $lastErr = $null
     for ($i = 1; $i -le 15; $i++) {
-        $resp = $null
-        try {
-            $resp = Invoke-WebRequest -Uri "$BaseUrl/api/auth/register" -Method Post `
-                -Body (@{ email = $apiEmail; password = $apiPassword } | ConvertTo-Json -Compress) `
-                -ContentType 'application/json' -TimeoutSec 20 -SkipHttpErrorCheck
-        } catch { }
-        if ($resp) {
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { $registered = $true; break }
+        $resp = Invoke-ApiRequest -Uri "$BaseUrl/api/auth/register" -Method Post `
+            -Body (@{ email = $apiEmail; password = $apiPassword } | ConvertTo-Json -Compress) `
+            -TimeoutSec 20
+        if ($resp.Error) { $lastErr = $resp.Error }
+        if ($null -ne $resp.Status) {
+            if ($resp.Status -ge 200 -and $resp.Status -lt 300) { $registered = $true; break }
             # A duplicate is success for our purpose: the admin exists.
-            if ($resp.StatusCode -eq 409 -or "$($resp.Content)" -match 'already|exists|duplicate') {
+            if ($resp.Status -eq 409 -or $resp.Body -match 'already|exists|duplicate') {
                 $alreadyThere = $true; break
             }
+            $lastErr = "HTTP $($resp.Status): $($resp.Body)"
         }
         if ($i -lt 15) { Start-Sleep -Seconds 4 }
     }
@@ -759,6 +815,7 @@ function Invoke-Bootstrap {
     }
     else {
         Write-Host "  [WARN] could not register the admin '$apiEmail'." -ForegroundColor Yellow
+        if ($lastErr) { Write-Host "         Last error: $lastErr" -ForegroundColor DarkYellow }
         Write-Host "         Matter provisioning will fail without a login. Check the API logs." -ForegroundColor Yellow
         return $false
     }

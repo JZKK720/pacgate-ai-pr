@@ -32,6 +32,15 @@
 #   G      control - the same command WITHOUT the helper still dies under 5.1.
 #                    Without this the test could pass for the wrong reason.
 #   H      parity  - the helper is a no-op under pwsh 7.
+#
+#   A second, independent defect of the SAME CLASS is covered here too:
+#   `-SkipHttpErrorCheck` is a PowerShell 7 parameter. Under 5.1 it raises
+#   ParameterBindingException before a request is sent, and because the register
+#   call sat in `try { } catch { }` the failure was silent - the installer printed
+#   "could not register the admin" and matter provisioning then could not
+#   authenticate either, so deer-flow fell back to unsanitized on-disk memory.
+#   Invoke-ApiRequest replaces it and reports status/body on both shells.
+#   Covered by: A2 static, plus I/J dynamic with I as the control.
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -116,6 +125,28 @@ try {
     $installPath = Join-Path $repoRoot 'deploy/client-bundle/install.ps1'
     $tokens = $null; $errors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($installPath, [ref]$tokens, [ref]$errors)
+
+    # A2. PowerShell 7-only parameters must not appear in the client scripts.
+    #     -SkipHttpErrorCheck throws ParameterBindingException on 5.1 BEFORE the
+    #     request is sent, and the swallow-all catch around the old call hid it.
+    #     -UseBasicParsing is NOT in this list: it is accepted (and ignored) by
+    #     both shells.
+    Write-Host ''
+    Write-Host 'STATIC: no PowerShell 7-only parameters in the client scripts'
+    foreach ($rel in $clientScripts) {
+        $path = Join-Path $repoRoot $rel
+        $name = Split-Path $rel -Leaf
+        if (-not (Test-Path $path)) { continue }
+        $exec = @()
+        $n = 0
+        foreach ($l in (Get-Content $path)) {
+            $n++
+            if ($l -match '^\s*#') { continue }
+            if ($l -match 'SkipHttpErrorCheck|StatusCodeVariable|AsHashtable|AsByteStream|ProgressAction|FollowSymlink') { $exec += $n }
+        }
+        Check "$name has no PowerShell 7-only parameters" ($exec.Count -eq 0) "lines: $($exec -join ', ')"
+    }
+
     $fnAst = $ast.FindAll({
             param($n)
             $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -194,6 +225,54 @@ catch {
             (($txt7 -match 'D\|admin') -and ($txt7 -match 'E\|7') -and ($txt7 -match 'F\|CLEAN')) "got: $txt7"
         # pwsh 7 does not have the defect, so the control is expected to survive.
         Check 'H: pwsh 7 control survives (defect is 5.1-only)' ($txt7 -match 'G\|SURVIVED') "got: $txt7"
+    }
+
+    # ── I/J: the API helper under PowerShell 5.1 ─────────────────────────────
+    # Extracted by AST from the shipped install.ps1, same reasoning as above.
+    # I is the CONTROL: it must PROVE that -SkipHttpErrorCheck really is absent
+    # from 5.1. Without I, J passing would not show the parameter was the fault.
+    Write-Host ''
+    Write-Host 'DYNAMIC: the API helper under Windows PowerShell 5.1'
+
+    $apiAst = $ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Name -eq 'Invoke-ApiRequest'
+        }, $true)
+    Check 'API helper found in install.ps1 by AST' ($apiAst.Count -eq 1) "found $($apiAst.Count)"
+    if ($apiAst.Count -eq 1 -and $ps51) {
+        $apiHarness = @'
+$ErrorActionPreference = 'Stop'
+
+# I. CONTROL - the parameter the old code used must be absent on 5.1.
+$has = $false
+try { $has = (Get-Command Invoke-WebRequest).Parameters.ContainsKey('SkipHttpErrorCheck') } catch { }
+Write-Output ("I|" + $(if ($has) { 'AVAILABLE' } else { 'ABSENT' }))
+
+# J. the shipped helper must still report a status and a body for a real 403,
+#    and must not throw. Any local listener would need a server, so use the
+#    documented loopback probe against a port nothing can be listening on: the
+#    point is that it returns Error instead of throwing.
+__HELPER__
+try {
+    $r = Invoke-ApiRequest -Uri 'http://127.0.0.1:1/never-listening' -TimeoutSec 5
+    Write-Output ("J|OK|status=" + $r.Status + "|error=" + ($r.Error -ne $null))
+}
+catch {
+    Write-Output "J|THREW|$($_.Exception.Message)"
+}
+'@
+        $apiHarness = $apiHarness.Replace('__HELPER__', $apiAst[0].Extent.Text)
+        $apiHarnessPath = Join-Path $work 'api-harness.ps1'
+        [System.IO.File]::WriteAllText($apiHarnessPath, $apiHarness)
+
+        $apiOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $apiHarnessPath 2>&1
+        $apiTxt = ($apiOut | ForEach-Object { "$_" }) -join "`n"
+        Write-Host '  --- powershell.exe 5.1 API output ---' -ForegroundColor DarkGray
+        $apiTxt -split "`n" | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+
+        Check 'I: CONTROL - -SkipHttpErrorCheck is ABSENT on 5.1' ($apiTxt -match 'I\|ABSENT') "got: $apiTxt"
+        Check 'J: Invoke-ApiRequest returns a result instead of throwing' ($apiTxt -match 'J\|OK') "got: $apiTxt"
     }
 
     Write-Host ''
