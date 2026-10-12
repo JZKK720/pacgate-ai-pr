@@ -119,7 +119,8 @@ with httpx.Client(timeout=20) as c:
     r2 = c.post('http://127.0.0.1:8000/mcp', headers=H2, json={'jsonrpc':'2.0','id':2,'method':'tools/list'})
     tools = payload(r2.text).get('result',{}).get('tools',[])
     names = [t['name'] for t in tools]
-    print(f'TOOLS={len(names)} PACGATE={sum(1 for n in names if n.startswith("pacgate_"))}')
+    pg = sum(1 for n in names if n.startswith('pacgate_'))
+    print('TOOLS=' + str(len(names)) + ' PACGATE=' + str(pg))
 "@ 2>&1 | Out-String).Trim()
 if ($probe -match 'TOOLS=(\d+) PACGATE=(\d+)') {
     $total = [int]$Matches[1]; $pg = [int]$Matches[2]
