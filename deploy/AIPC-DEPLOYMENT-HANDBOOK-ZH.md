@@ -83,8 +83,15 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 - 两台 AIPC 上都运行 Ollama（`install.ps1` 会拉取它需要的模型）
 - 如果使用带 cloud 标签的 deepseek 模型，每台 AIPC 上完成 `ollama signin`
 - 两台 AIPC 上都安装 Node.js 24+（供 qm 使用）
-- PowerShell 7（`pwsh`）可选 —— 安装脚本优先使用它，缺失时回退到系统自带的
-  PowerShell 5.1；脚本本身与两种版本均兼容。
+- PowerShell 7（`pwsh`）可选 —— 安装脚本在系统自带的 PowerShell 5.1 上同样可以
+  运行。（在 2026-10-11 之前这一说法并不成立，且有两处问题：其一，只要附加了重定向，
+  PS 5.1 就会把*任何*写入 stderr 的原生命令变成终止性错误，而 `docker compose up -d`
+  每次运行都会把进度写入 stderr，导致安装脚本在引导租户和管理员之前就中断；其二，
+  管理员注册调用使用了 PS 7 专有的 `-SkipHttpErrorCheck` 参数，5.1 会在请求发出之前
+  就拒绝它，于是每一次 API 调用都静默失败。现在 `install.ps1`、`setup-qm.ps1` 和
+  `smoke-deer-flow-outputs.ps1` 中所有写 stderr 的调用都经由
+  `Invoke-WithNativeStderr`，所有 API 调用都经由 `Invoke-ApiRequest`。详见
+  `deploy/DEFECT-ps51-native-stderr.md`。）
 - **无需 `docker login ghcr.io`**——Pacgate 运行时镜像以**公开** GHCR 包发布
   （见 Stage 0）。
 
