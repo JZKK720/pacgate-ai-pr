@@ -114,3 +114,62 @@ runbook section 5), and the qm / OpenViking recall lanes.
 ### Not covered (unchanged from run 1)
 
 - A different machine (runbook §5). LAN sign-in was exercised mechanically from this box.
+
+## 2026-10-13 - run 3 (PASSED at v0.1.27; found and fixed TWO PowerShell 5.1 defects)
+
+- **Procedure**: `deploy/RUNBOOK-clean-clone-proof.md` section 1, executed end to end.
+- **Clone**: `C:\Users\1\pacgate-clean-proof\pacgate-ai-pr`, HEAD `e78394a`, remote
+  `JZKK720/pacgate-ai-pr`. Fresh secrets in `.env`.
+- **Installer shell**: **`powershell.exe` 5.1**, deliberately - NOT `pwsh`. Runs 1 and 2
+  both used pwsh, which is exactly why neither could see the two defects below. The
+  client AIPC has the built-in shell; the proof has to use it.
+- **Clean start**: the proof project's own volume `pacgate-ai-bundle_pacgate-db-data` was
+  removed so the DB initialized empty. It held `0 matters / 0 documents` at the time and
+  NO `client-bundle` volume exists on this box, so nothing else was affected.
+
+### Mechanical results
+
+| Step | Result |
+|---|---|
+| 1. clone | HEAD e78394a, remote JZKK720, both fixes present |
+| 2. .env | 5 required values set; `PACGATE_MATTER_ID` left at the template default |
+| 3. install | **exit 0**; all images pulled; **8 of 8 services up** |
+| 3b. bootstrap | `[OK] tenant 'default-firm' present`; `[OK] admin 'admin@pacgate-law.com' registered`; `[OK] ... holds the platform admin role`; `[OK] Provisioned matter 301960a8-e521-4956-8f7b-3e244f7d6a1a`; `[OK] memory endpoint reachable` |
+| 3c. lane | `[OK] deer-flow has PACGATE_MATTER_ID=301960a8-...` |
+| 4a. version | 0.1.27 rev 32171f4 at the nginx ROOT; `/setup` returns **200** (not 502) |
+| 4b. workflow library | PASS - 222 workflows, 46 categories |
+| 4c. legal journey | PASS - **19 of 19 assertions**; **neither** documented SKIP triggered |
+| 4d. LAN sign-in | PASS - login 200 + token from hostname, LAN IP and localhost origins |
+| DB after | `tenants=1 users=1 matters=1` (before the fix: `0 / 0 / 0`) |
+| `NativeCommandError` in the whole transcript | **0** |
+
+### TWO defects found, both PowerShell 5.1, both fixed
+
+Both are recorded in full in `deploy/DEFECT-ps51-native-stderr.md`.
+
+1. **The installer aborted before bootstrapping** (defect 1, fixed `50f39bc`). PS 5.1 turns
+   ANY native command that writes to stderr into a terminating error when a redirection is
+   attached, and `docker compose up -d` writes progress to stderr on every run. The script
+   died at the compose-up line, so the tenant and admin were never created. Present
+   IDENTICALLY in v0.1.25, v0.1.26 and v0.1.27; introduced by `a8be956` (2026-09-28);
+   v0.1.24 has none. **Not a 0.1.27 regression.** Invisible until now because run 2 tested
+   0.1.24, which predates it, and because this box always runs pwsh 7.
+
+2. **Every API call failed silently** (defect 2, fixed `e78394a`). `-SkipHttpErrorCheck` is
+   a PowerShell 7 parameter; 5.1 raises `ParameterBindingException` before a request leaves
+   the machine, and the `catch { }` around the call hid it. The installer printed only
+   "could not register the admin", and matter provisioning then could not authenticate, so
+   deer-flow fell back to UNSANITIZED on-disk memory. **Found only because defect 1 was
+   fixed first** - until the abort was gone, the bootstrap never ran at all.
+
+### Why runs 1 and 2 could not have caught either
+
+They invoked the installer under `pwsh`. Both defects are pwsh-only-safe: pwsh 7 does not
+turn redirected stderr into a terminating error, and it accepts `-SkipHttpErrorCheck`. A
+proof that does not run the client's shell cannot test the client's shell.
+
+### Not covered (unchanged from runs 1 and 2)
+
+- A different machine (runbook section 5). LAN sign-in was exercised mechanically from this
+  box by sending a LAN `Origin` header; it does not prove a browser on another host.
+
