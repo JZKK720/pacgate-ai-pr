@@ -963,20 +963,29 @@ if ($LASTEXITCODE -eq 0) {
 # starts, so they are already in effect.
 if ($Update) {
     Write-Host "`nRestarting services with bind-mounted code..." -ForegroundColor Cyan
-    # Service -> why it must restart. Kept as data so a future bind mount is
-    # added here rather than silently inheriting the same gap.
-    $bindMounted = @(
-        @{ Service = 'deer-flow';          Why = 'patches/*.py and config.yaml now in effect' }
-        @{ Service = 'deer-flow-frontend'; Why = 'next.config.js (proxyTimeout) now in effect' }
-    )
-    foreach ($svc in $bindMounted) {
-        $running = docker compose -f compose.prod.yaml ps -q $svc.Service
-        if ($running) {
-            docker compose -f compose.prod.yaml restart $svc.Service
-            Write-Host "[OK] $($svc.Service) restarted ($($svc.Why))" -ForegroundColor Green
-        } else {
-            Write-Host "[WARN] $($svc.Service) is not running; skipped restart" -ForegroundColor Yellow
-        }
+    # Deer-flow: patches/*.py and deer-flow-config.yaml are bind-mounted and read
+    # at process start only. The literal `restart deer-flow` below is also the
+    # marker scripts/audit-aipc-update-coverage.ps1 matches on for BOTH the
+    # personas/patches and deer-flow-config.yaml rows, so keep it explicit.
+    $dfRunning = docker compose -f compose.prod.yaml ps -q deer-flow
+    if ($dfRunning) {
+        docker compose -f compose.prod.yaml restart deer-flow
+        Write-Host "[OK] deer-flow restarted (patches/*.py and config.yaml now in effect)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] deer-flow is not running; skipped restart" -ForegroundColor Yellow
+    }
+    # Frontend: next.config.js is bind-mounted (deploy/frontend-patches/files/) and
+    # `next start` reads it only at boot. Its experimental.proxyTimeout is what
+    # stops Next.js tearing down proxied gateway calls longer than its 30s default
+    # (deploy/DEFECT-frontend-proxy-timeout.md). Without this restart a repo update
+    # leaves the OLD config in force and an updated machine stays broken - the fix
+    # would look shipped and be inert.
+    $feRunning = docker compose -f compose.prod.yaml ps -q deer-flow-frontend
+    if ($feRunning) {
+        docker compose -f compose.prod.yaml restart deer-flow-frontend
+        Write-Host "[OK] deer-flow-frontend restarted (next.config.js proxyTimeout now in effect)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] deer-flow-frontend is not running; skipped restart" -ForegroundColor Yellow
     }
 }
 
