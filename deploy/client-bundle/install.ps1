@@ -601,6 +601,71 @@ if ($pullExit -ne 0) {
     Write-Host "[OK] Images pulled" -ForegroundColor Green
 }
 
+# 6a. Verify the pull ACTUALLY refreshed the tags, and repair it if it did not.
+#
+# `compose pull` reports "Pulled" for an image even when the local tag does not
+# advance. Observed on this dev box 2026-10-13: every image logged "Pulled", the
+# command exited 0, and the machine went on running the PREVIOUS build of the same
+# version (revision 50252862c826 where 0.1.28 had been re-published as b5ef2b12b8de).
+# Nothing reported it, because "did the pull do anything" was never asked.
+#
+# The digest is the content, so it is the only honest answer. The registry digest
+# comes from `buildx imagetools` (which resolves anonymously for these public
+# images) and the local one from RepoDigests; when they agree the tag is current.
+#
+# Degrades quietly: no network, no buildx, or an unreadable digest means "cannot
+# assert", which is reported as nothing rather than as a failure. An installer
+# that blocks on an unreachable registry is worse than one that cannot check.
+if (Test-Path compose.prod.yaml) {
+    $firstParty = @([regex]::Matches((Get-Content compose.prod.yaml -Raw -Encoding UTF8),
+        '(?m)^\s*image:\s*(?<ref>ghcr\.io/[a-z0-9\-]+/[a-z0-9\-]+:\d+\.\d+\.\d+)\s*$') |
+        ForEach-Object { $_.Groups['ref'].Value } | Select-Object -Unique)
+
+    function Get-RegistryImageDigest([string]$Ref) {
+        try {
+            $d = Invoke-WithNativeStderr { (docker buildx imagetools inspect --format '{{.Manifest.Digest}}' $Ref 2>$null | Out-String).Trim() }
+            if ($d -match '^sha256:[0-9a-f]{64}$') { return $d }
+        }
+        catch { }
+        return $null
+    }
+    function Get-LocalImageDigest([string]$Ref) {
+        try {
+            $d = Invoke-WithNativeStderr { (docker inspect --format '{{index .RepoDigests 0}}' $Ref 2>$null | Out-String).Trim() }
+            if ($d -match '@(?<d>sha256:[0-9a-f]{64})$') { return $Matches['d'] }
+        }
+        catch { }
+        return $null
+    }
+
+    $staleRefs = @()
+    $checked = 0
+    foreach ($ref in $firstParty) {
+        $reg = Get-RegistryImageDigest $ref
+        if (-not $reg) { continue }         # offline or no buildx: cannot assert
+        $checked++
+        if ((Get-LocalImageDigest $ref) -ne $reg) { $staleRefs += $ref }
+    }
+
+    if ($checked -gt 0 -and $staleRefs.Count -gt 0) {
+        Write-Host "[WARN] $($staleRefs.Count) image tag(s) did not refresh during 'compose pull':" -ForegroundColor Yellow
+        foreach ($r in $staleRefs) { Write-Host "       $r" -ForegroundColor Gray }
+        Write-Host "       Retrying with an explicit pull..." -ForegroundColor Yellow
+        foreach ($r in $staleRefs) { docker pull $r }
+        $stillStale = @($staleRefs | Where-Object { (Get-LocalImageDigest $_) -ne (Get-RegistryImageDigest $_) })
+        if ($stillStale.Count -eq 0) {
+            Write-Host "[OK] all $checked image tag(s) now match the registry" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[WARN] still not current after an explicit pull: $($stillStale -join ', ')" -ForegroundColor Yellow
+            Write-Host "       The stack may come up on an older build of the same version." -ForegroundColor Yellow
+        }
+    }
+    elseif ($checked -gt 0) {
+        Write-Host "[OK] all $checked image tag(s) match the registry" -ForegroundColor Green
+    }
+}
+
 # 6b. Provision the matter that deer-flow's memory adapter is scoped to.
 #
 # WHY THIS EXISTS, and why it runs BEFORE the stack starts.
