@@ -1,9 +1,14 @@
 # Dev-box override: enable the plan 019 OCR pipeline on the local stack.
 #
 # NOT for client deployment. The tracked compose.prod.yaml keeps ocr-service
-# commented out (a ~1.5GB PaddleOCR model download on upgrade of existing
-# AIPCs is gated behind the 0.1.15 release decision). This override brings the
-# pipeline up on THIS dev machine so the surface can be exercised e2e.
+# commented out (enabling OCR on upgrade of existing AIPCs is gated behind the
+# 0.1.15 release decision). This override brings the pipeline up on THIS dev
+# machine so the surface can be exercised e2e.
+#
+# The original rationale for that gate was a ~1.5GB PaddleOCR model download on
+# upgrade. That figure was wrong by two orders of magnitude: the PP-OCRv4 weights
+# are ~17 MB, and they are now BAKED into the image, so an upgrade downloads
+# nothing at all and the gate no longer rests on a download concern.
 #
 # It also swaps pacgate-api to the plan020-test build, because the published
 # 0.1.14 image has NO OCR plumbing (no OCR_SERVICE_URL consumer, migrations

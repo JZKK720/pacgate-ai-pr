@@ -223,7 +223,10 @@ services:
     restart: unless-stopped
 
   # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
-  # The ~1.5GB PaddleOCR model downloads on FIRST EXTRACTION, not at build.
+  # The PP-OCRv4 det/rec/cls weights (~17 MB) are BAKED INTO the image at build
+  # time. They used to download on FIRST EXTRACTION, which made this the one lane
+  # needing an external host (paddleocr.bj.bcebos.com) and measured 269.9s cold
+  # against a 300s client timeout in pacgate-api - so it failed intermittently.
   ocr-service:
     image: ghcr.io/jzkk720/ocr-service:0.1.28
     container_name: ocr-service
@@ -231,11 +234,8 @@ services:
       # Python logging rejects lowercase level names.
       OCR_LOG_LEVEL: INFO
       OCR_USE_GPU: "0"
-    # PaddleOCR downloads its PP-OCRv4 det/rec/cls weights (~18 MB) into
-    # /root/.paddleocr on FIRST extraction - they are NOT baked into the image.
-    # Without this volume the cache lives in the container's writable layer, so
-    # every recreate re-downloads from paddleocr.bj.bcebos.com (the only source)
-    # and an offline recreate leaves extraction failing closed.
+    # The writable layer over the baked copy. PaddleOCR only downloads when a
+    # model is MISSING, so with the bake in place it does not download at all.
     volumes:
       - paddleocr-models:/root/.paddleocr
     restart: unless-stopped

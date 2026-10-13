@@ -55,6 +55,17 @@ $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 
+# The release ocr-service image, used purely as a FIXTURE BUILDER (it is the
+# container that has PIL). It was `ocr-service:local`, an invented tag nothing
+# builds: on any machine that never made it this gate exited 2 and was skipped
+# while the suite still reported success - coverage that quietly disappears.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$OcrImage = Get-ReleaseOcrImage
+if (-not $OcrImage) { Die 'cannot derive the release ocr-service image' 2 }
+if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
+    Die "$OcrImage is not published yet (release window) and is not present locally" 2
+}
+
 $script:passed = 0
 $script:skipped = @()
 $script:artifacts = @{ matterId = $null; docId = $null }
@@ -170,7 +181,7 @@ try {
     # Fixture built inside the ocr container: it has PIL, and a born-digital PDF
     # is what the extraction lane expects (a .txt would route to OCR instead).
     $dir = Split-Path $fixture -Parent
-    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c @"
 from PIL import Image, ImageDraw, ImageFont
 img = Image.new('RGB', (900, 300), 'white')
 d = ImageDraw.Draw(img)
@@ -181,7 +192,7 @@ img.save('/fix/journey-$runId.pdf', 'PDF', resolution=100)
 "@ 2>&1 | Out-Null
     $madeFixture = Test-Path $fixture
 } catch { }
-if (-not $madeFixture) { Die 'could not build the PDF fixture (ocr-service:local image present?).' }
+if (-not $madeFixture) { Die ("could not build the PDF fixture using $OcrImage") }
 
 $fileBytes = [System.IO.File]::ReadAllBytes($fixture)
 $ms = New-Object System.IO.MemoryStream

@@ -63,6 +63,17 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
+
+# The release ocr-service image, used purely as a FIXTURE BUILDER (it is the
+# container that has PIL). It was `ocr-service:local`, an invented tag nothing
+# builds: on any machine that never made it this gate exited 2 and was skipped
+# while the suite still reported success - coverage that quietly disappears.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$OcrImage = Get-ReleaseOcrImage
+if (-not $OcrImage) { Write-Output 'SKIP: cannot derive the release ocr-service image'; exit 2 }
+if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
+    Write-Output "SKIP: $OcrImage is not published yet (release window) and is not present locally."; exit 2
+}
 if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 
 # The two identifiers every fixture carries. Bare (or space-separated) tokens
@@ -274,7 +285,7 @@ function New-DocxFixture {
     }
     $dir = Split-Path $OutPath -Parent
     $leaf = Split-Path $OutPath -Leaf
-    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c @"
 from docx import Document
 d = Document()
 if '$Kind' == 'body':
@@ -353,7 +364,7 @@ function New-OoxmlFixture {
     }
     $dir = Split-Path $OutPath -Parent
     $leaf = Split-Path $OutPath -Leaf
-    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c @"
 import zipfile
 
 KIND = '$Kind'
@@ -488,7 +499,7 @@ function New-PdfFixture {
     param([Parameter(Mandatory)][string]$OutPath)
     $dir = Split-Path $OutPath -Parent
     $leaf = Split-Path $OutPath -Leaf
-    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c @"
 from PIL import Image, ImageDraw, ImageFont
 W, H = 1400, 500
 try:
@@ -787,7 +798,7 @@ foreach ($key in $fixtures.Keys) {
     }
 }
 if ($buildFailures.Count -gt 0) {
-    Die "fixture builder(s) failed: $($buildFailures -join ', ') - is ocr-service:local present?"
+    Die "fixture builder(s) failed: $($buildFailures -join ', ') - is $OcrImage available?"
 }
 
 # ── Cases ──

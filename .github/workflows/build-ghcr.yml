@@ -256,8 +256,17 @@ jobs:
       # from 0.1.16: the OCR surface is a user-facing feature (standalone
       # pacgate_ocr_document MCP tool + enabled compose service), so the
       # perception lane must be part of every release, not a dev-box side
-      # build. The ~1.5GB model download happens on FIRST EXTRACTION, not at
-      # image build or container start, so the image itself stays small.
+      # build.
+      #
+      # The PP-OCRv4 weights are BAKED INTO this image at build time (see
+      # deploy/ocr-service/Dockerfile). They are ~17 MB, not the ~1.5GB an
+      # earlier version of this comment claimed, and they used to be downloaded
+      # from paddleocr.bj.bcebos.com on the client's FIRST extraction. That made
+      # the perception lane depend on an external CDN - the one lane in the
+      # bundle that was not offline-capable - and it measured 269.9s cold
+      # against a 300s client timeout in pacgate-api, so it failed
+      # intermittently. Baking it removes that dependency entirely; a fresh AIPC
+      # no longer needs that host to read its first document.
       - name: Build & push ocr-service
         uses: docker/build-push-action@v6
         with:

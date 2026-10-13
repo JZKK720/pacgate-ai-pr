@@ -27,6 +27,17 @@ $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 
+# The release ocr-service image, used purely as a FIXTURE BUILDER (it is the
+# container that has PIL). It was `ocr-service:local`, an invented tag nothing
+# builds: on any machine that never made it this gate exited 2 and was skipped
+# while the suite still reported success - coverage that quietly disappears.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$OcrImage = Get-ReleaseOcrImage
+if (-not $OcrImage) { Write-Output 'SKIP: cannot derive the release ocr-service image'; exit 2 }
+if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
+    Write-Output "SKIP: $OcrImage is not published yet (release window) and is not present locally."; exit 2
+}
+
 $script:failures = 0
 $script:checks = 0
 
@@ -122,7 +133,7 @@ function New-FixturePdf {
     # builders in this repo (test-legal-journey.ps1:161, test-sanitizer-e2e.ps1:18).
     # An earlier draft piped the script to `python3 -` over stdin; NO gate in this
     # repo uses that form, so it was replaced with the pattern proven on this box.
-    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c @"
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c @"
 from PIL import Image, ImageDraw, ImageFont
 W, H = 1400, 500
 try:
@@ -159,7 +170,7 @@ d.text((40, 150), '11010519491231002X', fill='black', font=font)
 p2 = Image.new('RGB', (W, H), 'white')
 p1.save('/fix/$leaf', 'PDF', resolution=150, save_all=True, append_images=[p2])
 "@
-    docker run --rm -v "${dir}:/fix" --entrypoint python3 ocr-service:local -c $pyScript 2>&1 | Out-Null
+    docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c $pyScript 2>&1 | Out-Null
     return (Test-Path $OutPath)
 }
 
@@ -277,7 +288,7 @@ function Invoke-CacheCase {
 # A1 - blank page. THE assertion this plan exists for.
 $blankPdf = Join-Path $fixtureDir 'blank.pdf'
 if (-not (New-FixturePdf -OutPath $blankPdf -Kind 'blank')) {
-    Die 'could not build the blank fixture (is ocr-service:local present?)'
+    Die ("could not build the blank fixture using $OcrImage")
 }
 Invoke-Case -Label 'A1 blank page' -FilePath $blankPdf -ExpectIncomplete 'true'
 

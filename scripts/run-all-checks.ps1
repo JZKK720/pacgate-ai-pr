@@ -30,51 +30,53 @@
 # no docs found - so the reading is consistent, and neither loses coverage.
 [CmdletBinding()]
 param(
-    # The suite needs an `ocr-service:local` image because several gates build their
-    # PDF fixtures INSIDE it (it is the container that has PIL). Nothing ever built
-    # that tag - it is a hand-made leftover on machines where it happens to exist -
-    # so on any other machine those gates exit 2 (CANNOT CHECK) and are silently
-    # skipped while the suite still reports success. That is the failure mode this
-    # header warns about: coverage that quietly disappears.
+    # Several gates build PDF fixtures INSIDE the ocr-service container (it is the
+    # container that has PIL), so the release ocr-service image must be present.
+    # Nothing ever built the invented `ocr-service:local` tag this used to require -
+    # it was a hand-made leftover - so on any other machine those gates exited 2
+    # (CANNOT CHECK) and were silently skipped while the suite still reported
+    # success. That is the failure mode this header warns about: coverage that
+    # quietly disappears.
     #
-    # So the suite CREATES it from the published image, which is the same code and
-    # is guaranteed present for the release under test. Tagging an already-pulled
-    # image is free. Pass -SkipOcrTag to opt out.
-    [switch]$SkipOcrTag
+    # The suite therefore PULLS the release tag and uses that reference DIRECTLY.
+    # It no longer invents `:local`: an unversioned tag could not prove which image
+    # the gates ran against, which is exactly the property a release test needs.
+    # Pass -SkipOcrPull to opt out (e.g. offline, with the image already local).
+    [switch]$SkipOcrPull
 )
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# Ensure `ocr-service:local` exists, derived from the workspace version rather than
-# hardcoded, so it follows the release.
-if (-not $SkipOcrTag) {
-    $haveLocal = @(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains 'ocr-service:local'
-    if ($haveLocal) {
-        Write-Host 'ocr-service:local present' -ForegroundColor DarkGray
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$script:OcrImage = Get-ReleaseOcrImage
+if (-not $script:OcrImage) {
+    Write-Host 'WARN: could not derive the release ocr-service image; fixture-dependent gates may CANNOT CHECK.' -ForegroundColor Yellow
+}
+
+# Make the release ocr-service image available for the fixture-building gates.
+if (-not $SkipOcrPull -and $script:OcrImage) {
+    $ocrState = Test-ReleaseOcrImagePresent -Reference $script:OcrImage
+    if ($ocrState -eq 'present') {
+        Write-Host "release ocr-service image ready: $script:OcrImage" -ForegroundColor DarkGray
+        docker pull $script:OcrImage 2>&1 | Out-Null
+    }
+    elseif ($ocrState -eq 'absent') {
+        # Release window: the bump has landed but the tag is not published yet.
+        # Say so explicitly rather than letting a dozen fixture gates each report a
+        # confusing CANNOT CHECK.
+        Write-Host "WARN: $script:OcrImage is not published yet (release window) - fixture-dependent gates will CANNOT CHECK." -ForegroundColor Yellow
+        Write-Host '      Publish the release tag and re-run for full coverage.' -ForegroundColor Yellow
     }
     else {
-        $toml = 'pacgate-ai/Cargo.toml'
-        $ver  = if (Test-Path $toml) {
-            (Select-String -Path $toml -Pattern '^version\s*=\s*"([0-9.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-        } else { '' }
-        $ref = "ghcr.io/jzkk720/ocr-service:$ver"
-        if (-not $ver) {
-            Write-Host 'WARN: cannot derive the version; fixture-dependent gates may CANNOT CHECK.' -ForegroundColor Yellow
-        }
-        elseif (-not (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains $ref)) {
-            Write-Host "pulling $ref (needed by the fixture-dependent gates)..." -ForegroundColor DarkGray
-            docker pull $ref 2>&1 | Out-Null
-        }
-        if ($ver -and (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains $ref)) {
-            docker tag $ref ocr-service:local 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { Write-Host "ocr-service:local tagged from $ref" -ForegroundColor DarkGray }
-            else { Write-Host 'WARN: could not create ocr-service:local.' -ForegroundColor Yellow }
-        }
+        Write-Host "WARN: could not confirm $script:OcrImage on GHCR (transport/registry) - continuing." -ForegroundColor Yellow
     }
 }
 
-$gates = @(
-    'scripts/test-install-render.ps1'
+# The release ocr-service image is derived above (Get-ReleaseOcrImage) and used
+# directly by the gates - see the param block. No `:local` alias is created: an
+# unversioned tag could not prove which image a gate ran against.
+
+$gates = @(    'scripts/test-install-render.ps1'
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
@@ -320,6 +322,27 @@ foreach ($s in $gates) {
     $tail = (($out | Where-Object { $_ -match '\d+ passed|ALL .*PASSED|RESULT|members present' } | Select-Object -Last 2) -join ' ; ')
     if ($code -eq 0) {
         Write-Host ("  PASS {0,-46} {1}" -f (Split-Path $s -Leaf), $tail) -ForegroundColor Green
+    }
+    elseif ($code -eq 2) {
+        # Exit 2 = CANNOT CHECK, the same contract the live-stack loop below
+        # honours. This loop did NOT honour it, which contradicted this file's own
+        # header: it already documents that test-workflow-compose-wiring.ps1 and
+        # test-handoff-command-safety.ps1 exit 2 for "environment is wrong", yet a
+        # red run was produced anyway. That is red-for-the-wrong-reason on a clean
+        # machine, the exact thing the header warns teaches people to ignore the
+        # suite.
+        #
+        # It is also required by the release window. A version bump names an image
+        # that does not exist until the tag finishes building, so
+        # test-version-marker-against-image.ps1 has nothing to assert and exits 2
+        # (see scripts/lib/Release-ImageState.ps1). Counted as a failure, that
+        # turned five gates red on 0.1.28 with messages that all read as product
+        # faults; none of them were one.
+        #
+        # This is a carve-out on the EXIT CODE only, never on an assertion: a real
+        # failure still exits 1 and is still red, and a skip is always printed
+        # rather than absorbed.
+        Write-Host ("  SKIP {0,-46} CANNOT CHECK (exit 2) {1}" -f (Split-Path $s -Leaf), $tail) -ForegroundColor Yellow
     }
     else {
         Write-Host ("  FAIL {0,-46} exit={1} {2}" -f (Split-Path $s -Leaf), $code, $tail) -ForegroundColor Red

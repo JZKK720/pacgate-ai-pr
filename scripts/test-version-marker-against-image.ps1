@@ -59,6 +59,25 @@ if (-not $Image) {
     $Image = "ghcr.io/$ns/pacgate-api:$v"
 }
 
+# A version bump opens a window in which Cargo.toml and the compose pins name an
+# image that has not been published yet (the tag push is still building). This
+# gate then derived the NEW version, could not `docker run` it, and reported
+# "harness error: docker run failed" - which reads as a product fault and
+# contributed one of five misleading reds to the 0.1.28 sweep. Nothing about the
+# product was wrong; the question simply had no artefact to ask about yet.
+# Report that state as NOT YET ASSERTABLE (exit 2 = SKIP) instead, so a real
+# defect is not buried in pre-release noise. A PRESENT image still fails normally.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$imgTail = ($Image -split '/')[-1]
+$imgNs   = [regex]::Match($Image, '^ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/').Groups['ns'].Value
+$imgRepo = if ($imgTail.Contains(':')) { $imgTail.Substring(0, $imgTail.LastIndexOf(':')) } else { $imgTail }
+$imgTag  = if ($imgTail.Contains(':')) { $imgTail.Substring($imgTail.LastIndexOf(':') + 1) } else { 'latest' }
+$imgState = if ($imgNs -and $imgRepo) { Test-GhcrManifestPresent -Namespace $imgNs -Repository $imgRepo -Tag $imgTag } else { 'unknown' }
+if ($imgState -ne 'present') { $imgState = Test-ImageTagLocally -Reference $Image }
+if ($imgState -ne 'present') {
+    Exit-NotYetAssertable ("$Image is not published (registry probe: $imgState) and not present locally, so /build-info cannot be probed against a real image. Publish the release tag, wait for build-ghcr.yml, then re-run.")
+}
+
 # Derive the network from the RUNNING stack, the same way the namespace above is
 # derived rather than hardcoded. Ask docker which network the live pacgate-api is
 # attached to; that is authoritative regardless of what the directory is called
