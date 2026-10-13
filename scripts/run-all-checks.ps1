@@ -339,8 +339,51 @@ $liveStackGates = @(
     #
     # The workflow id is a Chinese overview-table workflow: short, and it
     # exercises the CJK round trip end to end.
+    # The FORMAT COVERAGE lane, registered 2026-10-14. This is a legal workspace, so
+    # "we can read and write every format we accept" is a compliance property, not a
+    # feature. Coverage was previously split three ways with holes between them:
+    # text-native-sanitize proved extraction+sanitization, ocr-extraction proved the
+    # raster lane, document-generation proved DOCX only - and NOTHING proved
+    # conversion for any format, or that the format lists agree with each other.
+    #
+    # It walks every accepted format through upload -> extract -> sanitize -> convert,
+    # and - the part that had never been asserted anywhere - DOWNLOADS the document and
+    # inspects the bytes. That last step is how the CRITICAL finding in §EGRESS was
+    # made: after a `verdict=pass` sanitization, download still served the ORIGINAL file
+    # with the raw identifiers, for all seven formats, because the sanitizer persists a
+    # state flag rather than a sanitized artifact. See
+    # deploy/DEFECT-sanitized-content-not-served.md.
+    #
+    # Two PDF kinds are covered deliberately: an image-only scan (which must go through
+    # OCR) and a PDF with a real text layer (which the converter can read). They behave
+    # differently, and an image-only PDF makes markitdown return ok=true with 0 chars.
+    # The DOCUMENT GENERATION lane, registered 2026-10-13. The picker gate above
+    # proves a generation is DELIVERED; this one proves a workflow actually
+    # PRODUCES a document. They are different failures: the picker defect lost the
+    # reply in transit, while this lane can break in the workflow loader, the persona
+    # composer, the AgentLoop, the LLM gateway, the docx tools, the matter store, or
+    # the tenant storage root - and every one of those layers had a separate defect
+    # this month. See the header of that script for the full assertion list, and
+    # deploy/DEFECT-agent-loop-max-rounds.md for the round-cap behaviour it pins.
     'scripts/test-document-generation-e2e.ps1'
+    # officecli, registered 2026-10-14. It is enabled in deer-flow's extension config
+    # and smoke counted it as one of "3 MCP servers enabled" - which was its ENTIRE
+    # coverage. Counting a tool is not testing it, and this is the richest document tool
+    # in the stack: its own description instructs the model to validate, check for
+    # leftover placeholders and screenshot before delivering.
+    #
+    # This drives the real MCP stdio protocol (initialize -> tools/list -> tools/call)
+    # and asserts a document it creates and edits: the tool is advertised WITH its
+    # delivery-gate instructions, create/add/save produce a real OOXML file on disk,
+    # validate reports zero errors, and the added text reads back out. That last
+    # assertion is what separates "save returned success" from "the edit landed".
+    #
+    # Container-only: officecli exists only in deer-flow-pacgate, so it exits 2 when
+    # that image is not present.
+    'scripts/test-officecli-mcp.ps1'
+    'scripts/test-format-coverage-e2e.ps1'
 )
+
 
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
