@@ -85,6 +85,38 @@ missing volume is stated loudly rather than silently producing a cold run.
 - The bake is proven by the build-time assertions in the Dockerfile
   (`test -d /root/.paddleocr/whl/{det,rec,cls}`), plus a post-publish check that
   a container started with **no** weights volume extracts without downloading.
+- **Offline proof against the PUBLISHED image** (`ghcr.io/jzkk720/ocr-service:0.1.28`),
+  which is the property the bake exists for. The image alone carries
+  `det`/`rec`/`cls` at `/root/.paddleocr/whl` (**18M, zero volumes**). A container
+  started with `--network none` - verified to have **no non-loopback interfaces**
+  and DNS resolving to `gaierror` - answered its own `POST /extract` over
+  loopback with **HTTP 200 in 5.05s**, returning
+  `{"text":"OFFLINEOCROK","pages":1,"engine":"paddleocr","incomplete":false}`
+  with spans. Nothing was downloaded.
+- Note the production container mounts `paddleocr-models` over the baked path, so
+  inspecting the *running* container does not by itself prove the bake - Docker
+  seeds a fresh named volume **from** the image, which is why the volume also
+  reads 18M. The `--network none` run above is the check that actually
+  discriminates.
+
+## The `ocr-service:local` indirection is now gone entirely
+
+Removing the tag from the gates still left one live reference: the dev-box
+`compose.ocr-override.yaml`. That file had been superseded twice over and was
+**deleted**:
+
+- `40938bb` (0.1.16) shipped `ocr-service` as a first-class release image and
+  enabled it in `compose.prod.yaml` - the override was redundant from that point.
+- It pinned `pacgate-api:plan020-test`, an image that **does not exist on this
+  box**, and `ocr-service:local`, the invented tag. Combining it with
+  `compose.prod.yaml` therefore *retagged both lanes backwards*, replacing the
+  release images with stale local builds.
+
+Measured before deleting: no gate asserts the file exists (`test-memory-lane.ps1`
+only asserts on composes that define `deer-flow` **and** wire `PACGATE_API_URL`,
+which this override does not), no doc treats it as still-needed, and the running
+stack resolves `ghcr.io/jzkk720/ocr-service:0.1.28`. `test-memory-lane.ps1`'s
+comment naming the file was updated in the same change.
 
 ## Honest residual
 
