@@ -258,6 +258,16 @@ services:
       # JWT for the /api/pacgate proxy route (server-to-server, not browser).
       PACGATE_API_URL: http://pacgate-api:8080
       PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
+    volumes:
+      # Pacgate patch (2026-10-13): `next start` reads next.config.js at boot, so
+      # bind-mounting the patched copy applies the proxyTimeout fix WITHOUT an
+      # image rebuild. Without it, Next.js kills every gateway call that runs
+      # longer than its 30 s default and the caller sees the failure while the
+      # run keeps executing server-side - which is why long agent runs presented
+      # as "the model cannot generate". Measurement + rationale live in
+      # deploy/frontend-patches/files/next.config.js. Baked into the image too,
+      # via the CI copy step, so a future rebuild stays correct on its own.
+      - ../frontend-patches/files/next.config.js:/app/frontend/next.config.js:ro
     restart: unless-stopped
 
   pacgate-mcp:
