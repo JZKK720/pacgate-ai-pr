@@ -584,7 +584,22 @@ if (-not $Update) {
 # 6. Pull Docker images
 Write-Host "`nPulling Docker images..." -ForegroundColor Cyan
 docker compose -f compose.prod.yaml pull
-Write-Host "[OK] Images pulled" -ForegroundColor Green
+# Capture WHY, not just the fact. `compose pull` writes progress to stderr, so it
+# must stay unredirected here (under Windows PowerShell 5.1 any 2>&1 / 2>$null
+# makes a native command's stderr TERMINATING). But leaving the exit code
+# unexamined meant a pull that failed halfway still printed "[OK] Images pulled",
+# and the machine then reported success while running the previous artifact -
+# observed on this dev box 2026-10-13, where every image logged "Pulled" and the
+# tag still pointed at the old build. A pull result the operator cannot trust is
+# the same as no check at all.
+$pullExit = $LASTEXITCODE
+if ($pullExit -ne 0) {
+    Write-Host "[WARN] 'compose pull' exited $pullExit - some images may not be current." -ForegroundColor Yellow
+    Write-Host "       The install continues, but the stack may come up on an older artifact." -ForegroundColor Yellow
+    Write-Host "       Check with:  docker compose -f compose.prod.yaml pull" -ForegroundColor Gray
+} else {
+    Write-Host "[OK] Images pulled" -ForegroundColor Green
+}
 
 # 6b. Provision the matter that deer-flow's memory adapter is scoped to.
 #
@@ -1090,17 +1105,33 @@ if ($Update) {
     # Read the version compose pins, so the reported value is compared against
     # something rather than printed with nothing to check it against.
     $pinned = $null
+    $pinnedRef = $null
     try {
         # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
         # ANSI/GBK; compose.prod.yaml carries Chinese comments.
         $composeTxt = Get-Content compose.prod.yaml -Raw -Encoding UTF8
-        $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+)\s*$')
-        if ($m.Success) { $pinned = $m.Groups['v'].Value }
+        $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*(?<ref>ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+))\s*$')
+        if ($m.Success) { $pinned = $m.Groups['v'].Value; $pinnedRef = $m.Groups['ref'].Value }
     }
     catch { }
 
     $reported = $null
     $revision = $null
+
+    # Image identity, for the version-vs-content comparison below. Read AFTER the
+    # pull (step 6), so $localTagId is what the tag points at NOW. The reference
+    # comes from compose rather than being rebuilt here, so a namespace change
+    # cannot silently make this check inspect a different image than the stack runs.
+    $localTagId = $null
+    $containerId = $null
+    if ($Update -and $pinnedRef) {
+        try {
+            $localTagId = Invoke-WithNativeStderr { (docker inspect --format '{{.Id}}' $pinnedRef 2>$null | Out-String).Trim() }
+            $containerId = Invoke-WithNativeStderr { (docker inspect --format '{{.Image}}' pacgate-api 2>$null | Out-String).Trim() }
+        }
+        catch { }
+    }
+
     foreach ($attempt in 1..3) {
         try {
             $resp = Invoke-RestMethod -Uri $versionUrl -Method Get -TimeoutSec 5
@@ -1133,6 +1164,27 @@ if ($Update) {
             Write-Host "[WARN] Running pacgate-api is $reported but compose pins $pinned." -ForegroundColor Yellow
             Write-Host "       The container has not been recreated yet. If this persists:" -ForegroundColor Yellow
             Write-Host "         docker compose -f compose.prod.yaml up -d --force-recreate pacgate-api" -ForegroundColor Gray
+        }
+        elseif ($Update -and $localTagId -and $containerId -and $localTagId -ne $containerId) {
+            # THE CASE A VERSION COMPARISON CANNOT SEE, and it is the one that
+            # actually happened here (2026-10-13).
+            #
+            # A version is a NAME; a digest is the CONTENT. Re-publishing the same
+            # version with a different build moves the digest without moving the
+            # version, so "running 0.1.28, compose pins 0.1.28" reads OK while the
+            # machine executes the previous build. That is exactly how the 0.1.28
+            # OCR-weights-tag re-point worked: 50252862c826 -> b5ef2b12b8de, same
+            # version string, different image. This box ran the old one through a
+            # whole "-Update" that printed [OK], because the only comparison made
+            # was on the version.
+            #
+            # $localTagId is re-read AFTER the pull, so a stale local tag is not
+            # being compared against itself.
+            Write-Host "[WARN] pacgate-api reports $reported, but the RUNNING container is not the image the tag now points to." -ForegroundColor Yellow
+            Write-Host "       running  $($containerId.Substring(0,[Math]::Min(12,$containerId.Length)))" -ForegroundColor Gray
+            Write-Host "       tag now  $($localTagId.Substring(0,[Math]::Min(12,$localTagId.Length)))" -ForegroundColor Gray
+            Write-Host "       Same version, different build - a re-published tag. Recreate to apply:" -ForegroundColor Yellow
+            Write-Host "         docker compose -f compose.prod.yaml up -d" -ForegroundColor Gray
         }
         else {
             Write-Host "[OK] pacgate-api reports $reported (source revision $rev)" -ForegroundColor Green

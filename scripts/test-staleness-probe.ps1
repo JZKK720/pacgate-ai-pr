@@ -110,6 +110,35 @@ Check 'compose pin parses for the comparison' $m.Success 'no pinned pacgate-api 
 Check 'compose pin matches the crate manifest version' ($m.Success -and $m.Groups['v'].Value -eq $manifestVersion) "compose pins '$($m.Groups['v'].Value)' but Cargo.toml says '$manifestVersion' - /version reports the manifest value, so the staleness check could never fire"
 Write-Host ("         manifest {0}, compose pins pacgate-api {1}" -f $manifestVersion, $m.Groups['v'].Value) -ForegroundColor DarkGray
 
+# 6. The VERSION comparison alone is provably insufficient, and this is the
+#    failure that actually happened (2026-10-13).
+#
+#    A version is a NAME; an image id is the CONTENT. Re-publishing the same
+#    version with a different build moves the id and leaves the version alone, so
+#    "running 0.1.28, compose pins 0.1.28" reads OK while the machine executes the
+#    previous build. On this box that exact state survived a full
+#    `install.ps1 -Update` that printed [OK]: the 0.1.28 OCR tag was re-pointed
+#    (revision 50252862c826 -> b5ef2b12b8de, same version string), the running
+#    container was still the old one, and nothing compared the content.
+$installTxt = Get-Content deploy/client-bundle/install.ps1 -Raw
+Check 'install.ps1 compares image IDENTITY, not only the version string' `
+    ($installTxt -match '\$localTagId' -and $installTxt -match '\$containerId') `
+    'the staleness probe compares only $reported vs $pinned, so a re-published tag reads as current'
+Check 'install.ps1 examines the compose pull exit code' `
+    ($installTxt -match '\$pullExit') `
+    'a failed `compose pull` would still print [OK] Images pulled'
+
+# Synthetic discrimination: the comparison must accept the same image and detect
+# a different one, or a probe that always answers "current" would pass everything
+# above. The ids are the REAL pair from this release.
+function Test-ImageIdentityMatch([string]$tagId, [string]$containerId) { return ($tagId -eq $containerId) }
+Check 'identity comparison ACCEPTS the image the tag points to' `
+    (Test-ImageIdentityMatch 'sha256:9386a8e6a2f0' 'sha256:9386a8e6a2f0') `
+    'an identical image must not be reported as stale'
+Check 'identity comparison DETECTS a re-published tag (so the probe can fail)' `
+    (-not (Test-ImageIdentityMatch 'sha256:9386a8e6a2f0' 'sha256:f47700a26283')) `
+    'the 50252862c826 -> b5ef2b12b8de re-publish must be visible; without this the check cannot fail'
+
 Write-Output ''
 Write-Host ("{0} passed, {1} failed" -f $passed, $failed)
 if ($failed -gt 0) { exit 1 }
