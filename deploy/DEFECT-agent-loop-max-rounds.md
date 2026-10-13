@@ -5,8 +5,9 @@ generated fine - but my HTTP request got 500"* - on the single route that produc
 client deliverables.
 
 **Found:** 2026-10-13, while building `scripts/test-document-generation-e2e.ps1`.
-**Status:** root-caused, fixed, unit-tested, proven live. Awaiting the next image
-build to reach clients (the fix is Rust, so it needs an image).
+**Status:** root-caused, fixed, unit-tested, proven live, and **shipped in 0.1.29**
+(revision `672194d1d78c`, all 5 images PUBLIC). Before that it was present in every
+0.1.28 and earlier deployment.
 
 ## Symptom
 
@@ -126,6 +127,28 @@ been a 500 was delivered instead.
 **End to end.** `scripts/test-document-generation-e2e.ps1`: **19/19 PASS**, including
 a real .docx read back off disk with correct Chinese text.
 
+**On the PUBLISHED 0.1.29 images** (not a local build), the final proof:
+
+| | before (0.1.28 and earlier) | after (0.1.29, revision 672194d) |
+| --- | --- | --- |
+| 8 consecutive `execute` runs | 3 of 8 returned 500 | 8 of 8 returned 200 |
+| 6 consecutive `execute` runs | - | **6 of 6 returned 200** |
+| `max_rounds_reached` on the response | field did not exist | present on every step |
+| runs in which the cap FIRED and were still delivered | 0 (each was a 500) | **2 of those 6** |
+
+The last row is the one that matters: the cap firing is not a rare event - it
+happened in a third of the proof runs - and every one of those is a request that
+0.1.28 answered with a 500 while the document sat on disk.
+
+Confirmed in the published binary itself:
+
+```
+max_rounds_reached symbol : 1
+"agent loop exceeded max_rounds" string : 0
+```
+
+**Full suite against the published 0.1.29: ALL 37 GATES PASSED** (7 live-stack).
+
 ## Residual
 
 - **`max_rounds` is left at 10.** A higher cap would reduce how often the flag is
@@ -142,3 +165,7 @@ a real .docx read back off disk with correct Chinese text.
   read `max_rounds_reached` to tell "nothing happened" from "the tools ran".
 - The live proof used a locally built image, not a published tag. Reaching clients
   needs the normal release path.
+- The **client-side rollout is not yet exercised**: no clean clone has been taken and
+  upgraded through `install.ps1 -Update` to 0.1.29. The dev box was upgraded and is
+  green, but a fresh-clone proof is the only valid test for install-path changes and
+  that has not been run for this release.
