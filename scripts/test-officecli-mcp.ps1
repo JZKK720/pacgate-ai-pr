@@ -187,13 +187,13 @@ if ($exists) {
 
 # validate is necessary and explicitly NOT sufficient - the tool's own text says so.
 Check 'validate reports no errors' ($validateP -and $validateP.success -eq $true -and [int]$validateP.data.count -eq 0) `
-    "validate did not report a clean result: $($validateP | ConvertTo-Json -Compress)"
+    "validate did not report a clean result (errors present or unparseable)"
 
 # The edit must be readable back out, or "save succeeded" only means a file was written.
 Check 'the added text is READ BACK from the document' ($viewR -match 'GATEMARKER') `
     "view text did not return the marker; the edit may not have landed: $($viewR.Substring(0,[Math]::Min(220,$viewR.Length)))"
 Check 'query returns structured JSON the agent can use' ($queryP -and $queryP.success -eq $true -and @($queryP.data.results).Count -ge 1) `
-    "query did not return structured results: $($queryP | ConvertTo-Json -Compress)"
+    "query did not return structured results the agent can read"
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 if (-not $KeepArtifacts) { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
