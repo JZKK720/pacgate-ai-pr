@@ -38,7 +38,11 @@ param(
     # it is short, deterministic in shape, and exercises the CJK path end to end.
     [string]$WorkflowId = '00000000-0000-0000-0000-000000001002',
     [string]$EnvFile = '',
-    [int]$TimeoutSec = 900
+    [int]$TimeoutSec = 900,
+    # Opt-in failure-rate soak. 0 = skip (default, keeps the sweep fast). Each run
+    # costs a real generation, so this belongs in a release soak, not every sweep.
+    [int]$FailureRateRuns = 0,
+    [int]$MaxFailures = 0
 )
 
 $ErrorActionPreference = 'Continue'
@@ -60,6 +64,80 @@ function Skip-CannotCheck($why) {
     Write-Host "RESULT: $pass passed, $fail failed (CANNOT CHECK)" -ForegroundColor Yellow
     exit 2
 }
+
+# ── Failure-rate measurement ──────────────────────────────────────────────────
+#
+# WHY THIS IS A SEPARATE PASS. The 0.1.28 defect answered
+# `POST /api/workflows/:id/execute` with HTTP 500 on **1 run in 3**, while the
+# document was written anyway. Every gate in this repo, including the ones in this
+# file, runs a route ONCE and asserts on that single result - so a 1-in-3 defect had
+# a ~67% chance of passing the suite on any given run. The suite was not weak
+# because it asserted too little; it was weak because it asserted once.
+#
+# A single-run gate cannot be fixed by adding assertions. This measures the thing
+# that was actually wrong: the FAILURE RATE of the generation path under repetition.
+#
+# It is opt-in (`-FailureRateRuns N`) for a deliberate reason: each run costs a real
+# generation, so it belongs in a release soak and not in the default sweep. The
+# number to beat is not zero - it is "the rate is not statistically distinguishable
+# from zero at this sample size", which is why the threshold is stated as a count
+# (`-MaxFailures`, default 0) rather than a percentage that would round a 1-in-3 bug
+# down to something that looks acceptable.
+function Measure-GenerationFailureRate {
+    param(
+        [string]$BaseUrl, [hashtable]$Headers, [string]$WorkflowId, [int]$Runs, [int]$MaxFailures, [int]$TimeoutSec
+    )
+    Write-Host ''
+    Write-Host ("MEASURE: generation failure rate over {0} consecutive runs" -f $Runs) -ForegroundColor Cyan
+    $codes = @()
+    $capped = 0
+    $matterIds = @()
+    try {
+        for ($i = 1; $i -le $Runs; $i++) {
+            $mid = $null
+            try {
+                $mm = Invoke-RestMethod -Uri "$BaseUrl/api/matters" -Method Post -Headers $Headers -TimeoutSec 30 `
+                    -ContentType 'application/json' `
+                    -Body (@{ name = "soak-$i-$(Get-Random)"; description = "failure-rate soak run $i" } | ConvertTo-Json -Compress)
+                $mid = $mm.id; $matterIds += $mid
+            }
+            catch { }
+
+            $code = 'no-matter'
+            $flag = ''
+            if ($mid) {
+                $code = (curl.exe -s -o "$env:TEMP\soak-$i.json" -w '%{http_code}' `
+                        -X POST "$BaseUrl/api/workflows/$WorkflowId/execute" `
+                        -H "Authorization: $($Headers['Authorization'])" -H 'Content-Type: application/json' `
+                        --data-binary "{`"matter_id`":`"$mid`"}" --max-time $TimeoutSec 2>&1)
+                if ($code -eq '200') {
+                    try {
+                        $flag = ((Get-Content "$env:TEMP\soak-$i.json" -Raw | ConvertFrom-Json).steps[0].max_rounds_reached)
+                        if ($flag -eq $true) { $capped++ }
+                    }
+                    catch { }
+                }
+            }
+            $codes += $code
+            Write-Host ("  run {0,2}/{1}: HTTP {2} {3}" -f $i, $Runs, $code, $(if ($flag -eq $true) { '(round cap reached - delivered anyway)' } else { '' })) -ForegroundColor DarkGray
+        }
+    }
+    finally {
+        foreach ($mid in $matterIds) {
+            try { $null = Invoke-RestMethod -Uri "$BaseUrl/api/matters/$mid" -Method Delete -Headers $Headers -TimeoutSec 30 } catch { }
+        }
+    }
+
+    $failures = @($codes | Where-Object { $_ -ne '200' }).Count
+    Write-Host ("  failures: {0} of {1}  (codes: {2})" -f $failures, $Runs, ($codes -join ' ')) -ForegroundColor DarkGray
+    if ($capped -gt 0) {
+        Write-Host ("  the round cap fired on {0} run(s) and every one was still delivered" -f $capped) -ForegroundColor Yellow
+    }
+    Check "generation path has no failures in $Runs consecutive runs" ($failures -le $MaxFailures) `
+        "$failures of $Runs failed (allowed $MaxFailures). THIS is the shape of the 0.1.28 defect: it failed on demand and succeeded on retry, so one run proves nothing."
+    return $failures
+}
+
 
 Write-Host '=== document generation gate (workflow execute -> docx on disk) ===' -ForegroundColor Cyan
 
@@ -321,6 +399,21 @@ finally {
     if ($matterId) {
         try { $null = Invoke-RestMethod -Uri "$BaseUrl/api/matters/$matterId" -Method Delete -Headers $H -TimeoutSec 30 } catch { }
     }
+}
+
+# ── 9. Optional failure-rate soak ──────────────────────────────────────────────
+# Placed AFTER the single-run proof and outside its try, so a soak failure cannot
+# mask whether the ordinary path works, and vice versa.
+if ($FailureRateRuns -gt 0) {
+    $null = Measure-GenerationFailureRate -BaseUrl $BaseUrl -Headers $H -WorkflowId $WorkflowId `
+        -Runs $FailureRateRuns -MaxFailures $MaxFailures -TimeoutSec $TimeoutSec
+}
+else {
+    Write-Host ''
+    Write-Host 'NOTE: the failure-rate soak was NOT run. This gate has now asserted on ONE' -ForegroundColor Yellow
+    Write-Host '      generation. The 0.1.28 defect failed on 1 run in 3, so a single run' -ForegroundColor Yellow
+    Write-Host '      passes a broken build about two times in three. For a release, run:' -ForegroundColor Yellow
+    Write-Host "        pwsh -File $($MyInvocation.MyCommand.Path) -FailureRateRuns 8" -ForegroundColor Gray
 }
 
 Write-Host ''

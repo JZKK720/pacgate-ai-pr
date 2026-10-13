@@ -153,8 +153,6 @@ max_rounds_reached symbol : 1
 
 - **`max_rounds` is left at 10.** A higher cap would reduce how often the flag is
   set, but it treats the symptom: the number was never the defect, the `Err` was.
-  Raising it is now a tuning decision that can be made from the flag's frequency
-  rather than blind.
 - **The flag is not yet surfaced in any client UI.** The frontend shows the run's
   assistant message; a truncated run has no closing message, so a user could still
   see "no answer" with a 200. The API now makes the state observable; consuming it
@@ -165,6 +163,97 @@ max_rounds_reached symbol : 1
   read `max_rounds_reached` to tell "nothing happened" from "the tools ran".
 - The live proof used a locally built image, not a published tag. Reaching clients
   needs the normal release path.
+
+---
+
+# 2026-10-14: the fix was incomplete — it turned a loud 500 into a silent blank
+
+The section above shipped in 0.1.29. **Measuring it afterwards changed the
+conclusion**, and this is recorded here rather than quietly patched.
+
+## The measurement that broke it
+
+Driving `POST /api/workflows/:id/execute` repeatedly on the shipped 0.1.29:
+
+| metric | 0.1.29 | |
+| --- | --- | --- |
+| HTTP 200 delivered | 8 / 8 | the 500 was genuinely gone |
+| document row exists | 7 / 8 | |
+| **`content: EMPTY` (no reply)** | **5 / 8** | **62%** |
+| round cap fired | 5 / 8 | |
+| tool calls per run | 3, **10, 1, 10, 10, 10**, 7, **10** | |
+
+A single step's `tools_used`, verbatim:
+
+```
+list_documents, generate_docx, generate_docx, generate_docx, generate_docx,
+generate_docx, generate_docx, generate_docx, read_document, generate_docx
+```
+
+**Nine `generate_docx` calls.** Each one SUCCEEDS - it really does write another
+document - so nothing errors, the loop never converges, and `generate_docx` is still
+the tool in flight when the cap stops it. The result is HTTP 200 with
+`"content": null` and `"final_content": null`.
+
+That is worse than what it replaced. A 500 tells the caller something is wrong. A
+200 with a blank answer tells them nothing, and the client UI renders it as "no
+response" with no error to report.
+
+The root cause of the *original* defect was still correctly identified (returning
+`Err` discarded committed work). The mistake was treating "do not error" as the whole
+fix. Not erroring is not the same as answering.
+
+## Two further changes
+
+**1. A forced final-answer pass.** When the loop stops without a natural close
+(cap reached, or the new loop-break below), the model is asked once more **with the
+tools withheld**, so it cannot call another tool and must answer in text. A failure
+there is non-fatal: the turn's work is already done and its tool log is intact.
+
+**2. Runaway-regeneration detection.** Before dispatching a round, the calls are
+compared with the previous round's. A repeated identical `tool + arguments` is not
+progress, so the loop breaks and goes straight to the forced-answer pass. Two
+consecutive identical rounds is the threshold: a legitimate workflow does not call an
+identical tool-with-arguments twice in a row.
+
+Raising `max_rounds` was considered and rejected - it buys more duplicate documents,
+not an answer.
+
+## Verified
+
+Unit (red-checked): with the detector disabled the loop burns all **50** rounds and
+the test fails with `identical calls must stop the loop early, not consume the whole
+cap; made 50 calls`. Two new tests pin both halves - a repeated identical call stops
+the loop, and distinct calls are **not** mistaken for one (or the detector would just
+be counting rounds). Agent suite 9/9; full workspace green.
+
+Live, on a rebuilt image:
+
+| metric | 0.1.29 as shipped | after the loop fix |
+| --- | --- | --- |
+| HTTP 200 | 8 / 8 | 22 / 22 |
+| **`content: EMPTY`** | **5 / 8 (62%)** | **0 / 22** |
+| document row exists | 7 / 8 | 21 / 22 |
+| round cap fired | 5 / 8 | 10 / 22 |
+
+The empty-answer class is gone across 22 consecutive runs.
+
+## Residual, still open
+
+- **Duplicate documents are NOT prevented.** The model can still call `generate_docx`
+  several times with *different* arguments before converging; runs produced up to 4
+  rows. Loop detection keys on an **identical** `tool + arguments` pair, so a
+  varying-argument loop is untouched. A user can therefore still be shown a matter
+  containing several near-identical documents. Fixing this means deciding whether
+  repeated generation is a legitimate iteration or a mistake, which is a product
+  decision about how workflows should behave - not a code change to make silently.
+- **One 500 was observed in an earlier 10-run sample** and its body was not captured
+  (the probe discarded non-200 bodies at the time). It did not reproduce in the
+  following 22 runs, so it is recorded as unexplained rather than fixed. The probe now
+  prints the body for any non-200.
+- **`content` can be non-null while the document row count is 0** (runs 1, 4, 11 in the
+  12-run sample): the model narrated a document it did not manage to create. The
+  answer is confident and wrong. Nothing in the API currently distinguishes that.
 - The **client-side rollout is not yet exercised**: no clean clone has been taken and
   upgraded through `install.ps1 -Update` to 0.1.29. The dev box was upgraded and is
   green, but a fresh-clone proof is the only valid test for install-path changes and
