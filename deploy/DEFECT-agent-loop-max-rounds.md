@@ -254,6 +254,64 @@ The empty-answer class is gone across 22 consecutive runs.
 - **`content` can be non-null while the document row count is 0** (runs 1, 4, 11 in the
   12-run sample): the model narrated a document it did not manage to create. The
   answer is confident and wrong. Nothing in the API currently distinguishes that.
+
+---
+
+# 2026-10-14 (later): two more findings from the format audit
+
+## A third failure shape: the intermittent 500 that will not reproduce
+
+`test-format-coverage-e2e.ps1` hit a **HTTP 500 on `POST /api/documents/:id/extract`
+for an `.xlsx`**. It then did not reproduce:
+
+| attempt | result |
+| --- | --- |
+| the original run | **500** |
+| a single targeted retry | 200, correct text |
+| 12 consecutive runs of the same fixture through upload -> extract | **12 x 200, 0 failures** |
+
+The log signature was `response failed classification=Status code: 500 latency=1-3 ms`
+- i.e. the failure happened **before any extraction work**, so it is not a slow path,
+a timeout, or a PaddleOCR problem. No panic, no `ERROR` beyond the tower_http
+classification line, and the error body was not captured because the gate's helper
+discarded non-200 bodies at that moment.
+
+Recorded as **reproduced once, not diagnosed**, which is the honest status. The gate now
+captures the body of every non-200 so the next occurrence is diagnosable instead of
+anecdotal. A 1-in-13 failure is also the same class as the round-cap defect: a
+single-run assertion passes a broken build most of the time, which is why
+`test-document-generation-e2e.ps1` grew its `-FailureRateRuns` soak.
+
+## Document versions are counted per STEM, not per document
+
+Not a crash, but a real design detail the format gate exposed and worth writing down.
+
+`latest_version` is keyed on `(matter_id, name)` where **`name` is the extension-less
+stem**, while `rel_path` also carries the format:
+
+```rust
+let version = self.latest_version(matter_id, stem).await?;   // stem only
+let rel_path = Self::rel_path(&tenant_id, matter_id, stem, version, format);
+```
+
+So `report.docx` and `report.xlsx` uploaded into the same matter share one version
+counter: the second gets `version = 2` even though it is not a second version of the
+first. Uploading `report.docx` again then produces `version = 3`, making the docx
+versions non-contiguous (1, 3) and leaving `version = 2` pointing at a different format.
+
+Consequences:
+
+- **Nothing errors.** Each row keeps its own format, so retrieval by
+  `(matter, stem, version)` still resolves, and `list_versions` works.
+- **But "version" reads as "revision of this document" and is not.** A user asking for
+  version 2 of `report.docx` is asking for a number that was assigned to a spreadsheet.
+- A test fixture using the same stem for several formats (which is exactly what the
+  format gate did) sees versions 1..N across unrelated files, which looks alarming and
+  is not - a false alarm this note exists to prevent someone re-investigating.
+
+**Not changed.** Making the counter per `(stem, format)` is a one-line key change but it
+alters the numbering of existing rows' meaning, so it needs a migration decision rather
+than a silent edit.
 - The **client-side rollout is not yet exercised**: no clean clone has been taken and
   upgraded through `install.ps1 -Update` to 0.1.29. The dev box was upgraded and is
   green, but a fresh-clone proof is the only valid test for install-path changes and
