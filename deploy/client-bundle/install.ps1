@@ -950,16 +950,33 @@ if ($LASTEXITCODE -eq 0) {
 # deer-flow-config.yaml sit on disk doing nothing. See
 # deploy/AIPC-UPDATE-GAP-ANALYSIS.md defect 3b.
 #
+# deer-flow-frontend is restarted for the SAME reason since 2026-10-13: it now
+# bind-mounts deploy/frontend-patches/files/next.config.js, and `next start`
+# reads that file only at process boot. Its config carries
+# experimental.proxyTimeout, without which Next.js tears down every proxied
+# gateway call longer than its 30s default - the caller sees the failure while
+# the run keeps executing (deploy/DEFECT-frontend-proxy-timeout.md). A repo
+# update that changes that file is inert until the process restarts, so omitting
+# this restart would leave an updated machine still broken.
+#
 # Only needed on -Update: a first install mounts the files before the container
 # starts, so they are already in effect.
 if ($Update) {
     Write-Host "`nRestarting services with bind-mounted code..." -ForegroundColor Cyan
-    $dfRunning = docker compose -f compose.prod.yaml ps -q deer-flow
-    if ($dfRunning) {
-        docker compose -f compose.prod.yaml restart deer-flow
-        Write-Host "[OK] deer-flow restarted (patches/*.py and config.yaml now in effect)" -ForegroundColor Green
-    } else {
-        Write-Host "[WARN] deer-flow is not running; skipped restart" -ForegroundColor Yellow
+    # Service -> why it must restart. Kept as data so a future bind mount is
+    # added here rather than silently inheriting the same gap.
+    $bindMounted = @(
+        @{ Service = 'deer-flow';          Why = 'patches/*.py and config.yaml now in effect' }
+        @{ Service = 'deer-flow-frontend'; Why = 'next.config.js (proxyTimeout) now in effect' }
+    )
+    foreach ($svc in $bindMounted) {
+        $running = docker compose -f compose.prod.yaml ps -q $svc.Service
+        if ($running) {
+            docker compose -f compose.prod.yaml restart $svc.Service
+            Write-Host "[OK] $($svc.Service) restarted ($($svc.Why))" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] $($svc.Service) is not running; skipped restart" -ForegroundColor Yellow
+        }
     }
 }
 

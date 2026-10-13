@@ -78,6 +78,18 @@ Check 'nginx has a long-run read timeout on the UI/API locations' `
     (($rootTimeouts | Where-Object { $_ -ge 900 }).Count -ge 2) `
     "read timeouts found: $($rootTimeouts -join ', ') s (need >= 900 on both / and /research/)"
 
+# The UPDATE path must actually apply the bind mount. A changed bind-mounted FILE
+# does not alter compose config, so `up -d` never recreates the container and
+# `next start` reads next.config.js only at boot. install.ps1's "-Update" restart
+# list therefore has to name deer-flow-frontend, or an updated machine silently
+# keeps the old config and stays broken - the exact gap this assertion exists for.
+$installPs1 = Join-Path $repoRoot 'deploy/client-bundle/install.ps1'
+$iTxt = Get-Content $installPs1 -Raw
+$restartBlock = [regex]::Match($iTxt, "(?s)Restarting services with bind-mounted code.{0,1500}")
+Check 'install.ps1 -Update restarts deer-flow-frontend (applies the bind mount)' `
+    ($restartBlock.Success -and $restartBlock.Value -match 'deer-flow-frontend') `
+    'the update restart list must include deer-flow-frontend, or a repo update leaves the old proxyTimeout in force'
+
 # ── STATIC: picker roster vs what install.ps1 pulls ──────────────────────────
 Write-Host ''
 Write-Host 'STATIC: the picker roster cannot drift from the pulled models'
