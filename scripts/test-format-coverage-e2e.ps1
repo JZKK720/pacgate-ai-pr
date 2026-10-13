@@ -83,6 +83,14 @@ Write-Host '  authenticated' -ForegroundColor DarkGray
 # The ocr-service image doubles as the fixture builder (it is the container with
 # Pillow). Derived, never the invented `ocr-service:local`.
 if (-not $OcrImage) {
+    # Prefer the image the RUNNING ocr-service uses: it is what the stack being tested
+    # actually runs, and it exists. Falling straight to the derived release tag fails
+    # during a release window (the tag is not built yet) and reports "fixture could not
+    # be built", which reads like a product failure - exactly the false-red class
+    # scripts/lib/Release-ImageState.ps1 exists to prevent.
+    try { $OcrImage = (docker inspect $(docker ps -q -f "name=^ocr-service$") --format '{{.Config.Image}}' 2>$null | Out-String).Trim() } catch { }
+}
+if (-not $OcrImage) {
     . (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
     $OcrImage = Get-ReleaseOcrImage
 }
@@ -269,14 +277,19 @@ except Exception:
 # Every accepted upload format, with the extension and content type the client
 # sends. `pdf` is the raster lane (OCR); the rest are text-native.
 $cases = @(
-    [pscustomobject]@{ Name = 'pdf-scan'; File = 'cscan.pdf'; Ct = 'application/pdf';       Lane = 'raster (OCR)';      TextLayer = $false },
-    [pscustomobject]@{ Name = 'pdf-text'; File = 'ctext.pdf'; Ct = 'application/pdf';       Lane = 'text layer (native)'; TextLayer = $true },
-    [pscustomobject]@{ Name = 'docx'; File = 'c.docx'; Ct = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'; Lane = 'text-native'; TextLayer = $false },
-    [pscustomobject]@{ Name = 'xlsx'; File = 'c.xlsx'; Ct = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';          Lane = 'text-native'; TextLayer = $false },
-    [pscustomobject]@{ Name = 'pptx'; File = 'c.pptx'; Ct = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';  Lane = 'text-native'; TextLayer = $false },
-    [pscustomobject]@{ Name = 'html'; File = 'c.html'; Ct = 'text/html';             Lane = 'text-native'; TextLayer = $false },
-    [pscustomobject]@{ Name = 'txt';  File = 'c.txt';  Ct = 'text/plain';            Lane = 'text-native'; TextLayer = $false },
-    [pscustomobject]@{ Name = 'md';   File = 'c.md';   Ct = 'text/markdown';         Lane = 'text-native'; TextLayer = $false }
+    # Each fixture uses a DISTINCT stem on purpose. Version is counted per
+    # (matter, stem) with the extension stripped, so `c.docx` and `c.xlsx` in one matter
+    # share a version counter and appear as versions 1, 2, 3... of each other. That is
+    # real behaviour (see DEFECT-agent-loop-max-rounds.md), and a fixture that trips it
+    # reports alarming version numbers that mean nothing about the format under test.
+    [pscustomobject]@{ Name = 'pdf-scan'; File = 'fscan.pdf'; Ct = 'application/pdf';       Lane = 'raster (OCR)';      TextLayer = $false },
+    [pscustomobject]@{ Name = 'pdf-text'; File = 'ftext.pdf'; Ct = 'application/pdf';       Lane = 'text layer (native)'; TextLayer = $true },
+    [pscustomobject]@{ Name = 'docx'; File = 'fdoc.docx'; Ct = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'; Lane = 'text-native'; TextLayer = $false },
+    [pscustomobject]@{ Name = 'xlsx'; File = 'fsheet.xlsx'; Ct = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';          Lane = 'text-native'; TextLayer = $false },
+    [pscustomobject]@{ Name = 'pptx'; File = 'fdeck.pptx'; Ct = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';  Lane = 'text-native'; TextLayer = $false },
+    [pscustomobject]@{ Name = 'html'; File = 'fpage.html'; Ct = 'text/html';             Lane = 'text-native'; TextLayer = $false },
+    [pscustomobject]@{ Name = 'txt';  File = 'fnote.txt';  Ct = 'text/plain';            Lane = 'text-native'; TextLayer = $false },
+    [pscustomobject]@{ Name = 'md';   File = 'freadme.md'; Ct = 'text/markdown';         Lane = 'text-native'; TextLayer = $false }
 )
 
 Write-Host ''
