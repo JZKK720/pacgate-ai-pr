@@ -125,6 +125,50 @@ def render_lang(lang: str, chrome_exe: str) -> tuple[Path, Path]:
     return html_path, pdf_path
 
 
+# Chrome discovery.
+#
+# This used to hardcode r"C:\Users\pacga\.cache\puppeteer\...\chrome.exe" - a
+# SPECIFIC USER'S puppeteer cache - so on every other machine rendering died with
+# "Chrome not found at" and the handbook could not be regenerated at all. The same
+# literal is fixed in deploy/handbooks/render_handbooks.py, which had the
+# identical defect.
+#
+# Searched most-specific first; CHROME_EXE still overrides everything.
+def find_chrome() -> str | None:
+    override = os.environ.get("CHROME_EXE")
+    if override:
+        return override if Path(override).exists() else None
+
+    candidates: list[Path] = []
+    # Every user's puppeteer cache, globbed - the build revision changes on each
+    # puppeteer update, and pinning a revision is the same mistake in a new place.
+    for base in (
+        Path(os.environ.get("USERPROFILE", "")) / ".cache" / "puppeteer" / "chrome",
+        Path.home() / ".cache" / "puppeteer" / "chrome",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "puppeteer" / "chrome",
+        Path.home() / "Library" / "Caches" / "puppeteer" / "chrome",
+    ):
+        if base.is_dir():
+            candidates.extend(sorted(base.glob("*/chrome-win64/chrome.exe")))
+            candidates.extend(sorted(base.glob("*/chrome-win/chrome.exe")))
+            candidates.extend(sorted(base.glob("*/chrome-linux64/chrome")))
+            candidates.extend(sorted(base.glob("*/chrome-headless-shell-*/chrome-headless-shell*")))
+    for p in (
+        Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Google/Chrome/Application/chrome.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/Application/chrome.exe",
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    ):
+        candidates.append(p)
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -135,13 +179,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    chrome_exe = os.environ.get(
-        "CHROME_EXE",
-        r"C:\Users\pacga\.cache\puppeteer\chrome\win64-1108766\chrome-win\chrome.exe",
-    )
-    if not Path(chrome_exe).exists():
-        print("Chrome not found at", chrome_exe)
+    chrome_exe = find_chrome()
+    if not chrome_exe:
+        print("Chrome not found. Set CHROME_EXE to a Chrome/Chromium binary, or install Chrome.")
+        print("Searched: CHROME_EXE, every user's puppeteer cache, and installed Chrome/Chromium.")
         sys.exit(1)
+    print(f"Chrome: {chrome_exe}")
 
     langs = ["en", "zh"] if args.lang == "both" else [args.lang]
     for lang in langs:
