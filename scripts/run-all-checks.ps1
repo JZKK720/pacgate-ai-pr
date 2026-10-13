@@ -141,6 +141,18 @@ $gates = @(    'scripts/test-install-render.ps1'
     'scripts/test-qm-sandbox-fingerprint.ps1'
     'scripts/test-version-marker.ps1'
     'scripts/test-version-marker-against-image.ps1'
+    # Asserts the release TAG still identifies the PUBLISHED artifacts - that the
+    # tag is the recipe for what a client pulls. Nothing else could see this:
+    # preflight-release-tag.ps1 only checks BEFORE a release, and
+    # smoke-full-stack.ps1 only asserts /version carries some revision. On 0.1.28
+    # a workflow_dispatch published the OCR bake under an already-existing version
+    # number without moving the tag, so the tag pointed at a commit whose tree had
+    # no warm_up.py while every published image reported the bake commit. The
+    # published images were correct; the tag was wrong, and re-deriving the
+    # release from its own tag would have reproduced the bake-less image.
+    # Self-contained: reads the GHCR config blobs and the git history. No docker,
+    # no running stack, so it belongs here rather than in $liveStackGates.
+    'scripts/test-release-provenance.ps1'
     # The Rust layer was entirely un-gated before 2026-09-26: cargo test and
     # cargo clippy ran nowhere in CI or run-all-checks. That is why a silent
     # recall miss shipped in four detectors. Scope is deliberately -p
