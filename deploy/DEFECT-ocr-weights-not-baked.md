@@ -131,7 +131,11 @@ and a mount that can be stale removes that guarantee even when, today, it is not
   `install.ps1 -Update`.
 - An existing `paddleocr-models` volume on a client machine is now simply unused;
   it can be removed with
-  `docker volume rm <project>_paddleocr-models` but leaving it is inert.
+  `docker volume rm <project>_paddleocr-models` (project is `pacgate-ai-bundle`,
+  so the real name is `pacgate-ai-bundle_paddleocr-models`) but leaving it is inert.
+  It was removed on the dev box and `ocr-service` recreated from the current
+  compose afterwards: **0** mounts, det/rec/cls present, and a real extraction
+  through the API still PASSes - so the removal is proven, not assumed.
 
 ## A second, independent defect found in the same place
 
