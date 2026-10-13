@@ -278,6 +278,16 @@ $liveStackGates = @(
     # looked like sanitizer defects. It now derives the network from the running
     # container, and exits 2 when the stack is not up.
     'scripts/test-sanitizer-e2e.ps1'
+    # The picker + generation DELIVERY gate, registered 2026-10-13 alongside the
+    # fix it protects. Nothing tested either surface, which is why the 0.1.27
+    # defect shipped: Next.js `experimental.proxyTimeout` defaults to 30 s, so
+    # every agent run the frontend proxied was cut mid-flight while the run kept
+    # executing - and it presented as "the model cannot generate". The static half
+    # asserts the timeout chain stays configured (the defect WAS a missing config
+    # value) and that the picker roster cannot drift from ollama-models.txt; the
+    # live half drives a REAL generation through nginx and requires an actual
+    # assistant reply, not just HTTP 200. See deploy/DEFECT-frontend-proxy-timeout.md.
+    'scripts/test-model-picker-e2e.ps1'
 )
 
 $measurements = @(
