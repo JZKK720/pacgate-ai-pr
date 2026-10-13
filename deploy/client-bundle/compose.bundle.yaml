@@ -227,6 +227,11 @@ services:
   # time. They used to download on FIRST EXTRACTION, which made this the one lane
   # needing an external host (paddleocr.bj.bcebos.com) and measured 269.9s cold
   # against a 300s client timeout in pacgate-api - so it failed intermittently.
+  #
+  # No volumes: block, deliberately. Mounting a volume over /root/.paddleocr
+  # SHADOWS the baked copy and lets PaddleOCR reach for the CDN again for anything
+  # the volume lacks - the dependency the bake exists to remove. See the longer
+  # note in compose.prod.yaml.
   ocr-service:
     image: ghcr.io/jzkk720/ocr-service:0.1.28
     container_name: ocr-service
@@ -234,10 +239,6 @@ services:
       # Python logging rejects lowercase level names.
       OCR_LOG_LEVEL: INFO
       OCR_USE_GPU: "0"
-    # The writable layer over the baked copy. PaddleOCR only downloads when a
-    # model is MISSING, so with the bake in place it does not download at all.
-    volumes:
-      - paddleocr-models:/root/.paddleocr
     restart: unless-stopped
 
   openviking:
@@ -262,7 +263,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Persists PaddleOCR's downloaded model weights across container recreation.
-  paddleocr-models:
   pacgate-db-data:
 

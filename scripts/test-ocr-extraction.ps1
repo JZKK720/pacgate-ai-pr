@@ -41,9 +41,11 @@ $cleanup = { docker rm -f $cid 2>$null | Out-Null }
 
 # 1. Start ocr-service
 #
-# Note there is NO weights volume. That is deliberate: the PP-OCRv4 weights are
-# baked into the image, so extraction must work with nothing mounted - and this
-# script therefore doubles as a proof of the bake.
+# Note there is NO weights volume, and that is now the PRODUCTION shape: the
+# PP-OCRv4 weights are baked into the image and nothing may be mounted over
+# /root/.paddleocr (a mount shadows the baked copy). This script therefore
+# doubles as a proof of the bake, and `test-ocr-bake-integrity.ps1` keeps it
+# that way.
 Write-Output "== starting ocr-service ($OcrImage) =="
 docker run -d --name $cid -p 8110:8100 $OcrImage | Out-Null
 try {

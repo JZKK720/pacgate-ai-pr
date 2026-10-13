@@ -31,16 +31,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 # install path, which is the point - a fresh AIPC must not need a Chinese CDN to
 # read its first document.
 #
-# The weights live at /root/.paddleocr/whl/{det,rec,cls}/. compose.prod.yaml
-# still mounts the paddleocr-models volume over /root/.paddleocr: the baked copy
-# is the floor (always present, offline-safe) and the volume is the writable
-# layer. PaddleOCR only downloads when a model is MISSING, so with the bake in
-# place it does not download at all.
+# The weights live at /root/.paddleocr/whl/{det,rec,cls}/. NOTHING may be mounted
+# over /root/.paddleocr from here on: a mount point REPLACES the directory rather
+# than layering over it, so a mounted volume shadows this baked copy and PaddleOCR
+# goes back to bcebos for whatever the volume lacks. compose.prod.yaml and
+# compose.bundle.yaml used to mount a `paddleocr-models` volume here and no longer
+# do; `scripts/test-ocr-bake-integrity.ps1` fails if one comes back.
 #
 # The warm-up runs the REAL construction path rather than fetching specific
 # files, so the baked set always matches what app.py actually asks for. The
 # lang/angle_cls values here MUST stay in step with get_ocr() in app.py -
 # warm_up.py is the single source for the download and is invoked the same way.
+# That agreement is asserted statically by the same gate.
 ARG PACGATE_OCR_LANG=ch
 COPY warm_up.py .
 RUN PACGATE_OCR_LANG="${PACGATE_OCR_LANG}" python warm_up.py \

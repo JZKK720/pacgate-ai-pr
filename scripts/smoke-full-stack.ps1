@@ -188,15 +188,21 @@ $mcp = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 15 -X POST 'http://loc
 if ($mcp -eq '200' -or $mcp -eq '202') { Ok "openviking MCP tools/list -> $mcp" }
 else { Skip "openviking MCP -> $mcp (needs the root key in env; covered by test-legal-journey lane 10)" }
 
-# ── Lane 6: ocr-service (the 0.1.21 volume fix) ─────────────────────────────
+# ── Lane 6: ocr-service (the bake IS the weights tree) ──────────────────────
 Lane 'ocr-service'
 $oc = (docker exec -w /app ocr-service python3 -c "import app" 2>&1 | Out-String).Trim()
 if ([string]::IsNullOrEmpty($oc)) { Ok 'ocr-service module imports cleanly' } else { Skip "import probe: $oc" }
-$vol = (docker exec ocr-service sh -c "mount | grep -c '/root/.paddleocr'" 2>&1 | Out-String).Trim()
-if ($vol -eq '1') { Ok 'paddleocr weights volume IS mounted (0.1.21 fix)' }
-else { Bad "paddleocr volume NOT mounted ($vol) - recreate would re-download" }
-$weights = (docker exec ocr-service sh -c "ls /root/.paddleocr 2>/dev/null | wc -l" 2>&1 | Out-String).Trim()
-Write-Host "    weights present in volume: $weights entr(ies) (0 = not yet extracted this container)"
+# From 0.1.28 the PP-OCRv4 weights are BAKED INTO the image and nothing is
+# mounted over them. This assertion is inverted from pre-0.1.28: it used to pass
+# only when `paddleocr-models` WAS mounted ("0.1.21 fix"). That mount SHADOWS the
+# baked copy, so the old assertion demanded the one configuration that can defeat
+# the bake. Now a mount here is the failure.
+$mnt = (docker exec ocr-service sh -c "mount | grep -c '/root/.paddleocr'" 2>&1 | Out-String).Trim()
+if ($mnt -eq '0') { Ok 'no volume shadows /root/.paddleocr (baked weights are the tree)' }
+else { Bad "something is mounted over /root/.paddleocr ($mnt) - it shadows the baked weights" }
+$baked = (docker exec ocr-service sh -c "ls -d /root/.paddleocr/whl/det /root/.paddleocr/whl/rec /root/.paddleocr/whl/cls 2>/dev/null | wc -l" 2>&1 | Out-String).Trim()
+if ($baked -eq '3') { Ok 'baked weights present: det + rec + cls' }
+else { Bad "baked weights incomplete ($baked/3 of det rec cls present)" }
 
 # ── Lane 7: qm-pacgate ──────────────────────────────────────────────────────
 Lane 'qm-pacgate'

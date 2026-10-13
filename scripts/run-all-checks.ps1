@@ -241,6 +241,25 @@ $gates = @(    'scripts/test-install-render.ps1'
     # safe in the gate list. Negative-tested against both the stale tag and a
     # main.rs that bypasses the overrides.
     'scripts/test-model-roster-consistency.ps1'
+    # Baked-weights integrity. 0.1.28 bakes the PP-OCRv4 det/rec/cls weights into
+    # the ocr-service image, but both compose files went on mounting a
+    # `paddleocr-models` volume over /root/.paddleocr - and a mount point SHADOWS
+    # the image's directory, so anything the volume lacks is fetched from
+    # paddleocr.bj.bcebos.com again. That is the CDN dependency the bake exists to
+    # delete, and the cold path measured 269.9s against a 300s client timeout.
+    # The volume was being defended as "harmless", which is true only for a volume
+    # Docker has just created; measured on this box, a foreign volume made the
+    # baked tree invisible. Both the mount and the now-unused volume declaration
+    # were removed, and this gate asserts the PROPERTY that nothing in the tree
+    # shadows the baked path. It also pins the two ways the bake could rot
+    # silently: a warm_up.py that stops matching app.py's construction, and a
+    # smoke lane flipped back to REQUIRING the mount. Red-checked by
+    # reintroducing each of the three.
+    #
+    # STATIC - reads the Dockerfile, every compose in deploy/, and the smoke
+    # script - so it needs no containers and is safe in the gate list. The live
+    # counterpart is smoke-full-stack.ps1 lane 6.
+    'scripts/test-ocr-bake-integrity.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2

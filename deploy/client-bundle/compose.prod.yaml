@@ -303,11 +303,18 @@ services:
   # work at all, and measured 269.9s cold against a 300s client timeout in
   # pacgate-api - so it failed intermittently on a fresh machine.
   #
-  # The volume below is therefore no longer a download cache that must survive
-  # recreates; it is the WRITABLE layer over the baked copy. PaddleOCR only
-  # downloads when a model is MISSING, so with the bake in place it does not
-  # download at all and the lane works offline. The mount is kept because
-  # removing it would need a re-verification pass, and it is harmless.
+  # There is deliberately NO volumes: block here. Mounting a volume over
+  # /root/.paddleocr SHADOWS the baked copy: once the mount point exists, the
+  # image's directory is no longer visible there, and PaddleOCR falls back to
+  # paddleocr.bj.bcebos.com again for anything the volume lacks - reintroducing
+  # the exact CDN dependency the bake exists to remove, and 269.9s against a 300s
+  # client timeout. Proved with a probe: replacing one baked directory inside a
+  # volume made the running container unable to see it. With no mount the baked
+  # weights ARE the tree, and every extraction path is the 3.4s warm path.
+  #
+  # The weights are byte-identical to what a fresh download persists (9 files,
+  # 18,073,805 bytes, matching SHA256 per file), so dropping the mount does not
+  # change the engine, only removes the indirection that could defeat the bake.
   ocr-service:
     image: ghcr.io/jzkk720/ocr-service:0.1.28
     container_name: ocr-service
@@ -315,8 +322,6 @@ services:
       # Python logging rejects lowercase level names.
       OCR_LOG_LEVEL: INFO
       OCR_USE_GPU: "0"
-    volumes:
-      - paddleocr-models:/root/.paddleocr
     restart: unless-stopped
 
   openviking:
@@ -341,6 +346,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Persists PaddleOCR's downloaded model weights across container recreation.
-  paddleocr-models:
   pacgate-db-data:

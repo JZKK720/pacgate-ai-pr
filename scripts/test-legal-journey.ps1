@@ -216,7 +216,7 @@ Step '5. OCR / extract'
 try {
     $ex = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$docId/extract" -Method Post -Headers $H `
         -ContentType 'application/json' -Body '{}' -TimeoutSec $OcrTimeoutSec
-} catch { Die "extract failed (first call downloads PaddleOCR weights; allow time): $($_.Exception.Message)" }
+} catch { Die "extract failed (the PP-OCRv4 weights are baked into 0.1.28, so warm extraction is ~3s; a timeout here is a real fault, not a cold download): $($_.Exception.Message)" }
 if (-not $ex.text -or $ex.text.Length -eq 0) { Die 'extract returned empty text - OCR produced nothing for a document that visibly contains text.' }
 Ok "extracted $($ex.text.Length) chars (incomplete=$($ex.incomplete))"
 
