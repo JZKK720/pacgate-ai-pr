@@ -199,6 +199,15 @@ pub struct ExecuteStepResult {
     pub content: Option<String>,
     pub citations: Vec<pacgate_core::CitationRef>,
     pub tools_used: Vec<String>,
+    /// The step's tools ran, but the agent loop hit its tool-call round cap before
+    /// the model wrote a closing summary. Its side effects are real (a document was
+    /// created) - only the narration is missing.
+    ///
+    /// Surfaced to the caller so a client can say "the document was created but the
+    /// summary was truncated" instead of showing a bare success, and so this is
+    /// never again mistaken for a failed generation. See
+    /// deploy/DEFECT-agent-loop-max-rounds.md.
+    pub max_rounds_reached: bool,
 }
 
 /// Execute a workflow: load the template, run each step through AgentLoop.
@@ -297,6 +306,7 @@ pub async fn execute_workflow(
                 content: s.content.clone(),
                 citations: s.citations.clone(),
                 tools_used: s.tools_used.clone(),
+                max_rounds_reached: s.max_rounds_reached,
             })
             .collect(),
         final_content: result.final_content,

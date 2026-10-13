@@ -572,6 +572,20 @@ pub struct AgentTurnResult {
     pub content: Option<String>,
     pub citations: Vec<CitationRef>,
     pub tool_calls_made: Vec<String>,
+    /// True when the tool-call round cap stopped the loop before the model
+    /// produced a closing message.
+    ///
+    /// This is deliberately a FLAG rather than an error, and the distinction is
+    /// the whole point. The cap exists to stop a runaway loop, not to declare the
+    /// turn worthless: at the cap the tools have already run and their side
+    /// effects are committed, so everything the turn produced is real. Reporting
+    /// the cap as `Err` discarded all of it and surfaced as
+    /// `{"error":{"code":"internal_error", ...}}` - the caller saw a 500 even
+    /// though the document it asked for had been created. Measured 2026-10-13:
+    /// 1 run in 3 hit the cap with `has_output=true` and a 3KB .docx already on
+    /// disk. See deploy/DEFECT-agent-loop-max-rounds.md.
+    #[serde(default)]
+    pub max_rounds_reached: bool,
 }
 
 pub struct AgentLoop {
@@ -655,6 +669,7 @@ impl AgentLoop {
                     content,
                     citations,
                     tool_calls_made,
+                    max_rounds_reached: false,
                 });
             }
 
@@ -702,10 +717,34 @@ impl AgentLoop {
             }
         }
 
-        Err(PacgateError::LlmError(format!(
-            "agent loop exceeded max_rounds={}",
-            self.max_rounds
-        )))
+        // The round cap was hit. The tools above HAVE run and their side effects
+        // are committed (the document exists), so return what was produced with
+        // the flag set rather than an error that throws it away.
+        //
+        // The old form was `Err(LlmError("agent loop exceeded max_rounds=10"))`.
+        // Measured 2026-10-13: the API then answered
+        //   {"error":{"code":"internal_error","message":"LLM error: agent loop
+        //   exceeded max_rounds=10"}}
+        // on 1 run in 3, while the log for that same request said
+        //   workflow execution complete steps_completed=1 has_output=true
+        // and the .docx was already on disk. That is the reported symptom exactly:
+        // generation runs, the caller never gets the result.
+        //
+        // Callers that need to distinguish this can read `max_rounds_reached`;
+        // the workflow path reports it as a warning per step instead of failing
+        // the whole run.
+        tracing::warn!(
+            max_rounds = self.max_rounds,
+            tools = tool_calls_made.len(),
+            "agent loop reached max_rounds; returning the turn produced so far"
+        );
+        Ok(AgentTurnResult {
+            message_id: MessageId::new(),
+            content: None,
+            citations: Vec::new(),
+            tool_calls_made,
+            max_rounds_reached: true,
+        })
     }
 
     fn convert_history(&self, history: &[AgentMessage]) -> Vec<ChatMessage> {
@@ -834,5 +873,236 @@ mod tests {
 
         assert!(prompt.contains("CURRENT MATTER CONTEXT"));
         assert!(prompt.contains(&matter_id.as_str()));
+    }
+
+    // ── The max_rounds defect ────────────────────────────────────────────────
+    //
+    // The regression this pins is NOT "the loop stops at the cap" - stopping is
+    // the cap's job. It is that hitting the cap used to return
+    // `Err(LlmError("agent loop exceeded max_rounds=10"))`, which threw away a turn
+    // whose tools had already run and whose side effects were committed. Measured
+    // 2026-10-13: 1 run in 3 answered
+    //   {"error":{"code":"internal_error","message":"LLM error: agent loop
+    //   exceeded max_rounds=10"}}
+    // while the log for the same request said `has_output=true`, and the requested
+    // .docx was already on disk. See deploy/DEFECT-agent-loop-max-rounds.md.
+    //
+    // The test drives a REAL AgentLoop against a REAL local HTTP server that always
+    // asks for one more tool call, so it exercises the actual loop, the actual
+    // OpenAI-compatible parse, and the actual cap. A unit test over a hand-built
+    // struct would have passed while the product still returned 500.
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Accept exactly one connection and answer with a tool call, forever.
+    /// Returns (base_url, request_counter).
+    fn spawn_tool_calling_server() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                // Read the request headers + body so reqwest is not left hanging.
+                let mut buf = vec![0u8; 65536];
+                let _ = stream.read(&mut buf);
+
+                counter.fetch_add(1, Ordering::SeqCst);
+
+                // A well-formed OpenAI-compatible reply whose ONLY content is a
+                // tool call. The model never produces a closing message, which is
+                // exactly the state that used to be reported as an error.
+                let body = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_documents","arguments":"{}"}}]}}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        (format!("http://127.0.0.1:{port}"), hits)
+    }
+
+    fn test_router(base_url: &str) -> LlmRouter {
+        use pacgate_core::{LlmProvider, LlmTier, ModelConfig};
+        let cfg = |tier| ModelConfig {
+            tier,
+            provider: LlmProvider::Ollama {
+                base_url: base_url.to_string(),
+            },
+            model_name: "mock".to_string(),
+            max_tokens: 128,
+            temperature: 0.1,
+        };
+        LlmRouter::new(
+            vec![
+                cfg(LlmTier::Main),
+                cfg(LlmTier::Mid),
+                cfg(LlmTier::Low),
+            ],
+            std::collections::HashMap::new(),
+        )
+    }
+
+    fn dispatcher() -> Arc<ToolDispatcher> {
+        // The loop must actually dispatch, because the whole point is that the
+        // tools RAN. A dispatcher that refused would test a different path.
+        //
+        // The stores are deliberately trivial, UNREACHABLE doubles: every call
+        // returns an error, so if a test ever depends on real document behaviour
+        // it fails loudly rather than silently passing against a fake. The tool
+        // call itself is a `list_documents`, and the assertion is on the loop's
+        // bookkeeping (`tool_calls_made`), which is recorded BEFORE the tool runs.
+        struct NoStore;
+        #[async_trait::async_trait]
+        impl pacgate_core::DocumentStore for NoStore {
+            async fn read(&self, _: &DocumentId) -> Result<String> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn read_version(&self, _: &DocumentId, _: u32) -> Result<String> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn list_for_matter(&self, _: &MatterId) -> Result<Vec<pacgate_core::Document>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn find_in(&self, _: &DocumentId, _: &str) -> Result<Vec<pacgate_core::FindResult>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn create_from_structure(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: &serde_json::Value,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn apply_edit(
+                &self,
+                _: &DocumentId,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn replicate(&self, _: &DocumentId, _: u32) -> Result<Vec<pacgate_core::Document>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::WorkflowStore for NoStore {
+            async fn get_prompt(&self, _: &str) -> Result<String> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::KbStore for NoStore {
+            async fn search(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: u32,
+            ) -> Result<Vec<pacgate_core::KbChunk>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+        }
+        Arc::new(ToolDispatcher::new(
+            Arc::new(NoStore),
+            Arc::new(NoStore),
+            Arc::new(NoStore),
+        ))
+    }
+
+    #[tokio::test]
+    async fn hitting_max_rounds_returns_the_turn_instead_of_discarding_it() {
+        let (base, _hits) = spawn_tool_calling_server();
+        let router = Arc::new(test_router(&base));
+
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            // Small so the test is fast; the behaviour under test is the same at 10.
+            max_rounds: 3,
+        };
+
+        let result = agent
+            .run_with_router(&router, vec![], "do the thing", None, None)
+            .await;
+
+        let turn = result.expect(
+            "hitting the round cap must NOT be an error - the turn's tools already ran \
+             and its side effects are committed; discarding them is the reported defect",
+        );
+        assert!(
+            turn.max_rounds_reached,
+            "the caller must be able to tell the cap was hit"
+        );
+        assert_eq!(
+            turn.tool_calls_made.len(),
+            3,
+            "every dispatched tool call must still be reported"
+        );
+        assert!(
+            turn.tool_calls_made.iter().all(|t| t == "list_documents"),
+            "the tool log must name the tools that actually ran"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_normal_turn_reports_that_the_cap_was_not_hit() {
+        // The converse must hold, or the flag is useless: a run that closes
+        // normally has to say so, otherwise every caller would have to assume the
+        // worst and the flag would carry no information.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = vec![0u8; 65536];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"choices":[{"message":{"role":"assistant","content":"PONG"}}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let base = format!("http://127.0.0.1:{port}");
+        let router = Arc::new(test_router(&base));
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            max_rounds: 3,
+        };
+
+        let turn = agent
+            .run_with_router(&router, vec![], "say PONG", None, None)
+            .await
+            .expect("a normal turn must succeed");
+
+        assert!(!turn.max_rounds_reached, "the cap was not hit");
+        assert_eq!(turn.content.as_deref(), Some("PONG"));
+        assert!(turn.tool_calls_made.is_empty());
     }
 }

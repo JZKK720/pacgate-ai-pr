@@ -15,19 +15,26 @@
 use pacgate_core::{DdAgentConfig, MatterId};
 use pacgate_llm::LlmRouter;
 use pacgate_workflow::{Workflow, WorkflowStep};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, instrument};
 
 use crate::AgentLoop;
 
 /// Result of executing a single workflow step.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepResult {
     pub step_name: String,
     pub tool: String,
     pub content: Option<String>,
     pub citations: Vec<pacgate_core::CitationRef>,
     pub tools_used: Vec<String>,
+    /// The step's tools ran but the agent loop hit its round cap before the model
+    /// wrote a closing summary. The step's side effects are real (a document was
+    /// created); only the narration is missing. Reported, not failed - see
+    /// `AgentTurnResult::max_rounds_reached`.
+    #[serde(default)]
+    pub max_rounds_reached: bool,
 }
 
 /// Result of executing a complete workflow.
@@ -169,7 +176,20 @@ impl<'a> WorkflowExecutor<'a> {
                 content: turn_result.content.clone(),
                 citations: turn_result.citations.clone(),
                 tools_used: turn_result.tool_calls_made.clone(),
+                max_rounds_reached: turn_result.max_rounds_reached,
             };
+            if turn_result.max_rounds_reached {
+                // Make it visible at the step that hit it. Without this the run
+                // looks like an ordinary success, and the missing narration is
+                // mistaken for a model that "sometimes doesn't write anything".
+                tracing::warn!(
+                    step = i,
+                    name = %step.name,
+                    tool = %step.tool,
+                    tools_used = turn_result.tool_calls_made.len(),
+                    "step reached its tool-round cap; its tools ran, the closing summary did not"
+                );
+            }
 
             // Accumulate context for the next step
             if let Some(ref content) = turn_result.content {

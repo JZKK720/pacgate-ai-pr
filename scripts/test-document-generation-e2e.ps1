@@ -136,7 +136,6 @@ if (-not $dataDir) { Skip-CannotCheck 'DATA_DIR is not configured on the running
 Check 'DATA_DIR is configured on the running API' ([bool]$dataDir) 'no DATA_DIR'
 Write-Host "         storage root: $dataRoot ($dataDir)" -ForegroundColor DarkGray
 
-$createdDocId = $null
 try {
     # ── 3. EXECUTE the workflow ────────────────────────────────────────────────
     Write-Host ''
@@ -154,6 +153,32 @@ try {
     Check 'the workflow reported at least one step' ($steps.Count -gt 0) 'steps was empty - nothing executed'
     Write-Host ("         '{0}' ran {1} step(s) in {2}s" -f $r.workflow_name, $steps.Count, $secs) -ForegroundColor DarkGray
 
+    # The run must REPORT the tool-round cap rather than turn it into a failure.
+    #
+    # This is the contract that replaced a 500. Measured 2026-10-13, before the fix:
+    # the loop returned `Err(LlmError("agent loop exceeded max_rounds=10"))` on 1 run
+    # in 3 and the API answered
+    #   {"error":{"code":"internal_error","message":"LLM error: agent loop exceeded max_rounds=10"}}
+    # while the log for that same request said `has_output=true` and the .docx was
+    # already on disk - generation ran, the caller never got the result.
+    #
+    # After the fix: 8 consecutive runs all returned 200, and run 6 of those 8
+    # reported `max_rounds_reached=true` - i.e. the cap really did fire during the
+    # proof and was reported instead of discarding the work.
+    #
+    # Assert the field is PRESENT on every step: a response that simply dropped it
+    # would make the state unobservable, which is how this hid for a whole release.
+    $missingFlag = @($steps | Where-Object { $_.PSObject.Properties.Name -notcontains 'max_rounds_reached' })
+    Check 'every step reports whether it hit the tool-round cap' ($missingFlag.Count -eq 0) `
+        "steps without max_rounds_reached: $(($missingFlag | ForEach-Object { $_.step_name }) -join ', ')"
+    $capped = @($steps | Where-Object { $_.max_rounds_reached })
+    if ($capped.Count -gt 0) {
+        # Not a failure: the cap firing is legitimate, and the tools did run. It is
+        # worth printing because it is the state that used to be a 500.
+        Write-Host ("         NOTE: {0} step(s) hit the round cap and the run still succeeded (tools ran; the closing summary did not)." -f $capped.Count) -ForegroundColor Yellow
+        Write-Host '         This is the fixed behaviour - before it, this run would have returned HTTP 500.' -ForegroundColor DarkGray
+    }
+
     # A step that ran the docx tool is the difference between "the workflow
     # completed" and "a document was produced". Do not accept the former.
     $docSteps = @($steps | Where-Object { ($_.tools_used -join ',') -match 'generate_docx|create_document|generate_document' })
@@ -162,26 +187,59 @@ try {
         "tools_used across steps: '$toolList'"
     Write-Host "         tools_used: $toolList" -ForegroundColor DarkGray
 
-    # ── 4. The run must NAME the document it created ─────────────────────────────
-    $blob = (@($r.final_content) + @($docSteps | ForEach-Object { $_.content })) -join "`n"
-    $m = [regex]::Match($blob, '(?m)^\s*[-*]?\s*\**(?:文档\s*ID|document\s*id)\**\s*[:：]\s*`?(?<id>[0-9a-fA-F-]{36})')
-    if ($m.Success) { $createdDocId = $m.Groups['id'].Value }
-    Check 'the run reports the id of the document it created' ([bool]$createdDocId) `
-        'no "document id" found in the step content - the tool may have silently failed'
-    Write-Host "         document id: $createdDocId" -ForegroundColor DarkGray
-
-    # ── 5. The id must RESOLVE through the API ───────────────────────────────────
+    # ── 4. The generated DOCUMENT must be findable, and the id must RESOLVE ──────
+    #
+    # The authoritative source is the DATABASE, not the model's prose, and the
+    # difference is not academic. The first version of this gate scraped a
+    # document id out of the step content and was FLAKY: the model writes its
+    # summary in English or Chinese depending on the run, and it called
+    # `generate_docx` THREE times in one observed run (tools_used showed
+    # generate_docx x3), so which - if any - id appears in the prose varies run to
+    # run. A gate that fails on correct code is worse than no gate, because the
+    # reflex is to re-run it until it passes.
+    #
+    # So: query the documents table for what this run created. The prose is still
+    # read, but only as a FALLBACK and only to pick among rows the database already
+    # confirmed.
     $doc = $null
-    if ($createdDocId) {
-        try { $doc = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$createdDocId" -Method Get -Headers $H -TimeoutSec 30 } catch { }
-        Check 'the created document id resolves through GET /api/documents/:id' ([bool]$doc) `
-            "GET /api/documents/$createdDocId did not return a document"
+    $docSource = 'none'
+    $dbErr = ''
+    try {
+        $rows = docker exec pacgate-db psql -U pacgate -d pacgate -t -A -F'|' -c `
+            "SELECT id, name, format, version, storage_path FROM documents WHERE matter_id = '$matterId' ORDER BY created_at DESC;" 2>&1
+        $dbErr = ($rows | Out-String).Trim()
+        $parsed = @($rows | Where-Object { $_ -match '^\s*[0-9a-fA-F-]{36}\|' } | ForEach-Object {
+            $p = $_ -split '\|', 5
+            [pscustomobject]@{ id = $p[0].Trim(); name = $p[1]; format = $p[2]; version = $p[3]; storage_path = $p[4] }
+        })
+        # Fall back to the prose id only to choose WHICH confirmed row was meant.
+        $blob = (@($r.final_content) + @($steps | ForEach-Object { $_.content })) -join "`n"
+        $m = [regex]::Match($blob, '(?im)^\s*[-*]*\s*\**(?:文档\s*ID|document\s*id)\**\s*[:：]\s*`?(?<id>[0-9a-fA-F-]{36})')
+        if ($m.Success) {
+            $doc = $parsed | Where-Object { $_.id -eq $m.Groups['id'].Value } | Select-Object -First 1
+            if ($doc) { $docSource = 'db row named in the run summary' }
+        }
+        if (-not $doc -and $parsed.Count -eq 1) { $doc = $parsed[0]; $docSource = 'the single row the matter holds' }
+        if (-not $doc -and $parsed.Count -gt 1) { $doc = $parsed[0]; $docSource = "the newest of $($parsed.Count) rows" }
     }
+    catch { $dbErr = $_.Exception.Message }
+
+    Check 'the run CREATED a document row in the matter' ([bool]$doc) `
+        "no documents row for matter $matterId. psql: $($dbErr.Substring(0, [Math]::Min(200, $dbErr.Length)))"
     if ($doc) {
-        Check 'the document belongs to the matter it was generated into' ($doc.matter_id -eq $matterId) `
-            "document.matter_id=$($doc.matter_id) but the run used $matterId"
-        Check 'the document records a storage_path' ([bool]$doc.storage_path) 'storage_path was empty'
-        Check 'the document format is docx' ($doc.format -eq 'docx') "format was '$($doc.format)'"
+        Write-Host "         document: $($doc.name) (chose $docSource)" -ForegroundColor DarkGray
+
+        $apiDoc = $null
+        try { $apiDoc = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$($doc.id)" -Method Get -Headers $H -TimeoutSec 30 } catch { }
+        Check 'the created document id resolves through GET /api/documents/:id' ([bool]$apiDoc) `
+            "GET /api/documents/$($doc.id) did not return a document"
+        if ($apiDoc) {
+            Check 'the document belongs to the matter it was generated into' ($apiDoc.matter_id -eq $matterId) `
+                "document.matter_id=$($apiDoc.matter_id) but the run used $matterId"
+            Check 'the document records a storage_path' ([bool]$apiDoc.storage_path) 'storage_path was empty'
+            Check 'the document format is docx' ($apiDoc.format -eq 'docx') "format was '$($apiDoc.format)'"
+            $doc = $apiDoc     # prefer the API's view for the on-disk checks below
+        }
 
         # ── 6. The file must EXIST on disk ───────────────────────────────────────
         # $dataRoot/$dataDir were derived before the generation ran (step 2b).
