@@ -321,6 +321,25 @@ $liveStackGates = @(
     # live half drives a REAL generation through nginx and requires an actual
     # assistant reply, not just HTTP 200. See deploy/DEFECT-frontend-proxy-timeout.md.
     'scripts/test-model-picker-e2e.ps1'
+    # The DOCUMENT GENERATION lane, registered 2026-10-13. The picker gate above
+    # proves a generation is DELIVERED; this one proves a workflow actually
+    # PRODUCES a document. They are different failures: the picker defect lost the
+    # reply in transit, while this lane can break in the workflow loader, the
+    # persona composer, the AgentLoop, the LLM gateway, the docx tools, the matter
+    # store, or the tenant storage root - and every one of those layers had a
+    # separate defect this month.
+    #
+    # It asserts the whole chain and not the HTTP status: the execute call names
+    # the workflow, a step reports generate_docx in tools_used, the run names a
+    # document id, that id resolves through the API, the file EXISTS on disk at
+    # DATA_DIR/storage_path, it is a real OOXML package with word/document.xml, and
+    # the body is non-empty CJK. The last one is not decoration - the 0.1.26 defect
+    # was a byte-slicing panic on Chinese text, so "HTTP 200" would have passed
+    # while the product was broken.
+    #
+    # The workflow id is a Chinese overview-table workflow: short, and it
+    # exercises the CJK round trip end to end.
+    'scripts/test-document-generation-e2e.ps1'
 )
 
 $measurements = @(
