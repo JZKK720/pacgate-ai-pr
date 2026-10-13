@@ -99,3 +99,27 @@ rebuild stays correct on its own and the two paths cannot diverge.
 - The 3600 s values are deliberately generous. If a client environment wants a hard ceiling,
   lower nginx first and keep Next.js above it - never the reverse, or the frontend silently
   becomes the narrower gate again.
+
+## The client upgrade path, proven rather than assumed
+
+An existing AIPC runs `git pull` + `install.ps1 -Update`. Two mechanisms are involved, and
+BOTH were verified on 2026-10-13 by reproducing an old client rather than reasoning about it:
+
+1. **Reaching the container.** Adding a bind mount CHANGES the compose service definition, so
+   unlike a mere file edit `up -d` does recreate the container. Simulated by removing the
+   volume block from `compose.prod.yaml`, recreating the service, and then applying the update:
+
+   | State | Mount present | Config in container |
+   | --- | --- | --- |
+   | old client (no volume block) | `False` | `NONE` |
+   | after the update path | `True` | `proxyTimeout: 3600000` |
+
+   `up -d` reported `Container deer-flow-frontend Recreate / Recreated / Started`.
+
+2. **Applying the file.** Because `next start` reads `next.config.js` only at boot, the compose
+   recreate above is what makes the value live. `install.ps1` also names it explicitly in its
+   `-Update` restart list (section 7c) as a second, independent path.
+
+Reproducing an old client is the only way to test this honestly: a machine that already has the
+mount never exercises the transition.
+
