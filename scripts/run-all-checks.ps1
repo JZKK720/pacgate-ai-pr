@@ -393,6 +393,12 @@ $measurements = @(
     # stack up and credentials - it exits 2 for "could not check" when either is
     # missing, and exit 2 must never be read as a failure of the CODE.
     'scripts/test-workflow-library-served.ps1'
+    # Counts rows already mislabeled `sanitized` that still carry raw PII, and
+    # names the affected documents. A MEASUREMENT rather than a gate because the
+    # code fix is forward-only: an affected row needs a human to re-sanitize or
+    # delete it, and no commit can turn this green. See
+    # deploy/DEFECT-sanitized-content-not-served.md.
+    'scripts/audit-sanitized-chunk-egress.ps1'
 )
 
 $failed = @()

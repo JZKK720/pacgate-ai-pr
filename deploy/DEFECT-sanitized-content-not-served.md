@@ -1,13 +1,15 @@
-# DEFECT: sanitized documents are downloadable in their ORIGINAL form
+# DEFECT: sanitized chunks kept their RAW text under a `sanitized` label
 
-**Severity: CRITICAL for a legal workspace.** The product reports a document
-sanitized, redacts its text, then hands out the unsanitized file.
+**Severity: CRITICAL for a legal workspace.** The product reported a document
+sanitized, redacted its text, then served the *unredacted* text to chat - through
+the very retrieval gate the sanitizer had just approved.
 
 **Found:** 2026-10-14, by `scripts/test-format-coverage-e2e.ps1` (the first gate that
 followed sanitization all the way to what a reader actually receives).
-**Status:** root-caused and reproduced on the published 0.1.29. **Not fixed** - see
-"Why this is recorded rather than patched", because the correct behaviour is a
-product decision, not a code change I should make unilaterally.
+**Root-caused:** 2026-10-14 on the live 0.1.30 stack, by direct DB and HTTP probes.
+**Status: FIXED on the forward path** (`ChunkIngestor::reingest_sanitized_chunks`).
+**Not yet released** - rides the next image. See "Deploy implication" for the
+existing rows this does *not* clean up.
 
 ## What was measured
 
@@ -20,126 +22,214 @@ redactions = 2
 sanitized_text = "ID CARD: 00000000000000000X PHONE: [CN_MOBILE_120D0E42_2]"
 ```
 
-The redaction is **correct**. Then:
+The redaction is **correct**. Then the raw text is still reachable, three ways.
+
+**1. The download serves the original bytes.**
 
 ```
 GET /api/documents/<id>/download   -> HTTP 200, 36620 bytes
 downloaded .docx text              -> 'ID CARD: 11010519491231002X\nPHONE: 13812345678'
 RAW ID IN DOWNLOAD:     True
-RAW PHONE IN DOWNLOAD:  True
 ```
 
-Reproduced for **all seven accepted formats** (`docx, pdf-text, xlsx, pptx, html, txt,
-md`) on the published 0.1.29. The gate prints it on every run.
+**2. The knowledge base hands the raw identifiers to chat.** This is the one that
+makes it CRITICAL rather than an export-policy question, because it is the lane the
+sanitizer *claims* to protect:
 
-The same bytes are what `pacgate_convert_document` (MCP) feeds to markitdown, so an
-agent's `read`/`convert` of a "sanitized" document returns the raw identifiers too.
+```
+$ psql -c "SELECT c.sanitization_state, d.name, left(c.content,110)
+           FROM kb_chunks c JOIN documents d ON c.document_id=d.id
+           WHERE c.content ~ '[0-9]{17}[0-9Xx]'"
+
+ sanitization_state | name |                   snippet
+--------------------+------+----------------------------------------------
+ sanitized          | case | 11010519491231002X                          +
+                    |      | 13812345678
+ sanitized          | case | 11010519491231002X                          +
+                    |      | 13812345678
+ ... (25 rows in this state carried a raw ID on this dev box)
+```
+
+**3. It is reachable through the product's own API.** `kb_search` is auth-gated
+(401 unauthenticated) and tenant-scoped (403 across tenants), but a `Default Firm`
+user who owns the matter gets the raw value back:
+
+```
+kb_search: HTTP 200
+    rows=1
+    doc=None score=0.580 content=['11010519491231002X\n13812345678']
+    *** rows carrying the raw ID: 1 ***
+```
 
 ## Root cause
 
-`sanitize_document_handler` persists a **state flag, not an artifact**:
+The promote step asserted a verdict instead of performing it. It set a **state
+flag** and left the text alone:
 
 ```sql
-UPDATE documents SET sanitization_state = 'sanitized' WHERE id = $1
+-- pacgate-api/src/sanitize.rs, MARK_SANITIZED_DOC_SQL (now deleted)
+UPDATE kb_chunks SET sanitization_state = 'sanitized' \
+WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
+  AND sanitization_state = 'pending'
 ```
 
-There is no sanitized rendering stored anywhere - `grep` over the schema shows only
-`documents.sanitization_state` and `kb_chunks.sanitization_state`. The redacted text
-exists solely in the HTTP response body, which is not retained.
-
-`download_document` then gates on that flag and serves the original:
+and the RAG gate then *whitelisted* exactly those rows:
 
 ```rust
-if doc_state != "sanitized" && doc_state != "never" {
-    return Err(ApiError::conflict(...));      // the EGRESS GATE
-}
-let (doc, bytes) = state.doc_store.download_bytes(&doc_id, query.version).await?;
-...
-.body(axum::body::Body::from(bytes))          // <-- the ORIGINAL bytes
+// pacgate-rag/src/lib.rs:306
+sql.push_str(" AND c.sanitization_state IN ('sanitized', 'never')");
 ```
 
-So the gate controls **when** you may download, not **what** you get. The handler
-matches its own spec - `plans/020-sanitize-jobs.md` says "non-sanitized documents
-refuse download (409 Conflict)", which they do - and nothing in the design says the
-download should be the redacted rendering.
+So the flag did not merely fail to protect anything - it was the **selection key
+for the leak**. Rows correctly left `pending` were excluded from retrieval; rows
+mislabeled `sanitized` were served.
+
+The redacted rendering existed only in the HTTP response body and was never
+persisted. `sanitized_text` has exactly two occurrences in the whole workspace -
+its declaration and its assignment in `JobOutcome`. **Nothing ever reads it.**
+
+## Why this was first recorded as a product decision, and why that was WRONG
+
+The first write-up of this finding offered two readings and declined to choose,
+arguing that `restore` existing at all suggested the current behaviour was
+intentional. **That reasoning is retracted.** It was wrong on the evidence:
+
+- **The design decided it.** `docs/superpowers/specs/2026-09-18-sanitizer-agent-design.md`
+  is explicit that the label means the content is clean:
+  - the persistence table calls `kb_chunks` "**THIS is what general chat retrieves**";
+  - chat is described as running "over already-**sanitized chunks**, so its inputs
+    are already clean";
+  - the OpenViking lane is called out as a hole, and the argument for accepting it
+    is that "**what it summarises is already redacted**" - which only holds if the
+    chunks are.
+  There is no reading of the spec under which `sanitization_state='sanitized'` on
+  raw text is intended.
+- **`restore` is not evidence of intent here.** Restore takes the *sanitized* text
+  and un-redacts it (`restore_document_handler` -> `mapping.restore(&req.text, ..)`).
+  It is the privileged path back to the original, and it presupposes that the
+  placeholder rendering is what was stored. It is evidence *for* the fix, not
+  against it.
+- **The "analysis lane" is the lane that leaked.** The reading that download is an
+  export of the matter's own file is fine as a statement about *download*. It does
+  not extend to RAG, which is not an export - it is what the agent quotes from.
+
+The two readings were not equally defensible. One of them required believing the
+product serves raw PII to its own agent on purpose.
+
+## The fix
+
+`ChunkIngestor::mark_sanitized` (flip a flag) is replaced by
+`ChunkIngestor::reingest_sanitized_chunks` (replace the text):
+
+1. read one row's `jurisdiction` / `source_level` / `data_level`, so the sanitized
+   chunks keep the document's own classification;
+2. chunk the job's **redacted** rendering with the same splitter ingest uses, so
+   boundaries and `page` values stay meaningful;
+3. **delete** the rows being replaced, which also drops their now-stale embeddings;
+4. **insert** the redacted chunks already `sanitized` - the label is now earned at
+   insert time, which is the property the old code could not have.
+
+Delete-then-insert, in ONE transaction. Both halves of that are load-bearing:
+
+- **One transaction** makes the intermediate state - old rows gone, new rows not yet
+  written - invisible to any concurrent reader, so a RAG query can never observe a
+  document with no chunks. A crash rolls the delete back and leaves the document
+  exactly as it was.
+- **Delete first** because the `DELETE` predicate accepts `'sanitized'` and the
+  `INSERT` writes `'sanitized'`. The two overlap by construction, so insert-then-delete
+  has the `DELETE` remove the chunks that were just written. MEASURED 2026-10-14:
+  `promoted=1` and the document was left with **zero** chunks - the repair silently
+  stripped its RAG coverage while reporting success. Delete-first is what an earlier
+  version of this fix got wrong, and the gate only caught it because it counts total
+  chunks as well as leaks.
+
+`kb_chunks.content` feeds a generated `content_tsv`, so keyword search reindexes
+itself; nothing else had to change.
+
+## Remediation of already-poisoned rows - and the second defect found while proving it
+
+The rewrite must be able to repair documents the old code damaged, not only write
+correctly going forward. The first version of the selection used
+`sanitization_state = 'pending'`, copied from the old promote statement's guard.
+
+MEASURED 2026-10-14, against a real historical document (`bf29d6e3`): re-running the
+sanitize job on it returned `chunks_promoted=0` and **left the raw text in place**.
+The document's rows had been stamped `sanitized` by the buggy code, so a pending-only
+filter matched nothing - the repair was a silent no-op, and the audit script's
+advice to "re-sanitize it" was, at that moment, **wrong**.
+
+The selection and the delete therefore both use
+`sanitization_state IN ('pending', 'sanitized')`. `blocked` stays excluded in both:
+that state is a deliberate refusal and must never be overwritten or removed.
+
+Re-proven after the change, on historical document `50dc3aa7`: `1` raw hit before,
+`0` after, **and `1` sanitized chunk remaining** - clean without losing coverage.
+The stored text is now the redacted rendering (`00000000000000000X`,
+`[CN_MOBILE_E8845383_2]`).
+
+## Deploy implication - the part a version bump does NOT solve
+
+The write path is forward-only, but because the selection now accepts `sanitized`
+rows, **re-running the sanitize job is itself the remediation**. Existing rows that
+0.1.28 through 0.1.30 mislabeled keep their raw text until that job is re-run on
+them; no image upgrade rewrites them on its own. Any client machine that ran 0.1.28
+or later and sanitized a document has affected rows.
+
+Two remediations, both needing the operator to decide:
+
+- **Re-sanitize the document.** The job now rewrites chunks properly, even for rows
+  already mislabeled. Clean path, preserves retrieval coverage. This is the
+  recommended one, and it is proven end to end.
+- **Delete the affected rows**, removing the leak immediately at the cost of RAG
+  coverage until re-sanitization. Safe degradation: no leak, reduced recall.
+
+Before either, the affected set has to be counted.
+`scripts/audit-sanitized-chunk-egress.ps1` reports it read-only.
+
+Neither option works on 0.1.30 or earlier: that code has no rewrite path at all, so
+re-running the job there is a no-op that changes nothing.
 
 ## Why no gate caught it
 
-`test-sanitizer-e2e.ps1` asserts:
+`test-sanitizer-e2e.ps1` asserted:
 
 ```powershell
-Check "download allowed post-sanitize" ($dl.StatusCode -eq 200)
+Check "chunks sanitized" (($status.chunk_states -join ',').Trim() -eq 'sanitized')
 ```
 
-It asserts the **status code**. `200` is the correct status under the documented
-contract, so the assertion passes while carrying the original. Every other assertion
-in that gate runs on `job.sanitized_text` - the response field - not on the bytes a
-reader receives. Nothing had ever opened the downloaded file.
+It read the **state column** - the one thing the defective code did set. Every
+other assertion ran on `job.sanitized_text`, the response field, which was always
+correct. Nothing had ever read the text the retrieval gate would serve.
 
-This is the same failure shape as the OCR weights and the round cap: the test asserted
-the thing that was easy to observe rather than the property that mattered.
-
-## Why this is recorded rather than patched
-
-Two readings are defensible and they imply opposite code:
-
-- **It is a defect.** "Sanitized" should mean every egress path serves redacted
-  content. Then download must serve a sanitized artifact (which requires storing one,
-  and re-rendering the redacted text back into docx/xlsx/pptx/pdf to preserve the
-  format), and `restore` remains the admin-only route to the original.
-- **It is the design.** Download is an *export* of the matter's own file, gated so that
-  an unsanitized document cannot leave. The sanitizer protects the **analysis and
-  memory lanes** (RAG chunks are marked sanitized, and `sanitized_text` is what the
-  agent is given), while the stored file stays the client's original - which is
-  arguably required for legal work, since a redacted docx is not the executed
-  contract.
-
-The second reading is supported by `restore` existing at all: if download served the
-sanitized rendering, "restore" would be redundant. That is real evidence that the
-current behaviour is intentional.
-
-**What is not defensible is that the distinction was invisible.** A user cannot tell
-these apart, and a reviewer reading "sanitize passed, download allowed" would
-reasonably conclude the file was redacted. Making it observable is the change that is
-unambiguously correct, so that is the change made here.
-
-## What was changed
-
-`scripts/test-format-coverage-e2e.ps1` now, for every format:
-
-1. extracts, sanitizes, and asserts both identifiers are gone from `sanitized_text`;
-2. **downloads the document and inspects the bytes**, and also reads it through
-   `pacgate_convert_document`, recording whether either path still carries the raw
-   identifiers;
-3. prints a single `EGRESS:` summary naming every format where the original was
-   served.
-
-It is a **WARN, not a FAIL**, precisely because the intent is unresolved: failing the
-suite on behaviour that matches the written spec would train people to ignore it.
-The finding is loud, attributed to this document, and now impossible to miss.
-
-## The decision this needs
-
-Someone who owns the product must choose, and the choice is cheap to state:
-
-- **Serve sanitized:** store a sanitized rendering per version; re-render into the
-  original format; keep `restore` as the privileged path to the original. This is a
-  real feature (re-rendering redactions into OOXML/PDF while preserving layout), not a
-  small patch.
-- **Keep the original, rename the guarantee:** leave download as-is and make the
-  surfaces say so - the sanitizer protects the **analysis lane**, and the file you
-  download is the matter's original. A one-word change in the UI and docs, and no
-  behaviour change.
-
-Until that is decided, the honest statement to a client is: *sanitization governs what
-the agent reads and what the knowledge base stores; it does not alter the file you
-download.*
+This is the seventh instance of the same shape in this codebase: the test asserted
+what was easy to observe rather than the property that mattered. The gate now also
+asserts the chunk **content** for both identifiers, asserts that sanitized chunks
+exist at all (so "0 leaks" cannot be satisfied by having none), and asserts the raw
+row is gone rather than merely unlabelled.
 
 ## Residual
 
-- Only the seven accepted formats were probed. A format that reaches storage by another
-  path (an import or migration) is unmeasured.
-- `restore`'s own path was not exercised here; the sanitizer gate covers its role
-  gate (attorney refused, admin allowed).
-- The stored artifact has no version marker tying it to the sanitization that approved
-  it, so nothing can detect a file edited after sanitization.
+- **Chunks are not versioned.** `kb_chunks` has no `document_version` column even
+  though `redaction_ledger_rows` records one, so a job sanitizes whatever chunks the
+  document currently has. `delete_for_document` runs on re-ingest, so in practice the
+  chunks track the latest extraction and this is consistent - but a job running
+  against an older version would now rewrite the newer text with that version's
+  redaction. Pre-existing modelling gap, not introduced here; noting it because the
+  rewrite makes it visible where the flag flip merely hid it.
+- Download still serves the matter's **original**. That is a separate, narrower
+  question from the one above - it is a genuine export-policy decision, since a
+  redacted `.docx` is not the executed contract. It is no longer concealable behind
+  "the analysis lane is protected", because that lane is what was broken.
+- Only the seven accepted formats were probed. A format reaching storage by another
+  path (import or migration) is unmeasured.
+- The stored artifact has no version marker tying it to the sanitization that
+  approved it, so nothing detects a file edited after sanitization.
+- **Remediation requires a re-run per document.** There is no bulk repair endpoint;
+  `audit-sanitized-chunk-egress.ps1` names the affected documents and an operator (or
+  a small loop) re-runs `POST /api/documents/:id/sanitize` on each. On a machine with
+  a large affected set that is a manual pass, and it re-embeds each document. A batch
+  entry point would be the natural follow-up, but it is a new surface and was not
+  invented here.
+- **The repair re-embeds the whole document.** Chunks are rewritten wholesale, so a
+  document with 200 chunks makes 200 embedding calls to fix one leaking row. Correct,
+  but a bulk remediation of many documents is load-proportional, not leak-proportional.

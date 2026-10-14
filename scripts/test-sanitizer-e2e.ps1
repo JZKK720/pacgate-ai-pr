@@ -66,8 +66,21 @@ Remove-E2EContainers
 # is 'pacgate-ai-bundle_default' and `--network client-bundle_default` failed with
 # "network client-bundle_default not found". Derive it instead of guessing, so a
 # future rename cannot silently break this again.
-$Network = @(docker inspect pacgate-db --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>$null |
-    Where-Object { $_ }) | Select-Object -First 1
+#
+# ConvertFrom-Json, NOT a `{{...}}{{"\n"}}{{end}}` template. The template form
+# returns the network under PowerShell 7 but an EMPTY string under Windows
+# PowerShell 5.1 (verified side by side 2026-10-14: 5.1.26100.9549 vs 7.6.6, same
+# container). 5.1 splits the `\n` into separate lines before `Where-Object { $_ }`
+# sees them, so the derivation came back empty and this gate exited 2 "SKIP:
+# pacgate-db is not running" - even with the whole stack up.
+#
+# That is not a cosmetic bug: run-all-checks.ps1 falls back to powershell.exe when
+# `pwsh` is absent, which is the client AIPC arrangement, so on client hardware the
+# sanitizer e2e gate reported SKIP and its 20+ assertions never ran. Found while
+# red-checking the new chunk-content assertions below; the false SKIP had been
+# masking whether this gate ran at all.
+$Network = (docker inspect pacgate-db 2>$null | ConvertFrom-Json)[0].NetworkSettings.Networks.PSObject.Properties.Name |
+    Select-Object -First 1
 if (-not $Network) {
     Write-Output 'SKIP: pacgate-db is not running, so its compose network cannot be resolved.'
     Write-Output '      Start the stack (.\deploy\client-bundle\install.ps1) and re-run.'
@@ -241,6 +254,38 @@ Write-Output "  verdict=$($job.verdict) redactions=$($job.redaction_count) promo
 $status = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/documents/$docId/sanitize-status" -Headers $hdr
 Check "document state sanitized" ($status.document_state -eq 'sanitized')
 Check "chunks sanitized" (($status.chunk_states -join ',').Trim() -eq 'sanitized')
+
+# 8b. The 'sanitized' label must be EARNED by the chunk CONTENT, not just
+#     stamped on the row.
+#
+#     Until 2026-10-14 the promote path did `UPDATE kb_chunks SET
+#     sanitization_state='sanitized'` and left `content` as the raw extract, so
+#     RAG kept serving the original identifiers: the gate in
+#     pacgate-rag/src/lib.rs is `WHERE ... sanitization_state IN
+#     ('sanitized','never')`, which WHITELISTED exactly those rows.
+#
+#     The assertion above - `chunk_states -eq 'sanitized'` - is precisely the
+#     false-red that let this ship: it reads the state column, which was the one
+#     thing the old code did set. These two assertions read the text instead.
+#
+#     Both needles are checked separately so a regression names which one leaked.
+$chunkIdLeak = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND content LIKE '%11010519491231002X%'"" 2>&1"
+Check "no raw id card in a sanitized chunk" ([int](($chunkIdLeak | Select-Object -First 1).ToString().Trim()) -eq 0)
+$chunkPhoneLeak = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND content LIKE '%13812345678%'"" 2>&1"
+Check "no raw phone in a sanitized chunk" ([int](($chunkPhoneLeak | Select-Object -First 1).ToString().Trim()) -eq 0)
+
+# Positive evidence the rewrite happened, so "0 leaks" cannot be satisfied by
+# there simply being no sanitized chunks at all.
+$sanChunks = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized'"" 2>&1"
+Check "sanitized chunks exist" ([int](($sanChunks | Select-Object -First 1).ToString().Trim()) -ge 1)
+$sanText = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT string_agg(content,' ') FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized'"" 2>&1"
+$sanText = ($sanText | Select-Object -First 1).ToString().Trim()
+Check "sanitized chunk text is the redacted rendering" ($sanText.Length -gt 0 -and -not $sanText.Contains('11010519491231002X'))
+
+# 8c. And the raw row must be GONE, not merely unlabelled - a lingering pending
+#     copy is one status flip away from being served again.
+$rawLeft = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND content LIKE '%11010519491231002X%'"" 2>&1"
+Check "no raw id card anywhere in kb_chunks" ([int](($rawLeft | Select-Object -First 1).ToString().Trim()) -eq 0)
 
 # 9. Download gate: BEFORE sanitize the doc was pending; now sanitized, so
 #    download must be ALLOWED. Refusal path is asserted by the status above.

@@ -62,27 +62,73 @@ to deploy.
 
 ## 4. The blockers that remain
 
-### 🔴 BLOCKING - sanitized documents download as the ORIGINAL
+### 🔴 BLOCKING - sanitized chunks kept their RAW text, so chat was served raw PII
 
-Measured on all seven formats. After a `verdict=pass` sanitization whose response is
-correctly redacted, `GET /api/documents/:id/download` serves the original file with the
-raw identifiers, because the sanitizer persists a state flag rather than a sanitized
-artifact. `pacgate_convert_document` (the agent's read/convert path) returns the same
-raw bytes.
+**Root-caused, FIXED in code, and PROVEN end to end on a local build - but the fix is
+not in 0.1.30.** Read `DEFECT-sanitized-content-not-served.md` for the evidence.
 
-**This needs a product decision, not a patch**, which is why it is still open:
+Measured on the live 0.1.30 stack, three ways:
 
-- *Serve sanitized* -> store a sanitized rendering per version and re-render redactions
-  back into docx/xlsx/pptx/pdf. A real feature, not a small change.
-- *Keep the original, correct the claim* -> sanitization governs the **analysis lane**
-  (what the agent reads, what the KB stores); the file you download is the matter's own.
-  A one-word change in the UI and docs, no behaviour change.
+1. `GET /api/documents/:id/download` serves the original bytes with the raw identifiers,
+   on all seven formats.
+2. **25 rows in `kb_chunks` were labelled `sanitized` while holding the raw ID card and
+   phone number** - and the RAG gate is
+   `WHERE sanitization_state IN ('sanitized','never')`, so the label was the *selection
+   key* for serving them.
+3. Reachable through the product's own API: a same-tenant user's `kb_search` returned
+   `content=['11010519491231002X\n13812345678']`.
 
-Evidence for the second reading is real: `restore` exists precisely to hand an admin the
-original, which would be redundant if download already served redacted content.
-**But nobody has decided, and until they do, no client should be told "documents are
-sanitized" without the qualifier.** Either decision is cheap to implement; leaving it
-ambiguous is not.
+**An earlier version of this document recorded this as a product decision. That was
+wrong and is retracted.** The design spec
+(`docs/superpowers/specs/2026-09-18-sanitizer-agent-design.md`) is explicit that
+`sanitized` means the chunk *content* is redacted - chat runs "over already-sanitized
+chunks, so its inputs are already clean" - and `restore` takes the sanitized text and
+un-redacts it, which presupposes the placeholder rendering is what was stored. There was
+never a reading under which serving raw PII to the agent's own retrieval lane was
+intended.
+
+**What is fixed:** the promote step now *replaces* the chunk text with the job's redacted
+rendering (`ChunkIngestor::reingest_sanitized_chunks`) instead of flipping a flag, so a
+`sanitized` row is redacted by construction.
+
+**Proof, A/B, same fixture and same gate.** `test-sanitizer-e2e.ps1` was run against the
+published 0.1.30 image and against a local build carrying the fix:
+
+| image | result |
+|---|---|
+| `ghcr.io/jzkk720/pacgate-api:0.1.30` | **FAIL (4)** - the four content assertions |
+| local build with the fix | **PASS** - all 22 assertions |
+
+The decisive comparison is at the database level, two documents created 45 seconds
+apart by those two runs:
+
+```
+doc 0290b895 (fixed)   sanitized   00000000000000000X \n [CN_MOBILE_0D9D26FB_2]
+doc 56b5ca5f (0.1.30)  sanitized   11010519491231002X \n 13812345678
+```
+
+Both rows claim `sanitized`. Only one of them is telling the truth, and the old gate's
+`chunk_states -eq 'sanitized'` assertion passes on both - which is exactly why the
+defect shipped.
+
+**Remediation of already-poisoned rows is proven too.** Re-running the sanitize job on a
+real historical document with the fixed build: `1` raw hit before, `0` after, **and the
+document kept a chunk** carrying real placeholders. An earlier version of the fix could
+not do this at all - it selected only `pending` rows, so the job returned
+`chunks_promoted=0` and the leak survived the repair attempt.
+
+**What is NOT fixed by any image upgrade:** rows already mislabelled on 0.1.28..0.1.30.
+No version bump rewrites them. Each affected machine needs
+`scripts/audit-sanitized-chunk-egress.ps1` (read-only, names the documents) and then a
+per-document choice: re-sanitize (proven, preserves coverage), or delete the rows
+removes the leak but loses RAG coverage until re-sanitized. Neither option works on
+0.1.30 or earlier, where re-running the job is a no-op.
+
+**Download is a separate, still-open question.** Serving the matter's original is a real
+export-policy decision - a redacted `.docx` is not the executed contract - and it is
+narrower than the above, because download is an export while RAG is what the agent quotes.
+It is no longer concealable behind "the analysis lane is protected", because that lane is
+what was broken.
 
 ### 🟠 Duplicate documents are not prevented
 
@@ -110,21 +156,30 @@ nothing. Adding healthchecks changes client restart semantics and needs its own 
 
 ## 5. The answer
 
-**Deploy 0.1.30 to AIPC 1 and 2 now, with one qualifier.** It is proven on a clean
-machine, on PowerShell 5.1, with isolated volumes and a fresh database; all 46 gates
-pass; the delivery, OCR, sanitizer, format and document-generation lanes are covered;
-and the release that made things worse (0.127.x -> 0.1.29) is superseded.
+**Deploy 0.1.30 to AIPC 1 and 2 now, then ship the sanitizer fix as the next patch.**
+0.1.30 is proven on a clean machine, on PowerShell 5.1, with isolated volumes and a fresh
+database; all 46 gates pass; the delivery, OCR, format and document-generation lanes are
+covered; and the release that made things worse (0.1.27.x -> 0.1.29) is superseded.
 
-The qualifier is the sanitizer: **until someone decides what "sanitized" means for
-download**, every client conversation should say *"sanitization governs what the agent
-reads and what the knowledge base stores; it does not alter the file you download."*
-That is one sentence, and it is honest.
+The sanitizer fix is forward-only. 0.1.30 keeps raw chunk text on rows it labels
+`sanitized`, so **deploying 0.1.30 does not clean anything** and the next patch is what
+makes it correct. Two honest options:
 
-**To answer "100%"**: not while a CRITICAL finding about client PII is open. Closing that
-single item - whichever way it is decided - is what moves this from "deployable with a
-caveat" to "fully functional". Duplicate documents and healthchecks are quality work that
-can follow a release; the sanitizer question cannot, because it is the one a client's own
-compliance review would find.
+- **Deploy 0.1.30 now, patch immediately.** Fastest path to the round-cap and blank-answer
+  fixes, which are the symptoms clients actually reported. Accept that the sanitizer
+  remains leaky for one more release cycle.
+- **Hold 0.1.30, ship 0.1.31 with the fix.** One release, no window in which the product is
+  known-broken on a CRITICAL item. Slower to the reported symptoms.
+
+Either way, **every machine that ran 0.1.28..0.1.30 needs the affected rows dealt with
+separately** - `scripts/audit-sanitized-chunk-egress.ps1` names them, and re-sanitizing each
+affected document clears it once the fixed image is running. No upgrade does this for you.
+
+**To answer "100%"**: not while a CRITICAL finding about client PII is open, and the audit
+shows it is open on *real rows*, not hypothetically. Closing it needs three things, in
+order: (1) the fixed image, (2) the audit run per machine, (3) each affected document
+re-sanitized or its rows deleted. Duplicate documents and healthchecks are quality work
+that can follow; this one is what a client's own compliance review would find.
 
 ## 6. The process fix that stops this recurring
 
@@ -139,6 +194,14 @@ observe** rather than the property that **mattered**:
 | "the picker 401s" | 401 means *authenticate*, and the credential was documented |
 | "recall found the marker" | a semantic memory **summarizes**; a random token is noise |
 | "the tag exists" | the tag pointed at the **wrong build** |
+| "chunks sanitized" | it read the **state column** - the one thing a flag flip does set |
+
+One more, found while red-checking the fix above and worth its own line because it defeated
+the *runner* rather than a single assertion:
+
+| the defect | why nothing caught it |
+| --- | --- |
+| a `docker inspect --format '{{...}}{{"\n"}}{{end}}'` probe returns the network under PowerShell 7 but an **empty string** under 5.1 | the gate then exited 2 "SKIP: the stack is not running" and its 20+ assertions never ran. `run-all-checks.ps1` falls back to `powershell.exe` when `pwsh` is absent - the client AIPC arrangement - so this only ever worked on a developer box. The same idiom appears in `test-version-marker-against-image.ps1` |
 
 The gates added for each now assert the property, and each was red-checked by
 reintroducing the defect. The remaining structural gap is that **no gate measures a

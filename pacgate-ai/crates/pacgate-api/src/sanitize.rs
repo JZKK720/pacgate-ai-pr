@@ -18,13 +18,6 @@ use sqlx::Row;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Promote this document's pending chunks + the document rollup after a
-/// clean verdict. Scoped to one document (locked decision 3: atomic).
-const MARK_SANITIZED_DOC_SQL: &str = "\
-    UPDATE kb_chunks SET sanitization_state = 'sanitized' \
-    WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
-      AND sanitization_state = 'pending'";
-
 /// A Block verdict writes 'blocked' so the row can never be promoted by a
 /// later run on a different document (the pending-only guard in 005/ingest).
 const MARK_BLOCKED_SQL: &str = "\
@@ -225,6 +218,11 @@ pub async fn run_job(
     .map_err(|e| ApiError::internal(format!("ledger insert failed: {e}")))?;
 
     // 6. Promote or block, atomically per document.
+    //
+    // A Pass earns the 'sanitized' label by *replacing* the chunks with the
+    // job's redacted rendering. Flipping the flag alone left the raw text in
+    // `content`, which the RAG gate then served to chat - see
+    // `reingest_sanitized_chunks`.
     let verdict_is_block = outcome.ledger.verdict().is_block();
     let promoted: u64 = if verdict_is_block {
         sqlx::query(MARK_BLOCKED_SQL)
@@ -236,14 +234,11 @@ pub async fn run_job(
             .map_err(|e| ApiError::internal(format!("block write failed: {e}")))?
             .rows_affected()
     } else {
-        sqlx::query(MARK_SANITIZED_DOC_SQL)
-            .bind(tenant_id.0)
-            .bind(matter_id.0)
-            .bind(document_id.0)
-            .execute(&state.db)
+        let ingestor = pacgate_rag::ChunkIngestor::new(state.db.clone(), state.embedding.clone());
+        ingestor
+            .reingest_sanitized_chunks(tenant_id, matter_id, document_id, &outcome.text)
             .await
-            .map_err(|e| ApiError::internal(format!("promote write failed: {e}")))?
-            .rows_affected()
+            .map_err(|e| ApiError::internal(format!("sanitized chunk rewrite failed: {e}")))?
     };
     let _ = if verdict_is_block {
         sqlx::query(MARK_BLOCKED_DOCUMENT_SQL)
@@ -512,10 +507,8 @@ mod gate_tests {
 
     #[test]
     fn the_promotion_targets_only_this_document() {
-        assert!(MARK_SANITIZED_DOC_SQL.contains("tenant_id = $1"));
-        assert!(MARK_SANITIZED_DOC_SQL.contains("matter_id = $2"));
-        assert!(MARK_SANITIZED_DOC_SQL.contains("document_id = $3"));
-        assert!(MARK_SANITIZED_DOC_SQL.contains("sanitization_state = 'pending'"));
+        assert!(MARK_SANITIZED_DOCUMENT_SQL.contains("tenant_id = $2"));
+        assert!(MARK_SANITIZED_DOCUMENT_SQL.contains("id = $1"));
     }
 
     #[test]

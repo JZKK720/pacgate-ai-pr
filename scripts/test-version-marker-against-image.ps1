@@ -84,8 +84,21 @@ if ($imgState -ne 'present') {
 # or what COMPOSE_PROJECT_NAME was set to. Fall back to the directory-derived
 # name only if the stack is not up (the caller will then get a clear failure).
 if (-not $Network) {
-    $derived = (& docker inspect pacgate-api --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>$null |
-        Where-Object { $_ } | Select-Object -First 1)
+    # ConvertFrom-Json, NOT a `{{...}}{{"\n"}}{{end}}` template.
+    #
+    # The template form returns the network name under PowerShell 7 but an EMPTY
+    # string under Windows PowerShell 5.1 - verified side by side on 2026-10-14
+    # (5.1.26100.9549 vs 7.6.6, same container). 5.1 splits the `\n` inside the
+    # template into separate output lines and `Where-Object { $_ }` then receives
+    # the pieces; the net effect is an empty derivation on exactly the machines
+    # that do not have `pwsh`. That is the client hardware: run-all-checks.ps1
+    # explicitly falls back to powershell.exe when `pwsh` is absent, so this code
+    # path only ever ran for a developer.
+    #
+    # The symptom was a silent WARN plus an assumed network name - the failure mode
+    # is a wrong name, not an obvious error.
+    $derived = (docker inspect pacgate-api 2>$null | ConvertFrom-Json)[0].NetworkSettings.Networks.PSObject.Properties.Name |
+        Select-Object -First 1
     if ($derived) {
         $Network = $derived.Trim()
         Write-Host "  network derived from the live stack: $Network" -ForegroundColor DarkGray
