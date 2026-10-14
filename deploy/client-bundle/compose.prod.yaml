@@ -173,6 +173,31 @@ services:
       # frozen mid-run with zero user-visible output (run c2a0ced4 evidence in
       # .env comments). Value comes from .env: DEERFLOW_TITLE_INVOKE_TIMEOUT_S.
       DEERFLOW_TITLE_INVOKE_TIMEOUT_S: ${DEERFLOW_TITLE_INVOKE_TIMEOUT_S:-8}
+      # Pacgate (security fix 2026-10-14): arm the one-time setup-token gate on
+      # POST /api/v1/auth/initialize.
+      #
+      # /initialize creates the FIRST deer-flow admin and is necessarily PUBLIC --
+      # it cannot require a login, because before it runs there is no account. With
+      # the gate disabled, whoever reaches the URL first becomes that admin. On a
+      # fresh AIPC it is LAN-reachable through nginx, so this is the only guard
+      # between an unprovisioned machine and a stranger claiming it.
+      #
+      # Measured 2026-10-14 on the running stack: GET /api/v1/auth/initialize through
+      # nginx returned 405 (route exists and is routed), and a POST with no token and
+      # an invalid body returned 422 -- validation ran FIRST, which proves no token
+      # check happened, because the 403 is the handler's first statement.
+      #
+      # The DEFAULT IS 1, deliberately. The patch treats an unset switch as "do not
+      # arm", so a bare passthrough of an empty .env value would leave the hole open
+      # -- a fresh install with a blank token would still be claimable. Defaulting to
+      # 1 makes OMISSION arm the gate: the failure mode of forgetting this variable
+      # is an operator who must read one log line, not a publicly claimable admin.
+      #
+      # If PACGATE_SETUP_TOKEN is set, the patch prefers it and never generates. If
+      # it is blank, a per-process token is generated and logged once as
+      # "PACGATE SETUP TOKEN: <value>" -- so it changes on every deer-flow restart.
+      PACGATE_SETUP_TOKEN: ${PACGATE_SETUP_TOKEN:-}
+      PACGATE_GENERATE_SETUP_TOKEN: ${PACGATE_GENERATE_SETUP_TOKEN:-1}
     volumes:
       - ./data:/data
       # Pacgate (office-lane fix 2026-10-05): officecli's MCP defaults its

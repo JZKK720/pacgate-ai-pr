@@ -151,6 +151,13 @@ services:
       # frozen mid-run with zero user-visible output (run c2a0ced4 evidence in
       # .env comments). Value comes from .env: DEERFLOW_TITLE_INVOKE_TIMEOUT_S.
       DEERFLOW_TITLE_INVOKE_TIMEOUT_S: ${DEERFLOW_TITLE_INVOKE_TIMEOUT_S:-8}
+      # Pacgate (security fix 2026-10-14): arm the one-time setup-token gate on
+      # POST /api/v1/auth/initialize. See compose.prod.yaml for the full reasoning
+      # and the 2026-10-14 measurement; the two files must stay in step.
+      #
+      # Default 1, so OMISSION arms the gate rather than disabling it.
+      PACGATE_SETUP_TOKEN: ${PACGATE_SETUP_TOKEN:-}
+      PACGATE_GENERATE_SETUP_TOKEN: ${PACGATE_GENERATE_SETUP_TOKEN:-1}
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro

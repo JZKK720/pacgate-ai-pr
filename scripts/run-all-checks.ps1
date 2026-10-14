@@ -260,6 +260,23 @@ $gates = @(    'scripts/test-install-render.ps1'
     # script - so it needs no containers and is safe in the gate list. The live
     # counterpart is smoke-full-stack.ps1 lane 6.
     'scripts/test-ocr-bake-integrity.ps1'
+
+    # Closes the loop on the two findings AUDIT-2026-10-14-v0.1.29.md recorded as
+    # "found and recorded, not fixed", which then shipped for ten days: no compose
+    # declared a healthcheck, and nothing armed the /initialize setup-token gate.
+    #
+    # Both were fixed by hand on 2026-10-14, and this gate is what keeps them fixed.
+    # It is static by default (reads the rendered compose config; no containers
+    # needed), so it is safe here. Pass -Live to also execute every rendered
+    # healthcheck against its container.
+    #
+    # It earned its place immediately: its first run caught that a `git checkout --`
+    # had silently reverted the setup-token edit, leaving a commit whose message
+    # claimed a fix it did not contain.
+    #
+    # ASCII-ONLY by design, because the client AIPC has only Windows PowerShell 5.1
+    # and 5.1 cannot parse a BOM-less script holding non-ASCII literals.
+    'scripts/test-compose-healthchecks.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
