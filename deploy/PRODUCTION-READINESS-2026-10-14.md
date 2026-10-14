@@ -1,38 +1,61 @@
 # Production readiness — when can client AIPCs be upgraded?
 
 **Question asked:** when are we 100% ready to deploy?
-**Answer:** the sanitizer blocker is now **fixed, proven end to end on the published
-artifact, and shipped as 0.1.31**. The remaining work is a **per-machine remediation pass**
-that no image can do for you, because it rewrites data the old code already poisoned.
+**Answer:** **0.1.31 is now deployable and is the frozen release.** The sanitizer blocker
+is fixed and proven on the published artifact, the two remaining findings from the 0.1.29
+audit are closed, and the whole update path has been exercised end to end on a real
+machine. What remains is not engineering — it is *your* decision to schedule the window,
+because the last step is a per-machine remediation pass that needs the admin credentials.
 
-**Date:** 2026-10-14 (updated after 0.1.31 published)
+**Date:** 2026-10-14 (updated after 0.1.31 published, audit findings closed, and a live
+update rehearsal)
 
 ---
 
-## 0. Update: 0.1.31
+## 0. Current state, measured
 
-`0.1.31` is published to GHCR (5 images, all public, one revision `9d3193666bb2`) and
-`test-release-provenance.ps1` confirms the tag identifies the artifacts clients will pull.
+| item | state |
+| --- | --- |
+| version | **0.1.31**, 5 images public on GHCR, revision `9d3193666bb2` |
+| `test-release-provenance.ps1` | PASSED - the tag identifies the artifacts clients pull |
+| sanitizer fix | in the published binary (`reingest` present; absent in 0.1.30) |
+| `/initialize` gate | **ARMED** by default in both compose files |
+| compose healthchecks | **7 added** to each file; all 8 services report `(healthy)` |
+| `install.ps1 -Update` | **exercised for real** on this box: completed, all services healthy |
+| running `/version` | `0.1.31` rev `9d3193666bb2` |
+| this machine's database | **remediated**: 37 documents repaired, audit now returns 0 |
+| full gate suite | 38 static + live gates; the new one is `test-compose-healthchecks.ps1` |
 
-The one CRITICAL blocker below is closed in code and **proven against the published
-image, not just a local build**:
+### The three things fixed since the last revision of this document
 
-```
-api image: ghcr.io/jzkk720/pacgate-api:0.1.31     <- derived from Cargo.toml, no override,
-                                                    exactly what a client machine resolves
-== RESULT: PASS ==                                 all 22 assertions, including the five
-                                                    new chunk-CONTENT assertions
-```
+1. **The sanitizer blocker**, proven by controlled A/B on the *published* images: the
+   same gate and fixture return `FAIL (4)` on 0.1.30 and `PASS` on 0.1.31.
+2. **`/initialize` was publicly claimable on a fresh install.** The gate existed in the
+   deer-flow patch but nothing armed it. Now proven live by discrimination - without a
+   token the API returns `403 setup_token_required`, with the log-printed token it
+   returns `409 system_already_initialized` (i.e. it passed the token check).
+3. **No compose declared a healthcheck.** Seven added per file, chosen against a measured
+   inventory of what each image actually has, and each verified verbatim against its
+   container under **both** `pwsh` 7 and Windows PowerShell 5.1.
 
-The same gate against the published `0.1.30` returns `FAIL (4)`: those four content
-assertions are precisely what 0.1.30 got wrong. So the comparison is controlled - same
-gate, same fixture, same DB, one image replaced.
+**Neither fix needed an image rebuild.** One is a compose `environment:` entry, the other
+is compose only. That is why 0.1.31 can be frozen rather than superseded — the answer to
+"we keep building instead of shipping".
 
-**What still needs a human on each machine is remediation, not upgrading.** Rows that
-0.1.28..0.1.30 mislabelled keep their raw text until the sanitize job is re-run on them.
-The procedure is in the AIPC handbook (both languages), the counter is
-`scripts/audit-sanitized-chunk-egress.ps1`, and the repair is proven: `1` raw hit before,
-`0` after, with the document's chunk retained.
+### What is still NOT done, stated plainly
+
+- **No client AIPC has been updated.** Everything above is proven on the dev box. The
+  highest proof that exists for the install *path* is clean-clone run 4 at 0.1.30, and the
+  update path is now rehearsed once at 0.1.31 on this machine.
+- **37 documents on THIS box needed remediation and got it.** On AIPC 1 and AIPC 2 the
+  same class of rows almost certainly exists, because the defect shipped in v0.1.18
+  through v0.1.30 and those machines ran within that range. That pass needs the admin
+  password and must be run per machine.
+- **The qm sandbox digest is pinned, so a repo update does not rebuild it.** Deliberate,
+  but it means qm keeps running old skills until someone repins.
+- **`test-update-end-to-end.ps1` cannot run under PowerShell 5.1** — it uses
+  `ProcessStartInfo.ArgumentList`, absent on .NET Framework. Pre-existing; the gate
+  verifying the update path cannot itself run on client hardware.
 
 ---
 
@@ -185,30 +208,68 @@ nothing. Adding healthchecks changes client restart semantics and needs its own 
 
 ## 5. The answer
 
-**Deploy 0.1.30 to AIPC 1 and 2 now, then ship the sanitizer fix as the next patch.**
-0.1.30 is proven on a clean machine, on PowerShell 5.1, with isolated volumes and a fresh
-database; all 46 gates pass; the delivery, OCR, format and document-generation lanes are
-covered; and the release that made things worse (0.1.27.x -> 0.1.29) is superseded.
+**0.1.31 is the frozen release. Ship it, then run one remediation pass per machine.**
 
-The sanitizer fix is forward-only. 0.1.30 keeps raw chunk text on rows it labels
-`sanitized`, so **deploying 0.1.30 does not clean anything** and the next patch is what
-makes it correct. Two honest options:
+The earlier version of this section offered a choice between deploying 0.1.30 now and
+holding for the fix. That choice is gone: 0.1.31 carries the fix, is published, and is
+proven on the published artifact. There is no reason to deploy a version that is known to
+be wrong on a CRITICAL item.
 
-- **Deploy 0.1.30 now, patch immediately.** Fastest path to the round-cap and blank-answer
-  fixes, which are the symptoms clients actually reported. Accept that the sanitizer
-  remains leaky for one more release cycle.
-- **Hold 0.1.30, ship 0.1.31 with the fix.** One release, no window in which the product is
-  known-broken on a CRITICAL item. Slower to the reported symptoms.
+### The deployment, in order
 
-Either way, **every machine that ran 0.1.28..0.1.30 needs the affected rows dealt with
-separately** - `scripts/audit-sanitized-chunk-egress.ps1` names them, and re-sanitizing each
-affected document clears it once the fixed image is running. No upgrade does this for you.
+**On the dev machine (done, as the rehearsal):**
 
-**To answer "100%"**: not while a CRITICAL finding about client PII is open, and the audit
-shows it is open on *real rows*, not hypothetically. Closing it needs three things, in
-order: (1) the fixed image, (2) the audit run per machine, (3) each affected document
-re-sanitized or its rows deleted. Duplicate documents and healthchecks are quality work
-that can follow; this one is what a client's own compliance review would find.
+```powershell
+# 1. Update. Pulls 0.1.31, re-renders config, restarts the bind-mounted services.
+cd C:\pacgate-ai-pr\deploy\client-bundle
+.\install.ps1 -Update
+
+# 2. Confirm the running binary, not the compose pin.
+curl.exe -s http://localhost:8089/version      # {"version":"0.1.31","revision":"9d3193666bb2"}
+
+# 3. Count the damage BEFORE repairing anything - this is read-only.
+.\..\..\scripts\audit-sanitized-chunk-egress.ps1
+
+# 4. Repair. Re-runs the sanitize job per affected document.
+.\..\..\scripts\remediate-sanitized-chunk-egress.ps1 -WhatIf   # see the list first
+.\..\..\scripts\remediate-sanitized-chunk-egress.ps1
+
+# 5. Prove it. Must end "no raw Tier-1 match found in a sanitized chunk", exit 0.
+.\..\..\scripts\audit-sanitized-chunk-egress.ps1
+```
+
+**On AIPC 1 and AIPC 2:** the same five steps. The only difference is that step 3 will
+report a number that is not zero, because those machines ran a release in the
+v0.1.18..v0.1.30 window. Expect it; it is not a new fault, and step 4 is the fix.
+
+Two ordering constraints that matter:
+
+- **Step 4 needs 0.1.31 or later running.** On 0.1.30 and earlier the sanitize job has no
+  rewrite path at all, so re-running it changes nothing and the audit will still report
+  the same count. Update first, repair second.
+- **Step 5 is not optional.** Step 4 reports what it did; step 5 measures what is true. On
+  this machine those two disagreed twice, both times because of a defect in the audit
+  rather than in the repair, and the disagreement is what exposed it.
+
+### What "100%" means now
+
+The engineering is done: fix present in the published image, gate armed by default,
+healthchecks in place, update path exercised live, this machine's data clean and verified.
+
+What is left is not engineering:
+
+- **Scheduling the window.** `-Update` restarts deer-flow and the frontend, so a lawyer
+  mid-run loses that run. It is a few minutes, but it needs to be chosen, not assumed.
+- **Having the admin password to hand** for step 4. It logs in as `PACGATE_API_EMAIL` from
+  the bundle `.env`; without it the script exits 2 and says so rather than half-working.
+- **Accepting that step 4 re-embeds each repaired document.** Cost is proportional to
+  document size, not to how much leaked. On this box, 37 documents was quick; on a busier
+  machine, allow for it.
+
+Everything else on the earlier list - duplicate documents, the qm-sandbox repin, the
+cloud `reasoning` trap, the PS 5.1 harness defects - is quality work that can follow
+without holding the deploy. None of it is a reason a client's compliance review would
+reject the machine.
 
 ## 6. The process fix that stops this recurring
 
