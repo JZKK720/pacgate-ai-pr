@@ -106,10 +106,33 @@ function Measure-GenerationFailureRate {
             $code = 'no-matter'
             $flag = ''
             if ($mid) {
+                # The body goes in from a FILE, via `--data-binary @path`.
+                #
+                # MEASURED 2026-10-14: the inline form
+                #   --data-binary "{`"matter_id`":`"$mid`"}"
+                # produced HTTP 400 on 8 of 8 runs, and the server saw
+                #   "EOF while parsing an object at line 1 column 1"
+                # - the JSON never arrived. Reproduced on BOTH pwsh 7 and Windows
+                # PowerShell 5.1, so it is not a shell-compatibility quirk: the
+                # backtick-quoted braces are consumed before curl sees them.
+                #
+                # That mattered more than a noisy gate. This measurement exists to
+                # catch a 1-in-3 generation defect, and a harness that fails 8 of 8
+                # for an unrelated reason cannot distinguish "the product is broken"
+                # from "the harness is broken" - which is the same false-red shape
+                # that hid the sanitizer defect for two releases.
+                #
+                # Writing the body to a file removes every quoting layer.
+                $bodyFile = "$env:TEMP\soak-$i-body.json"
+                [System.IO.File]::WriteAllText(
+                    $bodyFile,
+                    (@{ matter_id = $mid } | ConvertTo-Json -Compress),
+                    (New-Object System.Text.UTF8Encoding($false))
+                )
                 $code = (curl.exe -s -o "$env:TEMP\soak-$i.json" -w '%{http_code}' `
                         -X POST "$BaseUrl/api/workflows/$WorkflowId/execute" `
                         -H "Authorization: $($Headers['Authorization'])" -H 'Content-Type: application/json' `
-                        --data-binary "{`"matter_id`":`"$mid`"}" --max-time $TimeoutSec 2>&1)
+                        --data-binary "@$bodyFile" --max-time $TimeoutSec 2>&1)
                 if ($code -eq '200') {
                     try {
                         $flag = ((Get-Content "$env:TEMP\soak-$i.json" -Raw | ConvertFrom-Json).steps[0].max_rounds_reached)
@@ -292,7 +315,20 @@ try {
         })
         # Fall back to the prose id only to choose WHICH confirmed row was meant.
         $blob = (@($r.final_content) + @($steps | ForEach-Object { $_.content })) -join "`n"
-        $m = [regex]::Match($blob, '(?im)^\s*[-*]*\s*\**(?:文档\s*ID|document\s*id)\**\s*[:：]\s*`?(?<id>[0-9a-fA-F-]{36})')
+        #
+        # The CJK alternation is written as \u escapes, NOT as literal 文档 / ：.
+        #
+        # MEASURED 2026-10-14: this script has no UTF-8 BOM, and Windows PowerShell
+        # 5.1 decodes a BOM-less script using the ANSI code page. The literals arrived
+        # as mojibake, which included a stray ')' - so the regex died with
+        #   "parsing ... Too many )'s."
+        # and the gate reported "no documents row" on a run that HAD created
+        # 项目概况表.docx. A false red is not a harmless noise: it is indistinguishable
+        # from the real defect this gate exists to catch.
+        #
+        # \u escapes are pure ASCII in the source, so no decoding step can alter them.
+        # '文档' = U+6587 U+6863; '：' = U+FF1A (full-width colon).
+        $m = [regex]::Match($blob, '(?im)^\s*[-*]*\s*\**(?:\u6587\u6863\s*ID|document\s*id)\**\s*[:\uFF1A]\s*`?(?<id>[0-9a-fA-F-]{36})')
         if ($m.Success) {
             $doc = $parsed | Where-Object { $_.id -eq $m.Groups['id'].Value } | Select-Object -First 1
             if ($doc) { $docSource = 'db row named in the run summary' }
