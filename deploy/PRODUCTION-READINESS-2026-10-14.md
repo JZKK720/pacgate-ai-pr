@@ -1,10 +1,38 @@
 # Production readiness — when can client AIPCs be upgraded?
 
 **Question asked:** when are we 100% ready to deploy?
-**Answer:** 0.1.30 is the first release that is **deployable**. It is not yet "100%",
-because two known issues are unresolved and one is CRITICAL by our own definition.
+**Answer:** the sanitizer blocker is now **fixed, proven end to end on the published
+artifact, and shipped as 0.1.31**. The remaining work is a **per-machine remediation pass**
+that no image can do for you, because it rewrites data the old code already poisoned.
 
-**Date:** 2026-10-14
+**Date:** 2026-10-14 (updated after 0.1.31 published)
+
+---
+
+## 0. Update: 0.1.31
+
+`0.1.31` is published to GHCR (5 images, all public, one revision `9d3193666bb2`) and
+`test-release-provenance.ps1` confirms the tag identifies the artifacts clients will pull.
+
+The one CRITICAL blocker below is closed in code and **proven against the published
+image, not just a local build**:
+
+```
+api image: ghcr.io/jzkk720/pacgate-api:0.1.31     <- derived from Cargo.toml, no override,
+                                                    exactly what a client machine resolves
+== RESULT: PASS ==                                 all 22 assertions, including the five
+                                                    new chunk-CONTENT assertions
+```
+
+The same gate against the published `0.1.30` returns `FAIL (4)`: those four content
+assertions are precisely what 0.1.30 got wrong. So the comparison is controlled - same
+gate, same fixture, same DB, one image replaced.
+
+**What still needs a human on each machine is remediation, not upgrading.** Rows that
+0.1.28..0.1.30 mislabelled keep their raw text until the sanitize job is re-run on them.
+The procedure is in the AIPC handbook (both languages), the counter is
+`scripts/audit-sanitized-chunk-egress.ps1`, and the repair is proven: `1` raw hit before,
+`0` after, with the document's chunk retained.
 
 ---
 
@@ -19,6 +47,7 @@ Measured from `CLEAN-CLONE-PROOF-LOG.md` - not from memory:
 | **v0.1.28** | **NOT PROVEN** | shipped, never proved on a clean machine |
 | **v0.1.29** | **NOT PROVEN** | shipped, never proved; also incomplete (see §3) |
 | **v0.1.30** | **PROVEN** | run 4, the first genuinely isolated run |
+| **v0.1.31** | **NOT PROVEN by clean clone** | carries the sanitizer fix; the fix itself is proven against the published image (see §0) |
 
 Two releases went out with no clean-machine proof. That is the process gap that let a
 1-in-3 HTTP 500 ship twice, and it is why the answer below is evidence-based rather than
