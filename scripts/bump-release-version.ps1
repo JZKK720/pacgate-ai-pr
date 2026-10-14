@@ -127,12 +127,26 @@ try {
         # the LINE SHAPE - a version immediately after a jzkk720 tag, at the start
         # of a list item or table row - which survives both languages and both
         # layouts. Every miss here produced a README contradicting itself.
+        # ASCII-ONLY HEADING PATTERNS, deliberately. This used to spell the Chinese
+        # literal out -- '(?m)^(## \u7248\u672c\uff1av)(?<v>...)'. Under PowerShell 7 that
+        # works; under Windows PowerShell 5.1 it does NOT, because this file has no
+        # UTF-8 BOM and 5.1 decodes a script without one using the ANSI code page.
+        # The literal becomes mojibake, the pattern matches nothing, and
+        # README-ZH.md is left at the PREVIOUS release while the script still reports
+        # success. MEASURED 2026-10-14 (PS 5.1.26100.8875) - that is exactly how the
+        # 0.1.31 bump left README-ZH.md at v0.1.30 and was caught only by the
+        # post-write verification below.
+        #
+        # Matching the heading STRUCTURALLY - `## <anything>vX.Y.Z` at the start of a
+        # line - keeps the same guarantee in both languages without depending on how
+        # this file is decoded. The heading is the first line of each README, so the
+        # first match on the file is the release heading.
         'README.md' = @(
-            '(?m)^(## Release: v)(?<v>\d+\.\d+\.\d+)',
+            '(?m)^(##[^\r\n]*?v)(?<v>\d+\.\d+\.\d+)',
             '(?m)^([-|]\s[^\r\n]*?ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
         'README-ZH.md' = @(
-            '(?m)^(## 版本：v)(?<v>\d+\.\d+\.\d+)',
+            '(?m)^(##[^\r\n]*?v)(?<v>\d+\.\d+\.\d+)',
             '(?m)^([-|]\s[^\r\n]*?ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
 
@@ -297,14 +311,34 @@ try {
     # Checked rather than assumed: an operator reads the heading first, and a
     # heading that lags five releases is exactly the kind of stale claim that made
     # the retired handoff docs dangerous.
+    #
+    # ASCII-ONLY PATTERN, deliberately. The obvious form anchors the Chinese
+    # literal -- '(?m)^## (?:Release: v|\u7248\u672c\uff1av)(?<v>...)'. That reads fine
+    # in the source and worked under PowerShell 7, but this script has no UTF-8 BOM
+    # and Windows PowerShell 5.1 decodes a script WITHOUT a BOM using the ANSI code
+    # page. The literal arrived as mojibake, the regex never matched, and the check
+    # reported "README-ZH.md has no '## ...' heading to check" -- while the heading
+    # regex on the WRITE side silently matched nothing too, so README-ZH.md was left
+    # at the previous release and only the verification noticed.
+    #
+    # MEASURED 2026-10-14, same script body, PS 5.1.26100.8875, against the real
+    # README-ZH.md:
+    #   no BOM  -> match success = False
+    #   with BOM-> match success = True
+    #
+    # So the heading is matched STRUCTURALLY instead: `## <anything>v` at the start
+    # of a line, with the version captured. No non-ASCII byte is involved, so the
+    # check cannot be broken by the decoding of this file. Client AIPCs only have
+    # PS 5.1, which is why this matters for a release step rather than being
+    # cosmetic.
     $headingStale = @()
     foreach ($rel in @('README.md', 'README-ZH.md')) {
         $p = Join-Path $repoRoot $rel
         if (-not (Test-Path -LiteralPath $p)) { continue }
         $t = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
-        $m = [regex]::Match($t, '(?m)^## (?:Release: v|版本：v)(?<v>\d+\.\d+\.\d+)')
+        $m = [regex]::Match($t, '(?m)^##[^\r\n]*?v(?<v>\d+\.\d+\.\d+)')
         if (-not $m.Success) {
-            $headingStale += "  $rel has no '## Release: vX.Y.Z' / '## 版本：vX.Y.Z' heading to check"
+            $headingStale += "  $rel has no '## ... vX.Y.Z' release heading to check"
         }
         elseif ($m.Groups['v'].Value -ne $To) {
             $headingStale += "  $rel release heading is v$($m.Groups['v'].Value), expected v$To"
