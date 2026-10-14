@@ -284,3 +284,77 @@ is now written in the runbook so the next editor does not reintroduce it.
 
 The proof stack was taken down. Its volumes were kept (nothing else references them) and
 are named `pacgate-proof_*` so they cannot be confused with the dev or client ones.
+
+## 2026-10-15 - run 5 (PASSED at v0.1.31; the release that ships, and it found TWO harness false-reds)
+
+First proof of 0.1.31, and the first run since 0.1.30. Runbook followed as written:
+clone from `JZKK720/pacgate-ai-pr` (NOT the fork - `fork/main` is still 0.1.24 and
+84 commits behind, i.e. it carries the sanitizer defect and not the fix), fresh
+`.env` with newly generated secrets (24/48/32 chars as the table says), and
+`COMPOSE_PROJECT_NAME=pacgate-proof` for genuinely isolated volumes.
+
+Install ran under **Windows PowerShell 5.1** - the shell a client AIPC has.
+
+### Mechanical results
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | `install.ps1` | exit 0; all 8 services `(healthy)` on first boot |
+| 4a | `/version` | `0.1.31` rev `9d3193666bb2` at the nginx ROOT; `/pacgate/health` -> `ok` |
+| 4b | workflow library | `222 workflows, 46 categories`; 220 of 222 names non-ASCII |
+| 4c | legal journey | **18 assertions PASS**, 1 honest SKIP (OpenViking recall) |
+| 4d | LAN origin | hostname Origin -> **422** (passed the origin gate); non-allowlisted -> **403** |
+| 5 | full suite | **37 of 38 gates PASS**, 9 live-stack lanes, 1 gate FAIL (see below) |
+
+The seven healthchecks added on 2026-10-14 report `(healthy)` on a **fresh** machine,
+which is the first time they have been exercised on a first boot rather than a restart.
+
+### The security fix, proven where it actually bites
+
+This machine had **no deer-flow admin** (`needs_setup: true`), so `/initialize` was
+genuinely claimable - the exact state the defect required:
+
+```
+POST /api/v1/auth/initialize, no token   -> refused, code=setup_token_required
+                                          -> needs_setup STILL true (nothing created)
+POST with the token from `docker logs`   -> admin created, needs_setup -> false
+```
+
+On an unpatched build the first request would have created a stranger's admin account.
+
+### TWO harness defects found - both false-reds, both fixed
+
+1. **The soak measured HTTP 400 on 8 of 8 runs.** The server saw
+   `EOF while parsing an object at line 1 column 1`: the JSON body never arrived.
+   The inline `--data-binary "{...}"` form has its backtick-quoted braces consumed
+   before curl sees them, reproduced on pwsh 7 AND 5.1. Fixed by sending the body
+   from a file; re-measured **6 of 6 HTTP 200**.
+2. **The prose-id regex died with "Too many )'s."** It held literal `文档` and `：` in
+   a script with no UTF-8 BOM, so PS 5.1's ANSI decoding mangled them into a stray
+   `)`. It reported "no documents row" on a run that HAD created `项目概况表.docx`.
+   Rewritten as `\u6587\u6863` / `\uFF1A` - ASCII in the source, so no decoding step
+   can alter them.
+
+Both are the class this project keeps hitting: correct under the dev box's `pwsh` 7,
+wrong under the client's 5.1. A gate that fails on a working product is
+indistinguishable from the real defect it exists to catch.
+
+### The one remaining FAIL is behavioural, and stated as such
+
+`test-document-generation-e2e.ps1` executes the workflow on an **empty** matter. The
+model correctly chooses `list_documents` and asks for the project input rather than
+inventing a 项目概况表 - reasonable agent behaviour, not a fault. On a matter holding
+the workflow's input, **3 of 3 runs chose `generate_docx`** and
+`项目概况表.docx` landed in the matter (verified as a row AND on disk).
+
+So the gate asserts something the product is not obliged to do on an empty matter.
+It should seed the workflow's input first; that is a gate change, not a product one.
+
+### Not covered (unchanged from runs 1-4)
+
+- LAN sign-in was exercised mechanically via an Origin header, not from a browser on
+  a second physical host.
+- OpenViking recall SKIPPED (cold-model budget), so the memory lane is unverified here.
+- qm was not staged on the clean machine (`setup-qm.ps1` not run), so the qm stack is
+  outside this proof.
+- The empty-matter generation assertion above.
