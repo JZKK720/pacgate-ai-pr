@@ -5,7 +5,15 @@ the whole stack and have every runtime work?"
 **Root cause CORRECTED 2026-10-04** — the first version had the mechanism wrong.
 See *Correction* below, because the correction is what determines the fix.
 **Severity:** HIGH on a fresh machine. Silent — no error is raised anywhere.
-**Status:** OPEN. Mechanism fully traced. Fix designed but NOT applied.
+**Status:** ✅ **RESOLVED 2026-10-04** — repinned to a pullable GHCR digest. Verified again
+2026-10-14: `qm.config.jsonc` pins
+`ghcr.io/jzkk720/pacgate-sandboxes@sha256:52e867fcb195f07c5ff32fc78e8ac3f35d000ebd5f34d6c8d792c602f6eae65b`,
+the same namespace as the other five qm images. Nothing in the config still points at
+`localhost:5000`.
+
+This header read "OPEN" for ten days after the fix, which is its own small defect: a doc
+that contradicts the code sends the next reader hunting a bug that is not there. The
+"OPEN" status was stale, not wrong when written.
 
 ## The defect in one line
 
