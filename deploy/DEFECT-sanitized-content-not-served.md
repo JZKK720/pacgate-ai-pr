@@ -7,9 +7,12 @@ the very retrieval gate the sanitizer had just approved.
 **Found:** 2026-10-14, by `scripts/test-format-coverage-e2e.ps1` (the first gate that
 followed sanitization all the way to what a reader actually receives).
 **Root-caused:** 2026-10-14 on the live 0.1.30 stack, by direct DB and HTTP probes.
-**Status: FIXED on the forward path** (`ChunkIngestor::reingest_sanitized_chunks`).
-**Not yet released** - rides the next image. See "Deploy implication" for the
-existing rows this does *not* clean up.
+**Status: FIXED and RELEASED in 0.1.31** (`ChunkIngestor::reingest_sanitized_chunks`).
+Proven by controlled A/B on the *published* images: the same gate and fixture return
+`FAIL (4)` against 0.1.30 and `PASS` against 0.1.31.
+**Existing rows are repaired by re-running the sanitize job**, which is what
+`scripts/remediate-sanitized-chunk-egress.ps1` drives - this machine's 37 affected
+documents were remediated and the audit now returns clean. See "Deploy implication".
 
 ## What was measured
 

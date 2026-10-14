@@ -2,8 +2,8 @@
 
 **Found:** 2026-10-01, during the 0.1.21 release (upstream port of two AIPC fixes).
 **Severity:** HIGH on a fresh install; not exploitable on an initialised one.
-**Status:** OPEN — the bundle now arms the gate by default (fixed 2026-10-14, see
-*Fix applied* at the end); this section records the original defect.
+**Status:** ✅ **RESOLVED 2026-10-14** — the bundle now arms the gate by default, and it is
+proven live (see *Fix applied* below). The section after it records the original defect.
 
 ## Fix applied 2026-10-14
 
