@@ -689,7 +689,21 @@ affected documents (up to 25):
 
 For each affected document, re-run its sanitize job. The job now replaces the stale
 chunk text with the redacted rendering, which repairs the row and keeps retrieval
-coverage:
+coverage. There is a script that does this for every affected document in one pass:
+
+```powershell
+# See what would be repaired first - read-only, changes nothing.
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1 -WhatIf
+
+# Repair them.
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1
+```
+
+It logs in as `PACGATE_API_EMAIL` using `PACGATE_API_PASSWORD` from
+`deploy\client-bundle\.env`, so it needs real credentials - it exits 2 and says so
+rather than half-working if the password is still the placeholder.
+
+The manual equivalent, if you prefer one document at a time:
 
 ```powershell
 $login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" `
@@ -700,7 +714,14 @@ Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/documents/<doc-id>/san
   -Method Post -Headers $hdr -ContentType 'application/json' -Body '{"data_level":"T3"}'
 ```
 
-Then re-run the audit and confirm the document no longer appears.
+Then re-run the audit and confirm the document no longer appears. **Do not skip this
+step**: the repair reports what it did, the audit measures what is true, and on the first
+machine those two disagreed - twice - which is how two defects in the audit itself were
+found.
+
+**Order matters: update to 0.1.31 FIRST.** On 0.1.30 and earlier the sanitize job has no
+rewrite path at all, so re-running it changes nothing and the audit still reports every
+affected document.
 
 Two things worth knowing before starting:
 

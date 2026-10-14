@@ -658,7 +658,21 @@ affected documents (up to 25):
 ```
 
 对每个受影响的文档，重新执行其净化任务。该任务现在会用脱敏后的渲染文本替换陈旧的
-chunk 内容，既修好该行，又保留检索覆盖：
+chunk 内容，既修好该行，又保留检索覆盖。有一个脚本可以一次处理全部受影响的文档：
+
+```powershell
+# 先查看将要修复哪些文档 —— 只读，不做任何改动。
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1 -WhatIf
+
+# 执行修复。
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1
+```
+
+该脚本使用 `deploy\client-bundle\.env` 中的 `PACGATE_API_EMAIL` 与
+`PACGATE_API_PASSWORD` 登录，因此需要真实凭据 —— 若密码仍是占位符，它会以退出码 2
+明确报错，而不会半途而废。
+
+如需逐个文档手动处理，等价命令如下：
 
 ```powershell
 $login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" `
@@ -669,7 +683,12 @@ Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/documents/<文档-id>/
   -Method Post -Headers $hdr -ContentType 'application/json' -Body '{"data_level":"T3"}'
 ```
 
-随后再次运行审计，确认该文档不再出现。
+随后再次运行审计，确认该文档不再出现。**不要跳过这一步**：修复脚本报告的是它做了什么，
+审计衡量的是事实如何；在第一台机器上二者曾出现分歧 —— 而且出现了两次 —— 正是由此发现了
+审计脚本自身的两个缺陷。
+
+**顺序很重要：必须先更新到 0.1.31。** 在 0.1.30 及更早版本中，净化任务根本没有重写路径，
+重新执行不会带来任何改变，审计仍会列出全部受影响的文档。
 
 开始前有两点值得了解：
 
