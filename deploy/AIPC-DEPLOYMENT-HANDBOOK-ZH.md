@@ -631,6 +631,56 @@ commit。它故意不回显 compose 中的 pin 或镜像 tag：那些记录的�
 在此之前，无法区分一台最新机器和一台落后的机器 — 从外部看两者完全相同，
 唯一的办法是 SSH 进去读 compose 文件，并寄希望于容器与之相符。
 
+#### 安全修复之后：检查由旧版本清理过的文档
+
+有些修复无法靠发布镜像来修复既有数据，0.1.31 的净化器改动就是如此。截至 0.1.30
+（含）的版本会把 chunk 标记为 `sanitized`，却把**原始文本留在行里**，随后检索门控
+又把这段文本送给了对话。升级镜像**不会**重写这些行。
+
+因此，凡运行过 0.1.28、0.1.29 或 0.1.30 的机器，更新后都应执行审计：
+
+```powershell
+pwsh -File C:\pacgate-ai-pr\scripts\audit-sanitized-chunk-egress.ps1
+```
+
+该脚本**只读**，不会改动任何内容。机器干净时输出：
+
+```
+== RESULT: no raw Tier-1 match found in a sanitized chunk ==
+```
+
+其他结果会列出受影响的文档：
+
+```
+== RESULT: 106 raw match(es) inside SANITIZED chunks - LEAK PRESENT ==
+affected documents (up to 25):
+  matter=56723800-...  doc=820f4904-...  name=leak
+```
+
+对每个受影响的文档，重新执行其净化任务。该任务现在会用脱敏后的渲染文本替换陈旧的
+chunk 内容，既修好该行，又保留检索覆盖：
+
+```powershell
+$login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" `
+  -Method Post -ContentType 'application/json' `
+  -Body '{"email":"admin@pacgate-law.com","password":"<密码>"}'
+$hdr = @{ Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/documents/<文档-id>/sanitize" `
+  -Method Post -Headers $hdr -ContentType 'application/json' -Body '{"data_level":"T3"}'
+```
+
+随后再次运行审计，确认该文档不再出现。
+
+开始前有两点值得了解：
+
+- **该修复会重新生成文档的嵌入向量。** 它会重写全部 chunk，因此大文档会按 chunk
+  数量产生嵌入调用。这是正确的，但代价与文档大小成正比，而非与实际泄漏量成正比。
+- **直接删除这些行同样安全**，且更快，但在重新净化之前会失去该文档的 RAG 覆盖。
+  优先选择重新执行净化任务。
+
+这两条路径在 0.1.30 及更早版本上**都无效**：那些代码根本没有重写路径，重新执行
+净化任务不会带来任何改变。请先更新版本。
+
 ### 切换模型
 
 deer-flow（研究工作空间）：

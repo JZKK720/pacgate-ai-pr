@@ -660,6 +660,59 @@ disagree.
 Before this existed there was no way to tell a current machine from one behind -both looked identical from the outside, and the only check was to SSH in and
 read the compose file, hoping the containers matched it.
 
+#### After a security fix: check for documents sanitized by an old build
+
+Some fixes cannot repair existing data by shipping an image, and the sanitizer change
+in 0.1.31 is one of them. Builds up to and including 0.1.30 stamped a chunk
+`sanitized` while leaving the raw text in the row, and the retrieval gate then served
+that text to chat. Upgrading the image does **not** rewrite those rows.
+
+So on any machine that ever ran 0.1.28, 0.1.29 or 0.1.30, run the audit after updating:
+
+```powershell
+pwsh -File C:\pacgate-ai-pr\scripts\audit-sanitized-chunk-egress.ps1
+```
+
+It is read-only and touches nothing. A clean machine prints:
+
+```
+== RESULT: no raw Tier-1 match found in a sanitized chunk ==
+```
+
+Any other result names the affected documents:
+
+```
+== RESULT: 106 raw match(es) inside SANITIZED chunks - LEAK PRESENT ==
+affected documents (up to 25):
+  matter=56723800-...  doc=820f4904-...  name=leak
+```
+
+For each affected document, re-run its sanitize job. The job now replaces the stale
+chunk text with the redacted rendering, which repairs the row and keeps retrieval
+coverage:
+
+```powershell
+$login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" `
+  -Method Post -ContentType 'application/json' `
+  -Body '{"email":"admin@pacgate-law.com","password":"<password>"}'
+$hdr = @{ Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/documents/<doc-id>/sanitize" `
+  -Method Post -Headers $hdr -ContentType 'application/json' -Body '{"data_level":"T3"}'
+```
+
+Then re-run the audit and confirm the document no longer appears.
+
+Two things worth knowing before starting:
+
+- **The repair re-embeds the document.** It rewrites every chunk, so a large document
+  makes one embedding call per chunk. Correct, but proportional to document size rather
+  than to how much actually leaked.
+- **Deleting the rows instead is also safe**, and faster, but loses the document's RAG
+  coverage until it is re-sanitized. Prefer the re-run.
+
+Neither route works on 0.1.30 or earlier: that code has no rewrite path at all, so
+re-running the job there changes nothing. Update first.
+
 ### Switch models
 
 deer-flow (research workspace):
