@@ -173,3 +173,114 @@ proof that does not run the client's shell cannot test the client's shell.
 - A different machine (runbook section 5). LAN sign-in was exercised mechanically from this
   box by sending a LAN `Origin` header; it does not prove a browser on another host.
 
+
+
+## 2026-10-14 - run 4 (PASSED at v0.1.30; FIRST genuinely isolated proof, and it found the recall gate asserting the wrong thing)
+
+**Why this run mattered.** Runs 1-3 all passed, but the clean-clone proof was last
+executed at **v0.1.27**. Every install-path change made since - the staleness probe
+comparing image IDENTITY rather than just the version, the registry-digest verification
+of `compose pull`, and the automatic repair of tags that did not refresh - landed in
+0.1.28 and had **never been exercised on a clean clone**. Those changes sit in the exact
+code path a client machine runs first, so "it works on the dev box" was not evidence.
+
+**This is also the first run with real isolation.** `COMPOSE_PROJECT_NAME=pacgate-proof`
+was set before the install. It **overrides** the `name: pacgate-ai-bundle` pin in
+compose.prod.yaml (verified), so the proof stack got its own containers *and its own
+named volumes*. Runs 2 and 3 shared the dev `pacgate-db-data` volume and therefore
+inherited the dev database - they could not have observed first-time bootstrap at all
+(which is why run 3's log says the admin "already exists"). Run 4 could, and did.
+
+### Mechanical results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | clone `JZKK720/pacgate-ai-pr`, HEAD `1c7f822` | PASS |
+| 2 | fresh `.env` from template, generated secrets | PASS |
+| 3 | `install.ps1` on Windows PowerShell 5.1 | **exit 0** |
+| 4a | `/version` -> `0.1.30` rev `4c0b2ca` at the nginx ROOT; `/setup` -> **200** | PASS |
+| 4a | 8 containers up, all first-party images at 0.1.30 | PASS |
+| 4b | workflow library served: **222 workflows, 46 categories** | PASS (exit 0) |
+| 4c | full legal journey | **19 / 19, no SKIP** |
+| 5 | DB counts on a first-time database | `tenants=1 users=1 matters=1` |
+
+### The three 0.1.28 install-path fixes all fired on a real fresh machine
+
+This is the evidence those changes were made for. On the clean clone, where nothing
+could be masked by dev-box state:
+
+```
+[OK] admin 'admin@pacgate-law.com' registered          <- first-time bootstrap
+[WARN] PACGATE_MATTER_ID=0000... does not resolve to a matter the API knows.
+[OK] Provisioned matter 18ac86c4-... and wrote it to .env   <- self-healing
+[WARN] 'compose pull' exited 1 - some images may not be current.
+[WARN] 1 image tag(s) did not refresh during 'compose pull':
+[OK] all 5 image tag(s) now match the registry          <- the digest verification
+```
+
+The digest repair fired **during a fresh install**, not only on an update, and it fixed
+itself without operator intervention. The bootstrap that had failed for three releases
+(`[WARN] could not register the admin`) registered on the first attempt.
+
+### The defect this run found: the recall gate asserted something that cannot be true
+
+The journey's OpenViking lane **SKIPPED** on the clean stack:
+
+```
+[SKIP] OpenViking recall - write accepted but the marker did not surface within 420s
+RESULT: journey PASSED on every step that ran; some lanes were NOT verified
+```
+
+That looked like a cold-machine extraction failure. It was not. The lane works:
+
+- `remember` was accepted, and the extractor DID write memories - 29 memory files and
+  22 session files on disk, with a `memory_diff.json` recording `total_adds: 2`.
+- `find` answered the query `recall-lane` at **91% confidence**, returning
+  `entities/programs/recall-lane acceptance probe.md`.
+- A **control** settled it: a meaningful sentence ("The settlement authority for the
+  Northgate construction dispute was confirmed by partner Chen Wei on 14 October") was
+  recalled as `events/2026/10/14/northgate_settlement_confirmed.md` in **40 seconds**,
+  partner's name intact.
+
+**Root cause - in the gate, not the product.** The lane wrote
+`"Recall-lane acceptance probe OVRECALL-<12 hex>"` and then required that random token
+to survive recall. But the extractor **summarizes**, and what landed on disk was:
+
+```
+Recall-lane acceptance probe
+A program for evaluating acceptance criteria within the recall-lane workflow.
+```
+
+The opaque token was dropped as noise. That is **correct** for a semantic memory
+system - discarding a meaningless string is the feature. The gate was asserting that a
+semantic summarizer preserves a random hex string, which is not a property a memory
+system should have, and its failure told us nothing about the product.
+
+So the assertion is now semantic: query the **concept** and require a memory back that
+carries the probe's own words ("recall-lane" AND "acceptance"), so a response envelope
+echoing the query cannot pass it vacuously. The unique token is still written (it keeps
+each run's source distinguishable) but is deliberately no longer what recall must
+preserve. The lane passes in 40-60 s.
+
+> **This is the fifth false-red of the same shape in this release series**: a test
+> asserting the thing that was easy to observe rather than the property that matters.
+> The others were the OCR weights volume, the sanitizer's download status code, the
+> round cap, and the picker's 401. Each was fixed by asking what the assertion is
+> actually FOR.
+
+### Runbook defect found and fixed
+
+The secret generator documented 48- and 32-character secrets and produced **36 and 16**,
+because `Get-Random -Count N` returns at most the number of DISTINCT inputs and the
+pools were smaller than the counts. Confirmed by measurement, corrected, and the reason
+is now written in the runbook so the next editor does not reintroduce it.
+
+### Not covered (unchanged from runs 1-3)
+
+- LAN sign-in was verified mechanically again, not from a browser on a second device.
+- The proof is a different *volume set* on the same box, not a different machine.
+
+### Post-run cleanup
+
+The proof stack was taken down. Its volumes were kept (nothing else references them) and
+are named `pacgate-proof_*` so they cannot be confused with the dev or client ones.

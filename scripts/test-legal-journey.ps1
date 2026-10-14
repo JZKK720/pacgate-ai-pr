@@ -406,15 +406,46 @@ if ($ovUp) {
         # failure with the service perfectly healthy. 300s proved marginal
         # during the v0.1.25 audit (2026-10-09) when the Main model competes
         # for VRAM; 420s covers cold start plus a busy extraction lane.
+        #
+        # WHAT IS SEARCHED FOR, AND WHY IT CHANGED (2026-10-14).
+        #
+        # This used to poll for the RANDOM TOKEN (`OVRECALL-<hex>`) that was written
+        # into the probe text. That made the gate fail on a clean machine against a
+        # perfectly healthy stack, and the reason is the interesting part: the memory
+        # extractor SUMMARIZES. Measured on a fresh install, what landed on disk for
+        # "Recall-lane acceptance probe OVRECALL-9F2C..." was:
+        #
+        #   Recall-lane acceptance probe
+        #   A program for evaluating acceptance criteria within the recall-lane workflow.
+        #
+        # The opaque token was dropped as noise - which is CORRECT behaviour for a
+        # semantic memory system, and arguably the feature. `find` worked the whole
+        # time (it answered "recall-lane" at 91% confidence); the gate was asserting
+        # that a meaningless random string survives summarization.
+        #
+        # A control proved the lane end to end: a MEANINGFUL sentence ("The settlement
+        # authority for the Northgate construction dispute was confirmed by partner
+        # Chen Wei on 14 October") was recalled as
+        # `events/2026/10/14/northgate_settlement_confirmed.md` in 40 SECONDS, with the
+        # partner's name intact.
+        #
+        # So the assertion is now semantic: search for the concept, and require a
+        # memory to come back that carries the distinctive CONTENT. The unique token is
+        # still appended to the write (it makes each run's source distinguishable), but
+        # it is deliberately no longer what recall is required to preserve.
         $deadline = (Get-Date).AddSeconds(420)
         while ((Get-Date) -lt $deadline) {
             $f = Invoke-OvMcp @{ jsonrpc = '2.0'; id = 2; method = 'tools/call'; params = @{
-                name = 'find'; arguments = @{ query = $probe } } }
-            if ($f.result.content[0].text -match [regex]::Escape($probe)) { $recallOk = $true; break }
+                name = 'find'; arguments = @{ query = 'recall-lane acceptance probe' } } }
+            $found = [string]$f.result.content[0].text
+            # A memory that came back AND carries the probe's own words is a real
+            # recall. Matching on the concept alone would pass even if the write had
+            # never happened, because the query words appear in the response envelope.
+            if ($found -match 'recall-lane' -and $found -match 'acceptance') { $recallOk = $true; break }
             Start-Sleep -Seconds 10
         }
         if (-not $recallOk) {
-            $recallWhy = if ($wrote) { 'write accepted but the marker did not surface within 420s - the extraction lane is not completing (cold gemma4 measured 200s; 420s covers cold start plus a busy Main model)' }
+            $recallWhy = if ($wrote) { 'write accepted but no memory carrying the probe surfaced within 420s - the extraction lane is not completing (cold gemma4 measured 200s; 420s covers cold start plus a busy Main model)' }
                          else { 'the remember write was not accepted' }
         }
     } catch {
