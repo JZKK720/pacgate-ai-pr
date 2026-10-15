@@ -39,6 +39,13 @@ param(
     # hidden constant - but the default is the one that has been proven.
     [string]$DataLevel = 'T3',
 
+    # Credentials for the admin that performs the repair. Defaults come from the
+    # bundle .env. They are parameters because the repair is TENANT-SCOPED: the
+    # sanitize route resolves the document within the caller's tenant, so a
+    # machine holding documents in more than one tenant needs one run per tenant.
+    [string]$ApiEmail,
+    [string]$ApiPassword,
+
     # List the work without performing it.
     [switch]$WhatIf,
 
@@ -51,6 +58,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $script:ok = 0
 $script:failed = 0
+$script:skipped = 0
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $bundle = Join-Path $repoRoot 'deploy\client-bundle'
@@ -65,12 +73,12 @@ function Invoke-Psql([string]$Sql) {
 }
 
 # ── credentials ─────────────────────────────────────────────────────────────────
-$apiEmail = 'admin@pacgate-law.com'
-$apiPassword = ''
+$apiEmail = if ($ApiEmail) { $ApiEmail } else { 'admin@pacgate-law.com' }
+$apiPassword = if ($ApiPassword) { $ApiPassword } else { '' }
 if (Test-Path $envPath) {
     foreach ($line in (Get-Content $envPath -ErrorAction SilentlyContinue)) {
-        if ($line -match '^\s*PACGATE_API_EMAIL\s*=\s*(.+)$') { $apiEmail = $Matches[1].Trim() }
-        if ($line -match '^\s*PACGATE_API_PASSWORD\s*=\s*(.+)$') { $apiPassword = $Matches[1].Trim() }
+        if (-not $ApiEmail -and $line -match '^\s*PACGATE_API_EMAIL\s*=\s*(.+)$') { $apiEmail = $Matches[1].Trim() }
+        if (-not $ApiPassword -and $line -match '^\s*PACGATE_API_PASSWORD\s*=\s*(.+)$') { $apiPassword = $Matches[1].Trim() }
     }
 }
 if (-not $apiPassword -or $apiPassword -match '^change-me') {
@@ -91,23 +99,42 @@ if (-not $apiPassword -or $apiPassword -match '^change-me') {
 $rawPredicate = Get-PacgateRawPiiPredicate -Column 'c.content'
 
 $findSql = @"
-SELECT c.document_id::text
+SELECT c.document_id::text || '|' || c.tenant_id::text
 FROM kb_chunks c
 JOIN documents d ON d.id = c.document_id
 WHERE c.sanitization_state = 'sanitized'
   AND ($rawPredicate)
-GROUP BY c.document_id
-ORDER BY c.document_id
+GROUP BY c.document_id, c.tenant_id
+ORDER BY c.tenant_id, c.document_id
 LIMIT $Limit;
 "@
 
-$docIds = @(Invoke-Psql $findSql | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ -and $_ -match '^[0-9a-f-]{36}$' })
-$docIds = @($docIds | Sort-Object -Unique)
+# The tenant is carried alongside the id because the repair is TENANT-SCOPED and
+# the affected set is NOT. The sanitize route resolves the document within the
+# caller's tenant (`fetch_document_for_tenant`), so a document belonging to
+# another tenant answers 404 - which reads as a repair fault when it is really a
+# visibility limit. Measured on the AIPC-2 upgrade (2026-10-15): 4 affected
+# documents, 1 repaired, 3 "FAILED: 404", because those three lived in a second
+# tenant the configured admin could not see. Naming the tenant turns that into an
+# actionable message instead of a mystery.
+$affected = @()
+foreach ($row in (Invoke-Psql $findSql)) {
+    $parts = "$row".Trim() -split '\|'
+    if ($parts.Count -eq 2 -and $parts[0] -match '^[0-9a-f-]{36}$') {
+        $affected += [pscustomobject]@{ DocumentId = $parts[0]; TenantId = $parts[1] }
+    }
+}
+$docIds = @($affected | ForEach-Object { $_.DocumentId } | Sort-Object -Unique)
 
 Write-Output "== sanitized-chunk egress remediation =="
 Write-Output "api base   : $ApiBase"
 Write-Output "data level : $DataLevel"
 Write-Output "documents  : $($docIds.Count) affected (limit $Limit)"
+$tenantCount = @($affected | ForEach-Object { $_.TenantId } | Sort-Object -Unique).Count
+if ($tenantCount -gt 1) {
+    Write-Output "tenants    : $tenantCount - the repair is tenant-scoped, so this needs one run per tenant"
+    Write-Output "             (pass -ApiEmail/-ApiPassword for an admin of each; see the note below)"
+}
 Write-Output ''
 
 if ($docIds.Count -eq 0) {
@@ -117,7 +144,10 @@ if ($docIds.Count -eq 0) {
 
 if ($WhatIf) {
     Write-Output 'would re-run the sanitize job for:'
-    $docIds | ForEach-Object { Write-Output "  $_" }
+    $affected | Group-Object TenantId | ForEach-Object {
+        Write-Output "  tenant $($_.Name)"
+        $_.Group | ForEach-Object { Write-Output "    $($_.DocumentId)" }
+    }
     Write-Output ''
     Write-Output '== RESULT: DRY RUN - nothing changed =='
     exit 0
@@ -149,8 +179,23 @@ foreach ($docId in $docIds) {
         $job = Invoke-RestMethod -Uri "$ApiBase/api/documents/$docId/sanitize" -Method Post -Headers $hdr `
             -ContentType 'application/json' -Body (@{ data_level = $DataLevel } | ConvertTo-Json -Compress) -TimeoutSec 300
     } catch {
-        Write-Output ("  [{0}/{1}] {2}  FAILED: {3}" -f $i, $docIds.Count, $docId, $_.Exception.Message)
-        $script:failed++
+        # A 404 here is NOT a repair failure: the sanitize route resolves the
+        # document within the CALLER's tenant, so a document in another tenant is
+        # indistinguishable from a missing one. Reporting it as FAILED sends the
+        # operator hunting for a sanitizer defect that does not exist. Name the
+        # tenant and the remedy instead.
+        $status = $null
+        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode.value__ }
+        if ($status -eq 404) {
+            $tenant = ($affected | Where-Object { $_.DocumentId -eq $docId } | Select-Object -First 1).TenantId
+            Write-Output ("  [{0}/{1}] {2}  SKIP: not visible to {3} - document is in tenant {4}" -f `
+                $i, $docIds.Count, $docId.Substring(0, 8), $apiEmail, $tenant)
+            $script:skipped++
+        }
+        else {
+            Write-Output ("  [{0}/{1}] {2}  FAILED: {3}" -f $i, $docIds.Count, $docId, $_.Exception.Message)
+            $script:failed++
+        }
         continue
     }
 
@@ -177,7 +222,11 @@ foreach ($docId in $docIds) {
 }
 
 Write-Output ''
-Write-Output "== RESULT: repaired $($script:ok), failed $($script:failed) =="
+Write-Output "== RESULT: repaired $($script:ok), skipped $($script:skipped) (other tenant), failed $($script:failed) =="
+if ($script:skipped -gt 0) {
+    Write-Output '   Skipped documents belong to a tenant the configured admin cannot see.'
+    Write-Output '   Re-run with -ApiEmail/-ApiPassword for an admin of that tenant to repair them.'
+}
 Write-Output '   Re-run audit-sanitized-chunk-egress.ps1 to confirm the machine is clean.'
 if ($script:failed -gt 0) { exit 1 }
 exit 0
