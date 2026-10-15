@@ -23,16 +23,44 @@
 param(
     [string]$NginxUrl = 'http://localhost:8089',
     [string]$OllamaUrl = 'http://localhost:11434',
-    # deer-flow admin. The documented dev credential; override per machine.
+    # deer-flow admin. The EMAIL is not a secret (it is published by design in
+    # .env.example); the PASSWORD is, and is resolved per machine - see
+    # Resolve-DeerFlowPassword below. There is deliberately NO hardcoded default:
+    # one lived here until 2026-10-15 and put a live password in a public repo.
     [string]$DfEmail = 'admin@pacgate-law.com',
-    [string]$DfPassword = '9delujmycbrktj9u5mo9js8t',
+    [string]$DfPassword = '',
     [string]$DfModel = 'gemma4-12b-local',
     # Emit pure markdown (for > file). Without it, prints a human summary too.
     [switch]$Markdown
 )
 
+# deer-flow keeps its OWN identity store (SQLite, not Postgres) and its admin is
+# provisioned by deer-flow's own /initialize - so neither PACGATE_API_PASSWORD from
+# .env nor any install-time secret is the deer-flow credential. It cannot be derived;
+# it must be supplied. Resolution order:
+#   1. -DfPassword on the command line
+#   2. PACGATE_DEERFLOW_PASSWORD environment variable
+#   3. deploy/client-bundle/.deer-flow-credentials   (gitignored - see .gitignore L55)
+# Returns $null when none is configured, and the caller reports CANNOT CHECK rather
+# than pretending a skipped login was a pass.
+function Resolve-DeerFlowPassword {
+    if ($DfPassword) { return $DfPassword }
+    if ($env:PACGATE_DEERFLOW_PASSWORD) { return $env:PACGATE_DEERFLOW_PASSWORD }
+    $f = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.deer-flow-credentials'
+    if (Test-Path -LiteralPath $f) {
+        $m = Select-String -LiteralPath $f -Pattern '^\s*PACGATE_DEERFLOW_PASSWORD\s*=\s*(.+?)\s*$' | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    return $null
+}
+
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# Resolve the deer-flow credential per machine before any lane runs. $null is safe
+# here: the deer-flow lane already reports 'ERR <status>' on login failure rather
+# than aborting the benchmark.
+$DfPassword = Resolve-DeerFlowPassword
 
 function Now-Ms { [Diagnostics.Stopwatch]::StartNew() }
 

@@ -277,6 +277,25 @@ $gates = @(    'scripts/test-install-render.ps1'
     # ASCII-ONLY by design, because the client AIPC has only Windows PowerShell 5.1
     # and 5.1 cannot parse a BOM-less script holding non-ASCII literals.
     'scripts/test-compose-healthchecks.ps1'
+
+    # PROVES no literal credential value is tracked. Registered 2026-10-15, after
+    # this exact script - which existed for a year - failed to notice a LIVE
+    # pacgate-api password sitting in a PUBLIC repo. Two reasons it was blind, both
+    # fixed before registering it here:
+    #
+    #   1. Its md-Password rule required a BOLD field name (`| **Password** |`).
+    #      deploy/BENCHMARK-REPORT-2026-10-08.md used `| Password |` and a
+    #      header-declared table with no per-row label at all. Neither matched.
+    #   2. It had NO exit statement, so it always returned 0 and could not have
+    #      failed CI even if the rule had fired. A detector that cannot fail is
+    #      documentation, not a control.
+    #
+    # It is now shape-agnostic (bold/plain/labelled/unlabelled), exits 1 on findings,
+    # and reads with -Encoding UTF8 - without which PowerShell 5.1 decodes a UTF-8
+    # CJK label as mojibake and every CJK rule silently misses (measured: the same
+    # planted credential scanned CLEAN, exit 0 on 5.1 and was found after the fix).
+    # ASCII-only, so 5.1 can parse it.
+    'scripts/detect-literal-credentials.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2

@@ -4,8 +4,8 @@
 # REMOVED (-) = a secret is leaving history -> expected during redaction, OK
 #
 # Pins console/output encoding to UTF-8: PowerShell on a CJK Windows locale
-# otherwise decodes git's UTF-8 as GBK, turning 密码 into mojibake and silently
-# missing every CJK credential.
+# otherwise decodes git's UTF-8 as GBK, turning a CJK password label into mojibake
+# and silently missing every CJK credential.
 param(
     [Parameter(Mandatory = $true)][string]$Range
 )
@@ -24,10 +24,15 @@ finally {
 
 # Rules that indicate a REAL secret value follows.
 $rules = [ordered]@{
-    'cjk-密码'    = '密码\s*[：:]\s*(?:&#xA;)?(?<v>[^\s|`]+)'
-    'cjk-登录名'  = '(?:统一)?登录名\s*[：:]\s*(?<v>[^\s|`]+)'
-    'md-Password' = '\|\s*\*\*Password\*\*\s*\|\s*`(?<v>[^`]+)`'
-    'md-Email'    = '\|\s*\*\*Email\*\*\s*\|\s*`(?<v>[^`]+)`'
+    'cjk-password' = '\u5BC6\u7801\s*[\uFF1A:]\s*(?:&#xA;)?(?<v>[^\s|`]+)'
+    'cjk-login'    = '(?:\u7EDF\u4E00)?\u767B\u5F55\u540D\s*[\uFF1A:]\s*(?<v>[^\s|`]+)'
+    # Field name may or may not be BOLD - see the note in detect-literal-credentials.ps1.
+    # This guard compares ADDED against REMOVED, so a shape-agnostic rule is safe here:
+    # a redaction shows up on both sides and nets out.
+    # `[^`\s]+` excludes whitespace so the capture cannot run across two adjacent code
+    # spans in prose (see assert-no-staged-secrets.ps1 for the measured example).
+    'md-Password' = '\|\s*(?:\*\*)?\s*[Pp]assword\s*(?:\*\*)?\s*\|\s*`(?<v>[^`\s]+)`'
+    'md-Email'    = '\|\s*\*\*Email\*\*\s*\|\s*`(?<v>[^`\s]+)`'
     'known-keys'  = '(?<v>vq_key_[A-Za-z0-9_\\\-]{10,}|sk-[A-Za-z0-9_\-]{16,}|AKIA[0-9A-Z]{16})'
 }
 
@@ -36,7 +41,7 @@ function Test-Line([string]$line) {
         foreach ($m in [regex]::Matches($line, $rules[$name])) {
             $v = $m.Groups['v'].Value.Trim()
             if ($v -match 'REDACTED') { continue }
-            if ($v -match '^(待填写|待补|xxx|\*+|-+|□+)$') { continue }
+            if ($v -match '^(\u5F85\u586B\u5199|\u5F85\u8865|xxx|\*+|-+|\u25A1+)$') { continue }
             if ($v -match '^<.*>$') { continue }
             if ($v.Length -lt 5) { continue }
             return $name

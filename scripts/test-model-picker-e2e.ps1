@@ -22,15 +22,46 @@
 param(
     [string]$NginxUrl = 'http://localhost:8089',
     [string]$Email = 'admin@pacgate-law.com',
-    [string]$Password = '9delujmycbrktj9u5mo9js8t',
+    # NOT hardcoded. A live deer-flow password sat here until 2026-10-15 in a PUBLIC
+    # repo. Resolved per machine from -Password, then PACGATE_DEERFLOW_PASSWORD, then
+    # the gitignored deploy/client-bundle/.deer-flow-credentials. With none of those
+    # the gate reports CANNOT CHECK (exit 2) instead of failing - see below.
+    [string]$Password = '',
     [string]$Model = 'gemma4-12b-local',
     [int]$TimeoutSec = 420
 )
+
+# deer-flow has a SEPARATE identity store from pacgate-api, so .env's
+# PACGATE_API_PASSWORD is the API principal and returns 401 here. The deer-flow admin
+# is created by deer-flow's own /initialize, so the credential must be supplied.
+function Resolve-DeerFlowPassword {
+    if ($Password) { return $Password }
+    if ($env:PACGATE_DEERFLOW_PASSWORD) { return $env:PACGATE_DEERFLOW_PASSWORD }
+    $f = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.deer-flow-credentials'
+    if (Test-Path -LiteralPath $f) {
+        $m = Select-String -LiteralPath $f -Pattern '^\s*PACGATE_DEERFLOW_PASSWORD\s*=\s*(.+?)\s*$' | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    return $null
+}
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $pass = 0
 $fail = 0
+
+# Resolve once, up front. CANNOT CHECK is reported before any assertion runs, so a
+# machine with no deer-flow credential does not produce a misleading red or a
+# misleading green.
+$Password = Resolve-DeerFlowPassword
+if (-not $Password) {
+    Write-Host '[SKIP] CANNOT CHECK: no deer-flow credential available.' -ForegroundColor Yellow
+    Write-Host '       Pass -Password, set PACGATE_DEERFLOW_PASSWORD, or write' -ForegroundColor Yellow
+    Write-Host '       deploy/client-bundle/.deer-flow-credentials (gitignored).' -ForegroundColor Yellow
+    Write-Host 'RESULT: 0 passed, 0 failed (CANNOT CHECK - no credential)' -ForegroundColor Yellow
+    exit 2
+}
+
 function Check($name, $cond, $detail = '') {
     if ($cond) { Write-Host "  [PASS] $name" -ForegroundColor Green; $script:pass++ }
     else {

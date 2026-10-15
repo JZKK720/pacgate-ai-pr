@@ -83,7 +83,37 @@ on:
         default: ""
 
 jobs:
+  # Runs BEFORE any image is built, on every release path this workflow has.
+  #
+  # WHY THIS EXISTS: on 2026-10-09 a commit carrying a LIVE pacgate-api admin
+  # password (byte-identical to the running .env) reached the PUBLIC repo and was
+  # then carried into tags v0.1.25 through v0.1.31. Nothing stopped it:
+  #   - scripts/detect-literal-credentials.ps1 existed but was never executed by
+  #     anything (no git hook, no pre-commit config, not in run-all-checks.ps1),
+  #     and its markdown rule required a BOLD field name, so it missed the plain
+  #     `| Password |` table that carried the value.
+  #   - No workflow ran any secret scanner.
+  # So the only automation that could have caught it is here.
+  #
+  # The scanner is read-only and reports file + line + rule - it never prints a
+  # matched value. Exit 1 = findings = fail, which blocks the image build. This is
+  # a backstop, not a substitute for a pre-commit hook: it runs at tag time, after
+  # the commit is already pushed.
+  credential-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: No literal credentials in tracked files
+        shell: pwsh
+        run: |
+          ./scripts/detect-literal-credentials.ps1
+
   build-and-push:
+    needs: credential-guard
     runs-on: ubuntu-latest
     permissions:
       contents: read

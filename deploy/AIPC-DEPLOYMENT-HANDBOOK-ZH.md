@@ -413,7 +413,43 @@ docker compose -f compose.qm.yaml up -d
 
 ## Stage 5：验证 deer-flow（两台机器）
 
-在每台机器上，验证研究工作空间：
+**deer-flow 有自己独立的登录体系，与 `pacgate-api` 的登录相互独立。**
+这是「密码不对」报告最常见的单一原因，因此在尝试登录之前请先读这一节。
+
+存在两个独立身份存储，且不共用密码：
+
+| 界面 | URL | 身份存储 | 密码来源 |
+| --- | --- | --- | --- |
+| pacgate-api（API，由 `install.ps1` 预置） | `/pacgate/api/auth/login` | Postgres `users` 表 | `.env` → `PACGATE_API_PASSWORD` |
+| **deer-flow（研究界面）** | `/api/v1/auth/*` | SQLite `data/deer-flow/data/deerflow.db` | 由 deer-flow 自身的首次运行设置决定 |
+
+`PACGATE_API_EMAIL` / `PACGATE_API_PASSWORD` 是 **pacgate-api** 的主体凭据，**不是**
+deer-flow 的凭据。把它们用于 deer-flow 登录会返回 `401 invalid_credentials` —— 这读起来
+与「密码错误」完全一样，但实际是「主体不对」。`install.ps1` 不会创建 deer-flow 管理员；
+它也无法创建，因为 deer-flow 的管理员是由其自身的 `/initialize` 建立的。
+
+登录 deer-flow：
+
+```powershell
+# 打开 http://localhost:8089/research/
+# 若提示设置管理员，请先完成设置 —— 该账户属于 deer-flow 自身。
+# 否则，使用此前设置的 deer-flow 管理员账户登录。
+```
+
+如果 deer-flow 管理员密码确实丢失，可以在不影响其他任何数据的前提下重建。密码格式为
+bcrypt(base64(sha256(password)))，由 `app/gateway/auth/password.py` 写入：
+
+```powershell
+# 1. deer-flow 认为自己是否已完成初始化？（needs_setup=false 表示管理员已存在）
+curl.exe -s http://localhost:8089/api/v1/auth/setup-status
+
+# 2. 向 deer-flow 自己的存储写入新的哈希以重置管理员密码。
+#    需在容器内针对 /data/deer-flow/data/deerflow.db 执行。
+#    完整示例见 deploy/BENCHMARK-REPORT-2026-10-08.md —— 2026-10-08 曾在首次设置的
+#    密码被确认不可恢复后照此操作。登录后请到「设置 → 账户」修改密码。
+```
+
+随后验证研究工作空间可用：
 
 ```powershell
 # 打开 http://localhost:8089/research/
@@ -422,6 +458,9 @@ docker compose -f compose.qm.yaml up -d
 # 验证：回复包含引用
 # 验证：回复已保存到事项记忆
 ```
+
+一个无需凭据的机械检查：用明知错误的密码登录，必须返回 **401 `invalid_credentials`**
+—— 而不是 403（意味着 Origin 门控配置有误，浏览器会被挡在外面），也不是 5xx（认证服务异常）。
 
 ## Stage 5.5：全链路操作 — deer-flow ↔ QM ↔ OpenViking
 

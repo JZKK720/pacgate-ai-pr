@@ -19,9 +19,9 @@ $Marker = '[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]'
 # Rule set. Each rule is applied to a line; the value side of a credential
 # separator is replaced, the label is kept.
 $rules = @(
-    @{ Name = 'sep-密码';   Re = '(密码\s*[：:]\s*(?:&#xA;)?)([^\s|]+)' }
-    @{ Name = 'sep-登录名'; Re = '((?:统一)?登录名\s*[：:]\s*(?:&#xA;)?)([^\s|]+)' }
-    @{ Name = 'sep-账号';   Re = '(账号\s*[：:]\s*(?:&#xA;)?)([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+|\d{8,})' }
+    @{ Name = 'sep-cjk-password'; Re = '(\u5BC6\u7801\s*[\uFF1A:]\s*(?:&#xA;)?)([^\s|]+)' }
+    @{ Name = 'sep-cjk-login';    Re = '((?:\u7EDF\u4E00)?\u767B\u5F55\u540D\s*[\uFF1A:]\s*(?:&#xA;)?)([^\s|]+)' }
+    @{ Name = 'sep-cjk-account';  Re = '(\u8D26\u53F7\s*[\uFF1A:]\s*(?:&#xA;)?)([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+|\d{8,})' }
     @{ Name = 'api-backtick'; Re = '(API\s*:\s*`)([^`]+)(`)' }
     # Bare (non-backticked) API keys. The charset includes backslash because
     # markdown escapes appear inside these values in practice, e.g. vq\_key\_...
@@ -30,13 +30,33 @@ $rules = @(
     @{ Name = 'table-Password'; Re = '(\|\s*\*\*Password\*\*\s*\|\s*`)([^`]+)(`\s*\|)' }
     @{ Name = 'table-Email';    Re = '(\|\s*\*\*Email\*\*\s*\|\s*`)([^`]+)(`\s*\|)' }
     @{ Name = 'table-GitHubID'; Re = '(\|\s*\*\*GitHub ID\*\*\s*\|\s*`)([^`]+)(`\s*\|)' }
+    # --- Plain (non-bold) field names, and unlabeled credential columns. ---
+    # The three rules above require `**bold**` field names. A credential table that
+    # declares its columns in a HEADER row and then lists bare values per row has
+    # neither the bold label NOR any label on the value's own line, so all three miss.
+    # MEASURED 2026-10-15: deploy/BENCHMARK-REPORT-2026-10-08.md used exactly that
+    # layout and carried a LIVE pacgate-api password; none of the bold rules fired.
+    @{ Name = 'table-PasswordPlain'; Re = '(\|\s*(?:\*\*)?\s*[Pp]assword\s*(?:\*\*)?\s*\|\s*`)([^`]+)(`\s*\|)' }
+    # Emails are NOT redacted here. They are account identifiers, not secrets, and
+    # admin@pacgate-law.com is already published across the handover docs and
+    # .env.example by design. Redacting it in one report while the handover prints it
+    # would just make the report harder to use. The bold table-Email rule above is
+    # kept for the assets docs, where the pairing was a pasted credential block.
+    # Last resort: a code-spanned token in its own table cell with no label. Runs last
+    # so labelled cells keep their more descriptive rule. Scoped by the explicit target
+    # list below, since on an arbitrary table this would redact any 24-40 char value.
+    @{ Name = 'table-bare-token'; Re = '(\|\s*`)([A-Za-z0-9]{24,40})(`\s*\|)' }
 )
 
 $targets = @(
+    'deploy/BENCHMARK-REPORT-2026-10-08.md'
     'pacgate-ai/pacgate-ai-assets/pacgate-ai/assets/assets/pacgate-ai-remote-handbook/OPERATOR.md'
-    'pacgate-ai/pacgate-ai-assets/pacgate-ai/assets/assets/智库资料收集/智库资料收集/MCP授权/法律数据库MCP.md'
-    'pacgate-ai/pacgate-ai-assets/pacgate-ai/assets/assets/智库资料收集/智库资料收集/MCP授权/境外法律数据库和网站.md'
+    'pacgate-ai/pacgate-ai-assets/pacgate-ai/assets/assets/\u667A\u5E93\u8D44\u6599\u6536\u96C6/\u667A\u5E93\u8D44\u6599\u6536\u96C6/MCP\u6388\u6743/\u6CD5\u5F8B\u6570\u636E\u5E93MCP.md'
+    'pacgate-ai/pacgate-ai-assets/pacgate-ai/assets/assets/\u667A\u5E93\u8D44\u6599\u6536\u96C6/\u667A\u5E93\u8D44\u6599\u6536\u96C6/MCP\u6388\u6743/\u5883\u5916\u6CD5\u5F8B\u6570\u636E\u5E93\u548C\u7F51\u7AD9.md'
 )
+# Path targets above may contain \uXXXX escapes: single-quoted strings do NOT expand
+# them, so they are resolved through the regex-free escape expansion below before use.
+$targets = $targets | ForEach-Object { [regex]::Unescape($_) }
 
 $totalChanges = 0
 

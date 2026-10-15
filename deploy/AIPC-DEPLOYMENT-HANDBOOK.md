@@ -431,7 +431,46 @@ Verify qm:
 
 ## Stage 5: Verify deer-flow (both machines)
 
-On each machine, verify the research workspace:
+**deer-flow has its OWN login, separate from `pacgate-api`'s.** This is the single most
+common source of "the password is wrong" reports, so read this before trying to sign in.
+
+There are two identity stores and they do not share passwords:
+
+| surface | URL | identity store | password comes from |
+| --- | --- | --- | --- |
+| pacgate-api (the API, `install.ps1` provisions it) | `/pacgate/api/auth/login` | Postgres `users` | `.env` → `PACGATE_API_PASSWORD` |
+| **deer-flow (the research UI)** | `/api/v1/auth/*` | SQLite `data/deer-flow/data/deerflow.db` | set at deer-flow's own first-run setup |
+
+`PACGATE_API_EMAIL` / `PACGATE_API_PASSWORD` are the **pacgate-api** principal. They are
+**not** deer-flow credentials, and using them against the deer-flow login returns
+`401 invalid_credentials` - which reads exactly like a wrong password but is a wrong
+principal. `install.ps1` does not create a deer-flow admin; it cannot, because deer-flow's
+admin is established by its own `/initialize`.
+
+To sign in to deer-flow:
+
+```powershell
+# Open http://localhost:8089/research/
+# If it asks you to set up an admin, do that first - that account is deer-flow's own.
+# Otherwise sign in with the deer-flow admin you set up previously.
+```
+
+If the deer-flow admin password is genuinely lost, it can be re-established without
+touching anything else. The password format is bcrypt of base64(sha256(password)),
+written by `app/gateway/auth/password.py`:
+
+```powershell
+# 1. Does deer-flow think it is already set up?  (needs_setup=false means an admin exists)
+curl.exe -s http://localhost:8089/api/v1/auth/setup-status
+
+# 2. Reset the admin password by writing a fresh hash into deer-flow's OWN store.
+#    Run INSIDE the container, against /data/deer-flow/data/deerflow.db.
+#    A worked example is in deploy/BENCHMARK-REPORT-2026-10-08.md - it was done there
+#    on 2026-10-08 after the first-run passwords were found to be unrecoverable.
+#    Change the password after logging in: Settings -> Account.
+```
+
+Then verify the research workspace works:
 
 ```powershell
 # Open http://localhost:8089/research/
@@ -440,6 +479,10 @@ On each machine, verify the research workspace:
 # Verify: response includes citations
 # Verify: response is saved to matter memory
 ```
+
+A useful mechanical check that needs no credentials: a login with a deliberately wrong
+password must return **401 `invalid_credentials`** - not 403 (which means the Origin gate
+is misconfigured and a browser would be locked out) and not a 5xx (auth service broken).
 
 ## Stage 5.5: Full-loop operations — deer-flow ↔ QM ↔ OpenViking
 
