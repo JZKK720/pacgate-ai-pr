@@ -180,10 +180,6 @@ $madeFixture = $false
 try {
     # Fixture built inside the ocr container: it has PIL, and a born-digital PDF
     # is what the extraction lane expects (a .txt would route to OCR instead).
-    # Pacgate 2026-10-10: use the GHCR-pulled image tag instead of a local
-    # ocr-service:local build (local image builds are not part of this repo's
-    # deployment flow; the GHCR image has the same PIL/python3 tooling).
-    $ocrImage = 'ghcr.io/jzkk720/ocr-service:0.1.25'
     $dir = Split-Path $fixture -Parent
     docker run --rm -v "${dir}:/fix" --entrypoint python3 $OcrImage -c @"
 from PIL import Image, ImageDraw, ImageFont
