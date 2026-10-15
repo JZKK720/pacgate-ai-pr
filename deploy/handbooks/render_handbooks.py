@@ -78,11 +78,72 @@ def md_to_html(md_text: str) -> str:
     )
 
 
-def render_md(md_path: Path, chrome_exe: str) -> tuple[Path, Path]:
+# Chrome discovery.
+#
+# WHY THIS IS NOT A LITERAL. Both renderers used to hardcode
+#     r"C:\Users\pacga\.cache\puppeteer\chrome\win64-1108766\chrome-win\chrome.exe"
+# which is a SPECIFIC USER'S puppeteer cache. On any other machine - including
+# every fresh clone, and every AIPC - that path does not exist, so rendering died
+# with "Chrome not found" and nobody could re-render. Meanwhile
+# scripts/test-pdf-freshness.ps1 requires the rendered PDFs to be newer than their
+# sources. The combination is why the handbook PDFs kept going stale: the check
+# demanded a re-render that the tooling could not perform for anyone but its
+# author (a real instance of the staleness this repo's own audit recorded on
+# 2026-10-01: the ZH PDF advertised 0.1.19 while its source said otherwise).
+#
+# Searched in order, most specific first. CHROME_EXE still overrides everything.
+def find_chrome() -> str | None:
+    override = os.environ.get("CHROME_EXE")
+    if override:
+        return override if Path(override).exists() else None
+
+    candidates: list[Path] = []
+
+    # Any user's puppeteer cache, so a machine that only has the downloaded
+    # browser still works. Globbed rather than pinned: the build revision changes
+    # every time puppeteer updates, and a pinned revision is the same mistake in a
+    # new place.
+    for base in (
+        Path(os.environ.get("USERPROFILE", "")) / ".cache" / "puppeteer" / "chrome",
+        Path.home() / ".cache" / "puppeteer" / "chrome",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "puppeteer" / "chrome",
+        Path.home() / "Library" / "Caches" / "puppeteer" / "chrome",
+        Path.home() / ".cache" / "puppeteer" / "chrome-headless-shell",
+    ):
+        if base.is_dir():
+            candidates.extend(sorted(base.glob("*/chrome-win64/chrome.exe")))
+            candidates.extend(sorted(base.glob("*/chrome-win/chrome.exe")))
+            candidates.extend(sorted(base.glob("*/chrome-linux64/chrome")))
+            candidates.extend(sorted(base.glob("*/chrome-headless-shell-*/chrome-headless-shell*")))
+
+    # A real installed Chrome, which is the most common case on a dev box.
+    for p in (
+        Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Google/Chrome/Application/chrome.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/Application/chrome.exe",
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    ):
+        candidates.append(p)
+
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def render_md(md_path: Path, chrome_exe: str, html_dir: Path | None = None) -> tuple[Path, Path]:
     text = md_path.read_text(encoding="utf-8")
     title = md_path.stem
     body = md_to_html(text)
-    html_path = md_path.with_suffix(".html")
+    # The HTML is a regenerable intermediate and is gitignored under handbooks/.
+    # Callers rendering a file from elsewhere (the AIPC handbook lives at the
+    # deploy root) point it here anyway, so the intermediate cannot land beside
+    # the source as a stray committable file: `*.html` is only ignored inside
+    # handbooks/.
+    html_path = (html_dir or md_path.parent) / f"{md_path.stem}.html"
     full = HTML_SHELL.format(title=title, css=STYLESHEET, body=body)
     html_path.write_text(full, encoding="utf-8")
     print(f"Wrote {html_path}  ({html_path.stat().st_size:,} bytes)")
@@ -108,31 +169,59 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--name",
-        choices=["all", "deer-flow", "qm"],
+        choices=["all", "deer-flow", "qm", "aipc"],
         default="all",
         help="Which handbook to render (default: all)",
     )
     args = parser.parse_args()
 
-    chrome_exe = os.environ.get(
-        "CHROME_EXE",
-        r"C:\Users\pacga\.cache\puppeteer\chrome\win64-1108766\chrome-win\chrome.exe",
-    )
-    if not Path(chrome_exe).exists():
-        print("Chrome not found at", chrome_exe)
+    chrome_exe = find_chrome()
+    if not chrome_exe:
+        print("Chrome not found. Set CHROME_EXE to a Chrome/Chromium binary, or install Chrome.")
+        print("Searched: CHROME_EXE, every user's puppeteer cache, and installed Chrome/Chromium.")
         sys.exit(1)
+    print(f"Chrome: {chrome_exe}")
 
+    aipc_md = ROOT.parent / "AIPC-DEPLOYMENT-HANDBOOK.md"
     targets = {
         "deer-flow": ROOT / "deer-flow-openviking-pacgate-handbook.zh.md",
         "qm": ROOT / "qm-openviking-pacgate-handbook.zh.md",
+        # NOTE: the AIPC handbook is handled by the dedicated loop below, not as a
+        # table entry, because it has FOUR tracked copies per language (deploy
+        # root, handbooks/pdf, client-delivery/docs) and needs the copies kept in
+        # step. It was previously not rendered at all - this renderer only ever
+        # handled deer-flow and qm - so its PDFs had no committed way to be
+        # regenerated, went stale on every version bump, and
+        # test-pdf-freshness.ps1 went red with no tool to fix it.
     }
     names = list(targets) if args.name == "all" else [args.name]
+    rendered: list[tuple[str, Path]] = []
     for name in names:
         md_path = targets[name]
         if not md_path.exists():
             print(f"[{name}] source not found: {md_path}")
             continue
-        render_md(md_path, chrome_exe)
+        # Keep intermediates in handbooks/ (gitignored) even when the source lives
+        # at the deploy root.
+        rendered.append((name, render_md(md_path, chrome_exe, html_dir=ROOT)[1]))
+
+    # The AIPC handbook keeps its English and Chinese PDFs at the deploy root, and
+    # the client-delivery copies must not drift from the originals (a delivery
+    # copy that lags ships a stale document from a tree that looks green).
+    if args.name in ("all", "aipc") and aipc_md.exists():
+        for lang_md, suffix in ((aipc_md, ""), (ROOT.parent / "AIPC-DEPLOYMENT-HANDBOOK-ZH.md", "-ZH")):
+            if not lang_md.exists():
+                print(f"[aipc] source not found: {lang_md}")
+                continue
+            pdf = render_md(lang_md, chrome_exe, html_dir=ROOT)[1]
+            root_pdf = ROOT.parent / f"AIPC-DEPLOYMENT-HANDBOOK{suffix}.pdf"
+            if pdf != root_pdf:
+                root_pdf.write_bytes(pdf.read_bytes())
+                print(f"Copied -> {root_pdf}")
+            delivery = ROOT.parent / "client-delivery" / "docs" / root_pdf.name
+            if delivery.parent.is_dir():
+                delivery.write_bytes(root_pdf.read_bytes())
+                print(f"Copied -> {delivery}")
 
 
 if __name__ == "__main__":

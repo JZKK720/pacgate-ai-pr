@@ -179,7 +179,7 @@ docker compose -f compose.qm.yaml down            # NO -v
 docker builder prune -f
 
 # 4. If the volumes are genuinely wanted gone (test debris only, per above):
-docker volume rm client-bundle_pacgate-db-data client-bundle_paddleocr-models
+docker volume rm pacgate-ai-bundle_pacgate-db-data pacgate-ai-bundle_paddleocr-models
 docker volume rm qm-pacgate-coredata qm-pacgate-pgdata pacgate-ner-models
 
 # 5. Remove only the pacgate images, by name. NEVER 'docker system prune'.
@@ -194,9 +194,13 @@ since no volume is reclaimable anyway.
 
 ## Two honest caveats
 
-1. **`paddleocr-models` is a large re-download.** It is regenerable (the container
-   re-pulls weights on boot), but it costs bandwidth and time. Keep it if the
-   machine may be used again soon.
+1. **`paddleocr-models` should now just be deleted.** As of 0.1.28 the PP-OCRv4
+   weights are baked into the `ocr-service` image, and nothing mounts this volume
+   any more (it used to shadow the bake - see `DEFECT-ocr-weights-not-baked.md`).
+   It is 18 MB of dead weight; `docker volume rm pacgate-ai-bundle_paddleocr-models`
+   is now safe and costs nothing, because the image carries the weights.
+   (Before 0.1.28 this caveat read "keep it, it is regenerable but only from
+   bcebos" - that was true then and is obsolete now.)
 2. **This box has been the reference environment** for the 0.1.22 audit and the
    sandbox investigation, and it is the only place the sandbox image is cached
    locally. Nothing in git or GHCR is lost, but a full wipe means the next
@@ -251,14 +255,21 @@ ghcr.io/jzkk720/*`) would have destroyed hermes and odysseus. Every removal was 
 explicit name or image ID instead. That is the same reason `docker system prune`
 was never used.
 
-## Volumes intentionally left in place (~160 MB)
+## Volumes intentionally left in place (~124 MB)
 
-`client-bundle_pacgate-db-data` (67 MB, the test matters), `qm-pacgate-pgdata`
-(74 MB), `client-bundle_paddleocr-models` (18 MB), `qm-pacgate-coredata` (0 B),
-`pacgate-ner-models` (0 B).
+`pacgate-ai-bundle_pacgate-db-data` (67 MB, the test matters), `qm-pacgate-pgdata`
+(74 MB), `qm-pacgate-coredata` (0 B), `pacgate-ner-models` (0 B).
+
+`pacgate-ai-bundle_paddleocr-models` (18 MB) was **deleted on 2026-10-13**: as of
+0.1.28 the PP-OCRv4 weights are baked into the `ocr-service` image and nothing
+mounts that volume, so it was 18 MB of dead weight. `ocr-service` was recreated
+from the current compose afterwards and re-verified (0 mounts over
+`/root/.paddleocr`, det/rec/cls present, extraction PASS) before the volume was
+removed - so this is a measured deletion, not a cleanup guess.
 
 Kept because they are small and this machine may be used again. qm's two are
-`external: true`, so even `down -v` would not have removed them.
+`external: true`, so even `down -v` would not have removed them. (The project is
+pinned `name: pacgate-ai-bundle`, which is why these are not `client-bundle_*`.)
 
 **One consequence if the DB volume is deleted later while `.env` is kept:**
 `PACGATE_MATTER_ID` would dangle. Investigated — `Invoke-MatterProvision` verifies

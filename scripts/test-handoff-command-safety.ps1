@@ -46,8 +46,31 @@ Write-Host '=== handoff doc command safety ===' -ForegroundColor Cyan
 
 # Vendored and generated trees contain hundreds of unrelated READMEs. Scanning
 # them produced 391 "docs" in the first run, which is noise, not coverage.
-$docs = @(Get-ChildItem -LiteralPath $RepoRoot -Recurse -File -Include '*.md' -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -notmatch '\\node_modules\\|\\target\\|\\\.git\\|\\\.venv\\|\\site-packages\\|\\dist-info\\' })
+# Tracked docs PLUS untracked-but-not-ignored ones, via git.
+#
+# Two failed attempts got here, and both are worth recording:
+#
+# 1. RECURSIVE SCAN (the original). It also matched runtime state the live stack
+#    holds open - OpenViking's SQLite WAL, LevelDB LOG/LOCK/MANIFEST - which threw
+#    IOException on read, producing eleven SKIP lines whose only effect was to bury
+#    the three assertions that matter.
+# 2. TRACKED ONLY. Clean, and it introduced a BLIND SPOT: a newly written handoff doc
+#    is not in `git ls-files` until it is committed, so the gate could not check the
+#    document at the moment it matters most - before it is shipped. Caught by
+#    red-checking this gate with a fork-clone command injected into an uncommitted
+#    doc; it passed when it should have failed.
+#
+# `--others --exclude-standard` is the missing half: untracked files that git is NOT
+# ignoring. That covers a new doc, while OpenViking's workspace stays out by virtue of
+# being gitignored - so the scan needs no hand-maintained path filter that can itself
+# go stale.
+$mdPaths = @(
+    (& git -C $RepoRoot ls-files '*.md' 2>$null)
+    (& git -C $RepoRoot ls-files --others --exclude-standard '*.md' 2>$null)
+)
+$docs = @($mdPaths | Where-Object { $_ } | Sort-Object -Unique |
+    ForEach-Object { Get-Item -LiteralPath (Join-Path $RepoRoot $_) -ErrorAction SilentlyContinue } |
+    Where-Object { $_ })
 
 if ($docs.Count -eq 0) {
     Write-Host 'RESULT: ERROR - no markdown docs found; check RepoRoot.' -ForegroundColor Red
@@ -69,7 +92,21 @@ Info ("scanning {0} doc(s); {1} are client-facing deployment docs" -f $docs.Coun
 # historical file, because that is exactly where an engineer short on time looks.
 $forkClone = @()
 foreach ($doc in $docs) {
-    $text = [System.IO.File]::ReadAllText($doc.FullName)
+    # Read as UTF-8 explicitly, and tolerate a file we cannot read.
+    #
+    # MEASURED 2026-10-15: the default ReadAllText threw IOException on
+    # deploy/client-bundle/data/.../usage_audit.sqlite3-wal, a LIVE SQLite WAL the
+    # running stack holds open. It exited 0 anyway, so the noise was cosmetic here -
+    # but a scan that silently skips files is the wrong shape for a gate whose whole
+    # job is proving no doc hands over a dangerous command, because the skipped file
+    # could be the one that matters. The `\data\` filter in $docs removes this
+    # target; this keep-going guard covers anything else unreadable.
+    try {
+        $text = [System.IO.File]::ReadAllText($doc.FullName, [System.Text.Encoding]::UTF8)
+    } catch {
+        Write-Host ("  [SKIP] cannot read {0}: {1}" -f $doc.Name, $_.Exception.Message) -ForegroundColor DarkYellow
+        continue
+    }
     # Match a real command line, not a prose mention or an inline-code note.
     if ($text -cmatch '(?m)^\s*git clone\s+https://github\.com/pacgate-ai/') {
         $forkClone += $doc.FullName.Replace($RepoRoot, '').TrimStart('\')

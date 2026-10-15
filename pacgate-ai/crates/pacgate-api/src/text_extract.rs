@@ -686,8 +686,13 @@ fn append_element_text(out: &mut String, xml: &str, element: &str) -> usize {
 /// phone number from being reassembled wrongly, while joining with nothing risks
 /// fusing the tail of one word to the head of the next and hiding a match at the
 /// seam. A space is the conservative choice for a redactor.
+///
+/// The separator is applied only at an identifier-like seam - see
+/// [`seam_needs_separator`]. Runs are split by *formatting*, not by words, so a
+/// tracked edit legitimately cuts one sentence into head / marked / tail runs and
+/// an unconditional space would inject characters the document does not contain.
 fn append_normalised(out: &mut String, chunk: &str) {
-    if !out.is_empty() && !out.ends_with(['\n', ' ']) {
+    if seam_needs_separator(out, chunk) {
         out.push(' ');
     }
     let mut chars = chunk.chars();
@@ -719,6 +724,28 @@ fn append_normalised(out: &mut String, chunk: &str) {
             }
         }
     }
+}
+
+/// Whether two adjacent runs must be kept apart by a space.
+///
+/// Only an ASCII alphanumeric byte on both sides of the seam can be fused into a
+/// different token by joining them - `11010519491231002` + `X`, or a phone number
+/// split across a formatting change. Everywhere else the space is simply text the
+/// document does not contain.
+///
+/// This matters most for Chinese, Japanese and Korean prose, which has no
+/// inter-word spacing: a tracked edit splits the surrounding paragraph into its
+/// own runs, and a blanket separator would space out the seams of every edit and
+/// every accept. The extracted text is what a redactor and a reviewer read, so an
+/// invented space is a visible defect, not a cosmetic one.
+fn seam_needs_separator(out: &str, chunk: &str) -> bool {
+    if out.is_empty() || out.ends_with(['\n', ' ']) {
+        return false;
+    }
+    let (Some(previous), Some(next)) = (out.chars().next_back(), chunk.chars().next()) else {
+        return false;
+    };
+    previous.is_ascii_alphanumeric() && next.is_ascii_alphanumeric()
 }
 
 /// XML built-in entities plus numeric character references.
@@ -1197,6 +1224,66 @@ mod tests {
         assert!(
             out.text.contains("Client") && out.text.contains("ID"),
             "a run was dropped: {:?}",
+            out.text
+        );
+    }
+
+    /// Runs are split by formatting, not by words, so a tracked edit legitimately
+    /// cuts one Chinese sentence into head / marked / tail runs. Chinese prose has
+    /// no inter-word spacing, so a blanket separator would inject spaces the
+    /// document does not contain - visible corruption in the redactor's input.
+    #[test]
+    fn cjk_runs_are_joined_without_an_invented_space() {
+        // 本合同项下的 / 顾问服务费
+        let head = "\u{672c}\u{5408}\u{540c}\u{9879}\u{4e0b}\u{7684}";
+        let tail = "\u{987e}\u{95ee}\u{670d}\u{52a1}\u{8d39}";
+        assert_eq!(head.len(), 18, "escapes must decode to six 3-byte scalars");
+        assert_eq!(tail.len(), 15, "escapes must decode to five 3-byte scalars");
+
+        let doc = docx_document(&format!(
+            r#"<w:p><w:r><w:t>{head}</w:t></w:r><w:r><w:t>{tail}</w:t></w:r></w:p>"#
+        ));
+        let out = extract_text_native(&DocumentFormat::Docx, &docx_of(&doc));
+        assert!(
+            out.text.contains(&format!("{head}{tail}")),
+            "a CJK seam gained an invented space: {:?}",
+            out.text
+        );
+    }
+
+    /// The separator survives only where joining could fuse two tokens. A space next
+    /// to a CJK character separates nothing, so it must not be added.
+    #[test]
+    fn the_seam_separator_is_limited_to_identifier_like_seams() {
+        let cjk = "\u{5408}\u{540c}"; // 合同
+
+        let ascii_seam = docx_document(
+            r#"<w:p><w:r><w:t>Client</w:t></w:r><w:r><w:t>ID</w:t></w:r></w:p>"#,
+        );
+        let out = extract_text_native(&DocumentFormat::Docx, &docx_of(&ascii_seam));
+        assert!(
+            out.text.contains("Client ID"),
+            "an identifier seam lost its space: {:?}",
+            out.text
+        );
+
+        let ascii_into_cjk = docx_document(&format!(
+            r#"<w:p><w:r><w:t>ID</w:t></w:r><w:r><w:t>{cjk}</w:t></w:r></w:p>"#
+        ));
+        let out = extract_text_native(&DocumentFormat::Docx, &docx_of(&ascii_into_cjk));
+        assert!(
+            out.text.contains(&format!("ID{cjk}")),
+            "a CJK seam gained an invented space: {:?}",
+            out.text
+        );
+
+        let cjk_into_ascii = docx_document(&format!(
+            r#"<w:p><w:r><w:t>{cjk}</w:t></w:r><w:r><w:t>ID</w:t></w:r></w:p>"#
+        ));
+        let out = extract_text_native(&DocumentFormat::Docx, &docx_of(&cjk_into_ascii));
+        assert!(
+            out.text.contains(&format!("{cjk}ID")),
+            "a CJK seam gained an invented space: {:?}",
             out.text
         );
     }

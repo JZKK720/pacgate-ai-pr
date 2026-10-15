@@ -82,13 +82,34 @@ MCP config render depends on it (install.ps1:314).
 ```powershell
 # Generate four strong secrets. Never reuse the dev box's values - a proof run
 # that inherits dev state is not testing a clean machine.
-$pw   = -join ((48..57) + (97..122) | Get-Random -Count 24 | % {[char]$_})
-$jwt  = -join ((48..57) + (97..122) | Get-Random -Count 48 | % {[char]$_})
-$ovk  = -join ((48..57) + (97..102) | Get-Random -Count 32 | % {[char]$_})
-"PACGATE_DB_PASSWORD=$pw"
-"PACGATE_JWT_SECRET=$jwt"
-"OPENVIKING_ROOT_API_KEY=$ovk"
+#
+# NOTE THE POOLS, not just the counts. `Get-Random -Count N` returns AT MOST the
+# number of DISTINCT input values, so the original form of this block
+# ((48..57)+(97..122) = 36 distinct, asked for 48; (97..102) = 6, asked for 32)
+# silently produced 36- and 16-character secrets where the table below documented
+# 48 and 32. Verified 2026-10-14: it returned exactly 36 and 16. The pools below are
+# sized above the counts so the generated length is what this runbook claims.
+$pw   = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object {[char]$_})
+$jwt  = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 48 | ForEach-Object {[char]$_})
+$ovk  = -join ((48..57) + (97..122) | Get-Random -Count 32 | ForEach-Object {[char]$_})
+"PACGATE_DB_PASSWORD=$pw   ($($pw.Length) chars)"
+"PACGATE_JWT_SECRET=$jwt   ($($jwt.Length) chars)"
+"OPENVIKING_ROOT_API_KEY=$ovk   ($($ovk.Length) chars)"
 ```
+
+> **Project isolation (verified 2026-10-14).** `compose.prod.yaml` pins
+> `name: pacgate-ai-bundle`, but **`COMPOSE_PROJECT_NAME` in the environment overrides
+> the file's `name:`**. Setting it before the install gives the proof run its own
+> containers *and its own named volumes*, so it genuinely exercises a fresh database
+> and a fresh set of secrets rather than attaching to the dev volumes:
+>
+> ```powershell
+> $env:COMPOSE_PROJECT_NAME = 'pacgate-proof'
+> ```
+>
+> That is stronger evidence than sharing the dev volume, and it is the reason proof
+> run 4 could assert first-time admin registration and first-time matter provisioning
+> at all.
 
 Edit `.env` and set exactly these:
 

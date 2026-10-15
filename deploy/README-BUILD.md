@@ -172,7 +172,7 @@ anonymously.
 
 ### Option A — GitHub Actions (recommended, no local secrets)
 
-Push a version tag; the workflow builds and pushes all four images:
+Push a version tag; the workflow builds and pushes all five images:
 
 ```powershell
 git tag v0.1.3
@@ -180,8 +180,8 @@ git push fork v0.1.3
 ```
 
 The workflow `.github/workflows/build-ghcr.yml`:
-1. Builds `pacgate-api`, `pacgate-mcp`, `deer-flow-pacgate`, `deer-flow-frontend-pacgate`.
-2. Pushes each to `ghcr.io/pacgate-ai/<image>:0.1.3` and `:latest`.
+1. Builds `pacgate-api`, `pacgate-mcp`, `ocr-service`, `deer-flow-pacgate`, `deer-flow-frontend-pacgate`.
+2. Pushes each to `ghcr.io/jzkk720/<image>:<tag>` and `:latest`.
 3. Verifies each manifest is publicly pullable (anonymous HEAD returns 200).
 
 #### The tag path has a failure mode - prefer dispatch
@@ -206,7 +206,7 @@ Dispatch decouples the image tag from the commit that builds it:
 2. **Use workflow from**: `main` (any ref with a valid workflow file).
 3. **Image tag to build**: the version to publish, e.g. `0.1.14`.
 4. Leave **GHCR owner override** empty - that resolves to the pinned
-   `pacgate-ai` namespace.
+   `jzkk720` namespace.
 
 The `tag` input sets what gets published; the branch selects the code. This needs
 no local credential at all, so it works from any machine that can reach the
@@ -222,8 +222,17 @@ repository in a browser.
 
 ```powershell
 pwsh -File .\scripts\verify-delivery-state.ps1   # pins, manifest version, GHCR 200s
-pwsh -File .\scripts\report-ghcr-digests.ps1     # :latest tracks the version tag
+pwsh -File .\scripts\report-ghcr-digests.ps1     # resolves GHCR_NAMESPACE itself;
+                                                 # :latest tracks the version tag
 ```
+
+> **Namespace trap - and why the script no longer has it.** `report-ghcr-digests.ps1`
+> used to hardcode the retired `pacgate-ai` mirror, so every version tag returned
+> 404 while `:latest` resolved to a stale 0.1.14-era build and the output still
+> looked half-healthy. It now reads `GHCR_NAMESPACE` from the workflow like
+> `build-images.ps1` does. 404 is worth reading carefully: a tag missing from a
+> namespace that never received the push is **indistinguishable** from a tag that
+> was never built.
 
 **Then flip any NEW package to public.** New GHCR packages default to PRIVATE,
 and a private package's only symptom is a failed anonymous pull on an AIPC.
@@ -234,7 +243,7 @@ Requires `docker login ghcr.io` first (interactive; do not route secrets
 through an assistant).
 
 ```powershell
-# Build + push all four
+# Build + push all five
 .\deploy\build-images.ps1 -Push
 
 # Build + push only pacgate-api and pacgate-mcp
@@ -270,9 +279,24 @@ After a push, confirm each image is publicly pullable:
 
 ```powershell
 # Anonymous token flow (200 = public)
-$tok = Invoke-RestMethod "https://ghcr.io/token?scope=repository:pacgate-ai/pacgate-mcp:pull"
-Invoke-WebRequest -Uri "https://ghcr.io/v2/pacgate-ai/pacgate-mcp/manifests/0.1.3" `
-  -Method Head -Headers @{Accept="application/vnd.oci.image.index.v1+json"; Authorization="Bearer $($tok.token)"}
+$tok = Invoke-RestMethod "https://ghcr.io/token?scope=repository:jzkk720/pacgate-mcp:pull"
+Invoke-WebRequest -Uri "https://ghcr.io/v2/jzkk720/pacgate-mcp/manifests/0.1.27" `
+  -Method Head -UseBasicParsing `
+  -Headers @{Accept="application/vnd.oci.image.index.v1+json"; Authorization="Bearer $($tok.token)"}
+```
+
+The OCI `Accept` header is **required**: GHCR answers 404 even for a public
+package when it is missing. `-UseBasicParsing` is required on Windows PowerShell
+5.1, where `-Method Head` without it throws a `NullReferenceException` instead of
+returning a status code. A credential-less HEAD always answers 401 (Bearer
+challenge) regardless of visibility, so 401 is not a privacy signal - use the
+anonymous token flow above.
+
+Prefer the script over hand-rolled probes. It resolves the namespace itself,
+covers all five images, and checks each version tag against `:latest`:
+
+```powershell
+pwsh -File .\scripts\report-ghcr-digests.ps1 -Version 0.1.27
 ```
 
 ## OCR service (plan 019)

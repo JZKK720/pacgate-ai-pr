@@ -2,8 +2,66 @@
 
 **Found:** 2026-10-01, during the 0.1.21 release (upstream port of two AIPC fixes).
 **Severity:** HIGH on a fresh install; not exploitable on an initialised one.
-**Status:** OPEN — fix identified, deliberately NOT bundled into 0.1.21. See *Why this
-did not ship* below.
+**Status:** ✅ **RESOLVED 2026-10-14** — the bundle now arms the gate by default, and it is
+proven live (see *Fix applied* below). The section after it records the original defect.
+
+## Fix applied 2026-10-14
+
+The gate itself was already correct and well-built. The defect was that **nothing in the
+client bundle armed it.** `PACGATE_SETUP_TOKEN` and `PACGATE_GENERATE_SETUP_TOKEN` were
+set nowhere, so `_current_setup_token()` took the branch whose own comment reads
+"the endpoint stays public and the `admin_count` check is the only guard".
+
+Measured on the running stack before the fix:
+
+```
+GET  http://127.0.0.1:8089/api/v1/auth/initialize        -> 405   (route exists, routed by nginx)
+POST (no token), invalid body                            -> 422   (validation ran FIRST, so no
+                                                                    token check happened at all)
+```
+
+The 422 is the proof: had the gate been armed, the 403 in the handler would have fired
+before validation, since it is the first statement.
+
+`compose.prod.yaml` / `compose.bundle.yaml` now pass:
+
+```yaml
+PACGATE_SETUP_TOKEN: ${PACGATE_SETUP_TOKEN:-}
+PACGATE_GENERATE_SETUP_TOKEN: ${PACGATE_GENERATE_SETUP_TOKEN:-1}
+```
+
+**The default is `1` on purpose.** The patch treats an *unset* switch as "do not arm", so a
+bare passthrough of a blank `.env` value would have left the hole open on every fresh
+install - the exact failure this was meant to close. Defaulting to `1` means omission arms
+the gate, so the worst case of forgetting the variable is an operator reading one log line,
+not a publicly claimable admin.
+
+Proven against the **deployed** patch (not a copy), by importing the mounted
+`/app/backend/app/gateway/routers/auth.py` inside the container and calling the real
+`_current_setup_token()`:
+
+| configuration | deployed result |
+| --- | --- |
+| as running before the fix (both unset) | **DISABLED** - publicly claimable |
+| new compose default | **ARMED** - 403 without the token, and logs `PACGATE SETUP TOKEN: …` |
+| operator pins a value | **ARMED** - uses the pinned value |
+
+Also confirmed that compose's `:-` substitutes on an **empty** value as well as an unset
+one (renders `"1"`), which is the property the fail-closed default depends on.
+
+**No image rebuild was needed** - `deer-flow-auth.py` is bind-mounted, and `install.ps1`
+step 7c restarts deer-flow so the mounted module is re-read.
+
+**Residual, deliberate:** with the generated token the value changes on every deer-flow
+restart, so an operator who needs to complete setup must read it at that point:
+
+```powershell
+docker logs deer-flow 2>&1 | Select-String 'PACGATE SETUP TOKEN'
+```
+
+Setting `PACGATE_SETUP_TOKEN` in `.env` pins a stable value instead. A per-install stable
+token written into `.env` would be friendlier, but it is a change to install.ps1 on the
+client path and was not bundled here.
 
 ## The defect
 

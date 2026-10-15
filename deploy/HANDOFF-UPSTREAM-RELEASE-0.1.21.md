@@ -49,7 +49,22 @@ re-download from `paddleocr.bj.bcebos.com` — the only source. An offline
 recreate leaves ocr-service unable to initialise and every extraction fails
 closed.
 
-Port: add to the `ocr-service` service in both files:
+**SUPERSEDED by 0.1.28 — read the replacement before porting anything here.**
+0.1.28 bakes those weights into the image (see `DEFECT-ocr-weights-not-baked.md`),
+which removes the download entirely rather than caching it. The port below is the
+**0.1.21-era** fix and must NOT be applied on top of the bake: a mount at
+`/root/.paddleocr` shadows the baked copy, so the CDN dependency the bake removes
+comes straight back. Measured: with a volume mounted and one baked directory
+absent from it, a recreated container could not see the baked weights at all.
+
+Port instead:
+
+```yaml
+  ocr-service:
+    # no `volumes:` at all - the weights are in the image
+```
+
+Port: ~~add to the `ocr-service` service in both files:~~
 
 ```yaml
     volumes:

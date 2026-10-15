@@ -14,13 +14,16 @@ first 401 09-29 08:05). Add `_relogin()` + retry-once-on-401 in `get`, `post`,
 **Port the logic, not the file** — the monorepo copy has GBK-mojibake
 em-dashes in comments; upstream's file is clean and structurally identical.
 
-**2. OCR model volume** — compose-only, no image change. In BOTH
-`deploy/client-bundle/compose.bundle.yaml` and `compose.prod.yaml`, add to
-`ocr-service`: `volumes: [- paddleocr-models:/root/.paddleocr]`, and to the
-top-level `volumes:` block: `paddleocr-models:`. PaddleOCR downloads ~18 MB
-of PP-OCRv4 weights into `/root/.paddleocr` on first extraction (NOT baked
-into the image); without the volume every recreate re-downloads from bcebos
-— the only source — and an offline recreate breaks all extraction.
+**2. OCR model volume** — SUPERSEDED from 0.1.28; do **not** port this as written.
+0.1.28 bakes the ~18 MB of PP-OCRv4 weights into the `ocr-service` image, so the
+download-on-first-extraction path is gone. The volume this handoff asks you to add
+is now actively harmful: a mount at `/root/.paddleocr` SHADOWS the baked copy
+(the mount point replaces the directory rather than layering over it), so anything
+the volume lacks is fetched from bcebos again - the dependency the bake removes.
+Measured: with a volume mounted and one baked directory missing from it, a
+recreated container could not see the baked weights at all. Port the **bake**
+instead (the `warm_up.py` + Dockerfile `RUN` in `deploy/ocr-service/`), and mount
+**nothing** over `/root/.paddleocr`. See `deploy/DEFECT-ocr-weights-not-baked.md`.
 
 ## Then release (a push to main builds NOTHING — trigger is tags/dispatch only)
 

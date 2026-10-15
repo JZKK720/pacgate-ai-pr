@@ -5,8 +5,15 @@
 # incomplete=false. Run from the repo root on a machine with Docker.
 #
 # Usage: powershell -File scripts/test-ocr-extraction.ps1
+param(
+    # The ocr-service image under test. Empty = the release image at the version in
+    # pacgate-ai/Cargo.toml, DERIVED so it follows the release instead of relying
+    # on an invented `ocr-service:local` tag that nothing builds.
+    [string]$OcrImage = ''
+)
 
 $ErrorActionPreference = 'Stop'
+Set-Location (Split-Path -Parent $PSScriptRoot)
 
 $failed = $false
 function Assert-True($cond, $name) {
@@ -14,12 +21,33 @@ function Assert-True($cond, $name) {
     else { Write-Output "FAIL: $name"; $script:failed = $true }
 }
 
+if (-not $OcrImage) {
+    . (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+    $OcrImage = Get-ReleaseOcrImage
+}
+if (-not $OcrImage) {
+    Write-Output 'SKIP: could not derive the release ocr-service image from Cargo.toml/compose.prod.yaml'
+    exit 2
+}
+# Release window: the tag may not be published yet. Say so, rather than failing at
+# `docker run` with a message that reads like a product fault.
+if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
+    Write-Output "SKIP: $OcrImage is not published yet and is not present locally."
+    exit 2
+}
+
 $cid = "ocr-e2e-" + (Get-Random)
 $cleanup = { docker rm -f $cid 2>$null | Out-Null }
 
 # 1. Start ocr-service
-Write-Output "== starting ocr-service =="
-docker run -d --name $cid -p 8110:8100 ocr-service:local | Out-Null
+#
+# Note there is NO weights volume, and that is now the PRODUCTION shape: the
+# PP-OCRv4 weights are baked into the image and nothing may be mounted over
+# /root/.paddleocr (a mount shadows the baked copy). This script therefore
+# doubles as a proof of the bake, and `test-ocr-bake-integrity.ps1` keeps it
+# that way.
+Write-Output "== starting ocr-service ($OcrImage) =="
+docker run -d --name $cid -p 8110:8100 $OcrImage | Out-Null
 try {
     # Wait for boot
     $ready = $false

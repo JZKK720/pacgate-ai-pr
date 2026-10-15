@@ -42,6 +42,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Run a native command that may write to stderr WITHOUT the Windows built-in
+# PowerShell 5.1 turning that stderr into a terminating error.
+#
+# Same defect as install.ps1 documents at length: under $ErrorActionPreference =
+# "Stop", PS 5.1 turns ANY native command that writes to stderr into a
+# TERMINATING error when a redirection is attached - `2>&1`, `2>$null` and `*>`
+# are all affected. PowerShell 7 does not. try/catch does not help (the rest of
+# the try block is skipped and the assignment is lost). This lowers the
+# preference for the duration of the scriptblock and restores it; $LASTEXITCODE
+# survives the boundary. A `2>$null` capture is byte-identical to PowerShell 7's.
+function Invoke-WithNativeStderr {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Script } finally { $ErrorActionPreference = $previous }
+}
+
 # $PSScriptRoot = <repo>\deploy\client-bundle, so the repo root is two levels up
 # and the tracked deployment definition lives in deploy/qm-pacgate.
 if (-not $QmSourceDir) { $QmSourceDir = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'deploy/qm-pacgate' }
@@ -54,7 +71,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: Node.js not found. Install Node.js 24+ from https://nodejs.org" -ForegroundColor Red
     exit 1
 }
-$nodeVersion = (node --version 2>$null)
+$nodeVersion = Invoke-WithNativeStderr { node --version 2>$null }
 if ($nodeVersion -and [int]($nodeVersion -replace 'v(\d+).*', '$1') -lt 24) {
     Write-Host "ERROR: Node.js 24+ required, found $nodeVersion" -ForegroundColor Red
     exit 1
@@ -301,7 +318,7 @@ try {
     # argument, which PowerShell does not nest - it failed with "unrecognized
     # token". One line with single-quoted JS strings avoids the problem entirely.
     $jwkJs = "const c=require('node:crypto');const{privateKey}=c.generateKeyPairSync('ec',{namedCurve:'P-256'});const j=privateKey.export({format:'jwk'});if(j.kty!=='EC'||j.crv!=='P-256'||!j.d){console.error('unexpected jwk shape');process.exit(1)}process.stdout.write(JSON.stringify({kty:j.kty,crv:j.crv,x:j.x,y:j.y,d:j.d}));"
-    $authSigningJwk = (& node -e $jwkJs 2>&1 | Out-String).Trim()
+    $authSigningJwk = Invoke-WithNativeStderr { (& node -e $jwkJs 2>$null | Out-String).Trim() }
     if (-not $authSigningJwk -or $authSigningJwk -notmatch '"crv":"P-256"') {
         Write-Host "[WARN] could not generate a P-256 AUTH_SIGNING_JWK with node - the qm auth broker will refuse to start" -ForegroundColor Yellow
     }

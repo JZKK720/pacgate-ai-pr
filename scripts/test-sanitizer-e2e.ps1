@@ -15,6 +15,13 @@ function Check($name, $cond) {
     if ($cond) { Write-Output "PASS: $name" } else { Write-Output "FAIL: $name"; $script:fail++ }
 }
 
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$OcrImage = if ($OcrImage) { $OcrImage } else { Get-ReleaseOcrImage }
+if (-not $OcrImage) { Write-Output 'SKIP: cannot derive the release ocr-service image'; exit 2 }
+if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
+    Write-Output "SKIP: $OcrImage is not published yet and is not present locally."; exit 2
+}
+
 Write-Output "== building fixture =="
 # PDF fixture via the ocr container's PIL. ocr-service is a perception lane:
 # it rasterises PDFs and reads images, but a born-digital .txt is v2 (Docling)
@@ -22,7 +29,7 @@ Write-Output "== building fixture =="
 $fixture = Join-Path $env:TEMP 'pacgate-san-e2e.pdf'
 # Regenerate every run so a stale fixture never masks a regression.
 if (Test-Path $fixture) { Remove-Item $fixture -Force }
-docker run --rm -v "${env:TEMP}:/fix" --entrypoint python3 ocr-service:local -c "from PIL import Image, ImageDraw, ImageFont
+docker run --rm -v "${env:TEMP}:/fix" --entrypoint python3 $OcrImage -c "from PIL import Image, ImageDraw, ImageFont
 img = Image.new('RGB',(900,300),'white')
 d = ImageDraw.Draw(img)
 font = ImageFont.load_default()
@@ -52,8 +59,48 @@ function Remove-E2EContainers {
 }
 Remove-E2EContainers
 
+# The compose network. This used to be the hardcoded literal
+# 'client-bundle_default' - the name Docker derives from the COMPOSE PROJECT,
+# which used to be inferred from the directory name. compose.prod.yaml now pins
+# `name: pacgate-ai-bundle` (the run-1 volume-collision fix), so the live network
+# is 'pacgate-ai-bundle_default' and `--network client-bundle_default` failed with
+# "network client-bundle_default not found". Derive it instead of guessing, so a
+# future rename cannot silently break this again.
+#
+# ConvertFrom-Json, NOT a `{{...}}{{"\n"}}{{end}}` template. The template form
+# returns the network under PowerShell 7 but an EMPTY string under Windows
+# PowerShell 5.1 (verified side by side 2026-10-14: 5.1.26100.9549 vs 7.6.6, same
+# container). 5.1 splits the `\n` into separate lines before `Where-Object { $_ }`
+# sees them, so the derivation came back empty and this gate exited 2 "SKIP:
+# pacgate-db is not running" - even with the whole stack up.
+#
+# That is not a cosmetic bug: run-all-checks.ps1 falls back to powershell.exe when
+# `pwsh` is absent, which is the client AIPC arrangement, so on client hardware the
+# sanitizer e2e gate reported SKIP and its 20+ assertions never ran. Found while
+# red-checking the new chunk-content assertions below; the false SKIP had been
+# masking whether this gate ran at all.
+$Network = (docker inspect pacgate-db 2>$null | ConvertFrom-Json)[0].NetworkSettings.Networks.PSObject.Properties.Name |
+    Select-Object -First 1
+if (-not $Network) {
+    Write-Output 'SKIP: pacgate-db is not running, so its compose network cannot be resolved.'
+    Write-Output '      Start the stack (.\deploy\client-bundle\install.ps1) and re-run.'
+    exit 2
+}
+Write-Output "compose network: $Network"
+
 # 1. OCR service (no host port needed; API reaches it over the compose net).
-docker run -d --name pacgate-ocr-e2e --network client-bundle_default ocr-service:local | Out-Null
+#
+# The image is the RELEASE ocr-service, derived, not an invented `:local` alias -
+# this container is part of what is under test, so it must be the same code a
+# client receives.
+#
+# The weights volume is NOT mounted, deliberately. The PP-OCRv4 weights are baked
+# into the image, so extraction must work with nothing mounted; leaving it off is
+# what proves the bake, and it also removes the external-CDN dependency that used
+# to make this gate slow and intermittent (measured 269.9s cold against a 300s
+# client timeout in pacgate-api, versus 3.4s with the weights present).
+docker rm -f pacgate-ocr-e2e 2>&1 | Out-Null
+docker run -d --name pacgate-ocr-e2e --network $Network $OcrImage | Out-Null
 # 2. API under test, wired to the live db + ocr + embeddings + NER weights.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $nerDir = Join-Path $repoRoot '.e2e-ner-model'
@@ -78,7 +125,42 @@ $ApiImage = if ($ApiImage) { $ApiImage } else {
         (Select-String -Path $toml -Pattern '^version\s*=\s*"([0-9.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
     } else { '' }
     if (-not $ver) { Write-Output 'SKIP: cannot derive the version from pacgate-ai/Cargo.toml'; exit 2 }
-    "ghcr.io/jzkk720/pacgate-api:$ver"
+    $ns = [regex]::Match((Get-Content (Join-Path $repoRoot 'deploy/client-bundle/compose.prod.yaml') -Raw),
+          'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/pacgate-api:\d+\.\d+\.\d+').Groups['ns'].Value
+    # A version bump opens a window in which the new tag is not published yet (the
+    # release build is still running). This script then `docker run`-ed a
+    # non-existent image and reported ELEVEN cascading FAILs that read exactly like
+    # sanitizer defects - they were one of five misleading reds in the 0.1.28
+    # sweep. Measured, not assumed: against the published 0.1.27 image this script
+    # is 16/16 PASS, so nothing about the sanitizer was broken.
+    #
+    # So when the new tag is absent, fall back to the NEWEST published version
+    # rather than reporting garbage. That keeps full sanitizer coverage during the
+    # release window (the sanitizer code is identical either side of a bump) and it
+    # is stated loudly, so nobody mistakes it for a test of the new build.
+    $probe = "ghcr.io/$ns/pacgate-api:$ver"
+    . (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+    if (-not $ns) { Write-Output 'SKIP: cannot derive the image namespace from compose.prod.yaml'; exit 2 }
+    if ((Test-ImageTagLocally -Reference $probe) -eq 'present' -or
+        (Test-GhcrManifestPresent -Namespace $ns -Repository 'pacgate-api' -Tag $ver) -eq 'present') {
+        $probe
+    }
+    else {
+        $tags = @()
+        try {
+            $tok = Invoke-RestMethod -Uri "https://ghcr.io/token?scope=repository:$ns/pacgate-api:pull&service=ghcr.io" -Method Get -TimeoutSec 20
+            $lst = Invoke-RestMethod -Uri "https://ghcr.io/v2/$ns/pacgate-api/tags/list" -Headers @{ Authorization = "Bearer $($tok.token)" } -TimeoutSec 20
+            $tags = @($lst.tags | Where-Object { $_ -match '^\d+\.\d+\.\d+$' })
+        }
+        catch { }
+        if (-not $tags) { Write-Output "SKIP: $probe is not published yet and no published version could be listed."; exit 2 }
+        $newest = $tags | Sort-Object { [version]$_ } -Descending | Select-Object -First 1
+        Write-Output "NOTE: $probe is NOT yet published (release window)."
+        Write-Output "      Falling back to the newest published image $ns/pacgate-api:$newest."
+        Write-Output "      The sanitizer code is identical across a version bump, so this still"
+        Write-Output "      exercises the real sanitizer - but it does NOT test the new build."
+        "ghcr.io/$ns/pacgate-api:$newest"
+    }
 }
 Write-Output "api image: $ApiImage"
 
@@ -99,7 +181,7 @@ if (Test-Path $bundleEnv) {
     }
 }
 
-docker run -d --name pacgate-api-e2e --network client-bundle_default `
+docker run -d --name pacgate-api-e2e --network $Network `
   -p 127.0.0.1:8097:8080 `
   -e "DATABASE_URL=postgres://pacgate:${DbPassword}@pacgate-db:5432/pacgate" `
   -e "DATA_DIR=/data/tenants" `
@@ -172,6 +254,38 @@ Write-Output "  verdict=$($job.verdict) redactions=$($job.redaction_count) promo
 $status = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/documents/$docId/sanitize-status" -Headers $hdr
 Check "document state sanitized" ($status.document_state -eq 'sanitized')
 Check "chunks sanitized" (($status.chunk_states -join ',').Trim() -eq 'sanitized')
+
+# 8b. The 'sanitized' label must be EARNED by the chunk CONTENT, not just
+#     stamped on the row.
+#
+#     Until 2026-10-14 the promote path did `UPDATE kb_chunks SET
+#     sanitization_state='sanitized'` and left `content` as the raw extract, so
+#     RAG kept serving the original identifiers: the gate in
+#     pacgate-rag/src/lib.rs is `WHERE ... sanitization_state IN
+#     ('sanitized','never')`, which WHITELISTED exactly those rows.
+#
+#     The assertion above - `chunk_states -eq 'sanitized'` - is precisely the
+#     false-red that let this ship: it reads the state column, which was the one
+#     thing the old code did set. These two assertions read the text instead.
+#
+#     Both needles are checked separately so a regression names which one leaked.
+$chunkIdLeak = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND content LIKE '%11010519491231002X%'"" 2>&1"
+Check "no raw id card in a sanitized chunk" ([int](($chunkIdLeak | Select-Object -First 1).ToString().Trim()) -eq 0)
+$chunkPhoneLeak = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND content LIKE '%13812345678%'"" 2>&1"
+Check "no raw phone in a sanitized chunk" ([int](($chunkPhoneLeak | Select-Object -First 1).ToString().Trim()) -eq 0)
+
+# Positive evidence the rewrite happened, so "0 leaks" cannot be satisfied by
+# there simply being no sanitized chunks at all.
+$sanChunks = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized'"" 2>&1"
+Check "sanitized chunks exist" ([int](($sanChunks | Select-Object -First 1).ToString().Trim()) -ge 1)
+$sanText = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT string_agg(content,' ') FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized'"" 2>&1"
+$sanText = ($sanText | Select-Object -First 1).ToString().Trim()
+Check "sanitized chunk text is the redacted rendering" ($sanText.Length -gt 0 -and -not $sanText.Contains('11010519491231002X'))
+
+# 8c. And the raw row must be GONE, not merely unlabelled - a lingering pending
+#     copy is one status flip away from being served again.
+$rawLeft = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND content LIKE '%11010519491231002X%'"" 2>&1"
+Check "no raw id card anywhere in kb_chunks" ([int](($rawLeft | Select-Object -First 1).ToString().Trim()) -eq 0)
 
 # 9. Download gate: BEFORE sanitize the doc was pending; now sanitized, so
 #    download must be ALLOWED. Refusal path is asserted by the status above.

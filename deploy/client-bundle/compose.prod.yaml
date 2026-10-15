@@ -14,6 +14,16 @@ name: pacgate-ai-bundle
 services:
   pacgate-db:
     image: pgvector/pgvector:pg16
+    healthcheck:
+      # pg_isready is Postgres's own readiness probe. `restart: unless-stopped`
+      # cannot restart a container that is RUNNING but not accepting connections;
+      # this is what makes that state visible and actionable.
+      test: ["CMD-SHELL", "pg_isready -U pacgate -d pacgate"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Generous: applies migrations on first boot before it serves.
+      start_period: 60s
     container_name: pacgate-db
     environment:
       POSTGRES_DB: pacgate
@@ -24,7 +34,20 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.25
+    image: ghcr.io/jzkk720/pacgate-api:0.1.31
+    healthcheck:
+      # No curl and no wget in this image (measured 2026-10-14), so the probe
+      # uses bash's /dev/tcp. /health is the one route that needs no auth
+      # (verified: 200, while /api/health, /ready and /version all return 401).
+      # grep -q "200" rather than testing the port alone: a wedged API still
+      # accepts connections, and only a response proves it is serving.
+      test:
+        - CMD-SHELL
+        - bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health HTTP/1.0\r\n\r\n" >&3 && head -1 <&3 | grep -q "200 OK"'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     container_name: pacgate-api
     depends_on: [pacgate-db]
     # Hard memory ceiling, as defence in depth behind the in-process admission
@@ -115,7 +138,16 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.25
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.31
+    healthcheck:
+      # :8001 is the gateway nginx proxies to; /health verified 200.
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request;raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=6).status==200 else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -141,6 +173,31 @@ services:
       # frozen mid-run with zero user-visible output (run c2a0ced4 evidence in
       # .env comments). Value comes from .env: DEERFLOW_TITLE_INVOKE_TIMEOUT_S.
       DEERFLOW_TITLE_INVOKE_TIMEOUT_S: ${DEERFLOW_TITLE_INVOKE_TIMEOUT_S:-8}
+      # Pacgate (security fix 2026-10-14): arm the one-time setup-token gate on
+      # POST /api/v1/auth/initialize.
+      #
+      # /initialize creates the FIRST deer-flow admin and is necessarily PUBLIC --
+      # it cannot require a login, because before it runs there is no account. With
+      # the gate disabled, whoever reaches the URL first becomes that admin. On a
+      # fresh AIPC it is LAN-reachable through nginx, so this is the only guard
+      # between an unprovisioned machine and a stranger claiming it.
+      #
+      # Measured 2026-10-14 on the running stack: GET /api/v1/auth/initialize through
+      # nginx returned 405 (route exists and is routed), and a POST with no token and
+      # an invalid body returned 422 -- validation ran FIRST, which proves no token
+      # check happened, because the 403 is the handler's first statement.
+      #
+      # The DEFAULT IS 1, deliberately. The patch treats an unset switch as "do not
+      # arm", so a bare passthrough of an empty .env value would leave the hole open
+      # -- a fresh install with a blank token would still be claimable. Defaulting to
+      # 1 makes OMISSION arm the gate: the failure mode of forgetting this variable
+      # is an operator who must read one log line, not a publicly claimable admin.
+      #
+      # If PACGATE_SETUP_TOKEN is set, the patch prefers it and never generates. If
+      # it is blank, a per-process token is generated and logged once as
+      # "PACGATE SETUP TOKEN: <value>" -- so it changes on every deer-flow restart.
+      PACGATE_SETUP_TOKEN: ${PACGATE_SETUP_TOKEN:-}
+      PACGATE_GENERATE_SETUP_TOKEN: ${PACGATE_GENERATE_SETUP_TOKEN:-1}
     volumes:
       - ./data:/data
       # Pacgate (office-lane fix 2026-10-05): officecli's MCP defaults its
@@ -250,7 +307,18 @@ services:
   # correct without a runtime patch. Published to GHCR by the build-ghcr.yml
   # workflow; pushed on every release tag so both AIPCs stay in sync.
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.31
+    healthcheck:
+      # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
+      # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
+      # against a dead port.
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     ports:
@@ -266,10 +334,32 @@ services:
       # JWT for the /api/pacgate proxy route (server-to-server, not browser).
       PACGATE_API_URL: http://pacgate-api:8080
       PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
+    volumes:
+      # Pacgate patch (2026-10-13): `next start` reads next.config.js at boot, so
+      # bind-mounting the patched copy applies the proxyTimeout fix WITHOUT an
+      # image rebuild. Without it, Next.js kills every gateway call that runs
+      # longer than its 30 s default and the caller sees the failure while the
+      # run keeps executing server-side - which is why long agent runs presented
+      # as "the model cannot generate". Measurement + rationale live in
+      # deploy/frontend-patches/files/next.config.js. Baked into the image too,
+      # via the CI copy step, so a future rebuild stays correct on its own.
+      - ../frontend-patches/files/next.config.js:/app/frontend/next.config.js:ro
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.25
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.31
+    healthcheck:
+      # A real MCP `initialize` handshake, not a TCP connect. The image has no
+      # curl; it does have python3, so the probe speaks the protocol and
+      # requires `serverInfo` in the reply. Verified: 200-equivalent with
+      # serverInfo present, and a connection error against a dead port.
+      test:
+        - CMD-SHELL
+        - python3 -c "import json,urllib.request;p=json.dumps({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2024-11-05','capabilities':{},'clientInfo':{'name':'hc','version':'1'}}}).encode();r=urllib.request.Request('http://127.0.0.1:8000/mcp',data=p,headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'});b=urllib.request.urlopen(r,timeout=6).read().decode();raise SystemExit(0 if 'serverInfo' in b else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -293,23 +383,45 @@ services:
     restart: unless-stopped
 
   # ocr-service: PaddleOCR extraction for scanned documents (plan 019).
-  # A first-class release image from 0.1.16. The ~1.5GB PaddleOCR model is
-  # downloaded on FIRST EXTRACTION (not at build or start), so image pulls
-  # stay small and the cost lands on the first OCR-using session.
+  # A first-class release image from 0.1.16.
+  #
+  # The PP-OCRv4 det/rec/cls weights (~17 MB) are BAKED INTO the image at build
+  # time. They used to be downloaded on FIRST EXTRACTION, which made this the one
+  # lane in the bundle that needed an external host (paddleocr.bj.bcebos.com) to
+  # work at all, and measured 269.9s cold against a 300s client timeout in
+  # pacgate-api - so it failed intermittently on a fresh machine.
+  #
+  # There is deliberately NO volumes: block here. Mounting a volume over
+  # /root/.paddleocr SHADOWS the baked copy: once the mount point exists, the
+  # image's directory is no longer visible there, and PaddleOCR falls back to
+  # paddleocr.bj.bcebos.com again for anything the volume lacks - reintroducing
+  # the exact CDN dependency the bake exists to remove, and 269.9s against a 300s
+  # client timeout. Proved with a probe: replacing one baked directory inside a
+  # volume made the running container unable to see it. With no mount the baked
+  # weights ARE the tree, and every extraction path is the 3.4s warm path.
+  #
+  # The weights are byte-identical to what a fresh download persists (9 files,
+  # 18,073,805 bytes, matching SHA256 per file), so dropping the mount does not
+  # change the engine, only removes the indirection that could defeat the bake.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.1.25
+    image: ghcr.io/jzkk720/ocr-service:0.1.31
+    healthcheck:
+      # /health verified 200. python3, not curl - the image has no curl.
+      # start_period is long on purpose: this service downloads its model on
+      # first run, which is exactly the window in which a short probe would
+      # mark a healthy-but-busy container unhealthy.
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request;raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=6).status==200 else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 300s
     container_name: ocr-service
     environment:
       # Python logging rejects lowercase level names.
       OCR_LOG_LEVEL: INFO
       OCR_USE_GPU: "0"
-    # PaddleOCR downloads its PP-OCRv4 det/rec/cls weights (~18 MB) into
-    # /root/.paddleocr on FIRST extraction - they are NOT baked into the image.
-    # Without this volume the cache lives in the container's writable layer, so
-    # every recreate re-downloads from paddleocr.bj.bcebos.com (the only source)
-    # and an offline recreate leaves extraction failing closed.
-    volumes:
-      - paddleocr-models:/root/.paddleocr
     restart: unless-stopped
 
   openviking:
@@ -325,6 +437,14 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    healthcheck:
+      # nginx's own image is the one place curl does exist. This proves the proxy
+      # is answering, which is the surface clients actually reach.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null --max-time 5 http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     container_name: pacgate-nginx
     depends_on: [pacgate-api, deer-flow]
     ports:
@@ -334,6 +454,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Persists PaddleOCR's downloaded model weights across container recreation.
-  paddleocr-models:
   pacgate-db-data:

@@ -59,14 +59,46 @@ if (-not $Image) {
     $Image = "ghcr.io/$ns/pacgate-api:$v"
 }
 
+# A version bump opens a window in which Cargo.toml and the compose pins name an
+# image that has not been published yet (the tag push is still building). This
+# gate then derived the NEW version, could not `docker run` it, and reported
+# "harness error: docker run failed" - which reads as a product fault and
+# contributed one of five misleading reds to the 0.1.28 sweep. Nothing about the
+# product was wrong; the question simply had no artefact to ask about yet.
+# Report that state as NOT YET ASSERTABLE (exit 2 = SKIP) instead, so a real
+# defect is not buried in pre-release noise. A PRESENT image still fails normally.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$imgTail = ($Image -split '/')[-1]
+$imgNs   = [regex]::Match($Image, '^ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/').Groups['ns'].Value
+$imgRepo = if ($imgTail.Contains(':')) { $imgTail.Substring(0, $imgTail.LastIndexOf(':')) } else { $imgTail }
+$imgTag  = if ($imgTail.Contains(':')) { $imgTail.Substring($imgTail.LastIndexOf(':') + 1) } else { 'latest' }
+$imgState = if ($imgNs -and $imgRepo) { Test-GhcrManifestPresent -Namespace $imgNs -Repository $imgRepo -Tag $imgTag } else { 'unknown' }
+if ($imgState -ne 'present') { $imgState = Test-ImageTagLocally -Reference $Image }
+if ($imgState -ne 'present') {
+    Exit-NotYetAssertable ("$Image is not published (registry probe: $imgState) and not present locally, so /build-info cannot be probed against a real image. Publish the release tag, wait for build-ghcr.yml, then re-run.")
+}
+
 # Derive the network from the RUNNING stack, the same way the namespace above is
 # derived rather than hardcoded. Ask docker which network the live pacgate-api is
 # attached to; that is authoritative regardless of what the directory is called
 # or what COMPOSE_PROJECT_NAME was set to. Fall back to the directory-derived
 # name only if the stack is not up (the caller will then get a clear failure).
 if (-not $Network) {
-    $derived = (& docker inspect pacgate-api --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>$null |
-        Where-Object { $_ } | Select-Object -First 1)
+    # ConvertFrom-Json, NOT a `{{...}}{{"\n"}}{{end}}` template.
+    #
+    # The template form returns the network name under PowerShell 7 but an EMPTY
+    # string under Windows PowerShell 5.1 - verified side by side on 2026-10-14
+    # (5.1.26100.9549 vs 7.6.6, same container). 5.1 splits the `\n` inside the
+    # template into separate output lines and `Where-Object { $_ }` then receives
+    # the pieces; the net effect is an empty derivation on exactly the machines
+    # that do not have `pwsh`. That is the client hardware: run-all-checks.ps1
+    # explicitly falls back to powershell.exe when `pwsh` is absent, so this code
+    # path only ever ran for a developer.
+    #
+    # The symptom was a silent WARN plus an assumed network name - the failure mode
+    # is a wrong name, not an obvious error.
+    $derived = (docker inspect pacgate-api 2>$null | ConvertFrom-Json)[0].NetworkSettings.Networks.PSObject.Properties.Name |
+        Select-Object -First 1
     if ($derived) {
         $Network = $derived.Trim()
         Write-Host "  network derived from the live stack: $Network" -ForegroundColor DarkGray

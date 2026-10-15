@@ -21,6 +21,16 @@ name: pacgate-ai-bundle
 services:
   pacgate-db:
     image: pgvector/pgvector:pg16
+    healthcheck:
+      # pg_isready is Postgres's own readiness probe. `restart: unless-stopped`
+      # cannot restart a container that is RUNNING but not accepting connections;
+      # this is what makes that state visible and actionable.
+      test: ["CMD-SHELL", "pg_isready -U pacgate -d pacgate"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Generous: applies migrations on first boot before it serves.
+      start_period: 60s
     container_name: pacgate-db
     environment:
       POSTGRES_DB: pacgate
@@ -31,7 +41,20 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.1.25
+    image: ghcr.io/jzkk720/pacgate-api:0.1.31
+    healthcheck:
+      # No curl and no wget in this image (measured 2026-10-14), so the probe
+      # uses bash's /dev/tcp. /health is the one route that needs no auth
+      # (verified: 200, while /api/health, /ready and /version all return 401).
+      # grep -q "200" rather than testing the port alone: a wedged API still
+      # accepts connections, and only a response proves it is serving.
+      test:
+        - CMD-SHELL
+        - bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health HTTP/1.0\r\n\r\n" >&3 && head -1 <&3 | grep -q "200 OK"'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     container_name: pacgate-api
     depends_on: [pacgate-db]
     # Memory ceiling as defence in depth behind the in-process admission bound
@@ -93,7 +116,16 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.25
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.1.31
+    healthcheck:
+      # :8001 is the gateway nginx proxies to; /health verified 200.
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request;raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=6).status==200 else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
     container_name: deer-flow
     depends_on: [pacgate-api, openviking, pacgate-mcp]
     environment:
@@ -119,6 +151,13 @@ services:
       # frozen mid-run with zero user-visible output (run c2a0ced4 evidence in
       # .env comments). Value comes from .env: DEERFLOW_TITLE_INVOKE_TIMEOUT_S.
       DEERFLOW_TITLE_INVOKE_TIMEOUT_S: ${DEERFLOW_TITLE_INVOKE_TIMEOUT_S:-8}
+      # Pacgate (security fix 2026-10-14): arm the one-time setup-token gate on
+      # POST /api/v1/auth/initialize. See compose.prod.yaml for the full reasoning
+      # and the 2026-10-14 measurement; the two files must stay in step.
+      #
+      # Default 1, so OMISSION arms the gate rather than disabling it.
+      PACGATE_SETUP_TOKEN: ${PACGATE_SETUP_TOKEN:-}
+      PACGATE_GENERATE_SETUP_TOKEN: ${PACGATE_GENERATE_SETUP_TOKEN:-1}
     volumes:
       - ./data:/data
       - ./deer-flow-config.yaml:/app/backend/config.yaml:ro
@@ -206,7 +245,18 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.31
+    healthcheck:
+      # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
+      # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
+      # against a dead port.
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
     container_name: deer-flow-frontend
     depends_on: [deer-flow]
     environment:
@@ -218,7 +268,19 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.1.25
+    image: ghcr.io/jzkk720/pacgate-mcp:0.1.31
+    healthcheck:
+      # A real MCP `initialize` handshake, not a TCP connect. The image has no
+      # curl; it does have python3, so the probe speaks the protocol and
+      # requires `serverInfo` in the reply. Verified: 200-equivalent with
+      # serverInfo present, and a connection error against a dead port.
+      test:
+        - CMD-SHELL
+        - python3 -c "import json,urllib.request;p=json.dumps({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2024-11-05','capabilities':{},'clientInfo':{'name':'hc','version':'1'}}}).encode();r=urllib.request.Request('http://127.0.0.1:8000/mcp',data=p,headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'});b=urllib.request.urlopen(r,timeout=6).read().decode();raise SystemExit(0 if 'serverInfo' in b else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     container_name: pacgate-mcp
     depends_on: [pacgate-api]
     environment:
@@ -231,21 +293,34 @@ services:
     restart: unless-stopped
 
   # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
-  # The ~1.5GB PaddleOCR model downloads on FIRST EXTRACTION, not at build.
+  # The PP-OCRv4 det/rec/cls weights (~17 MB) are BAKED INTO the image at build
+  # time. They used to download on FIRST EXTRACTION, which made this the one lane
+  # needing an external host (paddleocr.bj.bcebos.com) and measured 269.9s cold
+  # against a 300s client timeout in pacgate-api - so it failed intermittently.
+  #
+  # No volumes: block, deliberately. Mounting a volume over /root/.paddleocr
+  # SHADOWS the baked copy and lets PaddleOCR reach for the CDN again for anything
+  # the volume lacks - the dependency the bake exists to remove. See the longer
+  # note in compose.prod.yaml.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.1.25
+    image: ghcr.io/jzkk720/ocr-service:0.1.31
+    healthcheck:
+      # /health verified 200. python3, not curl - the image has no curl.
+      # start_period is long on purpose: this service downloads its model on
+      # first run, which is exactly the window in which a short probe would
+      # mark a healthy-but-busy container unhealthy.
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request;raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=6).status==200 else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 300s
     container_name: ocr-service
     environment:
       # Python logging rejects lowercase level names.
       OCR_LOG_LEVEL: INFO
       OCR_USE_GPU: "0"
-    # PaddleOCR downloads its PP-OCRv4 det/rec/cls weights (~18 MB) into
-    # /root/.paddleocr on FIRST extraction - they are NOT baked into the image.
-    # Without this volume the cache lives in the container's writable layer, so
-    # every recreate re-downloads from paddleocr.bj.bcebos.com (the only source)
-    # and an offline recreate leaves extraction failing closed.
-    volumes:
-      - paddleocr-models:/root/.paddleocr
     restart: unless-stopped
 
   openviking:
@@ -261,6 +336,14 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    healthcheck:
+      # nginx's own image is the one place curl does exist. This proves the proxy
+      # is answering, which is the surface clients actually reach.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null --max-time 5 http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     container_name: pacgate-nginx
     depends_on: [pacgate-api, deer-flow, deer-flow-frontend]
     ports:
@@ -270,7 +353,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Persists PaddleOCR's downloaded model weights across container recreation.
-  paddleocr-models:
   pacgate-db-data:
 

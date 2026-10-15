@@ -55,6 +55,12 @@ $checks = @(
     [pscustomobject]@{ Component = 'workflows/*.yaml (15)';     Needs = 'nothing (read per request)';          Any = @('__noop__') }
     [pscustomobject]@{ Component = 'personas/, patches/*.py';   Needs = 'container restart';                   Any = @('restart deer-flow') }
     [pscustomobject]@{ Component = 'deer-flow-config.yaml';     Needs = 'container restart';                   Any = @('restart deer-flow') }
+    # Added 2026-10-13 with deploy/frontend-patches/files/next.config.js. That file
+    # is bind-mounted over the image's copy and `next start` reads it only at boot,
+    # so it needs the same restart treatment as deer-flow-config.yaml above. Its
+    # experimental.proxyTimeout is what stops Next.js killing proxied gateway calls
+    # longer than its 30s default - see deploy/DEFECT-frontend-proxy-timeout.md.
+    [pscustomobject]@{ Component = 'frontend next.config.js';   Needs = 'container restart';                   Any = @('restart deer-flow-frontend') }
     [pscustomobject]@{ Component = 'extensions-config.json';    Needs = 're-render + compare';                 Any = @('RENDER-AND-COMPARE', '$dfExisting') }
     [pscustomobject]@{ Component = 'repo working tree';         Needs = 'fast-forward pull';                   Any = @('git pull --ff-only') }
     # Step 7f re-stages the RUNTIME qm config from the tracked source. This is

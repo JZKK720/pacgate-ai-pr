@@ -172,3 +172,15 @@ sync-fork-after.png
 /_*.py
 /_*.sh
 /_*.md
+
+# VS Code task scratch (tasks.json + probe scripts written during a session;
+# they carry machine-absolute paths and are not part of the build contract)
+/.vscode/
+
+# Last-run evidence from scripts/cjk-live-probe.py (regenerated on every run;
+# the probe itself is tracked, its output dump is not)
+/scripts/cjk_out.json
+
+# A zero-byte file PowerShell creates from an unexpanded ${input...} in a command.
+# Committed by accident twice; this makes the third time impossible.
+/${input*

@@ -1,9 +1,9 @@
 # Pacgate AI - Two-AIPC Deployment Handbook
 
 > Clone the repo on each machine, run the same install steps, and both machines become fully operational with deer-flow research and qm collaboration.
-> Targets release 0.1.23 — handbook updated 2026-10-05
+> Targets release 0.1.28 - handbook updated 2026-10-13
 > Chinese version: [AIPC-DEPLOYMENT-HANDBOOK-ZH.md](AIPC-DEPLOYMENT-HANDBOOK-ZH.md)
-> Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`. PowerShell 7 (`pwsh`) is optional - the installer prefers it and falls back to built-in PowerShell 5.1, which everything it runs is compatible with.
+> Prerequisites: Docker Desktop, Ollama, Node.js 24+. `install.ps1` pulls the models listed in `ollama-models.txt`. PowerShell 7 (`pwsh`) is optional - the installer runs on the built-in Windows PowerShell 5.1 as well. (Before 2026-10-11 that claim was false, in two ways: PS 5.1 turns *any* native command that writes to stderr into a terminating error when a redirection is attached, and `docker compose up -d` writes progress to stderr on every run, so the installer aborted before bootstrapping the tenant and admin; and the admin-registration call used the PowerShell 7-only `-SkipHttpErrorCheck` parameter, which 5.1 rejects before sending the request. `install.ps1`, `setup-qm.ps1` and `smoke-deer-flow-outputs.ps1` now route every stderr-writing call through `Invoke-WithNativeStderr` and make API calls through `Invoke-ApiRequest`. See `deploy/DEFECT-ps51-native-stderr.md`.)
 
 ## ⚠️ Significant findings (2026-09-02) — read before deploying AIPC #2
 
@@ -96,11 +96,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.25` | Published, public. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.25` | Published, public. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.25` | Published, public. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25` | Published, public. |
-| `ghcr.io/jzkk720/ocr-service:0.1.25` | Published, public. PaddleOCR extraction; first-class since 0.1.16. |
+| `ghcr.io/jzkk720/pacgate-api:0.1.31` | Published, public. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.31` | Published, public. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.31` | Published, public. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.31` | Published, public. |
+| `ghcr.io/jzkk720/ocr-service:0.1.31` | Published, public. PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed
@@ -108,7 +108,7 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 > live namespace is `jzkk720` and publishing moved there in plan 016. The old
 > `pacgate-ai/...-frontend-pacgate:0.1.0` row was also labelled "Published" while
 > returning **404** - it never resolved. All five `jzkk720/*` images at the current
-> pin (0.1.23, table above) return HTTP 200 anonymously.
+> pin (0.1.28, table above) return HTTP 200 anonymously.
 
 **Historical release table (retained for provenance, superseded):**
 
@@ -269,7 +269,7 @@ curl http://localhost:8089/pacgate/health
 
 Expected: all eight containers running (pacgate-db, pacgate-api, deer-flow,
 deer-flow-frontend, pacgate-mcp, ocr-service, openviking, nginx); `/version` returns
-`{"version":"0.1.23","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
+`{"version":"0.1.28","revision":"<git sha>"}` and `/pacgate/health` returns `ok`.
 
 > **Do not probe `/health` at the nginx root.** nginx routes `/` to the deer-flow frontend
 > by design, so `curl http://localhost:8089/health` returns the frontend's 404 page - that
@@ -659,6 +659,80 @@ disagree.
 
 Before this existed there was no way to tell a current machine from one behind -both looked identical from the outside, and the only check was to SSH in and
 read the compose file, hoping the containers matched it.
+
+#### After a security fix: check for documents sanitized by an old build
+
+Some fixes cannot repair existing data by shipping an image, and the sanitizer change
+in 0.1.31 is one of them. Builds up to and including 0.1.30 stamped a chunk
+`sanitized` while leaving the raw text in the row, and the retrieval gate then served
+that text to chat. Upgrading the image does **not** rewrite those rows.
+
+So on any machine that ever ran 0.1.28, 0.1.29 or 0.1.30, run the audit after updating:
+
+```powershell
+pwsh -File C:\pacgate-ai-pr\scripts\audit-sanitized-chunk-egress.ps1
+```
+
+It is read-only and touches nothing. A clean machine prints:
+
+```
+== RESULT: no raw Tier-1 match found in a sanitized chunk ==
+```
+
+Any other result names the affected documents:
+
+```
+== RESULT: 106 raw match(es) inside SANITIZED chunks - LEAK PRESENT ==
+affected documents (up to 25):
+  matter=56723800-...  doc=820f4904-...  name=leak
+```
+
+For each affected document, re-run its sanitize job. The job now replaces the stale
+chunk text with the redacted rendering, which repairs the row and keeps retrieval
+coverage. There is a script that does this for every affected document in one pass:
+
+```powershell
+# See what would be repaired first - read-only, changes nothing.
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1 -WhatIf
+
+# Repair them.
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1
+```
+
+It logs in as `PACGATE_API_EMAIL` using `PACGATE_API_PASSWORD` from
+`deploy\client-bundle\.env`, so it needs real credentials - it exits 2 and says so
+rather than half-working if the password is still the placeholder.
+
+The manual equivalent, if you prefer one document at a time:
+
+```powershell
+$login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" `
+  -Method Post -ContentType 'application/json' `
+  -Body '{"email":"admin@pacgate-law.com","password":"<password>"}'
+$hdr = @{ Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/documents/<doc-id>/sanitize" `
+  -Method Post -Headers $hdr -ContentType 'application/json' -Body '{"data_level":"T3"}'
+```
+
+Then re-run the audit and confirm the document no longer appears. **Do not skip this
+step**: the repair reports what it did, the audit measures what is true, and on the first
+machine those two disagreed - twice - which is how two defects in the audit itself were
+found.
+
+**Order matters: update to 0.1.31 FIRST.** On 0.1.30 and earlier the sanitize job has no
+rewrite path at all, so re-running it changes nothing and the audit still reports every
+affected document.
+
+Two things worth knowing before starting:
+
+- **The repair re-embeds the document.** It rewrites every chunk, so a large document
+  makes one embedding call per chunk. Correct, but proportional to document size rather
+  than to how much actually leaked.
+- **Deleting the rows instead is also safe**, and faster, but loses the document's RAG
+  coverage until it is re-sanitized. Prefer the re-run.
+
+Neither route works on 0.1.30 or earlier: that code has no rewrite path at all, so
+re-running the job there changes nothing. Update first.
 
 ### Switch models
 

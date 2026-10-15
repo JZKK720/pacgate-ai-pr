@@ -75,9 +75,9 @@ else {
 # 2. Every BASE compose that wires the adapter also feeds it its required env.
 #
 # DISCOVERED, not hardcoded. A base file is one that defines the deer-flow
-# service AND wires the adapter's env (PACGATE_API_URL). Override files
-# (compose.e2e-override, compose.ocr-override) patch a base and legitimately do
-# not repeat it, so requiring the key there would fail on correct files.
+# service AND wires the adapter's env (PACGATE_API_URL). Override files (e.g.
+# compose.e2e-override) patch a base and legitimately do not repeat it, so
+# requiring the key there would fail on correct files.
 # ---------------------------------------------------------------------------
 $composes = Get-ChildItem $bundle -Filter 'compose*.yaml' | Sort-Object Name
 $wired = 0

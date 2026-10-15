@@ -1,7 +1,7 @@
 # Pacgate AI - 双 AIPC 部署手册
 
 > 在每台机器上克隆仓库，运行相同的安装步骤，两台机器即可完全运行 deer-flow 研究与 qm 协作。
-> 版本 0.1.23 - 2026-10-05
+> 版本 0.1.28 - 2026-10-13
 > 英文版本：[AIPC-DEPLOYMENT-HANDBOOK.md](AIPC-DEPLOYMENT-HANDBOOK.md)
 > 前置条件：Docker Desktop、Ollama、Node.js 24+。`install.ps1` 会拉取 `ollama-models.txt` 中列出的模型。
 
@@ -83,8 +83,15 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 - 两台 AIPC 上都运行 Ollama（`install.ps1` 会拉取它需要的模型）
 - 如果使用带 cloud 标签的 deepseek 模型，每台 AIPC 上完成 `ollama signin`
 - 两台 AIPC 上都安装 Node.js 24+（供 qm 使用）
-- PowerShell 7（`pwsh`）可选 —— 安装脚本优先使用它，缺失时回退到系统自带的
-  PowerShell 5.1；脚本本身与两种版本均兼容。
+- PowerShell 7（`pwsh`）可选 —— 安装脚本在系统自带的 PowerShell 5.1 上同样可以
+  运行。（在 2026-10-11 之前这一说法并不成立，且有两处问题：其一，只要附加了重定向，
+  PS 5.1 就会把*任何*写入 stderr 的原生命令变成终止性错误，而 `docker compose up -d`
+  每次运行都会把进度写入 stderr，导致安装脚本在引导租户和管理员之前就中断；其二，
+  管理员注册调用使用了 PS 7 专有的 `-SkipHttpErrorCheck` 参数，5.1 会在请求发出之前
+  就拒绝它，于是每一次 API 调用都静默失败。现在 `install.ps1`、`setup-qm.ps1` 和
+  `smoke-deer-flow-outputs.ps1` 中所有写 stderr 的调用都经由
+  `Invoke-WithNativeStderr`，所有 API 调用都经由 `Invoke-ApiRequest`。详见
+  `deploy/DEFECT-ps51-native-stderr.md`。）
 - **无需 `docker login ghcr.io`**——Pacgate 运行时镜像以**公开** GHCR 包发布
   （见 Stage 0）。
 
@@ -96,15 +103,15 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.25` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.25` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.25` | 已发布，公开。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.25` | 已发布，公开。 |
-| `ghcr.io/jzkk720/ocr-service:0.1.25` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。 |
+| `ghcr.io/jzkk720/pacgate-api:0.1.31` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.1.31` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.31` | 已发布，公开。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.31` | 已发布，公开。 |
+| `ghcr.io/jzkk720/ocr-service:0.1.31` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
-> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.23，见上表）匿名拉取均返回 HTTP 200。
+> `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.28，见上表）匿名拉取均返回 HTTP 200。
 
 **历史发布表（保留以追溯，已被取代）：**
 
@@ -257,7 +264,7 @@ curl http://localhost:8089/pacgate/health
 
 预期：八个容器全部运行（pacgate-db、pacgate-api、deer-flow、deer-flow-frontend、
 pacgate-mcp、ocr-service、openviking、nginx），`/version` 返回
-`{"version":"0.1.23","revision":"<git sha>"}`，且 `/pacgate/health` 返回 `ok`。
+`{"version":"0.1.28","revision":"<git sha>"}`，且 `/pacgate/health` 返回 `ok`。
 
 > **不要在 nginx 根路径探测 `/health`。** nginx 按设计将 `/` 路由到 deer-flow 前端，
 > `curl http://localhost:8089/health` 会返回前端的 404 页面——看似失败，实为正确路由。
@@ -495,7 +502,7 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 ### 核心栈
 
 - [ ] `docker compose -f compose.prod.yaml ps` 显示 8 个服务运行（含 openviking、pacgate-mcp、ocr-service、deer-flow-frontend）
-- [ ] `curl http://localhost:8089/version` 返回 0.1.23；`curl http://localhost:8089/pacgate/health` 返回 `ok`
+- [ ] `curl http://localhost:8089/version` 返回发布版本与 revision JSON；`curl http://localhost:8089/pacgate/health` 返回 `ok`
 - [ ] `curl http://localhost:1933/health` 返回健康 JSON
 - [ ] Postgres 有 `pacgate-law` 租户
 - [ ] 管理员用户可以在 `http://localhost:8089/api/auth/login` 登录
@@ -623,6 +630,75 @@ commit。它故意不回显 compose 中的 pin 或镜像 tag：那些记录的�
 
 在此之前，无法区分一台最新机器和一台落后的机器 — 从外部看两者完全相同，
 唯一的办法是 SSH 进去读 compose 文件，并寄希望于容器与之相符。
+
+#### 安全修复之后：检查由旧版本清理过的文档
+
+有些修复无法靠发布镜像来修复既有数据，0.1.31 的净化器改动就是如此。截至 0.1.30
+（含）的版本会把 chunk 标记为 `sanitized`，却把**原始文本留在行里**，随后检索门控
+又把这段文本送给了对话。升级镜像**不会**重写这些行。
+
+因此，凡运行过 0.1.28、0.1.29 或 0.1.30 的机器，更新后都应执行审计：
+
+```powershell
+pwsh -File C:\pacgate-ai-pr\scripts\audit-sanitized-chunk-egress.ps1
+```
+
+该脚本**只读**，不会改动任何内容。机器干净时输出：
+
+```
+== RESULT: no raw Tier-1 match found in a sanitized chunk ==
+```
+
+其他结果会列出受影响的文档：
+
+```
+== RESULT: 106 raw match(es) inside SANITIZED chunks - LEAK PRESENT ==
+affected documents (up to 25):
+  matter=56723800-...  doc=820f4904-...  name=leak
+```
+
+对每个受影响的文档，重新执行其净化任务。该任务现在会用脱敏后的渲染文本替换陈旧的
+chunk 内容，既修好该行，又保留检索覆盖。有一个脚本可以一次处理全部受影响的文档：
+
+```powershell
+# 先查看将要修复哪些文档 —— 只读，不做任何改动。
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1 -WhatIf
+
+# 执行修复。
+pwsh -File C:\pacgate-ai-pr\scripts\remediate-sanitized-chunk-egress.ps1
+```
+
+该脚本使用 `deploy\client-bundle\.env` 中的 `PACGATE_API_EMAIL` 与
+`PACGATE_API_PASSWORD` 登录，因此需要真实凭据 —— 若密码仍是占位符，它会以退出码 2
+明确报错，而不会半途而废。
+
+如需逐个文档手动处理，等价命令如下：
+
+```powershell
+$login = Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/auth/login" `
+  -Method Post -ContentType 'application/json' `
+  -Body '{"email":"admin@pacgate-law.com","password":"<密码>"}'
+$hdr = @{ Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod -Uri "http://localhost:8089/pacgate/api/documents/<文档-id>/sanitize" `
+  -Method Post -Headers $hdr -ContentType 'application/json' -Body '{"data_level":"T3"}'
+```
+
+随后再次运行审计，确认该文档不再出现。**不要跳过这一步**：修复脚本报告的是它做了什么，
+审计衡量的是事实如何；在第一台机器上二者曾出现分歧 —— 而且出现了两次 —— 正是由此发现了
+审计脚本自身的两个缺陷。
+
+**顺序很重要：必须先更新到 0.1.31。** 在 0.1.30 及更早版本中，净化任务根本没有重写路径，
+重新执行不会带来任何改变，审计仍会列出全部受影响的文档。
+
+开始前有两点值得了解：
+
+- **该修复会重新生成文档的嵌入向量。** 它会重写全部 chunk，因此大文档会按 chunk
+  数量产生嵌入调用。这是正确的，但代价与文档大小成正比，而非与实际泄漏量成正比。
+- **直接删除这些行同样安全**，且更快，但在重新净化之前会失去该文档的 RAG 覆盖。
+  优先选择重新执行净化任务。
+
+这两条路径在 0.1.30 及更早版本上**都无效**：那些代码根本没有重写路径，重新执行
+净化任务不会带来任何改变。请先更新版本。
 
 ### 切换模型
 

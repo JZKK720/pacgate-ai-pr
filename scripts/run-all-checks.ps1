@@ -30,54 +30,64 @@
 # no docs found - so the reading is consistent, and neither loses coverage.
 [CmdletBinding()]
 param(
-    # The suite needs an `ocr-service:local` image because several gates build their
-    # PDF fixtures INSIDE it (it is the container that has PIL). Nothing ever built
-    # that tag - it is a hand-made leftover on machines where it happens to exist -
-    # so on any other machine those gates exit 2 (CANNOT CHECK) and are silently
-    # skipped while the suite still reports success. That is the failure mode this
-    # header warns about: coverage that quietly disappears.
+    # Several gates build PDF fixtures INSIDE the ocr-service container (it is the
+    # container that has PIL), so the release ocr-service image must be present.
+    # Nothing ever built the invented `ocr-service:local` tag this used to require -
+    # it was a hand-made leftover - so on any other machine those gates exited 2
+    # (CANNOT CHECK) and were silently skipped while the suite still reported
+    # success. That is the failure mode this header warns about: coverage that
+    # quietly disappears.
     #
-    # So the suite CREATES it from the published image, which is the same code and
-    # is guaranteed present for the release under test. Tagging an already-pulled
-    # image is free. Pass -SkipOcrTag to opt out.
-    [switch]$SkipOcrTag
+    # The suite therefore PULLS the release tag and uses that reference DIRECTLY.
+    # It no longer invents `:local`: an unversioned tag could not prove which image
+    # the gates ran against, which is exactly the property a release test needs.
+    # Pass -SkipOcrPull to opt out (e.g. offline, with the image already local).
+    [switch]$SkipOcrPull
 )
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# Ensure `ocr-service:local` exists, derived from the workspace version rather than
-# hardcoded, so it follows the release.
-if (-not $SkipOcrTag) {
-    $haveLocal = @(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains 'ocr-service:local'
-    if ($haveLocal) {
-        Write-Host 'ocr-service:local present' -ForegroundColor DarkGray
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$script:OcrImage = Get-ReleaseOcrImage
+if (-not $script:OcrImage) {
+    Write-Host 'WARN: could not derive the release ocr-service image; fixture-dependent gates may CANNOT CHECK.' -ForegroundColor Yellow
+}
+
+# Make the release ocr-service image available for the fixture-building gates.
+if (-not $SkipOcrPull -and $script:OcrImage) {
+    $ocrState = Test-ReleaseOcrImagePresent -Reference $script:OcrImage
+    if ($ocrState -eq 'present') {
+        Write-Host "release ocr-service image ready: $script:OcrImage" -ForegroundColor DarkGray
+        docker pull $script:OcrImage 2>&1 | Out-Null
+    }
+    elseif ($ocrState -eq 'absent') {
+        # Release window: the bump has landed but the tag is not published yet.
+        # Say so explicitly rather than letting a dozen fixture gates each report a
+        # confusing CANNOT CHECK.
+        Write-Host "WARN: $script:OcrImage is not published yet (release window) - fixture-dependent gates will CANNOT CHECK." -ForegroundColor Yellow
+        Write-Host '      Publish the release tag and re-run for full coverage.' -ForegroundColor Yellow
     }
     else {
-        $toml = 'pacgate-ai/Cargo.toml'
-        $ver  = if (Test-Path $toml) {
-            (Select-String -Path $toml -Pattern '^version\s*=\s*"([0-9.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-        } else { '' }
-        $ref = "ghcr.io/jzkk720/ocr-service:$ver"
-        if (-not $ver) {
-            Write-Host 'WARN: cannot derive the version; fixture-dependent gates may CANNOT CHECK.' -ForegroundColor Yellow
-        }
-        elseif (-not (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains $ref)) {
-            Write-Host "pulling $ref (needed by the fixture-dependent gates)..." -ForegroundColor DarkGray
-            docker pull $ref 2>&1 | Out-Null
-        }
-        if ($ver -and (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains $ref)) {
-            docker tag $ref ocr-service:local 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { Write-Host "ocr-service:local tagged from $ref" -ForegroundColor DarkGray }
-            else { Write-Host 'WARN: could not create ocr-service:local.' -ForegroundColor Yellow }
-        }
+        Write-Host "WARN: could not confirm $script:OcrImage on GHCR (transport/registry) - continuing." -ForegroundColor Yellow
     }
 }
 
-$gates = @(
-    'scripts/test-install-render.ps1'
+# The release ocr-service image is derived above (Get-ReleaseOcrImage) and used
+# directly by the gates - see the param block. No `:local` alias is created: an
+# unversioned tag could not prove which image a gate ran against.
+
+$gates = @(    'scripts/test-install-render.ps1'
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
     'scripts/test-scheduled-update.ps1'
+    # The three install tests above all run the installer under `pwsh` with a
+    # stub docker that prints NOTHING. A stub that never writes to stderr cannot
+    # reproduce a stderr-termination defect, and pwsh does not have the defect.
+    # This gate covers the gap: it asserts no unguarded redirection survives in
+    # the client scripts, then extracts the REAL helper from install.ps1 by AST
+    # and proves it survives stderr under Windows PowerShell 5.1 - with a control
+    # that shows the bare form still dies, so the test cannot pass vacuously.
+    'scripts/test-ps51-native-stderr.ps1'
     'scripts/test-workflow-namespace.ps1'
     # The workflow LIBRARY must be served, not the 10 built-in Rust definitions.
     # This one is STATIC - it reads compose files, needs no containers, no
@@ -131,6 +141,18 @@ $gates = @(
     'scripts/test-qm-sandbox-fingerprint.ps1'
     'scripts/test-version-marker.ps1'
     'scripts/test-version-marker-against-image.ps1'
+    # Asserts the release TAG still identifies the PUBLISHED artifacts - that the
+    # tag is the recipe for what a client pulls. Nothing else could see this:
+    # preflight-release-tag.ps1 only checks BEFORE a release, and
+    # smoke-full-stack.ps1 only asserts /version carries some revision. On 0.1.28
+    # a workflow_dispatch published the OCR bake under an already-existing version
+    # number without moving the tag, so the tag pointed at a commit whose tree had
+    # no warm_up.py while every published image reported the bake commit. The
+    # published images were correct; the tag was wrong, and re-deriving the
+    # release from its own tag would have reproduced the bake-less image.
+    # Self-contained: reads the GHCR config blobs and the git history. No docker,
+    # no running stack, so it belongs here rather than in $liveStackGates.
+    'scripts/test-release-provenance.ps1'
     # The Rust layer was entirely un-gated before 2026-09-26: cargo test and
     # cargo clippy ran nowhere in CI or run-all-checks. That is why a silent
     # recall miss shipped in four detectors. Scope is deliberately -p
@@ -219,6 +241,42 @@ $gates = @(
     # safe in the gate list. Negative-tested against both the stale tag and a
     # main.rs that bypasses the overrides.
     'scripts/test-model-roster-consistency.ps1'
+    # Baked-weights integrity. 0.1.28 bakes the PP-OCRv4 det/rec/cls weights into
+    # the ocr-service image, but both compose files went on mounting a
+    # `paddleocr-models` volume over /root/.paddleocr - and a mount point SHADOWS
+    # the image's directory, so anything the volume lacks is fetched from
+    # paddleocr.bj.bcebos.com again. That is the CDN dependency the bake exists to
+    # delete, and the cold path measured 269.9s against a 300s client timeout.
+    # The volume was being defended as "harmless", which is true only for a volume
+    # Docker has just created; measured on this box, a foreign volume made the
+    # baked tree invisible. Both the mount and the now-unused volume declaration
+    # were removed, and this gate asserts the PROPERTY that nothing in the tree
+    # shadows the baked path. It also pins the two ways the bake could rot
+    # silently: a warm_up.py that stops matching app.py's construction, and a
+    # smoke lane flipped back to REQUIRING the mount. Red-checked by
+    # reintroducing each of the three.
+    #
+    # STATIC - reads the Dockerfile, every compose in deploy/, and the smoke
+    # script - so it needs no containers and is safe in the gate list. The live
+    # counterpart is smoke-full-stack.ps1 lane 6.
+    'scripts/test-ocr-bake-integrity.ps1'
+
+    # Closes the loop on the two findings AUDIT-2026-10-14-v0.1.29.md recorded as
+    # "found and recorded, not fixed", which then shipped for ten days: no compose
+    # declared a healthcheck, and nothing armed the /initialize setup-token gate.
+    #
+    # Both were fixed by hand on 2026-10-14, and this gate is what keeps them fixed.
+    # It is static by default (reads the rendered compose config; no containers
+    # needed), so it is safe here. Pass -Live to also execute every rendered
+    # healthcheck against its container.
+    #
+    # It earned its place immediately: its first run caught that a `git checkout --`
+    # had silently reverted the setup-token edit, leaving a commit whose message
+    # claimed a fix it did not contain.
+    #
+    # ASCII-ONLY by design, because the client AIPC has only Windows PowerShell 5.1
+    # and 5.1 cannot parse a BOM-less script holding non-ASCII literals.
+    'scripts/test-compose-healthchecks.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
@@ -259,7 +317,90 @@ $liveStackGates = @(
     # leave every other gate green. It needs the stack up (exit 2 when not), and it
     # creates and deletes a probe account to prove the boundary end to end.
     'scripts/test-auth-provisioning-gate.ps1'
+    # The ONLY end-to-end sanitizer proof: real OCR extraction of a document with a
+    # national ID and a phone number, then the full lifecycle - sanitize verdict,
+    # redaction, sealed mapping, chunk state, the download egress gate, restore
+    # refused to an attorney but allowed to an admin, and the ledger + audit rows.
+    # Registered 2026-10-13. The script's own comment records that it was NOT in
+    # this list, "which is why the rot went unnoticed": it had hardcoded the compose
+    # network 'client-bundle_default', which the `name: pacgate-ai-bundle` pin had
+    # renamed, so it died at `docker run` and reported eleven cascading FAILs that
+    # looked like sanitizer defects. It now derives the network from the running
+    # container, and exits 2 when the stack is not up.
+    'scripts/test-sanitizer-e2e.ps1'
+    # The picker + generation DELIVERY gate, registered 2026-10-13 alongside the
+    # fix it protects. Nothing tested either surface, which is why the 0.1.27
+    # defect shipped: Next.js `experimental.proxyTimeout` defaults to 30 s, so
+    # every agent run the frontend proxied was cut mid-flight while the run kept
+    # executing - and it presented as "the model cannot generate". The static half
+    # asserts the timeout chain stays configured (the defect WAS a missing config
+    # value) and that the picker roster cannot drift from ollama-models.txt; the
+    # live half drives a REAL generation through nginx and requires an actual
+    # assistant reply, not just HTTP 200. See deploy/DEFECT-frontend-proxy-timeout.md.
+    'scripts/test-model-picker-e2e.ps1'
+    # The DOCUMENT GENERATION lane, registered 2026-10-13. The picker gate above
+    # proves a generation is DELIVERED; this one proves a workflow actually
+    # PRODUCES a document. They are different failures: the picker defect lost the
+    # reply in transit, while this lane can break in the workflow loader, the
+    # persona composer, the AgentLoop, the LLM gateway, the docx tools, the matter
+    # store, or the tenant storage root - and every one of those layers had a
+    # separate defect this month.
+    #
+    # It asserts the whole chain and not the HTTP status: the execute call names
+    # the workflow, a step reports generate_docx in tools_used, the run names a
+    # document id, that id resolves through the API, the file EXISTS on disk at
+    # DATA_DIR/storage_path, it is a real OOXML package with word/document.xml, and
+    # the body is non-empty CJK. The last one is not decoration - the 0.1.26 defect
+    # was a byte-slicing panic on Chinese text, so "HTTP 200" would have passed
+    # while the product was broken.
+    #
+    # The workflow id is a Chinese overview-table workflow: short, and it
+    # exercises the CJK round trip end to end.
+    # The FORMAT COVERAGE lane, registered 2026-10-14. This is a legal workspace, so
+    # "we can read and write every format we accept" is a compliance property, not a
+    # feature. Coverage was previously split three ways with holes between them:
+    # text-native-sanitize proved extraction+sanitization, ocr-extraction proved the
+    # raster lane, document-generation proved DOCX only - and NOTHING proved
+    # conversion for any format, or that the format lists agree with each other.
+    #
+    # It walks every accepted format through upload -> extract -> sanitize -> convert,
+    # and - the part that had never been asserted anywhere - DOWNLOADS the document and
+    # inspects the bytes. That last step is how the CRITICAL finding in §EGRESS was
+    # made: after a `verdict=pass` sanitization, download still served the ORIGINAL file
+    # with the raw identifiers, for all seven formats, because the sanitizer persists a
+    # state flag rather than a sanitized artifact. See
+    # deploy/DEFECT-sanitized-content-not-served.md.
+    #
+    # Two PDF kinds are covered deliberately: an image-only scan (which must go through
+    # OCR) and a PDF with a real text layer (which the converter can read). They behave
+    # differently, and an image-only PDF makes markitdown return ok=true with 0 chars.
+    # The DOCUMENT GENERATION lane, registered 2026-10-13. The picker gate above
+    # proves a generation is DELIVERED; this one proves a workflow actually
+    # PRODUCES a document. They are different failures: the picker defect lost the
+    # reply in transit, while this lane can break in the workflow loader, the persona
+    # composer, the AgentLoop, the LLM gateway, the docx tools, the matter store, or
+    # the tenant storage root - and every one of those layers had a separate defect
+    # this month. See the header of that script for the full assertion list, and
+    # deploy/DEFECT-agent-loop-max-rounds.md for the round-cap behaviour it pins.
+    'scripts/test-document-generation-e2e.ps1'
+    # officecli, registered 2026-10-14. It is enabled in deer-flow's extension config
+    # and smoke counted it as one of "3 MCP servers enabled" - which was its ENTIRE
+    # coverage. Counting a tool is not testing it, and this is the richest document tool
+    # in the stack: its own description instructs the model to validate, check for
+    # leftover placeholders and screenshot before delivering.
+    #
+    # This drives the real MCP stdio protocol (initialize -> tools/list -> tools/call)
+    # and asserts a document it creates and edits: the tool is advertised WITH its
+    # delivery-gate instructions, create/add/save produce a real OOXML file on disk,
+    # validate reports zero errors, and the added text reads back out. That last
+    # assertion is what separates "save returned success" from "the edit landed".
+    #
+    # Container-only: officecli exists only in deer-flow-pacgate, so it exits 2 when
+    # that image is not present.
+    'scripts/test-officecli-mcp.ps1'
+    'scripts/test-format-coverage-e2e.ps1'
 )
+
 
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
@@ -269,6 +410,12 @@ $measurements = @(
     # stack up and credentials - it exits 2 for "could not check" when either is
     # missing, and exit 2 must never be read as a failure of the CODE.
     'scripts/test-workflow-library-served.ps1'
+    # Counts rows already mislabeled `sanitized` that still carry raw PII, and
+    # names the affected documents. A MEASUREMENT rather than a gate because the
+    # code fix is forward-only: an affected row needs a human to re-sanitize or
+    # delete it, and no commit can turn this green. See
+    # deploy/DEFECT-sanitized-content-not-served.md.
+    'scripts/audit-sanitized-chunk-egress.ps1'
 )
 
 $failed = @()
@@ -291,6 +438,27 @@ foreach ($s in $gates) {
     $tail = (($out | Where-Object { $_ -match '\d+ passed|ALL .*PASSED|RESULT|members present' } | Select-Object -Last 2) -join ' ; ')
     if ($code -eq 0) {
         Write-Host ("  PASS {0,-46} {1}" -f (Split-Path $s -Leaf), $tail) -ForegroundColor Green
+    }
+    elseif ($code -eq 2) {
+        # Exit 2 = CANNOT CHECK, the same contract the live-stack loop below
+        # honours. This loop did NOT honour it, which contradicted this file's own
+        # header: it already documents that test-workflow-compose-wiring.ps1 and
+        # test-handoff-command-safety.ps1 exit 2 for "environment is wrong", yet a
+        # red run was produced anyway. That is red-for-the-wrong-reason on a clean
+        # machine, the exact thing the header warns teaches people to ignore the
+        # suite.
+        #
+        # It is also required by the release window. A version bump names an image
+        # that does not exist until the tag finishes building, so
+        # test-version-marker-against-image.ps1 has nothing to assert and exits 2
+        # (see scripts/lib/Release-ImageState.ps1). Counted as a failure, that
+        # turned five gates red on 0.1.28 with messages that all read as product
+        # faults; none of them were one.
+        #
+        # This is a carve-out on the EXIT CODE only, never on an assertion: a real
+        # failure still exits 1 and is still red, and a skip is always printed
+        # rather than absorbed.
+        Write-Host ("  SKIP {0,-46} CANNOT CHECK (exit 2) {1}" -f (Split-Path $s -Leaf), $tail) -ForegroundColor Yellow
     }
     else {
         Write-Host ("  FAIL {0,-46} exit={1} {2}" -f (Split-Path $s -Leaf), $code, $tail) -ForegroundColor Red

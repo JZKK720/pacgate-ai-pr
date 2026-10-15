@@ -572,6 +572,20 @@ pub struct AgentTurnResult {
     pub content: Option<String>,
     pub citations: Vec<CitationRef>,
     pub tool_calls_made: Vec<String>,
+    /// True when the tool-call round cap stopped the loop before the model
+    /// produced a closing message.
+    ///
+    /// This is deliberately a FLAG rather than an error, and the distinction is
+    /// the whole point. The cap exists to stop a runaway loop, not to declare the
+    /// turn worthless: at the cap the tools have already run and their side
+    /// effects are committed, so everything the turn produced is real. Reporting
+    /// the cap as `Err` discarded all of it and surfaced as
+    /// `{"error":{"code":"internal_error", ...}}` - the caller saw a 500 even
+    /// though the document it asked for had been created. Measured 2026-10-13:
+    /// 1 run in 3 hit the cap with `has_output=true` and a 3KB .docx already on
+    /// disk. See deploy/DEFECT-agent-loop-max-rounds.md.
+    #[serde(default)]
+    pub max_rounds_reached: bool,
 }
 
 pub struct AgentLoop {
@@ -643,6 +657,10 @@ impl AgentLoop {
         });
 
         let mut tool_calls_made = Vec::new();
+        // Signature of the previous round's calls, to detect a runaway regeneration
+        // loop. See the `identical_rounds` handling below.
+        let mut last_round_sig: Option<String> = None;
+        let mut identical_rounds = 0u32;
 
         for round in 0..self.max_rounds {
             let (content, tool_calls) = llm.complete(messages.clone(), tools.clone()).await?;
@@ -655,7 +673,47 @@ impl AgentLoop {
                     content,
                     citations,
                     tool_calls_made,
+                    max_rounds_reached: false,
                 });
+            }
+
+            // ── Runaway regeneration detection ────────────────────────────────
+            //
+            // Measured 2026-10-14 on the document-generation workflow: the model
+            // called `generate_docx` NINE times in one turn. `tools_used` from a
+            // single step:
+            //   list_documents, generate_docx, generate_docx, generate_docx,
+            //   generate_docx, generate_docx, generate_docx, generate_docx,
+            //   read_document, generate_docx
+            // Each call SUCCEEDS - it really does write another document - so nothing
+            // errors, the loop simply never converges and the round cap stops it with
+            // no closing message. 5 of 8 runs ended that way.
+            //
+            // The cap is the wrong place to fix that: raising it buys more duplicate
+            // documents, not an answer. A run that repeats the SAME tool with the SAME
+            // arguments is not making progress, so stop dispatching and ask for the
+            // answer instead. Two consecutive identical rounds is enough - a legitimate
+            // workflow does not call an identical tool+arguments pair twice in a row.
+            let sig = tool_calls
+                .iter()
+                .map(|tc| format!("{}:{}", tc.tool_name, tc.arguments))
+                .collect::<Vec<_>>()
+                .join("|");
+            if last_round_sig.as_deref() == Some(sig.as_str()) {
+                identical_rounds += 1;
+            } else {
+                identical_rounds = 0;
+            }
+            last_round_sig = Some(sig);
+
+            if identical_rounds >= 1 {
+                tracing::warn!(
+                    round,
+                    tools = tool_calls.len(),
+                    "the model repeated an identical tool call; asking for the final \
+                     answer instead of dispatching it again"
+                );
+                break;
             }
 
             info!(round, n_tools = tool_calls.len(), "executing tool calls");
@@ -702,10 +760,41 @@ impl AgentLoop {
             }
         }
 
-        Err(PacgateError::LlmError(format!(
-            "agent loop exceeded max_rounds={}",
-            self.max_rounds
-        )))
+        // The loop ended without the model producing a closing message - either the
+        // round cap was reached, or identical-call detection broke out of it.
+        //
+        // Ask for the answer ONE more time with the tools withheld. This is the
+        // difference between "delivered but empty" and "delivered": measured
+        // 2026-10-14, a run that hit the cap returned HTTP 200 with
+        // `content: null` and `final_content: null` while the document sat on disk,
+        // which is a worse outcome than the 500 it replaced because nothing is
+        // visibly wrong.
+        //
+        // With `tools` empty the model cannot call another tool, so it must answer
+        // in text. A failure here is NOT fatal: the turn's real work is already done
+        // and its tool log is intact, so the error is logged and the turn is still
+        // returned with the flag set.
+        let closing = match llm.complete(messages.clone(), Vec::new()).await {
+            Ok((content, _)) => content,
+            Err(e) => {
+                tracing::warn!(error = %e, "the forced final-answer pass failed; returning the turn without a closing message");
+                None
+            }
+        };
+
+        tracing::warn!(
+            max_rounds = self.max_rounds,
+            tools = tool_calls_made.len(),
+            answered = closing.is_some(),
+            "agent loop stopped before a natural close; returning the turn produced so far"
+        );
+        Ok(AgentTurnResult {
+            message_id: MessageId::new(),
+            content: closing,
+            citations: Vec::new(),
+            tool_calls_made,
+            max_rounds_reached: true,
+        })
     }
 
     fn convert_history(&self, history: &[AgentMessage]) -> Vec<ChatMessage> {
@@ -834,5 +923,347 @@ mod tests {
 
         assert!(prompt.contains("CURRENT MATTER CONTEXT"));
         assert!(prompt.contains(&matter_id.as_str()));
+    }
+
+    // ── The max_rounds defect ────────────────────────────────────────────────
+    //
+    // The regression this pins is NOT "the loop stops at the cap" - stopping is
+    // the cap's job. It is that hitting the cap used to return
+    // `Err(LlmError("agent loop exceeded max_rounds=10"))`, which threw away a turn
+    // whose tools had already run and whose side effects were committed. Measured
+    // 2026-10-13: 1 run in 3 answered
+    //   {"error":{"code":"internal_error","message":"LLM error: agent loop
+    //   exceeded max_rounds=10"}}
+    // while the log for the same request said `has_output=true`, and the requested
+    // .docx was already on disk. See deploy/DEFECT-agent-loop-max-rounds.md.
+    //
+    // The test drives a REAL AgentLoop against a REAL local HTTP server that always
+    // asks for one more tool call, so it exercises the actual loop, the actual
+    // OpenAI-compatible parse, and the actual cap. A unit test over a hand-built
+    // struct would have passed while the product still returned 500.
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Accept exactly one connection and answer with a tool call, forever.
+    /// Returns (base_url, request_counter).
+    fn spawn_tool_calling_server() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let counter_inner = hits.clone();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                // Read the request headers + body so reqwest is not left hanging.
+                let mut buf = vec![0u8; 65536];
+                let _ = stream.read(&mut buf);
+
+                counter.fetch_add(1, Ordering::SeqCst);
+
+                // A well-formed OpenAI-compatible reply whose ONLY content is a
+                // tool call. The model never produces a closing message, which is
+                // exactly the state that used to be reported as an error.
+                //
+                // The arguments are made DISTINCT per request on purpose. The loop
+                // now detects a repeated identical tool call and stops early, so a
+                // mock that answered identically every time would exercise that path
+                // instead of the round cap this test is about - and would silently
+                // start asserting a different thing.
+                let n = counter_inner.load(Ordering::SeqCst);
+                let body = format!(
+                    r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"call_{n}","type":"function","function":{{"name":"list_documents","arguments":"{{\"nonce\":{n}}}"}}}}]}}}}]}}"#
+                );
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        (format!("http://127.0.0.1:{port}"), hits)
+    }
+
+    fn test_router(base_url: &str) -> LlmRouter {
+        use pacgate_core::{LlmProvider, LlmTier, ModelConfig};
+        let cfg = |tier| ModelConfig {
+            tier,
+            provider: LlmProvider::Ollama {
+                base_url: base_url.to_string(),
+            },
+            model_name: "mock".to_string(),
+            max_tokens: 128,
+            temperature: 0.1,
+        };
+        LlmRouter::new(
+            vec![
+                cfg(LlmTier::Main),
+                cfg(LlmTier::Mid),
+                cfg(LlmTier::Low),
+            ],
+            std::collections::HashMap::new(),
+        )
+    }
+
+    fn dispatcher() -> Arc<ToolDispatcher> {
+        // The loop must actually dispatch, because the whole point is that the
+        // tools RAN. A dispatcher that refused would test a different path.
+        //
+        // The stores are deliberately trivial, UNREACHABLE doubles: every call
+        // returns an error, so if a test ever depends on real document behaviour
+        // it fails loudly rather than silently passing against a fake. The tool
+        // call itself is a `list_documents`, and the assertion is on the loop's
+        // bookkeeping (`tool_calls_made`), which is recorded BEFORE the tool runs.
+        struct NoStore;
+        #[async_trait::async_trait]
+        impl pacgate_core::DocumentStore for NoStore {
+            async fn read(&self, _: &DocumentId) -> Result<String> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn read_version(&self, _: &DocumentId, _: u32) -> Result<String> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn list_for_matter(&self, _: &MatterId) -> Result<Vec<pacgate_core::Document>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn find_in(&self, _: &DocumentId, _: &str) -> Result<Vec<pacgate_core::FindResult>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn create_from_structure(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: &serde_json::Value,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn apply_edit(
+                &self,
+                _: &DocumentId,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+            async fn replicate(&self, _: &DocumentId, _: u32) -> Result<Vec<pacgate_core::Document>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::WorkflowStore for NoStore {
+            async fn get_prompt(&self, _: &str) -> Result<String> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::KbStore for NoStore {
+            async fn search(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: u32,
+            ) -> Result<Vec<pacgate_core::KbChunk>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+        }
+        Arc::new(ToolDispatcher::new(
+            Arc::new(NoStore),
+            Arc::new(NoStore),
+            Arc::new(NoStore),
+        ))
+    }
+
+    #[tokio::test]
+    async fn hitting_max_rounds_returns_the_turn_instead_of_discarding_it() {
+        let (base, _hits) = spawn_tool_calling_server();
+        let router = Arc::new(test_router(&base));
+
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            // Small so the test is fast; the behaviour under test is the same at 10.
+            max_rounds: 3,
+        };
+
+        let result = agent
+            .run_with_router(&router, vec![], "do the thing", None, None)
+            .await;
+
+        let turn = result.expect(
+            "hitting the round cap must NOT be an error - the turn's tools already ran \
+             and its side effects are committed; discarding them is the reported defect",
+        );
+        assert!(
+            turn.max_rounds_reached,
+            "the caller must be able to tell the cap was hit"
+        );
+        assert_eq!(
+            turn.tool_calls_made.len(),
+            3,
+            "every dispatched tool call must still be reported"
+        );
+        assert!(
+            turn.tool_calls_made.iter().all(|t| t == "list_documents"),
+            "the tool log must name the tools that actually ran"
+        );
+    }
+
+    // ── Runaway regeneration detection ────────────────────────────────────────
+    //
+    // The round cap fix (above) turned a 500 into a delivered turn, but measurement
+    // then showed the model looping: NINE `generate_docx` calls in one turn, each of
+    // which really writes another document, until the cap stopped it with no closing
+    // message. 5 of 8 runs returned HTTP 200 with `content: null`.
+    //
+    // These two tests pin the two halves of the answer: a repeated identical call
+    // stops the loop, and a distinct call does not - so the detector cannot be
+    // satisfied by something that just counts rounds.
+    fn spawn_server_bodies(bodies: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut served = 0usize;
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = vec![0u8; 65536];
+                let _ = stream.read(&mut buf);
+                // Past the last scripted reply, keep answering with the last one.
+                let body = bodies
+                    .get(served)
+                    .or_else(|| bodies.last())
+                    .cloned()
+                    .unwrap_or_else(|| r#"{"choices":[{"message":{"role":"assistant","content":"done"}}]}"#.to_string());
+                served += 1;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    fn tool_call_body(nonce: &str) -> String {
+        format!(
+            r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"c","type":"function","function":{{"name":"list_documents","arguments":"{{\"nonce\":\"{nonce}\"}}"}}}}]}}}}]}}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn a_repeated_identical_tool_call_stops_the_loop_instead_of_burning_the_cap() {
+        // The model asks for the SAME call every round. The loop must stop well
+        // before max_rounds, and must still return the turn.
+        let base = spawn_server_bodies(vec![tool_call_body("same"), tool_call_body("same")]);
+        let router = Arc::new(test_router(&base));
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            max_rounds: 50,
+        };
+
+        let turn = agent
+            .run_with_router(&router, vec![], "loop please", None, None)
+            .await
+            .expect("a looping model must not become an error");
+
+        assert!(turn.max_rounds_reached, "the caller must know the loop was cut short");
+        assert!(
+            turn.tool_calls_made.len() < 5,
+            "identical calls must stop the loop early, not consume the whole cap; made {} calls",
+            turn.tool_calls_made.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn distinct_tool_calls_are_not_mistaken_for_a_loop() {
+        // A model making genuine progress must NOT be cut off. If this fails, the
+        // detector is counting rounds rather than detecting repetition.
+        let base = spawn_server_bodies(vec![
+            tool_call_body("a"),
+            tool_call_body("b"),
+            tool_call_body("c"),
+            r#"{"choices":[{"message":{"role":"assistant","content":"finished"}}]}"#.to_string(),
+        ]);
+        let router = Arc::new(test_router(&base));
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            max_rounds: 50,
+        };
+
+        let turn = agent
+            .run_with_router(&router, vec![], "make progress", None, None)
+            .await
+            .expect("a progressing model must succeed");
+
+        assert!(!turn.max_rounds_reached, "distinct calls are not a loop");
+        assert_eq!(turn.content.as_deref(), Some("finished"));
+        assert_eq!(turn.tool_calls_made.len(), 3, "all three calls should have run");
+    }
+
+    #[tokio::test]
+    async fn a_normal_turn_reports_that_the_cap_was_not_hit() {
+        // The converse must hold, or the flag is useless: a run that closes
+        // normally has to say so, otherwise every caller would have to assume the
+        // worst and the flag would carry no information.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = vec![0u8; 65536];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"choices":[{"message":{"role":"assistant","content":"PONG"}}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let base = format!("http://127.0.0.1:{port}");
+        let router = Arc::new(test_router(&base));
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            max_rounds: 3,
+        };
+
+        let turn = agent
+            .run_with_router(&router, vec![], "say PONG", None, None)
+            .await
+            .expect("a normal turn must succeed");
+
+        assert!(!turn.max_rounds_reached, "the cap was not hit");
+        assert_eq!(turn.content.as_deref(), Some("PONG"));
+        assert!(turn.tool_calls_made.is_empty());
     }
 }

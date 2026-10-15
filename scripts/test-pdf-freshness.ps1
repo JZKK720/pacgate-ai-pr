@@ -22,13 +22,31 @@
 #
 # A NOTE ON WHAT A TIMESTAMP CAN AND CANNOT TELL YOU
 #
-# This compares mtimes. That is a proxy: a PDF can be newer than its source and
-# still be a stale render (touch it, or edit the md without re-rendering after).
-# It cannot PROVE freshness, and this gate does not claim to. What it does catch
-# is the actual observed failure: a source edited weeks after the render. A
-# false pass requires someone to update a timestamp without re-rendering, which
-# is not a thing that happens by accident; the false NEGATIVE (a stale PDF with
-# an older md) is already covered by the git history of the pair.
+# FRESHNESS IS MEASURED IN GIT, NOT ON THE FILESYSTEM.
+#
+# Section 1 used to compare LastWriteTime, and that was blind to the exact
+# failure this gate exists for. Proven on a pristine clone at the revision where
+# the Chinese handbook WAS stale (2565018^):
+#
+#   PDF last touched by commit 6b38de1 (2026-10-06)
+#   MD  last touched by commit b3ba91e (2026-10-09)   <- edited AFTER the render
+#
+#   commit-time rule -> STALE   (correct)
+#   mtime rule       -> FRESH   (blind)
+#
+# Git checks every file out at the same instant, so in a fresh clone - which is
+# precisely what install.ps1 produces on a client machine - both mtimes are
+# equal and the source never appears newer. A hand re-render has the same effect
+# the other way: it stamps the PDF newer, so an md edit that landed BEFORE it is
+# invisible too. The mtime rule could only ever see a source edited in the
+# developer's own working tree, never one that shipped stale.
+#
+# So the comparison is between the two files' last-commit times. A working-tree
+# mtime that is nevertheless newer than the render is ALSO reported - it is the
+# only signal available for an edit that has not been committed yet - but on a
+# fresh clone every mtime is equal, so it cannot fire there and cannot cause a
+# false positive on a client machine. Either rule firing means the source moved
+# ahead of the render.
 #
 # SCOPE: only PDFs that HAVE a tracked .md source are checked. The 75 PDFs under
 # scope-assets/ with no source are third-party research and contracts - inputs,
@@ -39,13 +57,33 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
+# Non-ASCII paths must survive the trip out of git or this gate is doubly blind.
+#
+# Two independent things mangle them, and BOTH have to be handled:
+#   1. git quotes paths containing non-ASCII bytes by default (core.quotePath),
+#      handing back "\351\241\271...pdf" WITH the surrounding double quotes as part
+#      of the string. [IO.Path]::GetFileName throws "Illegal characters in path"
+#      on that, and Test-Path cannot resolve it.
+#   2. This machine's console is gb2312, so even unquoted UTF-8 bytes are decoded
+#      wrong on the way in. Disabling quotePath alone does NOT fix it.
+#
+# Measured on the 98 tracked PDFs, Windows PowerShell 5.1:
+#     git ls-files                       -> 18 quoted, 18 GetFileName throws, 80 resolve
+#     + core.quotePath=false             ->  0 quoted,  0 throws,        80 resolve
+#     + Console.OutputEncoding = UTF-8   ->  0 quoted,  0 throws,        98 resolve
+#
+# So without both, 18 of 98 PDFs were never checked at all - silently skipped by
+# section 1 and a hard crash in section 2 - and that was true on PowerShell 7 too.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+$GitPathArgs = @('-c', 'core.quotePath=false')
+
 $script:failures = 0
 function Fail($m) { Write-Host "  FAIL  $m" -ForegroundColor Red; $script:failures++ }
 function Pass($m) { Write-Host "  PASS  $m" -ForegroundColor Green }
 
 Write-Host '=== rendered PDFs vs their sources ===' -ForegroundColor Cyan
 
-$tracked = @(git ls-files '*.pdf')
+$tracked = @(git @GitPathArgs ls-files '*.pdf')
 if ($tracked.Count -eq 0) {
     Write-Host '  exit 2 - git ls-files returned no PDFs; cannot check' -ForegroundColor Yellow
     exit 2
@@ -55,7 +93,23 @@ if ($tracked.Count -eq 0) {
 # 1. Every PDF with a tracked .md sibling must be at least as new as it.
 # ---------------------------------------------------------------------------
 $mdSet = @{}
-foreach ($m in (git ls-files '*.md')) { $mdSet[$m.ToLower()] = $true }
+foreach ($m in (git @GitPathArgs ls-files '*.md')) { $mdSet[$m.ToLower()] = $true }
+
+# Last-commit time per path, resolved ONCE. A path with no commit (untracked, or
+# new in the working tree) gets 0, which reads as "older than anything" - that is
+# the conservative direction here: a rendered PDF that has never been committed
+# is not a shipped artifact, and a source that has never been committed produces
+# a mtime signal instead.
+$commitTime = @{}
+function Get-CommitTime([string]$path) {
+    if ($commitTime.ContainsKey($path)) { return $commitTime[$path] }
+    $ct = 0
+    # --format=%ct prints nothing for an untracked path; git log exits 0 either way.
+    $line = (& git @GitPathArgs log -1 --format=%ct -- $path 2>$null | Select-Object -First 1)
+    if ($line -and $line.Trim() -match '^\d+$') { $ct = [int64]$line.Trim() }
+    $commitTime[$path] = $ct
+    return $ct
+}
 
 $stale = @()
 $checked = 0
@@ -65,11 +119,26 @@ foreach ($pdf in $tracked) {
     if (-not (Test-Path $pdf) -or -not (Test-Path $src)) { continue }
     $checked++
 
-    $pdfTime = (Get-Item $pdf).LastWriteTime
-    $mdTime = (Get-Item $src).LastWriteTime
-    if ($mdTime -gt $pdfTime) {
-        $days = [int]($mdTime - $pdfTime).TotalDays
-        $stale += [pscustomobject]@{ Pdf = $pdf; Src = $src; Days = $days }
+    # Committed freshness: did the source move ahead of the render in history?
+    $pdfCt = Get-CommitTime $pdf
+    $mdCt = Get-CommitTime $src
+    $byCommit = ($mdCt -gt $pdfCt)
+
+    # Working-tree freshness: an uncommitted md edit that also changes mtime. On a
+    # fresh clone all mtimes are the checkout time, so this cannot fire there.
+    $pdfMt = (Get-Item $pdf).LastWriteTimeUtc
+    $mdMt = (Get-Item $src).LastWriteTimeUtc
+    $byMtime = ($mdMt -gt $pdfMt)
+
+    if ($byCommit -or $byMtime) {
+        $why = if ($byCommit) { 'commit history' } else { 'working-tree mtime' }
+        $days = 0
+        if ($byCommit) { $days = [int](($mdCt - $pdfCt) / 86400) }
+        $stale += [pscustomobject]@{
+            Pdf = $pdf; Src = $src; Days = $days; Why = $why
+            MdDate = ([datetimeoffset]::FromUnixTimeSeconds($mdCt)).ToString('yyyy-MM-dd')
+            PdfDate = ([datetimeoffset]::FromUnixTimeSeconds($pdfCt)).ToString('yyyy-MM-dd')
+        }
     }
 }
 
@@ -77,11 +146,16 @@ if ($checked -eq 0) {
     Fail 'no PDF had a tracked .md source - either the sources were deleted or this scan is broken'
 }
 elseif ($stale.Count -eq 0) {
-    Pass "all $checked rendered PDFs are at least as new as their sources"
+    Pass "all $checked rendered PDFs are at least as new as their sources (by commit history)"
 }
 else {
     foreach ($s in ($stale | Sort-Object Days -Descending)) {
-        Fail "$($s.Pdf) is STALE by $($s.Days)d - $($s.Src) was edited after it was rendered"
+        if ($s.Why -eq 'commit history') {
+            Fail "$($s.Pdf) is STALE - $($s.Src) last changed $($s.MdDate), the render $($s.PdfDate) ($($s.Days)d earlier)"
+        }
+        else {
+            Fail "$($s.Pdf) is STALE - $($s.Src) has an uncommitted edit newer than the render (working-tree mtime)"
+        }
     }
     Write-Host '        Re-render:  .venv\Scripts\python.exe safe_markdown_to_pdf.py <src.md> <out.pdf>' -ForegroundColor Gray
 }
@@ -125,7 +199,7 @@ else {
     # check asserted nothing and the truncation mutation passed unnoticed. The
     # index therefore holds EVERY origin per filename.
     $headBlobs = @{}
-    foreach ($line in (git ls-tree -r HEAD)) {
+    foreach ($line in (git @GitPathArgs ls-tree -r HEAD)) {
         if ($line -match '^\d+\s+blob\s+([0-9a-f]+)\t(.+)$') {
             $headBlobs[$Matches[2]] = $Matches[1]
         }

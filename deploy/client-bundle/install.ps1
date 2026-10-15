@@ -38,6 +38,88 @@ function Get-QmPowerShell {
 }
 $QmPowerShell = Get-QmPowerShell
 
+# Run a native command that may write to stderr WITHOUT the Windows built-in
+# PowerShell 5.1 turning that stderr into a terminating error.
+#
+# THE DEFECT THIS EXISTS FOR (measured on this box, not theorised):
+#   This script sets $ErrorActionPreference = "Stop" (above). On PowerShell 5.1,
+#   ANY native command that writes to stderr becomes a TERMINATING error when a
+#   redirection is attached - `2>&1`, `2>$null` and `*>` are ALL affected.
+#   `docker compose up -d` writes its progress ("Volume ... Creating",
+#   "Container ... Running") to stderr on EVERY run, so the installer died at
+#   the compose-up step with a NativeCommandError and never reached the tenant
+#   or admin bootstrap. PowerShell 7 does not do this, which is why a dev box
+#   running pwsh never saw it and a client AIPC running the built-in shell did.
+#
+#   try/catch does NOT help: the error is caught, but the remainder of the try
+#   block is skipped and any assignment in flight is silently lost. Verified.
+#
+# WHAT THIS DOES: lowers the preference to "Continue" for the duration of the
+#   scriptblock so stderr is non-terminating, then restores it. $LASTEXITCODE is
+#   preserved across the boundary, so the explicit exit-code checks that follow
+#   still work. A `2>$null` capture is byte-identical to PowerShell 7's.
+#
+# WHAT THIS DOES NOT DO: it does not make a `2>&1 | Out-String` capture match
+#   PowerShell 7 - PS 5.1 still injects NativeCommandError decoration into that
+#   text. That is why the capture sites below use `2>$null`, never `2>&1`.
+function Invoke-WithNativeStderr {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Script } finally { $ErrorActionPreference = $previous }
+}
+
+# Invoke an HTTP request and report its status code and body WITHOUT relying on
+# PowerShell 7-only parameters.
+#
+# THE DEFECT THIS EXISTS FOR (measured on this box, 2026-10-13, under the
+# client's built-in shell):
+#   `-SkipHttpErrorCheck` is a PowerShell 7 parameter. Windows PowerShell 5.1
+#   does not have it, so the call raises ParameterBindingException BEFORE any
+#   request leaves the machine:
+#       "A parameter cannot be found that matches parameter name 'SkipHttpErrorCheck'."
+#   The register call below sat inside `try { } catch { }` with nothing after it,
+#   so on a client AIPC the failure was SILENT: the response stayed $null, all
+#   15 retries failed identically, and the installer printed "could not register
+#   the admin" - after which matter provisioning could not authenticate either,
+#   so deer-flow fell back to unsanitized on-disk memory. On a pwsh 7 dev box the
+#   same code worked, which is why it survived. Same class as the native-stderr
+#   defect above: pwsh-7-only behaviour the client's shell does not have.
+#
+# A non-2xx response is returned as data rather than thrown. The body is read
+# from $_.ErrorDetails.Message, which carries it on BOTH shells. The obvious
+# alternatives do not: PS 5.1's HttpWebResponse stream reads EMPTY (PowerShell
+# has already consumed it) and PS 7's HttpResponseMessage.Content is DISPOSED by
+# the time the catch runs. Both measured on this box, 2026-10-13.
+function Invoke-ApiRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [string]$Method = 'Get',
+        [string]$Body,
+        [int]$TimeoutSec = 20
+    )
+    $result = [pscustomobject]@{ Status = $null; Body = ''; Error = $null }
+    try {
+        $r = if ($Body) {
+            Invoke-WebRequest -Uri $Uri -Method $Method -Body $Body `
+                -ContentType 'application/json' -TimeoutSec $TimeoutSec -UseBasicParsing
+        }
+        else {
+            Invoke-WebRequest -Uri $Uri -Method $Method -TimeoutSec $TimeoutSec -UseBasicParsing
+        }
+        $result.Status = [int]$r.StatusCode
+        $result.Body = [string]$r.Content
+    }
+    catch {
+        $wr = $_.Exception.Response
+        if ($wr) { $result.Status = [int]$wr.StatusCode }
+        $body = [string]$_.ErrorDetails.Message
+        if ($body) { $result.Body = $body }
+        if (-not $wr -and -not $body) { $result.Error = "$($_.Exception.Message)" }
+    }
+    return $result
+}
+
 Write-Host "=== Pacgate-ai Installer ===" -ForegroundColor Cyan
 
 # 1. Check Docker
@@ -45,7 +127,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: Docker Desktop not found. Install from https://docs.docker.com/desktop/" -ForegroundColor Red
     exit 1
 }
-docker info *>$null
+Invoke-WithNativeStderr { docker info *>$null }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Docker daemon not running. Start Docker Desktop." -ForegroundColor Red
     exit 1
@@ -147,7 +229,7 @@ if ($Update -and -not $SkipRepoPull) {
                 $before = (git rev-parse HEAD).Trim()
 
                 # Fetch first so we can decide without merging.
-                git fetch --quiet origin 2>$null
+                Invoke-WithNativeStderr { git fetch --quiet origin 2>$null }
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "[WARN] git fetch failed (offline?) - continuing with the current checkout." -ForegroundColor Yellow
                 }
@@ -156,7 +238,7 @@ if ($Update -and -not $SkipRepoPull) {
                     $remoteRef = "origin/$branch"
 
                     $behind = 0
-                    $counts = git rev-list --left-right --count "$remoteRef...$branch" 2>$null
+                    $counts = Invoke-WithNativeStderr { git rev-list --left-right --count "$remoteRef...$branch" 2>$null }
                     if ($LASTEXITCODE -eq 0 -and $counts) {
                         $behind = [int](($counts -split '\s+')[0])
                     }
@@ -188,10 +270,10 @@ if ($Update -and -not $SkipRepoPull) {
                         # hypothetical. ls-files is used instead of status
                         # because status COLLAPSES whole untracked directories to
                         # "dir/" and the names would never match.
-                        $untracked = @(git -c core.quotepath=false ls-files --others --exclude-standard 2>$null | Where-Object { $_ })
+                        $untracked = Invoke-WithNativeStderr { @(git -c core.quotepath=false ls-files --others --exclude-standard 2>$null | Where-Object { $_ }) }
                         $collisions = @()
                         if ($untracked.Count -gt 0) {
-                            $incoming = @(git -c core.quotepath=false diff --name-only --diff-filter=A "$before" "$remoteRef" 2>$null | Where-Object { $_ })
+                            $incoming = Invoke-WithNativeStderr { @(git -c core.quotepath=false diff --name-only --diff-filter=A "$before" "$remoteRef" 2>$null | Where-Object { $_ }) }
                             $collisions = @($untracked | Where-Object { $incoming -contains $_ })
                         }
 
@@ -230,7 +312,7 @@ if ($Update -and -not $SkipRepoPull) {
 
                                 # Name what changed, so an update is never silent. This
                                 # is the same principle as the config render below.
-                                $changed = git diff --name-only "$before" "$after" 2>$null
+                                $changed = Invoke-WithNativeStderr { git diff --name-only "$before" "$after" 2>$null }
                                 if ($changed) {
                                     Write-Host "     Files changed in this update:" -ForegroundColor DarkGray
                                     $changed | Select-Object -First 12 | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
@@ -284,7 +366,9 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
         (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and $envVars['OPENVIKING_CONF_CONTENT']))
     if ($needsRender -and $envVars.ContainsKey('OPENVIKING_ROOT_API_KEY') -and
         $envVars['OPENVIKING_ROOT_API_KEY'] -notmatch '^change-me') {
-        $conf = Get-Content $ovTemplate -Raw
+        # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
+        # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
+        $conf = Get-Content $ovTemplate -Raw -Encoding UTF8
         $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
         $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
         # Append with an explicit leading newline: PowerShell 5.1's Add-Content
@@ -345,7 +429,9 @@ if (Test-Path $dfTemplate) {
             # placeholder is a no-op and leaves a literal ${...} in the rendered
             # file, which makes openviking return 401 and rolls back the entire MCP
             # tool load (deer-flow uses asyncio.gather). See handbook finding #2.
-            $df = (Get-Content $dfTemplate -Raw).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
+            # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
+            # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
+            $df = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
 
             $dfExisting = if (Test-Path $dfRendered) {
                 [System.IO.File]::ReadAllText((Join-Path $PWD $dfRendered))
@@ -428,7 +514,7 @@ if ([string]::IsNullOrWhiteSpace($gwCors)) {
     # 8081 while compose declares 8089, and an AIPC may have either.
     $corsPort = $null
     try {
-        $corsPortOut = (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim()
+        $corsPortOut = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim() }
         if ($corsPortOut -match ':(\d+)\s*$') { $corsPort = $Matches[1] }
     } catch { $corsPort = $null }
     if (-not $corsPort) { $corsPort = '8089' }
@@ -486,7 +572,7 @@ else {
 # 5. Pull models (first install only)
 if (-not $Update) {
     Write-Host "`nPulling Ollama models (this takes a while on first run)..." -ForegroundColor Cyan
-    foreach ($model in Get-Content ollama-models.txt) {
+    foreach ($model in Get-Content ollama-models.txt -Encoding UTF8) {
         if ($model -and -not $model.StartsWith("#")) {
             Write-Host "  Pulling $model..." -ForegroundColor Yellow
             ollama pull $model
@@ -498,7 +584,87 @@ if (-not $Update) {
 # 6. Pull Docker images
 Write-Host "`nPulling Docker images..." -ForegroundColor Cyan
 docker compose -f compose.prod.yaml pull
-Write-Host "[OK] Images pulled" -ForegroundColor Green
+# Capture WHY, not just the fact. `compose pull` writes progress to stderr, so it
+# must stay unredirected here (under Windows PowerShell 5.1 any 2>&1 / 2>$null
+# makes a native command's stderr TERMINATING). But leaving the exit code
+# unexamined meant a pull that failed halfway still printed "[OK] Images pulled",
+# and the machine then reported success while running the previous artifact -
+# observed on this dev box 2026-10-13, where every image logged "Pulled" and the
+# tag still pointed at the old build. A pull result the operator cannot trust is
+# the same as no check at all.
+$pullExit = $LASTEXITCODE
+if ($pullExit -ne 0) {
+    Write-Host "[WARN] 'compose pull' exited $pullExit - some images may not be current." -ForegroundColor Yellow
+    Write-Host "       The install continues, but the stack may come up on an older artifact." -ForegroundColor Yellow
+    Write-Host "       Check with:  docker compose -f compose.prod.yaml pull" -ForegroundColor Gray
+} else {
+    Write-Host "[OK] Images pulled" -ForegroundColor Green
+}
+
+# 6a. Verify the pull ACTUALLY refreshed the tags, and repair it if it did not.
+#
+# `compose pull` reports "Pulled" for an image even when the local tag does not
+# advance. Observed on this dev box 2026-10-13: every image logged "Pulled", the
+# command exited 0, and the machine went on running the PREVIOUS build of the same
+# version (revision 50252862c826 where 0.1.28 had been re-published as b5ef2b12b8de).
+# Nothing reported it, because "did the pull do anything" was never asked.
+#
+# The digest is the content, so it is the only honest answer. The registry digest
+# comes from `buildx imagetools` (which resolves anonymously for these public
+# images) and the local one from RepoDigests; when they agree the tag is current.
+#
+# Degrades quietly: no network, no buildx, or an unreadable digest means "cannot
+# assert", which is reported as nothing rather than as a failure. An installer
+# that blocks on an unreachable registry is worse than one that cannot check.
+if (Test-Path compose.prod.yaml) {
+    $firstParty = @([regex]::Matches((Get-Content compose.prod.yaml -Raw -Encoding UTF8),
+        '(?m)^\s*image:\s*(?<ref>ghcr\.io/[a-z0-9\-]+/[a-z0-9\-]+:\d+\.\d+\.\d+)\s*$') |
+        ForEach-Object { $_.Groups['ref'].Value } | Select-Object -Unique)
+
+    function Get-RegistryImageDigest([string]$Ref) {
+        try {
+            $d = Invoke-WithNativeStderr { (docker buildx imagetools inspect --format '{{.Manifest.Digest}}' $Ref 2>$null | Out-String).Trim() }
+            if ($d -match '^sha256:[0-9a-f]{64}$') { return $d }
+        }
+        catch { }
+        return $null
+    }
+    function Get-LocalImageDigest([string]$Ref) {
+        try {
+            $d = Invoke-WithNativeStderr { (docker inspect --format '{{index .RepoDigests 0}}' $Ref 2>$null | Out-String).Trim() }
+            if ($d -match '@(?<d>sha256:[0-9a-f]{64})$') { return $Matches['d'] }
+        }
+        catch { }
+        return $null
+    }
+
+    $staleRefs = @()
+    $checked = 0
+    foreach ($ref in $firstParty) {
+        $reg = Get-RegistryImageDigest $ref
+        if (-not $reg) { continue }         # offline or no buildx: cannot assert
+        $checked++
+        if ((Get-LocalImageDigest $ref) -ne $reg) { $staleRefs += $ref }
+    }
+
+    if ($checked -gt 0 -and $staleRefs.Count -gt 0) {
+        Write-Host "[WARN] $($staleRefs.Count) image tag(s) did not refresh during 'compose pull':" -ForegroundColor Yellow
+        foreach ($r in $staleRefs) { Write-Host "       $r" -ForegroundColor Gray }
+        Write-Host "       Retrying with an explicit pull..." -ForegroundColor Yellow
+        foreach ($r in $staleRefs) { docker pull $r }
+        $stillStale = @($staleRefs | Where-Object { (Get-LocalImageDigest $_) -ne (Get-RegistryImageDigest $_) })
+        if ($stillStale.Count -eq 0) {
+            Write-Host "[OK] all $checked image tag(s) now match the registry" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[WARN] still not current after an explicit pull: $($stillStale -join ', ')" -ForegroundColor Yellow
+            Write-Host "       The stack may come up on an older build of the same version." -ForegroundColor Yellow
+        }
+    }
+    elseif ($checked -gt 0) {
+        Write-Host "[OK] all $checked image tag(s) match the registry" -ForegroundColor Green
+    }
+}
 
 # 6b. Provision the matter that deer-flow's memory adapter is scoped to.
 #
@@ -687,7 +853,7 @@ function Invoke-Bootstrap {
     #
     # Match on SLUG, and use the same slug the lookup will use.
     $sql = "INSERT INTO tenants (name, slug) SELECT '$($tenantName -replace "'","''")', '$($tenantSlug -replace "'","''")' WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = '$($tenantSlug -replace "'","''")');"
-    $seedOut = docker exec pacgate-db psql -U pacgate -d pacgate -t -c $sql 2>&1
+    $seedOut = Invoke-WithNativeStderr { docker exec pacgate-db psql -U pacgate -d pacgate -t -c $sql 2>$null }
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] tenant '$tenantSlug' present (created if absent)" -ForegroundColor Green
     }
@@ -697,21 +863,26 @@ function Invoke-Bootstrap {
     }
 
     # (2) The admin. Retry, because the API may still be applying migrations.
+    #
+    # Uses Invoke-ApiRequest: -SkipHttpErrorCheck is PowerShell 7-only and threw
+    # ParameterBindingException on PS 5.1, where the swallow-all catch below hid
+    # it. A 403 here is the normal "the first account already exists" answer from
+    # this route (it is first-user-only), not a failure - see the message check.
     $registered = $false
     $alreadyThere = $false
+    $lastErr = $null
     for ($i = 1; $i -le 15; $i++) {
-        $resp = $null
-        try {
-            $resp = Invoke-WebRequest -Uri "$BaseUrl/api/auth/register" -Method Post `
-                -Body (@{ email = $apiEmail; password = $apiPassword } | ConvertTo-Json -Compress) `
-                -ContentType 'application/json' -TimeoutSec 20 -SkipHttpErrorCheck
-        } catch { }
-        if ($resp) {
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { $registered = $true; break }
+        $resp = Invoke-ApiRequest -Uri "$BaseUrl/api/auth/register" -Method Post `
+            -Body (@{ email = $apiEmail; password = $apiPassword } | ConvertTo-Json -Compress) `
+            -TimeoutSec 20
+        if ($resp.Error) { $lastErr = $resp.Error }
+        if ($null -ne $resp.Status) {
+            if ($resp.Status -ge 200 -and $resp.Status -lt 300) { $registered = $true; break }
             # A duplicate is success for our purpose: the admin exists.
-            if ($resp.StatusCode -eq 409 -or "$($resp.Content)" -match 'already|exists|duplicate') {
+            if ($resp.Status -eq 409 -or $resp.Body -match 'already|exists|duplicate') {
                 $alreadyThere = $true; break
             }
+            $lastErr = "HTTP $($resp.Status): $($resp.Body)"
         }
         if ($i -lt 15) { Start-Sleep -Seconds 4 }
     }
@@ -724,6 +895,7 @@ function Invoke-Bootstrap {
     }
     else {
         Write-Host "  [WARN] could not register the admin '$apiEmail'." -ForegroundColor Yellow
+        if ($lastErr) { Write-Host "         Last error: $lastErr" -ForegroundColor DarkYellow }
         Write-Host "         Matter provisioning will fail without a login. Check the API logs." -ForegroundColor Yellow
         return $false
     }
@@ -749,8 +921,8 @@ function Invoke-Bootstrap {
     # Guarded to the configured service account only. It never touches another
     # user, and it reports what it changed.
     $emailLiteral = $apiEmail -replace "'", "''"
-    $roleBefore = (docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
-        "SELECT system_role FROM users WHERE email = '$emailLiteral';" 2>&1 | Out-String).Trim()
+    $roleBefore = Invoke-WithNativeStderr { (docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
+        "SELECT system_role FROM users WHERE email = '$emailLiteral';" 2>$null | Out-String).Trim() }
 
     if ($roleBefore -eq 'admin') {
         Write-Host "  [OK] '$apiEmail' holds the platform admin role" -ForegroundColor Green
@@ -759,8 +931,8 @@ function Invoke-Bootstrap {
         Write-Host "  [INFO] '$apiEmail' exists but is NOT a platform admin (system_role='user')." -ForegroundColor Yellow
         Write-Host "         Promoting it: without this the provisioning route is unreachable," -ForegroundColor Yellow
         Write-Host "         because no principal on this machine would hold the admin role." -ForegroundColor Yellow
-        $upd = docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
-            "UPDATE users SET system_role = 'admin' WHERE email = '$emailLiteral' RETURNING email;" 2>&1 | Out-String
+        $upd = Invoke-WithNativeStderr { docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c `
+            "UPDATE users SET system_role = 'admin' WHERE email = '$emailLiteral' RETURNING email;" 2>$null | Out-String }
         if ($upd -match [regex]::Escape($apiEmail)) {
             Write-Host "  [OK] '$apiEmail' promoted to platform admin" -ForegroundColor Green
         }
@@ -782,7 +954,11 @@ function Invoke-Bootstrap {
 Write-Host "`nBootstrapping the default tenant and admin user..." -ForegroundColor Cyan
 # Same nginx-fronted path as provisioning: the API publishes no host port.
 $bootstrapped = $false
-docker compose -f compose.prod.yaml up -d pacgate-api pacgate-db nginx 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+Invoke-WithNativeStderr {
+    docker compose -f compose.prod.yaml up -d pacgate-api pacgate-db nginx | ForEach-Object {
+        Write-Host "    $_" -ForegroundColor DarkGray
+    }
+}
 $apiUp = $false
 foreach ($attempt in 1..30) {
     try {
@@ -820,7 +996,7 @@ Write-Host "[OK] Stack running" -ForegroundColor Green
 # 7a. Prove deer-flow is on the SANITIZED lane, not the fallback. This is the
 # only check that observes the running container rather than the configuration.
 if ($provisioned) {
-    $lane = docker exec deer-flow sh -c 'echo $PACGATE_MATTER_ID' 2>$null
+    $lane = Invoke-WithNativeStderr { docker exec deer-flow sh -c 'echo $PACGATE_MATTER_ID' 2>$null }
     if ($lane -and $lane.Trim().Length -gt 0) {
         Write-Host "[OK] deer-flow has PACGATE_MATTER_ID=$($lane.Trim())" -ForegroundColor Green
     }
@@ -838,7 +1014,7 @@ if ($provisioned) {
 # reload the file. Reloading makes AIPC2 pick up ingress/proxy changes (e.g.
 # the resolver + variable proxy_pass fix) without a full recreate.
 Write-Host "`nReloading nginx config..." -ForegroundColor Cyan
-docker exec pacgate-nginx nginx -t *>$null
+Invoke-WithNativeStderr { docker exec pacgate-nginx nginx -t *>$null }
 if ($LASTEXITCODE -eq 0) {
     docker exec pacgate-nginx nginx -s reload
     Write-Host "[OK] nginx config reloaded" -ForegroundColor Green
@@ -854,16 +1030,42 @@ if ($LASTEXITCODE -eq 0) {
 # deer-flow-config.yaml sit on disk doing nothing. See
 # deploy/AIPC-UPDATE-GAP-ANALYSIS.md defect 3b.
 #
+# deer-flow-frontend is restarted for the SAME reason since 2026-10-13: it now
+# bind-mounts deploy/frontend-patches/files/next.config.js, and `next start`
+# reads that file only at process boot. Its config carries
+# experimental.proxyTimeout, without which Next.js tears down every proxied
+# gateway call longer than its 30s default - the caller sees the failure while
+# the run keeps executing (deploy/DEFECT-frontend-proxy-timeout.md). A repo
+# update that changes that file is inert until the process restarts, so omitting
+# this restart would leave an updated machine still broken.
+#
 # Only needed on -Update: a first install mounts the files before the container
 # starts, so they are already in effect.
 if ($Update) {
     Write-Host "`nRestarting services with bind-mounted code..." -ForegroundColor Cyan
+    # Deer-flow: patches/*.py and deer-flow-config.yaml are bind-mounted and read
+    # at process start only. The literal `restart deer-flow` below is also the
+    # marker scripts/audit-aipc-update-coverage.ps1 matches on for BOTH the
+    # personas/patches and deer-flow-config.yaml rows, so keep it explicit.
     $dfRunning = docker compose -f compose.prod.yaml ps -q deer-flow
     if ($dfRunning) {
         docker compose -f compose.prod.yaml restart deer-flow
         Write-Host "[OK] deer-flow restarted (patches/*.py and config.yaml now in effect)" -ForegroundColor Green
     } else {
         Write-Host "[WARN] deer-flow is not running; skipped restart" -ForegroundColor Yellow
+    }
+    # Frontend: next.config.js is bind-mounted (deploy/frontend-patches/files/) and
+    # `next start` reads it only at boot. Its experimental.proxyTimeout is what
+    # stops Next.js tearing down proxied gateway calls longer than its 30s default
+    # (deploy/DEFECT-frontend-proxy-timeout.md). Without this restart a repo update
+    # leaves the OLD config in force and an updated machine stays broken - the fix
+    # would look shipped and be inert.
+    $feRunning = docker compose -f compose.prod.yaml ps -q deer-flow-frontend
+    if ($feRunning) {
+        docker compose -f compose.prod.yaml restart deer-flow-frontend
+        Write-Host "[OK] deer-flow-frontend restarted (next.config.js proxyTimeout now in effect)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] deer-flow-frontend is not running; skipped restart" -ForegroundColor Yellow
     }
 }
 
@@ -886,9 +1088,9 @@ if ($Update) {
 if ($Update) {
     $qmScript = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts/qm-sandbox-fingerprint.ps1'
     # Only meaningful if this machine actually runs qm.
-    if ((Test-Path $qmScript) -and (docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-')) {
+    if ((Test-Path $qmScript) -and (Invoke-WithNativeStderr { docker ps --format '{{.Names}}' 2>$null | Select-String -SimpleMatch 'qm-' })) {
         Write-Host "`nChecking qm sandbox provenance..." -ForegroundColor Cyan
-        $fpOut = & $QmPowerShell -NoProfile -File $qmScript -Json 2>&1
+        $fpOut = Invoke-WithNativeStderr { & $QmPowerShell -NoProfile -File $qmScript -Json 2>$null }
         $fp = $null
         try { $fp = ($fpOut | Out-String).Trim() | ConvertFrom-Json } catch { }
         if ($fp) {
@@ -950,13 +1152,13 @@ if ($Update) {
     # running container, which is authoritative when an override file was used.
     $frontPort = $null
     try {
-        $portOut = (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim()
+        $portOut = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim() }
         if ($portOut -match ':(\d+)\s*$') { $frontPort = $Matches[1] }
     }
     catch { }
     if (-not $frontPort) {
         try {
-            $insp = docker port pacgate-nginx 2>$null
+            $insp = Invoke-WithNativeStderr { docker port pacgate-nginx 2>$null }
             foreach ($l in @($insp)) { if ($l -match ':(\d+)\s*$') { $frontPort = $Matches[1]; break } }
         }
         catch { }
@@ -968,15 +1170,33 @@ if ($Update) {
     # Read the version compose pins, so the reported value is compared against
     # something rather than printed with nothing to check it against.
     $pinned = $null
+    $pinnedRef = $null
     try {
-        $composeTxt = Get-Content compose.prod.yaml -Raw
-        $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+)\s*$')
-        if ($m.Success) { $pinned = $m.Groups['v'].Value }
+        # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
+        # ANSI/GBK; compose.prod.yaml carries Chinese comments.
+        $composeTxt = Get-Content compose.prod.yaml -Raw -Encoding UTF8
+        $m = [regex]::Match($composeTxt, '(?m)^\s*image:\s*(?<ref>ghcr\.io/[a-z0-9\-]+/pacgate-api:(?<v>\d+\.\d+\.\d+))\s*$')
+        if ($m.Success) { $pinned = $m.Groups['v'].Value; $pinnedRef = $m.Groups['ref'].Value }
     }
     catch { }
 
     $reported = $null
     $revision = $null
+
+    # Image identity, for the version-vs-content comparison below. Read AFTER the
+    # pull (step 6), so $localTagId is what the tag points at NOW. The reference
+    # comes from compose rather than being rebuilt here, so a namespace change
+    # cannot silently make this check inspect a different image than the stack runs.
+    $localTagId = $null
+    $containerId = $null
+    if ($Update -and $pinnedRef) {
+        try {
+            $localTagId = Invoke-WithNativeStderr { (docker inspect --format '{{.Id}}' $pinnedRef 2>$null | Out-String).Trim() }
+            $containerId = Invoke-WithNativeStderr { (docker inspect --format '{{.Image}}' pacgate-api 2>$null | Out-String).Trim() }
+        }
+        catch { }
+    }
+
     foreach ($attempt in 1..3) {
         try {
             $resp = Invoke-RestMethod -Uri $versionUrl -Method Get -TimeoutSec 5
@@ -1010,6 +1230,27 @@ if ($Update) {
             Write-Host "       The container has not been recreated yet. If this persists:" -ForegroundColor Yellow
             Write-Host "         docker compose -f compose.prod.yaml up -d --force-recreate pacgate-api" -ForegroundColor Gray
         }
+        elseif ($Update -and $localTagId -and $containerId -and $localTagId -ne $containerId) {
+            # THE CASE A VERSION COMPARISON CANNOT SEE, and it is the one that
+            # actually happened here (2026-10-13).
+            #
+            # A version is a NAME; a digest is the CONTENT. Re-publishing the same
+            # version with a different build moves the digest without moving the
+            # version, so "running 0.1.28, compose pins 0.1.28" reads OK while the
+            # machine executes the previous build. That is exactly how the 0.1.28
+            # OCR-weights-tag re-point worked: 50252862c826 -> b5ef2b12b8de, same
+            # version string, different image. This box ran the old one through a
+            # whole "-Update" that printed [OK], because the only comparison made
+            # was on the version.
+            #
+            # $localTagId is re-read AFTER the pull, so a stale local tag is not
+            # being compared against itself.
+            Write-Host "[WARN] pacgate-api reports $reported, but the RUNNING container is not the image the tag now points to." -ForegroundColor Yellow
+            Write-Host "       running  $($containerId.Substring(0,[Math]::Min(12,$containerId.Length)))" -ForegroundColor Gray
+            Write-Host "       tag now  $($localTagId.Substring(0,[Math]::Min(12,$localTagId.Length)))" -ForegroundColor Gray
+            Write-Host "       Same version, different build - a re-published tag. Recreate to apply:" -ForegroundColor Yellow
+            Write-Host "         docker compose -f compose.prod.yaml up -d" -ForegroundColor Gray
+        }
         else {
             Write-Host "[OK] pacgate-api reports $reported (source revision $rev)" -ForegroundColor Green
             if ($rev -eq 'unknown') {
@@ -1026,7 +1267,7 @@ if ($Update) {
         # TWO distinct causes, and conflating them sends people down the wrong
         # path. An old image predates /build-info entirely, in which case the
         # answer is "this install is behind", not "wait for startup".
-        $img = (docker inspect pacgate-api --format '{{.Config.Image}}' 2>$null | Out-String).Trim()
+        $img = Invoke-WithNativeStderr { (docker inspect pacgate-api --format '{{.Config.Image}}' 2>$null | Out-String).Trim() }
         Write-Host "[WARN] Could not read $versionUrl; skipping the staleness check." -ForegroundColor Yellow
         if ($img -match 'jzkk720|:0\.1\.[0-9]$') {
             Write-Host "       The running image is $img" -ForegroundColor Yellow
@@ -1179,7 +1420,7 @@ if (-not $Update) {
     #     also matches `qm-mailpit`, so a lone mailpit container reported "qm is
     #     already running" and skipped everything.
     # Ask the actual question: has qm been bootstrapped AND is it up?
-    $qmRunning = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count -ge 6
+    $qmRunning = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count -ge 6
     if ($qmRunning) {
         Write-Host "[OK] qm is already running - left untouched" -ForegroundColor Green
     }
@@ -1340,9 +1581,9 @@ if (-not $Update) {
         if (Test-Path (Join-Path $qmDir 'compose.qm.yaml')) {
             # External network/volumes are declared `external: true`, so they must
             # exist before compose will start; compose does not create them.
-            docker network create qm-pacgate *>$null
-            docker volume create qm-pacgate-coredata *>$null
-            docker volume create qm-pacgate-pgdata *>$null
+            Invoke-WithNativeStderr { docker network create qm-pacgate *>$null }
+            Invoke-WithNativeStderr { docker volume create qm-pacgate-coredata *>$null }
+            Invoke-WithNativeStderr { docker volume create qm-pacgate-pgdata *>$null }
 
             Push-Location $qmDir
             try {
@@ -1351,7 +1592,7 @@ if (-not $Update) {
                     Start-Sleep -Seconds 15
                     # Same container filter as the guard above: `qm-pacgate-` counts
                     # the six stack services and excludes qm-mailpit.
-                    $qmUp = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count
+                    $qmUp = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count
                     if ($qmUp -ge 6) {
                         Write-Host "[OK] qm running ($qmUp containers)" -ForegroundColor Green
                     }
@@ -1396,7 +1637,7 @@ Write-Host ""
 # instead of prescribing steps the installer already took.
 Write-Host "QM (co-working workspace):" -ForegroundColor Cyan
 if (Test-Path (Join-Path $PSScriptRoot 'qm-pacgate/compose.qm.yaml')) {
-    $qmCount = @(docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null).Count
+    $qmCount = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count
     if ($qmCount -ge 6) {
         Write-Host "  Running ($qmCount containers). Sign in at http://localhost:8181" -ForegroundColor Gray
         Write-Host "  (8181 is the portal FRONT DOOR - it proxies to web-ui 8182 and" -ForegroundColor Gray

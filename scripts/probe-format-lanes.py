@@ -26,9 +26,15 @@ It is NOT wired into run-all-checks.ps1: it needs a live stack + OCR weights and
 costs ~10-20s on a cold OCR cache, so it is a diagnostic you run on demand.
 
 Usage:
+  pip install requests python-docx        # python-docx builds the .docx fixture
   python scripts/probe-format-lanes.py
   python scripts/probe-format-lanes.py --base-url http://localhost:8089/pacgate
   python scripts/probe-format-lanes.py --keep-artifacts
+
+The .docx fixture goes through python-docx rather than a hand-built zip, because
+a real client sends a real .docx. Both dependencies are imported lazily, so a
+missing one surfaces only when that format is reached - the usage block above
+is the list that matters.
 
 Exit: 0 = probe completed (whatever the findings), 2 = could not check.
 """
@@ -36,6 +42,7 @@ Exit: 0 = probe completed (whatever the findings), 2 = could not check.
 from __future__ import annotations
 
 import argparse
+import atexit
 import io
 import json
 import os
@@ -68,6 +75,36 @@ def log(msg: str) -> None:
 def die(msg: str) -> None:
     print(f"\nCANNOT CHECK: {msg}", file=sys.stderr, flush=True)
     sys.exit(2)
+
+
+# The matter this run created, so every exit path can remove it. Without this,
+# any early die() -- an unreachable stack, missing credentials, a failed matter
+# create -- exits 2 and strands the row. That is exactly how orphan probe-<id>
+# matters accumulated.
+_matter: dict[str, str] = {}
+
+
+def cleanup() -> None:
+    """Best-effort removal of this run's matter.
+
+    Document families are deleted inline as each lane finishes, so only the
+    matter is left here. Idempotent: the id is cleared as it is deleted.
+    """
+    mid = _matter.get("id")
+    if not mid:
+        return
+    _matter["id"] = ""
+    api = _matter.get("api")
+    if api is None:
+        return
+    try:
+        r = api.delete(f"/api/matters/{mid}")
+        log(f"\nmatter cleanup (atexit): {r.status_code}")
+    except Exception as e:  # never mask the original failure
+        print(f"\nmatter cleanup (atexit) failed: {e}", file=sys.stderr)
+
+
+atexit.register(cleanup)
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -248,6 +285,8 @@ def main() -> int:
         die(f"matter create failed: {r.status_code} {r.text[:200]}")
     matter_id = r.json()["id"]
     log(f"  matter={matter_id}")
+    _matter["id"] = matter_id
+    _matter["api"] = api
 
     results: list[dict[str, Any]] = []
 
@@ -257,6 +296,13 @@ def main() -> int:
         row: dict[str, Any] = {"format": fmt, "filename": filename}
         try:
             blob = builder()
+        except ImportError as e:  # a missing dependency is not a finding about the stack
+            print(
+                f"FATAL: the {fmt} fixture needs a library that is not installed: {e}\n"
+                f"       pip install requests python-docx",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from e
         except Exception as e:  # a fixture builder failing is a probe problem
             row["error"] = f"fixture build failed: {e}"
             results.append(row)
@@ -359,6 +405,7 @@ def main() -> int:
     if not args.keep_artifacts:
         d = api.delete(f"/api/matters/{matter_id}")
         log(f"\nmatter cleanup: {d.status_code}")
+        _matter["id"] = ""  # cleared so the atexit net is a no-op
 
     return 0
 
