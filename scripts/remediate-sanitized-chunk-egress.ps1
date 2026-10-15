@@ -80,22 +80,22 @@ if (-not $apiPassword -or $apiPassword -match '^change-me') {
 }
 
 # ── the affected set ────────────────────────────────────────────────────────────
-# Same predicates as the audit script. Kept in step with it deliberately: if the
-# audit's idea of "affected" drifts from this one's, a machine can look clean while
-# still holding rows nothing repaired.
+# Patterns come from the SHARED file, not a local copy.
+#
+# This script used to hard-code its own list and carry a comment saying the two must
+# be kept in step with the audit. They drifted anyway: the audit learned to exclude
+# the redactor's placeholder and this did not, so on an already-clean machine this
+# selected 39 documents and reported "raw 0 -> 0, chunks kept=1" for every one - a
+# no-op dressed up as work, and the closing audit disagreed with it.
+. (Join-Path $PSScriptRoot 'lib/RawPiiPatterns.ps1')
+$rawPredicate = Get-PacgateRawPiiPredicate -Column 'c.content'
+
 $findSql = @"
 SELECT c.document_id::text
 FROM kb_chunks c
 JOIN documents d ON d.id = c.document_id
 WHERE c.sanitization_state = 'sanitized'
-  AND (
-        c.content LIKE '%[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]%'
-     OR c.content ~ '[0-9]{2}[0-9]{2}[0-9]{2}(19|20)[0-9]{2}[0-9]{2}[0-9]{2}[0-9]{3}[0-9Xx]'
-     OR c.content ~ '1[3-9][0-9]{9}'
-     OR c.content ~ '0[0-9]{2,3}-[0-9]{7,8}'
-     OR c.content LIKE '%@%.%'
-     OR c.content ~ '[0-9A-HJ-NPQRTUWXY]{18}'
-  )
+  AND ($rawPredicate)
 GROUP BY c.document_id
 ORDER BY c.document_id
 LIMIT $Limit;
@@ -142,7 +142,7 @@ Write-Output ''
 $i = 0
 foreach ($docId in $docIds) {
     $i++
-    $before = Invoke-Psql "SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND content ~ '1[3-9][0-9]{9}';"
+    $before = Invoke-Psql "SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND ($($rawPredicate -replace 'c\.content','content'));"
     $beforeN = [int]("$($before[0])".Trim())
 
     try {
@@ -156,7 +156,7 @@ foreach ($docId in $docIds) {
 
     # The rewrite is one transaction, so once the request returns the rows are
     # already replaced - no settle time needed.
-    $after = Invoke-Psql "SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND content ~ '1[3-9][0-9]{9}';"
+    $after = Invoke-Psql "SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized' AND ($($rawPredicate -replace 'c\.content','content'));"
     $afterN = [int]("$($after[0])".Trim())
     $kept = Invoke-Psql "SELECT count(*) FROM kb_chunks WHERE document_id='$docId' AND sanitization_state='sanitized';"
     $keptN = [int]("$($kept[0])".Trim())

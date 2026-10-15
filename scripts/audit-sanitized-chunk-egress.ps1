@@ -37,46 +37,22 @@ $ErrorActionPreference = 'Continue'
 # Kept deliberately simple: a SQL regex cannot express the rule set's context
 # windows or checksum validation, and pretending otherwise would overstate what
 # this measures.
-# Both 18-char patterns need the placeholder exclusion, not just one.
 #
-# MEASURED 2026-10-14: the redactor renders a Chinese ID card as the
-# format-preserving placeholder 00000000000000000X - 17 zeros and an X. That value
-# is a legitimate member of BOTH character classes below, so both patterns flagged
-# the sanitizer's own output as a leak. On a machine that had just been remediated
-# to zero real leaks, the audit still reported 37, and the first fix attempt only
-# covered 'uscc' - so it then reported 37 against 'cn_id_card' instead.
-#
-# (?!0{17}) excludes exactly that placeholder and nothing else. Real Chinese ID
-# cards and USCCs do not begin with 17 zeros.
-#
-# The lesson worth keeping: verify a regex fix against the pattern AS THE CODE
-# USES IT. My first check compared against a hand-written pattern that was not the
-# one in the file, so it "passed" while the defect was untouched.
-$patterns = [ordered]@{
-    'email'         = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
-    'cn_id_card'    = '(?!0{17})[0-9]{17}[0-9Xx]'
-    # NEGATIVE LOOKAHEAD, not a bare character class.
-    #
-    # The naive form was '[0-9A-HJ-NPQRTUWXY]{18}', and it reported 37 leaks on a
-    # machine that was CLEAN. Measured 2026-10-14 after remediating every affected
-    # document: the real patterns matched 0 rows while this one matched all 37 -
-    # because the redactor renders a Chinese ID card as the format-preserving
-    # placeholder 00000000000000000X, and 17 zeros plus an X is a valid 18-char
-    # member of that class. The audit was flagging the SANITIZER'S OWN OUTPUT as a
-    # leak.
-    #
-    # (?!0{17}) excludes that placeholder and nothing else: it is the only value
-    # this pattern exists to stop flagging, and real USCCs never begin with 17
-    # zeros. Checked before adding: the id-card pattern does NOT match the
-    # placeholder, so only this one needed it.
-    #
-    # Found because the remediation reported "37 repaired, 0 failed" while the audit
-    # still said 74 leaks - a disagreement between two things I had written, which
-    # is exactly the case that has to be resolved rather than explained away.
-    'uscc'          = '(?!0{17})[0-9A-HJ-NPQRTUWXY]{18}'
-    'cn_mobile'     = '1[3-9][0-9]{9}'
-    'cn_landline'   = '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}'
-}
+# The patterns now live in ONE place - scripts/lib/RawPiiPatterns.ps1 - because
+# duplicating them between this audit and the remediation script let them drift.
+# The audit was taught to exclude the redactor's own placeholder
+# (00000000000000000X) and the remediation was not, so the remediation went on
+# selecting 39 already-clean documents and reporting "raw 0 -> 0" for each. A
+# comment asking two copies to stay in step is not a mechanism; a shared file is.
+. (Join-Path $PSScriptRoot 'lib/RawPiiPatterns.ps1')
+$patterns = $PacgateRawPiiPatterns
+# duplicating them between this audit and the remediation script let them drift. The
+# audit was taught to exclude the redactor's placeholder and the remediation was not,
+# so the remediation went on selecting 39 already-clean documents and reporting
+# "raw 0 -> 0" for each. A comment asking two copies to stay in step is not a
+# mechanism; a shared file is.
+. (Join-Path $PSScriptRoot 'lib/RawPiiPatterns.ps1')
+$patterns = $PacgateRawPiiPatterns
 
 function Invoke-Psql([string]$sql) {
     # SQL goes in over STDIN, not through `cmd /c "..."`.
