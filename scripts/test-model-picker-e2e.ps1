@@ -21,14 +21,36 @@
 [CmdletBinding()]
 param(
     [string]$NginxUrl = 'http://localhost:8089',
-    [string]$Email = 'admin@pacgate-law.com',
-    [string]$Password = '9delujmycbrktj9u5mo9js8t',
+    # deer-flow admin. Resolved from deploy/client-bundle/.deer-flow-credentials
+    # below unless overridden here.
+    #
+    # These were HARDCODED literals that went stale when the credential was
+    # rotated (the credentials file records a 2026-10-09 reset). Combined with the
+    # JSON/form-data mismatch fixed at the login call, that made this gate report
+    # CANNOT CHECK against a healthy deer-flow on every run - and because exit 2 is
+    # the "not a failure" carve-out, it silently stopped testing anything while
+    # still appearing in the suite output. A gate that can never fail is not a gate.
+    [string]$Email,
+    [string]$Password,
     [string]$Model = 'gemma4-12b-local',
     [int]$TimeoutSec = 420
 )
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# The credentials file is per-machine and gitignored, so it is the authority; the
+# literals above are only a fallback for a machine that has not run /setup.
+if (-not $Email -or -not $Password) {
+    $dfCred = Join-Path $repoRoot 'deploy\client-bundle\.deer-flow-credentials'
+    if (Test-Path $dfCred) {
+        foreach ($line in (Get-Content $dfCred -ErrorAction SilentlyContinue)) {
+            if (-not $Email -and $line -match '^\s*DEER_FLOW_EMAIL\s*=\s*(.+)$') { $Email = $Matches[1].Trim() }
+            if (-not $Password -and $line -match '^\s*DEER_FLOW_PASSWORD\s*=\s*(.+)$') { $Password = $Matches[1].Trim() }
+        }
+    }
+    if (-not $Email) { $Email = 'admin@pacgate-law.com' }
+}
 $pass = 0
 $fail = 0
 function Check($name, $cond, $detail = '') {
@@ -123,7 +145,9 @@ $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $loginOk = $false
 try {
     $null = Invoke-WebRequest -Uri "$NginxUrl/api/v1/auth/login/local" -Method Post `
-        -Body @{ username = $Email; password = $Password } `
+        -Headers @{ Origin = $NginxUrl } `
+        -ContentType 'application/x-www-form-urlencoded' `
+        -Body "username=$Email&password=$Password" `
         -WebSession $session -UseBasicParsing -TimeoutSec 25
     $loginOk = $true
 }
