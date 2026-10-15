@@ -23,9 +23,16 @@
 param(
     [string]$NginxUrl = 'http://localhost:8089',
     [string]$OllamaUrl = 'http://localhost:11434',
-    # deer-flow admin. The documented dev credential; override per machine.
-    [string]$DfEmail = 'admin@pacgate-law.com',
-    [string]$DfPassword = '9delujmycbrktj9u5mo9js8t',
+    # deer-flow admin. Resolved from deploy/client-bundle/.deer-flow-credentials
+    # below unless overridden here.
+    #
+    # The previous default was a HARDCODED password that went stale when the
+    # credential was rotated (the credentials file records a 2026-10-09 reset).
+    # It made this lane report ERR 401 against a healthy deer-flow on every run,
+    # and run-benchmark is the harness the audit reads. Preferring the machine's
+    # own file over a literal means a rotation cannot silently rebreak it.
+    [string]$DfEmail,
+    [string]$DfPassword,
     [string]$DfModel = 'gemma4-12b-local',
     # Emit pure markdown (for > file). Without it, prints a human summary too.
     [switch]$Markdown
@@ -33,6 +40,20 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# ── deer-flow credentials ────────────────────────────────────────────────────
+# The file is per-machine and gitignored, so it is the authority; the literals
+# above are only a fallback for a machine that has not run the /setup flow.
+if (-not $DfEmail -or -not $DfPassword) {
+    $dfCred = Join-Path $repoRoot 'deploy\client-bundle\.deer-flow-credentials'
+    if (Test-Path $dfCred) {
+        foreach ($line in (Get-Content $dfCred -ErrorAction SilentlyContinue)) {
+            if (-not $DfEmail -and $line -match '^\s*DEER_FLOW_EMAIL\s*=\s*(.+)$') { $DfEmail = $Matches[1].Trim() }
+            if (-not $DfPassword -and $line -match '^\s*DEER_FLOW_PASSWORD\s*=\s*(.+)$') { $DfPassword = $Matches[1].Trim() }
+        }
+    }
+    if (-not $DfEmail) { $DfEmail = 'admin@pacgate-law.com' }
+}
 
 function Now-Ms { [Diagnostics.Stopwatch]::StartNew() }
 
@@ -125,7 +146,9 @@ $df = 'SKIP'
 $dfs = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 try {
     $null = Invoke-WebRequest -Uri "$NginxUrl/api/v1/auth/login/local" -Method Post `
-        -Body @{ username = $DfEmail; password = $DfPassword } -WebSession $dfs -UseBasicParsing -TimeoutSec 25
+        -Headers @{ Origin = $NginxUrl } `
+        -ContentType 'application/x-www-form-urlencoded' `
+        -Body "username=$DfEmail&password=$DfPassword" -WebSession $dfs -UseBasicParsing -TimeoutSec 25
     $csrf = ($dfs.Cookies.GetCookies($NginxUrl) | Where-Object { $_.Name -eq 'csrf_token' } | Select-Object -First 1).Value
     $H = @{ 'X-CSRF-Token' = $csrf }
     $t = (Invoke-WebRequest -Uri "$NginxUrl/api/threads" -Method Post -Body '{}' -ContentType 'application/json' `
@@ -204,6 +227,24 @@ if ($notes.Count -gt 0) {
 }
 Write-Output '## Verdict'
 Write-Output ''
-$bad = @($rows | Where-Object { $_.Status -eq 'ERR' })
-if ($bad.Count -eq 0) { Write-Output 'All measured lanes responded. No lane errored.' }
-else { Write-Output "$($bad.Count) lane(s) errored: $(($bad | ForEach-Object { $_.Label }) -join ', ')" }
+# The verdict must see EVERY lane it reports, not just the HTTP table.
+#
+# Measured 2026-10-15: it read only `$rows`, so the deer-flow lane - whose value
+# lives in `$df`, appended to section 2 as a bare string - was invisible to it. A
+# report whose section 2 read `deer-flow generation ... ERR 401` therefore carried
+# the verdict "All measured lanes responded. No lane errored." The LLM lanes had
+# the same hole (`Ms = 'ERR'` and never inspected). Both now feed the check.
+$bad = @($rows | Where-Object { $_.Status -eq 'ERR' } | ForEach-Object { $_.Label })
+$bad += @($llm | Where-Object { "$($_.Ms)" -match 'ERR' } | ForEach-Object { "$($_.Lane) (ollama)" })
+if ("$df" -match 'ERR') { $bad += "deer-flow generation through nginx ($DfModel)" }
+$bad = @($bad | Where-Object { $_ })
+if ($bad.Count -eq 0) {
+    Write-Output 'All measured lanes responded. No lane errored.'
+} else {
+    Write-Output "$($bad.Count) lane(s) errored: $($bad -join ', ')"
+    Write-Output ''
+    Write-Output 'An ERR in the deer-flow lane has been a STALE CREDENTIAL in this script,'
+    Write-Output 'not a deer-flow fault, every time it has been seen. Check'
+    Write-Output 'deploy/client-bundle/.deer-flow-credentials against -DfPassword before'
+    Write-Output 'reading it as a stack failure.'
+}
