@@ -154,6 +154,7 @@ class PacgateApi:
         data: dict[str, Any] | None = None,
         files: dict[str, Any] | None = None,
         timeout: float | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         """Send a request; on 401 re-login once and retry exactly once.
 
@@ -161,6 +162,11 @@ class PacgateApi:
         passing a headers dict built by the caller would resend the expired one
         and 401 again. Retrying is safe because pacgate-api rejects an expired
         token before the handler runs, so a 401 means nothing was executed.
+
+        `extra_headers` are the caller's per-call headers (currently only the
+        memory write's If-Match). They are merged INSIDE `send()`, over the
+        rebuilt base, so the retry also carries them - which is the whole point
+        of not letting the caller pass a complete dict.
 
         `timeout` overrides the client default for one call (used by the
         sanitize endpoints, whose NER pass legitimately runs for minutes).
@@ -174,6 +180,8 @@ class PacgateApi:
                 # server would parse a multipart body as JSON. The previous
                 # post_multipart never set Content-Type for this reason.
                 headers.pop("Content-Type", None)
+            if extra_headers:
+                headers.update(extra_headers)
             kwargs: dict[str, Any] = {"headers": headers}
             if params is not None:
                 kwargs["params"] = params
@@ -203,9 +211,28 @@ class PacgateApi:
         self,
         path: str,
         json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
-        return self._request("POST", path, json=json, timeout=timeout)
+        # `headers` exists for the memory write's If-Match revision guard.
+        #
+        # MEASURED 2026-10-15, on the published 0.1.31 image: without this kwarg
+        # `pacgate_write_memory` raised `TypeError: PacgateApi.post() got an
+        # unexpected keyword argument 'headers'` on EVERY call, so no agent could
+        # write matter memory through the MCP server. Reproduced deterministically
+        # against the running container, and present in the tag, origin/main and
+        # this tree - not a local regression.
+        #
+        # The agent-side adapter (deploy/client-bundle/patches/pacgate-adapter-client.py)
+        # was already fixed for exactly this and carries a comment saying so; the
+        # MCP client copies the same shape and never got the fix. The agent memory
+        # lane therefore worked while the MCP tool was dead, which is why the
+        # memory-lane gates (which assert configuration, not behaviour) stayed green.
+        #
+        # The value is merged INSIDE `_request`, which rebuilds auth headers on the
+        # 401-retry path; passing a caller-built dict straight to httpx would resend
+        # an expired token after a re-login.
+        return self._request("POST", path, json=json, timeout=timeout, extra_headers=headers)
 
     def delete(self, path: str) -> httpx.Response:
         return self._request("DELETE", path)
