@@ -130,6 +130,10 @@ $labelRules = @(
     #
     #   - `password|passwd|pwd|secret` only. `token` was dropped as too generic.
     #   - requires `=` immediately, so prose ("set a password to 12 chars") cannot fire.
+    #   - `[:=]` accepts the colon form used by YAML and Rust (`secret: "..."`), not
+    #     just the assignment form. The broad sweep that found the hardcoded PowerShell
+    #     defaults also found `secret: "..."` in state.rs and the Rust tests; without
+    #     this, a real YAML `password: "<value>"` would still be invisible.
     #   - requires 12+ chars (real generated secrets here are 16-24).
     #   - the negative lookahead drops values containing `- $ : { } *`. That excludes
     #     `$env:PACGATE_API_PASSWORD` (a reference) and the gate fixtures
@@ -145,7 +149,7 @@ $labelRules = @(
     # Known gap, stated rather than hidden: a real password that uses a hyphen or a
     # `$` would be missed by this rule. It is a heuristic for regression detection,
     # not a proof - the md-bare-token and known-format rules cover other shapes.
-    @{ Name = 'ps-password-literal'; Re = '(?i)(?:password|passwd|pwd|secret)["'']?\s*=\s*["''](?<v>(?![^"'']*[-$:{}*])[A-Za-z0-9!@#%^&+=?/~_.]{12,})["'']' }
+    @{ Name = 'ps-password-literal'; Re = '(?i)(?:password|passwd|pwd|secret)["'']?\s*[:=]\s*["''](?<v>(?![^"'']*[-$:{}*])[A-Za-z0-9!@#%^&+=?/~_.]{12,})["'']' }
 )
 
 # Scanners contain credential-shaped regex literals by design. Excluded so the
