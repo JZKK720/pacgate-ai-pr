@@ -48,6 +48,11 @@ try {
     # ── Fixtures ────────────────────────────────────────────────────────────
     Copy-Item (Join-Path $repoRoot 'deploy/client-bundle/install.ps1') $work
     Copy-Item (Join-Path $repoRoot 'deploy/client-bundle/deer-flow-extensions-config.template.json') $work
+    # The OpenViking template is the OTHER render-and-compare lane. It was left on
+    # render-IF-ABSENT while the extensions lane was fixed, so it needs the same
+    # coverage: a template change must reach a machine whose .env already has the key.
+    New-Item -ItemType Directory -Path (Join-Path $work 'openviking') -Force | Out-Null
+    Copy-Item (Join-Path $repoRoot 'deploy/client-bundle/openviking/ov.conf.template') (Join-Path $work 'openviking')
     'model-a' | Set-Content (Join-Path $work 'ollama-models.txt')
     # Minimal compose so `-f compose.prod.yaml` has a target; the stub ignores it.
     "services: {}" | Set-Content (Join-Path $work 'compose.prod.yaml')
@@ -59,6 +64,16 @@ try {
         'PACGATE_DB_PASSWORD=testpass'
         'PACGATE_JWT_SECRET=testsecret'
     ) | Set-Content (Join-Path $work '.env')
+
+    $workEnv = Join-Path $work '.env'
+    function Get-WorkEnvKey([string]$key) {
+        $m = Select-String -Path $workEnv -Pattern ("^\s*" + [regex]::Escape($key) + "\s*=(.*)$") | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value }
+        return $null
+    }
+    function Get-WorkEnvKeyCount([string]$key) {
+        return @(Select-String -Path $workEnv -Pattern ("^\s*" + [regex]::Escape($key) + "\s*=")).Count
+    }
 
     $run = {
         param($dir)
@@ -110,6 +125,7 @@ if (`$d -notlike '*_stubs*') {
         $first3 = if ($head.Length -ge 3) { ($head[0..2] -join ',') } else { '' }
         Check 'no BOM written' (-not ($first3 -eq '239,187,191'))
     }
+    Check 'first run rendered OPENVIKING_CONF_CONTENT into .env' ((Get-WorkEnvKeyCount 'OPENVIKING_CONF_CONTENT') -eq 1)
     $mtime1 = if (Test-Path $rendered) { (Get-Item $rendered).LastWriteTimeUtc } else { $null }
     Write-Host ''
 
@@ -149,6 +165,54 @@ if (`$d -notlike '*_stubs*') {
     Check 'named the gained server' ($out3txt -match 'firecrawl')
     $newTxt = Get-Content $rendered -Raw
     Check 'new content actually present in rendered file' ($newTxt -match 'firecrawl')
+    Write-Host ''
+
+    # ── Case 4: the OpenViking lane reaches an already-installed machine ────
+    #
+    # This is the regression the extensions lane was fixed for and this lane was
+    # NOT. Before the fix the guard was `-not ($envVars.ContainsKey(
+    # 'OPENVIKING_CONF_CONTENT') -and $envVars[...])`, so once .env carried the key
+    # the template was never read again. The concrete consequence: commit e180fc8
+    # changed the VLM from gemma4:12b-it-q8_0 (13 GB) to gemma4:12b-it-qat (7.2 GB)
+    # on 2026-09-21, and every machine that had already rendered kept q8_0 -
+    # silently, across every later -Update.
+    #
+    # Case 4 pins the KEY property: a template change is applied to a .env that
+    # ALREADY has the key. Using a model-tag change makes the failure mode concrete
+    # (that is the real historical drift) rather than a synthetic marker.
+    Write-Host 'CASE 4: OpenViking template change reaches an already-installed machine'
+    $ovBefore = Get-WorkEnvKey 'OPENVIKING_CONF_CONTENT'
+    Check 'OPENVIKING_CONF_CONTENT present before the change' ($null -ne $ovBefore)
+    Check '...and is a single line (not appended twice)' ((Get-WorkEnvKeyCount 'OPENVIKING_CONF_CONTENT') -eq 1)
+
+    # Rewrite the template's VLM tag, exactly as e180fc8 did.
+    $ovTplPath = Join-Path $work 'openviking/ov.conf.template'
+    $ovTpl = Get-Content $ovTplPath -Raw -Encoding UTF8
+    $ovTpl = $ovTpl.Replace('gemma4:12b-it-qat', 'gemma4:12b-it-q8_0')
+    [System.IO.File]::WriteAllText($ovTplPath, $ovTpl, [System.Text.UTF8Encoding]::new($false))
+
+    $out4 = & $run $work
+    $out4txt = $out4 -join "`n"
+    $ovAfter = Get-WorkEnvKey 'OPENVIKING_CONF_CONTENT'
+    Check 'template change WAS applied to .env (the defect was that it was not)' ($ovAfter -match 'q8_0')
+    Check 'stale value is GONE (no duplicate line left above)' ((Get-WorkEnvKeyCount 'OPENVIKING_CONF_CONTENT') -eq 1)
+    Check 'CHANGE IS REPORTED (not silent)' ($out4txt -match 'from template')
+    Check 'named the VLM model' ($out4txt -match 'OpenViking VLM now')
+
+    # Idempotency: an unchanged template must not rewrite .env.
+    $envMtime = (Get-Item $workEnv).LastWriteTimeUtc
+    Start-Sleep -Milliseconds 1100
+    $out5 = & $run $work
+    Check 'unchanged run does NOT rewrite .env (idempotent)' ((Get-Item $workEnv).LastWriteTimeUtc -eq $envMtime) `
+        'a rewrite on every run would churn the file and could re-order/fuse lines'
+    Check 'reports the OpenViking config already current' (($out5 -join "`n") -match 'OPENVIKING_CONF_CONTENT already current')
+
+    # The unrelated keys must survive the in-place rewrite.
+    Check 'unrelated .env keys preserved' (
+        ($null -ne (Get-WorkEnvKey 'PACGATE_JWT_SECRET')) -and
+        ($null -ne (Get-WorkEnvKey 'OPENVIKING_API_KEY')) -and
+        ($null -ne (Get-WorkEnvKey 'OPENVIKING_ROOT_API_KEY'))
+    )
     Write-Host ''
 
     Write-Host "RESULT: $pass passed, $fail failed" -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

@@ -435,6 +435,27 @@ $measurements = @(
     # delete it, and no commit can turn this green. See
     # deploy/DEFECT-sanitized-content-not-served.md.
     'scripts/audit-sanitized-chunk-egress.ps1'
+
+    # Auxiliary model lanes must be pinned BY NAME. Registered 2026-10-17, after
+    # `title.model_name` was found unset in BOTH shipped configs - which sent title
+    # generation to `models[0]`, a 25 GB `ollama ps` resident, on EVERY new thread.
+    # On the 16 GB AIPC dGPUs that model does not fit, so it either OOMs or evicts
+    # the model the user's chat is already on; the following call pays a full reload
+    # and the 420 s stream idle watchdog eventually kills it.
+    #
+    # The memory lane was pinned for the SAME class of bug on 2026-10-07 (a 43k-token
+    # loop on the single Ollama runner slot). The title lane was missed, and
+    # `summarization` was missed too - measured the same day to fall back to
+    # models[0] as well, because the middleware builds its own model and never
+    # receives the chat model. Nothing in the repo asserted what an auxiliary lane
+    # resolves to, so all three could regress silently.
+    #
+    # STATIC - reads the two tracked configs only, no containers and no YAML module
+    # (the AIPCs ship Windows PowerShell 5.1, which has no ConvertFrom-Yaml).
+    # Red-checked by reintroducing each pin's removal and by pinning a non-existent
+    # model name; the summarization assertions correctly SKIP when that lane is
+    # disabled, since deer-flow defaults `enabled` to false.
+    'scripts/test-auxiliary-model-pins.ps1'
 )
 
 $failed = @()

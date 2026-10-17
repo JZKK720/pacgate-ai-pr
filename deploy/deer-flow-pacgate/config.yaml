@@ -162,3 +162,16 @@ memory:
   # of thousands of tokens on the single Ollama runner slot, stalling every
   # chat. gemma4-12b-memory carries a hard 2048 max_tokens (entry below).
   model_name: gemma4-12b-memory
+
+# Pacgate 2026-10-17: PIN the title-generation model.
+#
+# Same root cause as in the client config: `title.model_name` unset meant
+# `title_middleware.py` called `create_chat_model()` with no name, resolving to
+# `models[0]` - here nemotron-3.5-lightning:30b-a3b, 25 GB resident. That ran on
+# EVERY new thread, loading or evicting a 25 GB model on the single Ollama
+# runner slot for a six-word title. This file is baked into the standalone
+# image, so an image started without the client bind-mount has no other pin.
+# gemma4-12b-memory is the only 12B entry here, so title and memory converge on
+# one resident model.
+title:
+  model_name: gemma4-12b-memory

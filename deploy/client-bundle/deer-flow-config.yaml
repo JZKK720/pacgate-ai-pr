@@ -241,6 +241,14 @@ model_routing:
   # it is still called cloud_model; read it as "the escalation target".
   cloud_model: nemotron-3.5-lightning-30b-local
   message_token_threshold: 40000
+  # Pacgate 2026-10-17: DEAD SIGNAL, left at the schema default on purpose.
+  # Measured live on 0.1.31: the bound surface is 44 tools (7 sandbox + 2
+  # builtins + 35 MCP), so `tool_count >= 200` is unreachable and escalation is
+  # decided by message_token_threshold ALONE. Raising MCP servers would not make
+  # it fire either - that count is the raw tool list, taken BEFORE tool_search
+  # deferral, and it never exceeds ~44 with the three servers we ship. Kept (not
+  # removed) because the key is part of deer-flow's config schema and a future
+  # deployment with a genuinely large surface can still use it.
   tool_count_threshold: 200
 
 # Pacgate 2026-10-07: pin background memory updates to a dedicated capped model.
@@ -253,6 +261,24 @@ memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
   model_name: gemma4-12b-memory
 
+# Pacgate 2026-10-17: PIN the title-generation model.
+#
+# Root cause (measured live, 2026-10-17): `title.model_name` was unset, so
+# `title_middleware.py` fell through to `create_chat_model()` with no name,
+# which resolves to `models[0]`. That is nemotron-3.5-lightning:30b-a3b, a
+# 25 GB resident model. TitleMiddleware runs on EVERY new thread, so the first
+# message of a fresh thread loaded a 25 GB model onto the single Ollama runner
+# slot. On a 16 GB dGPU that either OOMs or evicts the model the user's chat is
+# already running on, and the next real call then pays a full model reload -
+# which is what the 420 s "no astream output" stall watchdog eventually kills.
+#
+# The title prompt asks for <=6 words / <=60 chars and is already bounded by
+# DEERFLOW_TITLE_INVOKE_TIMEOUT_S=8 in compose, so it needs no 30B model.
+# gemma4-12b-local shares its Ollama tag with the memory pin above, so title and
+# memory work converge on ONE resident model instead of adding a third.
+title:
+  model_name: gemma4-12b-local
+
 # Pacgate 2026-10-09: ENABLE conversation summarization. Root cause this
 # fixes: summarization was UNCONFIGURED (null -> disabled by default), so
 # long threads grew unbounded. The trigger counts MESSAGE tokens only
@@ -263,12 +289,35 @@ memory:
 # All three 2026-10-08 stalls ("no astream output for 420s") happened at
 # input=64-65k - exactly the 65536-token ctx slot Ollama allocates.
 # 12000 message-tokens engages after ~40 messages; keep=12000 preserves the
-# recent verbatim context. No model_name pin: the summarizer runs on the
-# default chat model (same runner slot, no VRAM swap). Verified live
+# recent verbatim context. (The old note here claimed no model_name pin was
+# needed because "the summarizer runs on the default chat model (same runner
+# slot, no VRAM swap)" - that was wrong and is corrected at the pin below.)
+# Verified live
 # 2026-10-09: hook fired, summary executed, next model call input bounded
 # 32,770 (was 83k).
 summarization:
   enabled: true
+  # Pacgate 2026-10-17: PIN the summarizer model, like memory and title above.
+  #
+  # Measured live on 0.1.31: `summarization.model_name` was unset, so
+  # `_create_summarization_middleware` took its `else` branch ->
+  # `create_chat_model(thinking_enabled=False)` -> `models[0]` ->
+  # nemotron-3.5-lightning:30b-a3b, 25 GB resident. The pre-2026-10-17 comment
+  # here claimed "the summarizer runs on the default chat model (same runner
+  # slot, no VRAM swap)". That was FALSE on both counts: the middleware never
+  # receives the chat model, so it does not follow the user's picker choice, and
+  # "the default" is a 25 GB model that does not fit a 16 GB dGPU.
+  #
+  # Effect before the pin: a long thread crossing the 12000-token trigger made a
+  # SECOND invisible model call - on the same single Ollama runner slot as the
+  # user's chat, and on a different, oversized model. That is the "hang while
+  # another lane works" signature.
+  #
+  # gemma4-12b-local shares the Ollama tag `gemma4:12b-it-qat` with the memory pin,
+  # so chat, title, memory and summarization now all converge on ONE resident
+  # model. The 8192 cap is kept (not the 2048 memory cap) because summary length
+  # is less predictable than a short fact block.
+  model_name: gemma4-12b-local
   trigger:
     - type: tokens
       value: 12000

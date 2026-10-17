@@ -360,29 +360,106 @@ if (Test-Path $envPath) {
 }
 
 # 4b-i. Render OpenViking config (OPENVIKING_CONF_CONTENT) from template + secrets
+#
+# RENDER-AND-COMPARE, not render-if-absent.
+#
+# This block previously rendered ONLY when the key was missing from .env:
+#
+#     $needsRender = -not (Test-Path env:OPENVIKING_CONF_CONTENT) -and
+#         (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and ...))
+#
+# Once .env carried the key, that guard was false forever and the template was
+# never read again. Verified on this box 2026-10-17: `OPENVIKING_CONF_CONTENT=` IS
+# present in .env, so the guard skips and the template has not been re-rendered
+# since. Commit e180fc8 changed the template's VLM from `gemma4:12b-it-q8_0` (13 GB)
+# to `gemma4:12b-it-qat` (7.2 GB) on 2026-09-21 - and every machine that had already
+# rendered kept q8_0, silently, across every subsequent -Update.
+#
+# This is the IDENTICAL defect the extensions config below was fixed for
+# (see deploy/AIPC-UPDATE-GAP-ANALYSIS.md 3a). That path was converted to
+# render-and-compare; this one was left behind.
+#
+# The container reads OPENVIKING_CONF_CONTENT from its ENVIRONMENT (verified:
+# `docker exec openviking` sees the var), so .env is the authoritative source and
+# this is the right place to fix it. openviking/ov.conf on the host is
+# container-generated state and is deliberately left alone.
 $ovTemplate = ".\openviking\ov.conf.template"
 if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
-    $needsRender = -not (Test-Path env:OPENVIKING_CONF_CONTENT) -and
-        (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and $envVars['OPENVIKING_CONF_CONTENT']))
-    if ($needsRender -and $envVars.ContainsKey('OPENVIKING_ROOT_API_KEY') -and
-        $envVars['OPENVIKING_ROOT_API_KEY'] -notmatch '^change-me') {
+    $ovKey = $envVars['OPENVIKING_ROOT_API_KEY']
+    if (-not $ovKey -or $ovKey -match '^change-me') {
+        # Cannot render without a usable key. Preserve the previous lenient
+        # behaviour (do not fail an otherwise-good install) but SAY so, because a
+        # silent skip is what hid this class of drift.
+        Write-Host "[WARN] OPENVIKING_ROOT_API_KEY is unset or still 'change-me' - not re-rendering OPENVIKING_CONF_CONTENT." -ForegroundColor Yellow
+    } else {
         # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
         # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
         $conf = Get-Content $ovTemplate -Raw -Encoding UTF8
-        $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
+        $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $ovKey)
         $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
-        # Append with an explicit leading newline: PowerShell 5.1's Add-Content
-        # glues the new line onto the last line when .env has no trailing
-        # newline, fusing e.g. OPENVIKING_API_KEY=<val> with
-        # OPENVIKING_CONF_CONTENT=<json> on one line (corrupting both).
-        $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
-        $prefix = if ($rawEnv.Length -eq 0 -or $rawEnv.EndsWith("`n")) { '' } else { "`r`n" }
-        [System.IO.File]::AppendAllText(
-            (Resolve-Path $envPath),
-            "$prefix" + "OPENVIKING_CONF_CONTENT=$minified`r`n",
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT into .env" -ForegroundColor Green
+
+        $ovExisting = if ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT')) { $envVars['OPENVIKING_CONF_CONTENT'] } else { '' }
+        # Compare minified-to-minified so a whitespace-only difference does not look
+        # like a change and churn the file on every run.
+        $ovUnchanged = ($null -ne $ovExisting) -and ($ovExisting.Trim() -eq $minified.Trim())
+
+        if ($ovUnchanged) {
+            Write-Host "[OK] OPENVIKING_CONF_CONTENT already current" -ForegroundColor Green
+        } else {
+            # Rewrite IN PLACE: preserve every other line, including comments and
+            # secrets. Appending here would leave the stale line above the new one,
+            # and docker compose's last-one-wins behaviour would make that "work"
+            # while the file silently accumulated a stale copy on every update.
+            $ovLines = Get-Content $envPath
+            $ovFound = $false
+            $ovOut = foreach ($line in $ovLines) {
+                if ($line -match '^\s*OPENVIKING_CONF_CONTENT\s*=') {
+                    $ovFound = $true
+                    "OPENVIKING_CONF_CONTENT=$minified"
+                } else { $line }
+            }
+            if (-not $ovFound) {
+                # Append with an explicit leading newline: PowerShell 5.1's Add-Content
+                # glues the new line onto the last line when .env has no trailing
+                # newline, fusing e.g. OPENVIKING_API_KEY=<val> with
+                # OPENVIKING_CONF_CONTENT=<json> on one line (corrupting both).
+                $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
+                $prefix = if ($rawEnv.Length -eq 0 -or $rawEnv.EndsWith("`n")) { '' } else { "`r`n" }
+                $ovOut = @($ovLines)
+                $ovOut += "$prefix" + "OPENVIKING_CONF_CONTENT=$minified"
+            }
+            # No BOM: docker compose chokes on a BOM in .env, and Set-Content adds one
+            # by default on Windows PowerShell.
+            #
+            # Resolve to an ABSOLUTE path first. `$envPath` is ".\\.env", and .NET's
+            # current directory does NOT follow PowerShell's Set-Location - so a
+            # relative path here can silently write somewhere other than the
+            # directory this script believes it is in. The original AppendAllText
+            # called Resolve-Path for exactly this reason; keep that property.
+            [System.IO.File]::WriteAllLines((Resolve-Path $envPath), $ovOut, [System.Text.UTF8Encoding]::new($false))
+            Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT from template (it was stale)" -ForegroundColor Green
+
+            # Name what changed. The silent version of this is what let q8_0 survive
+            # the qat rename, and the VLM is the one lane whose staleness is invisible
+            # at runtime - extraction still works, just on a 13 GB model instead of 7.2.
+            $ovModels = @{}
+            foreach ($ovM in [regex]::Matches($minified, '"model":\s*"([^"]+)"')) {
+                $ovModels[$ovM.Groups[1].Value] = $true
+            }
+            foreach ($ovName in @('gemma4:12b-it-q8_0', 'gemma4:12b-it-qat')) {
+                if ($ovModels.ContainsKey($ovName)) {
+                    Write-Host "     OpenViking VLM now: $ovName" -ForegroundColor Yellow
+                }
+            }
+            if ($minified -match '"model":\s*"gemma4:12b-it-q8_0"') {
+                Write-Host "     NOTE: the template still names q8_0 (13 GB). qat is 7.2 GB and shares one resident model with the other utility lanes." -ForegroundColor Yellow
+            }
+
+            # Same-run visibility: docker compose reads ${OPENVIKING_CONF_CONTENT}
+            # from the process environment, so this avoids needing a second run.
+            $envVars['OPENVIKING_CONF_CONTENT'] = $minified
+            $env:OPENVIKING_CONF_CONTENT = $minified
+        }
     }
 }
 
