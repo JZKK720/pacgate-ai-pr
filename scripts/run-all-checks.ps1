@@ -456,7 +456,45 @@ $measurements = @(
     # model name; the summarization assertions correctly SKIP when that lane is
     # disabled, since deer-flow defaults `enabled` to false.
     'scripts/test-auxiliary-model-pins.ps1'
+
+    # Capacity fitness, registered 2026-10-17. `audit-model-tags.ps1` already gates
+    # tag OBTAINABILITY (HTTP 404 at runtime); nothing gated whether a tag can
+    # actually RUN on the smallest supported client GPU, and those are different
+    # failures - an un-fittable model pulls fine, lists fine, then spills to CPU or
+    # evicts the chat model.
+    #
+    # The dev box for this project has a 96 GiB iGPU carve-out, so every over-cap
+    # model runs there happily and the defect is invisible until it reaches a 16 GB
+    # AIPC. That is precisely why this needs a gate rather than a review.
+    #
+    # REGISTERED AS A MEASUREMENT, NOT A GATE, on purpose. Run normally it reports
+    # the capacity exposures and exits 0. Run with -Strict it exits 1, and it
+    # currently WOULD fail on real findings:
+    #   - PACGATE_MODEL_MID defaults to qwen3.8:27b-mtp-q4_K_M (17 GB) in BOTH
+    #     compose files - unconditional, so it is a capacity bug, not a preference;
+    #   - two active deer-flow roster entries are over-cap (nemotron 25 GB,
+    #     ornith-35b 22 GB).
+    # Making that blocking is a single switch flip, but which models the SHIPPED
+    # roster offers is a product decision that is still open. Promote it to `$gates`
+    # with -Strict once that call is made - the warnings above are the input to it.
+    'scripts/test-aipc-capacity-fit.ps1'
 )
+
+# Cross-stack credential agreement, registered 2026-10-17. This is the gate
+# whose ABSENCE let a real divergence survive: the deployment has TWO .env files
+# (client-bundle/.env and client-bundle/qm-pacgate/.env, separate compose projects
+# at separate directories), and four keys are shared BY VALUE with nothing
+# synchronising them. PACGATE_API_PASSWORD diverged, so qm-pacgate-core held a value
+# that returns 401 against pacgate-api - proved by login probe, 200 vs 401.
+#
+# The whole 39-gate suite stayed green through it, because every existing test
+# drives pacgate-api using client-bundle/.env and NOTHING crossed the stack
+# boundary. Registered as a GATE, not a measurement: there is no judgement call
+# here, shared secrets agreeing is a hard requirement.
+#
+# It exits 2 (CANNOT CHECK) on a fresh clone where neither .env exists - those
+# files are gitignored and per-machine by design.
+$gates += 'scripts/test-cross-stack-credentials.ps1'
 
 $failed = @()
 

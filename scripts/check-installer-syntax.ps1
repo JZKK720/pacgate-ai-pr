@@ -36,6 +36,8 @@ $targets = @(
     'scripts/audit-qm-bootstrap.ps1'
     'scripts/scheduled-update.ps1'
     'scripts/register-scheduled-update.ps1'
+    'scripts/test-aipc-capacity-fit.ps1'
+    'scripts/test-cross-stack-credentials.ps1'
 )
 
 $bad = 0

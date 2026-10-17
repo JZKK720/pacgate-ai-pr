@@ -504,3 +504,137 @@ it, the run can exceed its window. It passes when it has the runner to itself.
 
 This work reduces that contention rather than adding to it: the auxiliary lanes now
 converge on one resident 12B tag instead of pulling in a 25 GB `models[0]`.
+
+## 15. Hardware tiering: is a per-machine profile warranted?
+
+Asked directly: the dev box is a 395 with 128 GB, AIPC 1 & 2 are HX370 with 16 GB, so should
+the shipped stack carry feasible quants and per-machine prefill/ctx/temperature instead of
+the over-cap models that only run here?
+
+**The roster answer is yes, and the over-cap set should not be shipping at all.** On-disk
+sizes measured on the dev box 2026-10-17 (`ollama list`, Ollama 0.40.5):
+
+| tag | on-disk | vs 16 GB dGPU |
+| --- | ---: | --- |
+| `gemma4:12b-it-qat` | 7.2 GB | fits comfortably |
+| `nomic-embed-text:latest` | 274 MB | fits |
+| `ornith-1.5:9b` | 6.6 GB | fits |
+| `gemma4:26b-a4b-it-qat` | 15 GB | marginal - no headroom for KV or compositor |
+| `qwen3.8:27b-mtp-q4_K_M` | 17 GB | **over cap** |
+| `ornith-1.5:35b` | 22 GB | **over cap** |
+| `nemotron-3.5-bolt:74b-a9b-iq2` | 24 GB | **over cap** |
+| `nemotron-3.5-lightning:30b-a3b` | 25 GB | **over cap** |
+
+The quant *choice* is already right (`qat`, not `q8_0`). The problem is not quantization - it
+is that **`ollama-models.txt` pulls every uncommented line unconditionally**
+(`install.ps1:651` loops the whole file), including ~53 GB the file's own comments label
+"extra pre-pull" and a model it says "do NOT enable for Main tier." The comments carry the
+intent; the puller ignores it.
+
+### The measurement that changes the answer
+
+`num_ctx` is **never sent by deer-flow**. Both shipped configs pass only `max_tokens` and
+`temperature`. Context is therefore decided entirely by the **host Ollama server**, which
+nothing in this repo configures. Measured what that implies:
+
+```
+options:{} (no num_ctx - deer-flow's actual behaviour)
+  gemma4:12b-it-qat   7.9 GB   100% GPU   CONTEXT 262144
+options:{num_ctx:65536}
+  gemma4:12b-it-qat   7.7 GB   100% GPU   CONTEXT 65536
+options:{num_ctx:8192}
+  gemma4:12b-it-qat   7.7 GB   100% GPU   CONTEXT 8192
+```
+
+Two results, both load-bearing:
+
+1. **Ollama defaults to 262144, not 65536.** The comment at
+   `deer-flow-config.yaml:290` asserting "exactly the 65536-token ctx slot Ollama allocates"
+   was simply false, and has been corrected in place. The 64-65k figure recorded where the
+   2026-10-08 stalls *happened*; it was never a hard ceiling.
+2. **Context width is not the constraint.** 8k -> 262k costs 7.7 -> 7.9 GB. This independently
+   re-confirms section 9's conclusion from a different angle, and it means per-machine
+   *prefill/ctx* tuning buys essentially nothing on VRAM. The weights are the constraint.
+
+### Which knobs actually deserve a per-machine value
+
+| knob | per-machine? | why |
+| --- | --- | --- |
+| roster / tier models | **yes** | the actual constraint; 17-25 GB tags cannot run on 16 GB |
+| `OLLAMA_CONTEXT_LENGTH` | **yes, cheaply** | 262144 default is safe on gemma4 but is not a decision anyone made on purpose |
+| `OLLAMA_KEEP_ALIVE` | **yes** | `30m` is already set at User scope on the dev box; this is the proven channel |
+| `OLLAMA_NUM_PARALLEL` / `KV_CACHE_TYPE` | **yes** | same channel; `q8_0` KV halves cache at some quality cost |
+| `temperature` | **no - keep global** | see below |
+| `max_tokens` | **no** | already capped per-model for a correctness reason (thinking loops) |
+
+**Temperature stays global, deliberately.** Every model entry is already uniformly `0.1`.
+For a legal product that uniformity is a feature, not an oversight: divergent temperature means
+the same firm's documents generate differently depending on which workstation ran them, which
+is indefensible in a legal context. Per-machine temperature is the one item on this list that
+should be refused.
+
+### Hardware detection is feasible - but the obvious APIs are traps
+
+Measured on this box:
+
+| method | returns | verdict |
+| --- | --- | --- |
+| `Win32_VideoController.AdapterRAM` | **4 GB** for a 96 GB card | UINT32-saturated; useless |
+| `HKLM\...\{4d36e968-...}\0000\HardwareInformation.qwMemorySize` | **103079215104 = 96 GB** | correct; QWORD |
+| `Win32_ComputerSystem.TotalPhysicalMemory` | **31.65 GB** on a 128 GB box | reports the BIOS carve-out, under-reports 4x |
+
+So a profile *can* be detected reliably via the registry QWORD - but only via that path, and a
+naive implementation reading `AdapterRAM` would put every machine in the wrong tier.
+
+### Directions, and what was actually done
+
+- **A - roster diet + install-time profile** (recommended): gate over-cap tags by detected
+  tier, and write host-side Ollama knobs (`CONTEXT_LENGTH`, `KEEP_ALIVE`, `NUM_PARALLEL`,
+  `KV_CACHE_TYPE`) at User scope. Covers both halves through one channel that is **already in
+  use** on this machine (`OLLAMA_KEEP_ALIVE=30m` is set today, no new machinery needed).
+- **B - roster diet only**: fix the two over-cap unconditional paths. Ships fastest, but leaves
+  the 262144 default unmanaged, so it is a partial fix.
+- **C - containerize Ollama with a profile**: **rejected**. Adds GPU passthrough, image weight,
+  and install risk to a 16 GB client machine to gain nothing over host env vars that already
+  work.
+
+**Landed:** the measurable half. `scripts/test-aipc-capacity-fit.ps1` (new) closes the missing
+dimension - `audit-model-tags.ps1` gates tag *obtainability* (404s); nothing gated whether a tag
+can *run* on the smallest supported client GPU, and those are different failures. It is
+registered as a **measurement, not a gate**, because the remaining findings are product
+decisions. Run normally it reports and exits 0; `-Strict` exits 1.
+
+**Not landed, because it is the user's call:** the roster change itself. `-Strict` currently
+fails on real findings - `PACGATE_MODEL_MID` defaults to `qwen3.8:27b-mtp-q4_K_M` (17 GB) in
+**both** compose files, and two active deer-flow roster entries are over cap. Making that
+blocking is one switch flip once the commercial call is made.
+
+### Ledger, third pass
+
+| idea | evidence | verdict |
+| --- | --- | --- |
+| Correct the "65536 ctx slot" comment | measured: no `num_ctx` sent -> CONTEXT 262144 | **kept** - done |
+| Capacity-fitness gate | `audit-model-tags` covers obtainability, not runnability; dev box's 96 GiB hides the class | **kept** - new script |
+| Tier the fit verdict (FITS/MARGINAL/OVER_CAP) | 16 GB card != 16 GB available; driver + compositor + KV share the pool | **kept** - avoids a binary fit/no-fit lie |
+| Gate the capacity check as blocking | the findings include a product decision | **deferred** - measurement mode, `-Strict` ready |
+| Per-machine `temperature` | uniform `0.1` is correct for legal reproducibility | **rejected** - would make outputs machine-dependent |
+| Lower `num_ctx` to save VRAM | measured: 7.7 GB at 8k and at 256k | **rejected** - KV is not the constraint |
+| Read VRAM via `Win32_VideoController.AdapterRAM` | measured 4 GB on a 96 GB card | **rejected** - UINT32 cap |
+| Containerize Ollama for a per-machine profile | host User-scope env vars already work (`OLLAMA_KEEP_ALIVE=30m`) | **rejected** - cost without gain |
+
+### Open questions for the user
+
+1. **Should AIPC 1 and 2 be allowed to differ at all?** Per-machine profiles mean the same
+   matter can produce different results on different workstations. For legal work you may
+   prefer *identical* outputs and a slower ceiling. This is commercial, not technical.
+2. **What replaces `PACGATE_MODEL_MID`?** It currently points at a 17 GB model that no AIPC
+   can hold. Candidates that fit: `gemma4:12b-it-qat` (7.2 GB), `ornith-1.5:9b` (6.6 GB), or
+   `gemma4:26b-a4b-it-qat` (15 GB, marginal).
+3. **Should the two over-cap roster entries stay selectable?** They are the only entries that
+   can stall a 16 GB machine; the file already contains a commented-out pattern for exactly
+   this.
+4. **What does the AIPC actually report?** Everything size-related here is measured on the dev
+   box. One `ollama ps` during a Mid-tier run on a real AIPC settles it - `PROCESSOR` and
+   `CONTEXT` are right there. Untested on AIPC hardware; cheap for the on-site engineer to
+   confirm.
+

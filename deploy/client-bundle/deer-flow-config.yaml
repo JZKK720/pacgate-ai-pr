@@ -287,7 +287,18 @@ title:
 # unreachable - summarization never fired and every call re-sent the full
 # 83k context (1.3-1.7M tokens burned per document run, 60-120s per call).
 # All three 2026-10-08 stalls ("no astream output for 420s") happened at
-# input=64-65k - exactly the 65536-token ctx slot Ollama allocates.
+# input=64-65k. This note USED to claim that was "exactly the 65536-token ctx
+# slot Ollama allocates". That is wrong, and was corrected 2026-10-17 after
+# measuring it: deer-flow never sends `num_ctx` (this config passes only
+# max_tokens and temperature), and Ollama 0.40.5 then loads the model at its
+# OWN maximum - 262144 for gemma4, not 65536. Verified: with no num_ctx,
+# `ollama ps` reports CONTEXT 262144.
+#
+# So 64-65k was the input SIZE at which the run stalled, not a hard context
+# ceiling - which is exactly why the fix was summarization (bounding input)
+# rather than a ctx change. Do not "fix" a future stall by lowering num_ctx:
+# the whole 8k -> 262k range costs only 7.7 -> 7.9 GB on gemma4, so context
+# width is not what constrains a 16 GB card. The weights are.
 # 12000 message-tokens engages after ~40 messages; keep=12000 preserves the
 # recent verbatim context. (The old note here claimed no model_name pin was
 # needed because "the summarizer runs on the default chat model (same runner
