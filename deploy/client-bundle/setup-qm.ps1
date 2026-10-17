@@ -214,6 +214,66 @@ try {
         exit 1
     }
 
+    # ------------------------------------------------------------------
+    # VERIFY THE BRIDGE CREDENTIAL BEFORE IT IS WRITTEN INTO .env.
+    #
+    # Added 2026-10-17 after a real divergence was found in the field: qm's .env
+    # held a password that authenticated with NOTHING, so every pacgate tool call
+    # from a qm sandbox returned 401, while every container reported healthy and
+    # the entire 39-gate suite stayed green. See
+    # deploy/INCIDENT-2026-10-17-cross-stack-credential-divergence.md.
+    #
+    # The old flow wrote whatever was typed and only PROBED later, at line ~480 -
+    # and even then a failure was a [WARN] with a successful exit. That ordering is
+    # the defect: a bad credential got persisted, and the operator was left to fix
+    # it by hand. Verifying BEFORE the write converts a silent, persistent
+    # misconfiguration into a loud stop, and it costs one HTTP call.
+    #
+    # The probe is intentionally read-only: a login, never a create. Account
+    # creation still happens downstream so the existing provisioning comments
+    # (and their 403 reasoning) stay accurate.
+    #
+    # A non-401 outcome (DNS, TLS, 500, timeout) must NOT block setup - the API
+    # being briefly unreachable is not evidence that the password is wrong. Only
+    # a definite rejection stops the run.
+    # ------------------------------------------------------------------
+    $loginProbePath = Join-Path ([System.IO.Path]::GetTempPath()) "qm-bridge-probe-$PID.json"
+    try {
+        [System.IO.File]::WriteAllText(
+            $loginProbePath,
+            (@{ email = $bridgeEmail; password = $plainPassword } | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $probeStatus = $null
+        $probeOk = $false
+        try {
+            $probe = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post `
+                -ContentType 'application/json' -InFile $loginProbePath -TimeoutSec 20
+            if ($probe.token) { $probeOk = $true }
+        } catch {
+            if ($_.Exception.Response) { $probeStatus = [int]$_.Exception.Response.StatusCode }
+        }
+
+        if ($probeOk) {
+            Write-Host "[OK] Bridge credential verified against $PacgateApiUrl" -ForegroundColor Green
+        } elseif ($probeStatus -eq 401) {
+            Write-Host "ERROR: $bridgeEmail / the supplied password was REJECTED by pacgate-api (401)." -ForegroundColor Red
+            Write-Host "  Refusing to write a credential that does not work - that is exactly how the" -ForegroundColor Red
+            Write-Host "  2026-10-17 divergence happened, and it took a qm 401 to notice." -ForegroundColor Red
+            Write-Host "  Either this is a NEW account (it will be created in the next step - re-run" -ForegroundColor Yellow
+            Write-Host "  with -BridgePassword again if so), or the password is wrong for an EXISTING" -ForegroundColor Yellow
+            Write-Host "  account. To find the working value, test candidates against" -ForegroundColor Yellow
+            Write-Host "  $PacgateApiUrl/api/auth/login - a 200 means that one is live." -ForegroundColor Yellow
+            exit 1
+        } else {
+            Write-Host "[WARN] Could not verify the bridge credential (pacgate-api said $probeStatus)." -ForegroundColor Yellow
+            Write-Host "  Continuing - an unreachable API is not proof the password is wrong. Re-run" -ForegroundColor Yellow
+            Write-Host "  this script once pacgate-api is reachable to verify." -ForegroundColor Yellow
+        }
+    } finally {
+        if (Test-Path -LiteralPath $loginProbePath) { Remove-Item -LiteralPath $loginProbePath -Force -ErrorAction SilentlyContinue }
+    }
+
     # 6. Create .env
     #
     # GUARDED, and this guard is the point. Re-running this script used to fall

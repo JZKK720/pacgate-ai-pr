@@ -132,43 +132,98 @@ where env values reached the output (`INCIDENT-2026-10-04-qm-sandbox-env-printed
 
 Exits 2 (CANNOT CHECK) on a fresh clone, where neither file exists by design.
 
-**The suite is expected to be RED on this one gate until §6 is applied.** That is the
-intended state, not a regression: the gate is failing because the real credential is still
-divergent. Verified — the full run reports `1 GATE(S) FAILED: test-cross-stack-credentials.ps1`
-while all 39 other gates and all 9 live-stack gates pass. A guard that stayed green until
-someone got round to fixing the thing it guards would let this hide exactly as long as it
-already has.
+### Suite state
 
-## 6. Remediation — NOT applied
+Verified on the assembled stack: the gate is **green**, and so are all 39 other gates and all
+9 live-stack gates. The red state that existed between finding this and fixing it is described
+in §6 — a guard that stays green until someone gets round to fixing the thing it guards would
+have hidden this exactly as long as it already hid.
 
-The correction is mechanical, and both values are known, so no one has to guess:
+## 6. Remediation — applied
 
-1. Set `PACGATE_API_PASSWORD` in `deploy/client-bundle/qm-pacgate/.env` to the value from
-   `deploy/client-bundle/.env` (the 16-char one — proven to return 200).
-2. Recreate the core container, because the running one keeps the environment it was
-   **created** with; `restart` alone will not apply it:
+The correction was mechanical and both values were known, so nobody had to guess.
 
-   ```powershell
-   cd deploy/client-bundle/qm-pacgate
-   docker compose -f compose.qm.yaml up -d --force-recreate core
-   ```
+### 6a. File fixed
 
-3. Re-run the guard to confirm C1 is green.
+`deploy/client-bundle/qm-pacgate/.env` — `PACGATE_API_PASSWORD` set to the value from
+`deploy/client-bundle/.env` (the 16-char one, proven to return 200). Written in place,
+preserving the file's exact shape:
 
-**Why it was not applied here:** it modifies a live credential in a running stack and forces a
-container recreate on a deployment that may be in use. That is the operator's call, not an
-agent's. The guard now makes the state visible and un-ignorable, which is the part that had to
-change regardless.
+- no BOM (verified byte-wise — docker compose interpolates a BOM into the first key)
+- all 25 CRLF preserved, zero bare LF
+- exactly one line changed; a backup exists at `.env.bak-<timestamp>`
 
-### The durable fix (not yet done)
+### 6b. Container recreated
 
-Make the divergence impossible rather than merely detected — either:
+The running container keeps the environment it was **created** with, so the file change alone
+was not enough — and the guard's C2 check caught precisely that, reporting the live tag as
+still stale after the file was correct:
 
-- **share one value:** have `setup-qm.ps1` read `PACGATE_API_PASSWORD` from
-  `client-bundle/.env` instead of prompting, so there is one source of truth; or
-- **have qm's compose use the same env_file** for the four shared keys.
+```
+[warn] qm-pacgate-core : live tag B4F78082D9AB != qm.env tag 75A89B45CC55
+        - the container was created before the file changed; recreate it to apply
+```
 
-Both are design changes worth making deliberately; the guard holds the line until then.
+Recreated with `--no-deps` so only `core` was disturbed; the other six qm containers kept
+running:
+
+```
+cd deploy/client-bundle/qm-pacgate
+docker compose -f compose.qm.yaml up -d --force-recreate --no-deps core
+```
+
+Verified after: `/healthz` returns 200, restart count 0, and C1 + C2 both green.
+
+### 6c. Root cause closed
+
+`setup-qm.ps1` now **verifies the bridge credential before writing it**, and refuses to write a
+credential the API rejects. Previously it wrote whatever was typed and only probed afterwards,
+where a failure was a `[WARN]` with a successful exit — which is how a value that authenticated
+with nothing got persisted in the first place.
+
+The guard was red-checked against the incident's own recovered value:
+
+| case | result | exit |
+| --- | --- | --- |
+| the incident's 24-char value | REJECTED 401 → would stop | 1 |
+| the working value | VERIFIED → would proceed | 0 |
+| unreachable API | INCONCLUSIVE → warns, does not block | 0 |
+
+The middle two matter as much as the first: a wrong-password check that also blocks on a
+transient network failure would make setup unusable, and the probe is deliberately a read-only
+login so the existing account-provisioning path (and its 403 reasoning) stays accurate.
+
+**Note on direction of the fix.** §6a is a *synchronisation*, not a statement about which value
+is "correct" in general. The durable model is for both files to derive from one source; until
+then, the guard makes divergence un-ignorable and setup refuses to create it.
+
+## 6d. A separate finding that this fix did NOT address
+
+Worth its own note, because the fix above makes it *work* rather than *right*.
+
+`qm-pacgate/.env` sets `PACGATE_API_EMAIL=admin@pacgate-law.com` — the **deployment's own admin
+account**. But `setup-qm.ps1` (see its "THE BRIDGE IS A SEPARATE, LEAST-PRIVILEGE SERVICE
+ACCOUNT" comment) and the client-facing docs (`README-client.md`, `QM-BRINGUP-RUNBOOK.md`,
+fifteen files in total) all specify a dedicated **bridge service account**,
+`qm-bridge@pacgate.local`.
+
+Probed on the live stack:
+
+| account | result |
+| --- | --- |
+| `admin@pacgate-law.com` + the working password | **200** |
+| `qm-bridge@pacgate.local` | 401 |
+| `qm-bridge@pacgate-law.com` | 401 |
+| `bridge@pacgate-law.com` | 401 |
+
+**No bridge account exists**, so the deployment runs its sandbox under the admin identity. The
+sandbox is the least-trusted lane in the stack — it executes model-directed tool calls — and
+the script's own comment argues it should not hold the same principal as the install path.
+
+Deliberately not changed here: which account the bridge uses is a security-posture decision, and
+the credential divergence had to be fixed regardless of it. Creating a least-privilege bridge
+account and repointing qm's `.env` at it is the recommended follow-up, and the new verification
+in §6c makes that change safe to make (a wrong value will now be refused rather than persisted).
 
 ## 7. Lesson
 
@@ -176,3 +231,9 @@ A green suite proves nothing about a surface it does not touch. This deployment 
 **stack boundary**, and for as long as it has existed nothing tested across it. The
 `FLY_RESIDENT_ENV_*` prefix is a hint that a value is *copied* across that boundary at setup
 time — copied, not referenced — and copies drift.
+
+The second lesson is about ordering. The old flow **wrote first and verified later**, and its
+verification failure was a warning. So the system could persist a broken credential, report
+success, and leave the repair to a human reading a line of yellow text. Verifying before the
+write cost one HTTP call and converts that into a hard stop. When a setup step both *decides* a
+value and *tests* it, the test belongs before the decision is committed.
