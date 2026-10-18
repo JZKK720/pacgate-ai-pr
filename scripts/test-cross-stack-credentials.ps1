@@ -119,8 +119,8 @@ function Get-LiveEnvMap([string]$container) {
 
 Write-Host '=== credentials shared across the Pacgate and QM stacks agree ==='
 
-$pacPath = Join-Path $repoRoot $PacgateEnv
-$qmPath  = Join-Path $repoRoot $QmEnv
+$pacPath = if ([System.IO.Path]::IsPathRooted($PacgateEnv)) { $PacgateEnv } else { Join-Path $repoRoot $PacgateEnv }
+$qmPath  = if ([System.IO.Path]::IsPathRooted($QmEnv)) { $QmEnv } else { Join-Path $repoRoot $QmEnv }
 
 Write-Host ''
 Write-Host '  sources' -ForegroundColor DarkGray
@@ -209,19 +209,111 @@ if ($SkipLive) {
 }
 
 # ---------------------------------------------------------------------------
+# C3. The OpenViking client key must EQUAL the root key.
+#
+# This is a different failure from C1, and it is the one that stays invisible the
+# longest: both .env files can agree with each other perfectly and still hold a key
+# that authenticates with nothing.
+#
+# Found 2026-10-18 on the live stack. ov.conf.template declares only `root_api_key`
+# - no per-client key is ever registered in the service. So a separately generated
+# OPENVIKING_API_KEY is a key that does not exist:
+#
+#   POST /mcp, X-API-Key = a distinct OPENVIKING_API_KEY  -> 401 Invalid API Key
+#   POST /mcp, X-API-Key = the ROOT key                   -> 200 + the tool list
+#
+# .env.example already documents the correct value - "API key clients use to call
+# OpenViking (can equal root key in pilot)" - so equality is the contract, not a
+# workaround. install.ps1 documents the same defect for the deer-flow template
+# (~line 504: "NOT ${OPENVIKING_API_KEY} ... makes openviking return 401 and rolls
+# back the entire MCP tool load"). deer-flow was fixed there; the qm path was not.
+#
+# Why nobody noticed: OpenViking's /health needs no key, so a connectivity check
+# passes. Every qm ov-* sandbox tool fails at call time instead.
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'C3  OpenViking client key equals the root key' -ForegroundColor Cyan
+
+$ovChecked = 0
+foreach ($pair in @(@{ label = 'pacgate'; map = $pac }, @{ label = 'qm     '; map = $qm })) {
+    $m = $pair.map
+    if (-not $m.Contains('OPENVIKING_ROOT_API_KEY') -or -not $m.Contains('OPENVIKING_API_KEY')) {
+        Write-Warn "$($pair.label) : one or both OPENVIKING_*_API_KEY keys absent - cannot compare"
+        continue
+    }
+    $ovChecked++
+    $rootTag = Get-SecretTag $m['OPENVIKING_ROOT_API_KEY']
+    $apiTag  = Get-SecretTag $m['OPENVIKING_API_KEY']
+    if ($rootTag -ceq $apiTag) {
+        Write-Pass "$($pair.label) : OPENVIKING_API_KEY == OPENVIKING_ROOT_API_KEY (tag $apiTag)"
+    } else {
+        Write-Fail "$($pair.label) : OPENVIKING_API_KEY (tag $apiTag) != OPENVIKING_ROOT_API_KEY (tag $rootTag) - no per-client key is registered in OpenViking, so the client key cannot authenticate; set it equal to the root key"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# C4. Live proof: the client key actually authenticates to /mcp.
+#
+# C3 is a static contract check; this is the behavioural one. Advisory, because a
+# stopped OpenViking is normal on a dev box and must not redden the suite.
+#
+# /health is deliberately NOT used here: it needs no key, so it passes even when
+# every tool call 401s. That property is precisely what hid this defect.
+# ---------------------------------------------------------------------------
+if ($SkipLive) {
+    Write-Host ''
+    Write-Host 'C4  skipped (-SkipLive)' -ForegroundColor DarkGray
+} else {
+    Write-Host ''
+    Write-Host 'C4  the client key authenticates to OpenViking /mcp' -ForegroundColor Cyan
+    $ovUrl = 'http://localhost:1933/mcp'
+    $mcpBody = '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+    $probed = 0
+    foreach ($pair in @(@{ label = 'pacgate'; key = $(if ($pac.Contains('OPENVIKING_API_KEY')) { $pac['OPENVIKING_API_KEY'] } else { $null }) },
+                        @{ label = 'qm     '; key = $(if ($qm.Contains('OPENVIKING_API_KEY')) { $qm['OPENVIKING_API_KEY'] } else { $null }) })) {
+        if (-not $pair.key) { continue }
+        try {
+            $resp = Invoke-WebRequest -Uri $ovUrl -Method Post -Body $mcpBody -ContentType 'application/json' `
+                -Headers @{ 'Accept' = 'application/json, text/event-stream'; 'X-API-Key' = $pair.key } `
+                -TimeoutSec 12 -UseBasicParsing
+            if ($resp.StatusCode -eq 200) {
+                Write-Pass "$($pair.label) : /mcp accepted OPENVIKING_API_KEY (HTTP 200)"
+            } else {
+                Write-Warn "$($pair.label) : /mcp returned HTTP $($resp.StatusCode)"
+            }
+            $probed++
+        } catch {
+            $code = $null
+            if ($_.Exception.Response) { $code = $_.Exception.Response.StatusCode.value__ }
+            if ($code -eq 401) {
+                Write-Fail "$($pair.label) : /mcp REJECTED OPENVIKING_API_KEY with 401 Invalid API Key"
+                $probed++
+            } else {
+                Write-Warn "$($pair.label) : OpenViking not reachable at $ovUrl (HTTP $code) - start it to check"
+            }
+        }
+    }
+    if ($probed -eq 0) { Write-Warn 'OpenViking was not reachable - C4 not evaluated' }
+}
+
+# ---------------------------------------------------------------------------
 Write-Host ''
 if ($script:failures -gt 0) {
-    Write-Host "FAIL: $($script:failures) credential(s) shared across the two stacks have diverged." -ForegroundColor Red
+    Write-Host "FAIL: $($script:failures) credential problem(s) across the two stacks." -ForegroundColor Red
     Write-Host ''
     Write-Host '  WHICH VALUE IS RIGHT: the one the account was actually created with. Prove it,' -ForegroundColor DarkGray
     Write-Host '  do not guess - a login probe settles it. POST the candidate value to' -ForegroundColor DarkGray
     Write-Host '  <pacgate-api>/api/auth/login as JSON { email, password }.' -ForegroundColor DarkGray
     Write-Host '  200 + a token = that value is the live one. 401 = it is the stale one.' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Then set the shared key in BOTH files to the working value, and RECREATE the' -ForegroundColor DarkGray
-    Write-Host '  affected container - `restart` alone keeps the old environment.' -ForegroundColor DarkGray
+    Write-Host '  For C3: set OPENVIKING_API_KEY equal to OPENVIKING_ROOT_API_KEY in BOTH files' -ForegroundColor DarkGray
+    Write-Host '  (the documented pilot contract - no per-client key exists in the service).' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Then RECREATE the affected containers - `restart` keeps the old environment.' -ForegroundColor DarkGray
     Write-Host '    cd deploy/client-bundle/qm-pacgate' -ForegroundColor DarkGray
-    Write-Host '    docker compose -f compose.qm.yaml up -d --force-recreate core' -ForegroundColor DarkGray
+    Write-Host '    docker compose -f compose.qm.yaml up -d --force-recreate --no-deps core' -ForegroundColor DarkGray
+    Write-Host '    cd ..' -ForegroundColor DarkGray
+    Write-Host '    docker compose -f compose.bundle.yaml up -d --force-recreate --no-deps pacgate-api openviking' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Root cause to fix, or this returns: setup-qm.ps1 takes the bridge password' -ForegroundColor DarkGray
     Write-Host "  from a parameter/prompt and writes it to qm's .env WITHOUT reading what the" -ForegroundColor DarkGray

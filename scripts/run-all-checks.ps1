@@ -418,6 +418,26 @@ $liveStackGates = @(
     # that image is not present.
     'scripts/test-officecli-mcp.ps1'
     'scripts/test-format-coverage-e2e.ps1'
+    # THE EDGES, registered 2026-10-18. Every other live-stack gate here tests a
+    # COMPONENT or a public endpoint. Nothing tested the LANES BETWEEN components,
+    # and that is exactly where three separate defects survived a green suite:
+    # qm held a pacgate-api password the API rejected; qm's OPENVIKING_API_KEY
+    # authenticated with nothing (no per-client key is registered in the service,
+    # and OpenViking /health needs no key so the obvious check passed); and the qm
+    # bridge ran as the deployment admin instead of a least-privilege account.
+    #
+    # `smoke-full-stack.ps1` above reports lane REACHABILITY, which is a different
+    # question - a lane can be up and the credential on it dead. The decisive
+    # difference is that this gate probes from the CALLER's side, inside its own
+    # container with its own resident environment (E6, E7). A host-side probe
+    # cannot prove those, because host and container do not share an environment -
+    # which is precisely how a 401 on qm's copy stayed invisible.
+    #
+    # It also reports container PROVENANCE, after this box was found running a mix:
+    # pacgate-api + openviking from compose.bundle.yaml, the rest from
+    # compose.prod.yaml, while both declare `name: pacgate-ai-bundle` (same project).
+    # Exits 2 when nothing is reachable, so a clean machine is not a false red.
+    'scripts/test-lane-connectivity.ps1'
 )
 
 

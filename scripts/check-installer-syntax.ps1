@@ -39,6 +39,7 @@ $targets = @(
     'scripts/test-aipc-capacity-fit.ps1'
     'scripts/test-cross-stack-credentials.ps1'
     'deploy/client-bundle/setup-qm.ps1'
+    'scripts/test-lane-connectivity.ps1'
 )
 
 $bad = 0

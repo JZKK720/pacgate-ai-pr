@@ -394,6 +394,23 @@ try {
     # OpenViking scope. Account = the tenant slug qm's sandbox writes under; user =
     # the attorney id. Defaults match the stack's tenant so the sandbox is scoped
     # rather than blank; operators with a different tenant override via the env vars.
+    #
+    # OPENVIKING_API_KEY is set EQUAL to the root key. This is not laziness - it is
+    # the contract .env.example already documents ("API key clients use to call
+    # OpenViking (can equal root key in pilot)"), and it is the only value that
+    # works today. ov.conf.template declares ONLY `root_api_key`; no per-client key
+    # is ever registered in the service, so a separately generated
+    # OPENVIKING_API_KEY authenticates with NOTHING.
+    #
+    # Measured 2026-10-18: POST /mcp with a distinct OPENVIKING_API_KEY -> 401
+    # "Invalid API Key"; with the root key -> 200 + the tool list. The failure was
+    # invisible because qm's OpenViking /health check passed (it needs no key), so
+    # only the MCP tool calls failed.
+    #
+    # This is the same defect install.ps1 already documents for the deer-flow
+    # template at its ~line 504 ("NOT ${OPENVIKING_API_KEY} ... makes openviking
+    # return 401 and rolls back the entire MCP tool load"). deer-flow was fixed
+    # there; this path was not.
     $ovAccount = if ($env:OPENVIKING_ACCOUNT) { $env:OPENVIKING_ACCOUNT } else { 'default-firm' }
     $ovUser    = if ($env:OPENVIKING_USER)    { $env:OPENVIKING_USER }    else { $adminEmail }
 
