@@ -163,10 +163,31 @@ services:
       # gateway rejects cross-site auth POSTs unless the Origin is same-origin or
       # explicitly allowlisted; the frontend proxies /api/* internally so the
       # browser Origin (:8089/:8090) must be allowlisted here.
+      #
       # IMPORTANT: clients access the AIPC via IP/hostname (not localhost), which
       # is NOT in the default list. Set GATEWAY_CORS_ORIGINS in .env to the
       # client's actual access origin (e.g. http://192.168.1.10:8089) or login
       # fails with "Cross-site auth request denied" (403). Comma-separated.
+      #
+      # SINGLE SOURCE (fixed 2026-10-19). TWO independent gates guard browser
+      # sign-in and they are enforced in different processes:
+      #   gateway  (deer-flow)          -> GATEWAY_CORS_ORIGINS  (this line)
+      #   frontend (deer-flow-frontend) -> DEER_FLOW_TRUSTED_ORIGINS (line ~335)
+      # Both must admit the browser's Origin or sign-in 403s. They used to be
+      # configured by different rules - this one from .env, the other hardcoded
+      # to localhost - so any host-derived origin passed one gate and failed the
+      # other. Measured 2026-10-19 on the dev box:
+      #   Origin localhost:8089      gateway 422 (pass)  frontend 422 (pass)  OK
+      #   Origin localhost:8090      gateway 403         frontend 422         FAIL
+      #   Origin <hostname>:8089     gateway 422 (pass)  frontend 403         FAIL
+      #   Origin <hostname>:8090     gateway 403         frontend 403         FAIL
+      # Only browsing ON the AIPC at :8089 worked; every LAN/remote path 403'd,
+      # which is what "blocked from OAuth" actually was. Both lists now derive
+      # from this one variable.
+      #
+      # The default lists BOTH ports. install.ps1 derives hostname/LAN variants
+      # for the ingress port only, so the compose default is the fallback that
+      # keeps :8090 reachable; do not reduce it to a single port.
       GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:8089,http://localhost:8090}
       # Pacgate (silent-no-reply fix 2026-10-06): bound the first-exchange title
       # generation so a stalled Ollama cloud read cannot leave the pregel loop
@@ -317,7 +338,19 @@ services:
       - "8090:3000"
     environment:
       DEER_FLOW_INTERNAL_GATEWAY_BASE_URL: http://deer-flow:8001
-      DEER_FLOW_TRUSTED_ORIGINS: http://localhost:8089,http://localhost:8090,http://localhost:3000
+      # SECOND browser-origin gate (see GATEWAY_CORS_ORIGINS on deer-flow).
+      # The Next.js server admits auth requests whose Origin is in this list and
+      # rejects the rest with 403 BEFORE authentication runs. It was a hardcoded
+      # localhost literal, so a client browsing http://<aipc-host>:8089 or :8090
+      # was refused here even when the gateway would have accepted it. Proven
+      # 2026-10-19 by posting an unlisted Origin straight at :8090:
+      #   Origin http://evil.example:9999   -> 403
+      #   Origin http://<hostname>:8090     -> 403
+      #   Origin http://localhost:8090      -> 422 (passed the gate)
+      # Now derived from the SAME variable as the gateway gate, so the two can
+      # never disagree again. The :3000 entry is kept because the Next.js dev /
+      # internal port serves the same app.
+      DEER_FLOW_TRUSTED_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:8089,http://localhost:8090},http://localhost:3000
       BETTER_AUTH_SECRET: ${PACGATE_JWT_SECRET}
       # Sanitizer review panel (plan 021). The panel is mounted only in the
       # sanitizer agent workspace; this flag keeps it compiled out elsewhere.

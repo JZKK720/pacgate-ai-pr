@@ -455,6 +455,30 @@ $liveStackGates = @(
     # the check that catches a corrected file the container never picked up.
     # Exits 2 when qm is not deployed, since that is normal on a box without it.
     'scripts/test-qm-currentness.ps1'
+    # BROWSER-ORIGIN and OAuth reachability, registered 2026-10-19.
+    #
+    # This is the gate whose ABSENCE let a client-facing auth breakage ship through
+    # a fully green 40-gate suite. test-lane-connectivity.ps1 probes from INSIDE
+    # containers, so it proves service-to-service lanes; it never sends a browser
+    # Origin header. The auth gates therefore all passed while every sign-in from
+    # another computer returned 403 - refused BEFORE authentication, so it read as
+    # "blocked from OAuth" rather than as a wrong password.
+    #
+    # O1  every origin this machine advertises is not 403 (422/400/401 = reached auth)
+    # O2  the frontend port :8090 is represented, not just the ingress port
+    # O3  DEER_FLOW_TRUSTED_ORIGINS covers the machine and matches GATEWAY_CORS_ORIGINS
+    # O4  both allowlists are substitution-derived from one value
+    # O5  the OIDC discovery document advertises a browser-reachable issuer
+    #
+    # O5 exists because OAuth is a BROWSER redirect: the issuer is resolved on the
+    # user's machine, so a localhost issuer sends every remote user to their own
+    # loopback and sign-in can never complete - with no server-side error at all.
+    # Token exchange keeps working via the in-cluster OIDC_TOKEN_ENDPOINT, which is
+    # why a server-side probe passed while browser sign-in was dead.
+    #
+    # It sends a deliberately WRONG credential (creates no state) and exits 2 when
+    # the stack is down, so a clean machine is not a false red.
+    'scripts/test-origin-coherence.ps1'
 )
 
 
@@ -532,6 +556,22 @@ $measurements = @(
 # It exits 2 (CANNOT CHECK) on a fresh clone where neither .env exists - those
 # files are gitignored and per-machine by design.
 $gates += 'scripts/test-cross-stack-credentials.ps1'
+# CROSS-MACHINE TRANSFER, registered 2026-10-19.
+#
+# The question "how do Matters, skills, tools, templates and recorded matters
+# reach the other AIPC?" had NO answer in this repository - no export route, no
+# import route, no replication script, no documentation. It was not broken, it
+# had never been built, and a capability that does not exist passes every gate
+# because nothing asserts that it should.
+#
+# This gate asserts the capability exists and stays coherent: the tool parses,
+# every API route it calls is actually served by pacgate-api, it is keyed on the
+# natural keys that exist (tenant slug, user email, matters.external_key) rather
+# than on per-machine uuids, it never deletes a matter, and it moves no password
+# hashes. Those are exactly the ways a sync tool fails destructively.
+#
+# It is static (no live stack needed), so it runs everywhere.
+$gates += 'scripts/test-sync-capability.ps1'
 
 $failed = @()
 

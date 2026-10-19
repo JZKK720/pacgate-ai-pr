@@ -41,6 +41,8 @@ $targets = @(
     'deploy/client-bundle/setup-qm.ps1'
     'scripts/test-lane-connectivity.ps1'
     'scripts/test-qm-currentness.ps1'
+    'scripts/test-origin-coherence.ps1'
+    'scripts/sync-pacgate-matters.ps1'
 )
 
 $bad = 0

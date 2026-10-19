@@ -310,6 +310,35 @@ try {
         # Config is still validated so a stale/broken .env is reported rather than
         # discovered later as a crash-looping container.
         Write-Host "`nValidating qm config..." -ForegroundColor Cyan
+
+        # Additive repair of QM_PUBLIC_URL (fix 2026-10-19). Machines installed
+        # before this key existed have no QM_PUBLIC_URL, so compose falls back to
+        # http://localhost:8181 for the OIDC issuer, redirect URI and portal URL -
+        # and since OAuth is a BROWSER redirect, every remote user lands on their
+        # own loopback and cannot sign in. This key is NOT a secret and is not
+        # pinned to any data, so it can be repaired in place without touching the
+        # secrets or volumes that made regeneration unsafe.
+        $qmEnvPath = Join-Path (Get-Location) '.env'
+        $qmEnvRaw = [System.IO.File]::ReadAllText($qmEnvPath)
+        if ($qmEnvRaw -match '(?m)^\s*QM_PUBLIC_URL\s*=') {
+            Write-Host "[OK] QM_PUBLIC_URL already set" -ForegroundColor Green
+        }
+        else {
+            $repairHost = try { ([System.Net.Dns]::GetHostName()).ToLower() } catch { 'localhost' }
+            $repairUrl = if ($env:QM_PUBLIC_URL) { $env:QM_PUBLIC_URL.TrimEnd('/') } else { "http://${repairHost}:8181" }
+            $prefix = if ($qmEnvRaw.Length -eq 0 -or $qmEnvRaw.EndsWith("`n")) { '' } else { "`r`n" }
+            [System.IO.File]::AppendAllText(
+                $qmEnvPath,
+                "$prefix" + "QM_PUBLIC_URL=$repairUrl`r`n",
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            Write-Host "[OK] Added QM_PUBLIC_URL=$repairUrl (browser-facing OAuth origin)." -ForegroundColor Green
+            Write-Host "     Without it the OIDC issuer advertised localhost and remote" -ForegroundColor Gray
+            Write-Host "     sign-in redirected users to their own machine." -ForegroundColor Gray
+            Write-Host "     Recreate the browser-facing services to apply:" -ForegroundColor Gray
+            Write-Host "       docker compose -f compose.qm.yaml up -d --force-recreate portal auth web-ui admin core" -ForegroundColor Gray
+        }
+
         npm exec qm -- check
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: qm check failed against the EXISTING .env - the file needs review." -ForegroundColor Red
@@ -414,6 +443,27 @@ try {
     $ovAccount = if ($env:OPENVIKING_ACCOUNT) { $env:OPENVIKING_ACCOUNT } else { 'default-firm' }
     $ovUser    = if ($env:OPENVIKING_USER)    { $env:OPENVIKING_USER }    else { $adminEmail }
 
+    # Browser-facing public origin for the staff portal (fix 2026-10-19).
+    #
+    # The compose file derives AUTH_ISSUER, AUTH_REDIRECT_URI, OIDC_ISSUER,
+    # OIDC_AUTH_ENDPOINT, PORTAL_PUBLIC_URL and PUBLIC_WEB_URL from
+    # QM_PUBLIC_URL. Those were hardcoded to localhost, and because OAuth is a
+    # BROWSER redirect, every remote user was sent to their own loopback - the
+    # portal could only be signed into while sitting at the AIPC. Deriving it
+    # here means each machine is configured for the address staff actually use,
+    # instead of every AIPC advertising localhost.
+    #
+    # Precedence: explicit env override > derived from this machine's hostname.
+    # The hostname (not the LAN IP) is preferred because it survives DHCP
+    # changes; on the AIPCs both resolve to the same box.
+    $qmPublicUrl = $env:QM_PUBLIC_URL
+    if ([string]::IsNullOrWhiteSpace($qmPublicUrl)) {
+        $qmHost = try { ([System.Net.Dns]::GetHostName()).ToLower() } catch { 'localhost' }
+        if ([string]::IsNullOrWhiteSpace($qmHost)) { $qmHost = 'localhost' }
+        $qmPublicUrl = "http://${qmHost}:8181"
+    }
+    $qmPublicUrl = $qmPublicUrl.TrimEnd('/')
+
     $envContent = @"
 ADMIN_GRANTS=$adminEmail
 AUTH_ALLOWED_EMAILS=$adminEmail
@@ -440,6 +490,7 @@ FIRECRAWL_API_KEY=$fcKey
 PUBLIC_API_URL=http://localhost:8180
 PACGATE_API_EMAIL=$bridgeEmail
 PACGATE_API_PASSWORD=$plainPassword
+QM_PUBLIC_URL=$qmPublicUrl
 "@
 
     # BOM-safe write. The previous `Out-File -Encoding utf8` is Windows

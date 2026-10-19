@@ -586,15 +586,9 @@ $gwCors = if ($envVars.ContainsKey('GATEWAY_CORS_ORIGINS')) { $envVars['GATEWAY_
 if ([string]::IsNullOrWhiteSpace($gwCors)) {
     # Derive this machine's browser origins. The browser may reach the
     # ingress via ANY of: hostname, every non-loopback IPv4, or localhost.
-    # Each is http://<host>:<nginx-host-port>. The port must be DERIVED
-    # (docker compose port nginx 80), not hardcoded - this dev box publishes
-    # 8081 while compose declares 8089, and an AIPC may have either.
-    $corsPort = $null
-    try {
-        $corsPortOut = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim() }
-        if ($corsPortOut -match ':(\d+)\s*$') { $corsPort = $Matches[1] }
-    } catch { $corsPort = $null }
-    if (-not $corsPort) { $corsPort = '8089' }
+    # Each is http://<host>:<published-port>. The ports must be DERIVED
+    # (docker compose port <svc> <container-port>), not hardcoded - this dev box
+    # publishes 8081 while compose declares 8089, and an AIPC may have either.
 
     $corsHosts = New-Object System.Collections.Generic.List[string]
     $corsHosts.Add('localhost')
@@ -609,7 +603,34 @@ if ([string]::IsNullOrWhiteSpace($gwCors)) {
         foreach ($ip in $lanIps) { if (-not $corsHosts.Contains($ip)) { $corsHosts.Add($ip) } }
     } catch { }
 
-    $derivedOrigins = ($corsHosts | ForEach-Object { "http://$_`:$corsPort" }) -join ','
+    # Derive BOTH published browser ports, not just the ingress port.
+    #
+    # Defect fixed 2026-10-19. This used to emit http://<host>:<nginx-port> only.
+    # Because compose declares ${GATEWAY_CORS_ORIGINS:-<default>}, writing that
+    # narrower value into .env REPLACED a better default - the compose default
+    # lists both :8089 and :8090, and the derived value silently dropped :8090.
+    # Measured consequence on the dev box: a browser on :8090 was refused by the
+    # gateway (403 "Cross-site auth request denied") while :8089 worked, so the
+    # machine appeared to have a broken auth service rather than a missing origin.
+    #
+    # :8090 is deer-flow-frontend's published port and serves the same app; both
+    # are legitimate sign-in origins. Enumerate the ports compose actually
+    # publishes for nginx (80) and deer-flow-frontend (3000) and fall back to the
+    # declared defaults when the stack is not up yet (first install runs this
+    # before `up`).
+    $corsPorts = New-Object System.Collections.Generic.List[string]
+    foreach ($svcPort in @(@('nginx', '80', '8089'), @('deer-flow-frontend', '3000', '8090'))) {
+        $svcName = $svcPort[0]; $containerPort = $svcPort[1]; $fallback = $svcPort[2]
+        $published = $null
+        try {
+            $out = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port $svcName $containerPort 2>$null | Out-String).Trim() }
+            if ($out -match ':(\d+)\s*$') { $published = $Matches[1] }
+        } catch { $published = $null }
+        if (-not $published) { $published = $fallback }
+        if (-not $corsPorts.Contains($published)) { $corsPorts.Add($published) }
+    }
+
+    $derivedOrigins = ($corsHosts | ForEach-Object { $h = $_; $corsPorts | ForEach-Object { "http://${h}:$_" } }) -join ','
     # Compose reads ${GATEWAY_CORS_ORIGINS:-...} - the value must be SET in
     # .env so it overrides the compose default, which is localhost-only.
     $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
@@ -622,8 +643,12 @@ if ([string]::IsNullOrWhiteSpace($gwCors)) {
     $envVars['GATEWAY_CORS_ORIGINS'] = $derivedOrigins
     Write-Host "[OK] Derived GATEWAY_CORS_ORIGINS for this machine: $derivedOrigins" -ForegroundColor Green
     Write-Host "     Browser sign-in/register now accepts this machine's hostname and LAN IP." -ForegroundColor Gray
-    if ($corsPort -ne '8089') {
-        Write-Host "     NOTE: the ingress port is $corsPort (not the default 8089); origins use it." -ForegroundColor Gray
+    Write-Host "     Feeds BOTH origin gates (gateway CORS + frontend trusted origins)." -ForegroundColor Gray
+    if ($corsPorts.Count -gt 1) {
+        Write-Host "     Ports covered: $(($corsPorts | ForEach-Object { $_ }) -join ', ') (ingress + frontend)." -ForegroundColor Gray
+    }
+    if ($corsPorts -notcontains '8089') {
+        Write-Host "     NOTE: the ingress port is $($corsPorts[0]) (not the default 8089); origins use it." -ForegroundColor Gray
     }
 }
 else {
@@ -638,11 +663,97 @@ else {
         Write-Host "       and registration ('Cross-site auth request denied.')." -ForegroundColor Yellow
         Write-Host "       Fix: add this machine's browser origin to .env, e.g." -ForegroundColor Yellow
         $fixHost = try { [System.Net.Dns]::GetHostName().ToLower() } catch { '<machine-host>' }
-        Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,$gwCors" -ForegroundColor Gray
+        Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,http://${fixHost}:8090,$gwCors" -ForegroundColor Gray
         Write-Host "       then re-run this script." -ForegroundColor Yellow
     }
     else {
-        Write-Host "[OK] GATEWAY_CORS_ORIGINS set: $gwCors" -ForegroundColor Green
+        # Present-but-incomplete is the AIPC failure mode, not localhost-only.
+        #
+        # Fixed 2026-10-19. The old code only WARNed when the value was
+        # localhost-only, and did nothing when it covered some hosts but not all
+        # published ports. On a client AIPC the installer had already written
+        # http://<host>:8089 for the ingress port only, so re-running -Update
+        # found the key present, skipped derivation, and left :8090 dead for
+        # ever: the machine stayed 403 on the frontend port across every
+        # upgrade, and no release could fix it. A value that is missing hosts or
+        # ports is a defect, not a preference.
+        #
+        # Repair is ADDITIVE ONLY. Origins are never removed, so an operator who
+        # deliberately allowlisted extra hosts keeps them, and narrowing access
+        # by hand still works because a fully-covered list is left untouched.
+        $corsPorts = New-Object System.Collections.Generic.List[string]
+        foreach ($svcPort in @(@('nginx', '80', '8089'), @('deer-flow-frontend', '3000', '8090'))) {
+            $published = $null
+            try {
+                $out = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port $svcPort[0] $svcPort[1] 2>$null | Out-String).Trim() }
+                if ($out -match ':(\d+)\s*$') { $published = $Matches[1] }
+            } catch { $published = $null }
+            if (-not $published) { $published = $svcPort[2] }
+            if (-not $corsPorts.Contains($published)) { $corsPorts.Add($published) }
+        }
+        $corsHosts = New-Object System.Collections.Generic.List[string]
+        # localhost MUST be in the additive set too. It is the origin used when
+        # someone browses the app ON the AIPC itself, and the historical .env
+        # written by the old derivation had it only for :8089.
+        $corsHosts.Add('localhost')
+        try { $corsHosts.Add(([System.Net.Dns]::GetHostName()).ToLower()) } catch { }
+        try {
+            $lanIps = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+                Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } |
+                ForEach-Object { $_.GetIPProperties().UnicastAddresses } |
+                Where-Object { $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
+                ForEach-Object { $_.Address.ToString() } |
+                Where-Object { $_ -notmatch '^(127\.|169\.254\.)' }
+            foreach ($ip in $lanIps) { if (-not $corsHosts.Contains($ip)) { $corsHosts.Add($ip) } }
+        } catch { }
+
+        $existing = New-Object System.Collections.Generic.List[string]
+        foreach ($o in $corsSet) { if (-not $existing.Contains($o)) { $existing.Add($o) } }
+        $added = New-Object System.Collections.Generic.List[string]
+        foreach ($h in $corsHosts) {
+            foreach ($p in $corsPorts) {
+                $candidate = "http://${h}:${p}"
+                if (-not $existing.Contains($candidate)) { $existing.Add($candidate); $added.Add($candidate) }
+            }
+        }
+
+        if ($added.Count -gt 0) {
+            $merged = $existing -join ','
+            $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
+            $lines = [regex]::Split($rawEnv, '\r\n|\n')
+            $out = New-Object System.Collections.Generic.List[string]
+            $replaced = $false
+            foreach ($line in $lines) {
+                if (-not $replaced -and $line -match '^\s*GATEWAY_CORS_ORIGINS\s*=') {
+                    $out.Add("GATEWAY_CORS_ORIGINS=$merged"); $replaced = $true
+                } else { $out.Add($line) }
+            }
+            $text = ($out -join "`r`n")
+            if (-not $text.EndsWith("`r`n")) { $text += "`r`n" }
+            [System.IO.File]::WriteAllText((Resolve-Path $envPath), $text, [System.Text.UTF8Encoding]::new($false))
+            $envVars['GATEWAY_CORS_ORIGINS'] = $merged
+            Write-Host "[OK] GATEWAY_CORS_ORIGINS was incomplete - added $($added.Count) origin(s)." -ForegroundColor Green
+            Write-Host "     Added: $($added -join ', ')" -ForegroundColor Gray
+            Write-Host "     Both origin gates (gateway + frontend) now admit this machine." -ForegroundColor Gray
+            Write-Host "     Recreate the affected services for it to take effect:" -ForegroundColor Gray
+            Write-Host "       docker compose -f compose.prod.yaml up -d --force-recreate deer-flow deer-flow-frontend" -ForegroundColor Gray
+        }
+        elseif ($onlyLocal) {
+            # Loud, specific, actionable: this exact value produces the 403 that
+            # looks like a broken auth service. Deliberately NOT auto-fixed when
+            # the list is otherwise complete - an operator who SET a restricted
+            # value may be doing so on purpose.
+            Write-Host "[WARN] GATEWAY_CORS_ORIGINS is localhost-only ($gwCors)." -ForegroundColor Yellow
+            Write-Host "       Users browsing http://<machine-host>:8089 will get 403 on sign-in" -ForegroundColor Yellow
+            Write-Host "       and registration ('Cross-site auth request denied.')." -ForegroundColor Yellow
+            Write-Host "       Fix: add this machine's browser origin to .env, e.g." -ForegroundColor Yellow
+            $fixHost = try { [System.Net.Dns]::GetHostName().ToLower() } catch { '<machine-host>' }
+            Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,http://${fixHost}:8090,$gwCors" -ForegroundColor Gray
+            Write-Host "       then re-run this script." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "[OK] GATEWAY_CORS_ORIGINS set: $gwCors" -ForegroundColor Green
+        }
     }
 }
 
