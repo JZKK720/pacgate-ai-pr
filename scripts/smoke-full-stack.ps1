@@ -46,9 +46,33 @@ Write-Host "=== FULL STACK SMOKE — $expectedVersion ===" -ForegroundColor Whit
 # failure. Without this, every lane would report FAIL on a clean machine and the
 # runner would go red on a tree where nothing is wrong - the exact failure mode
 # run-all-checks.ps1's header warns about.
+# Preflight: if the stack is not running, this is CANNOT-CHECK (exit 2), not a
+# failure. Without this, every lane would report FAIL on a clean machine and the
+# runner would go red on a tree where nothing is wrong - the exact failure mode
+# run-all-checks.ps1's header warns about.
+#
+# MATCH LOOSELY, REPORT EXACTLY. An exact `-in $running` test made this gate skip
+# silently on 2026-10-19: compose declares `container_name: ocr-service`, but the
+# running container was `fc26e73d8a67_ocr-service` (a recreate left the old one in
+# place and Docker renamed the new one). OCR worked the whole time - reachable at
+# ocr-service:8100, health 200, weights baked - yet this gate reported exit 2 and
+# the ENTIRE full-stack smoke never ran, through many otherwise-green suites.
+#
+# So a service counts as up when any container name ENDS with it, and a name that
+# does not match exactly is printed rather than swallowed. Silently skipping a
+# gate is worse than a false red: it hides every lane behind it.
 $running = @(docker ps --format '{{.Names}}' 2>$null)
 $required = @('pacgate-nginx', 'pacgate-api', 'deer-flow', 'deer-flow-frontend', 'openviking', 'ocr-service')
-$missing = @($required | Where-Object { $_ -notin $running })
+$missing = @()
+foreach ($svc in $required) {
+    $exact = $running -contains $svc
+    $loose = @($running | Where-Object { $_ -like "*$svc" })
+    if (-not $loose) { $missing += $svc }
+    elseif (-not $exact) {
+        Write-Host ("  note: $svc is running as '$($loose[0])' (compose expects '$svc')." ) -ForegroundColor DarkYellow
+        Write-Host "        The lane is tested either way; recreate it to restore the declared name." -ForegroundColor DarkGray
+    }
+}
 if ($missing.Count -gt 0) {
     Write-Host "  exit 2 - stack not up; missing: $($missing -join ', ')" -ForegroundColor Yellow
     Write-Host '          Start it with: docker compose -f deploy/client-bundle/compose.prod.yaml up -d' -ForegroundColor Gray
