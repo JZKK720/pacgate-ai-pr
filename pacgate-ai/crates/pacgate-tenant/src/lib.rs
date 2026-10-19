@@ -84,6 +84,63 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), TenantError> {
         sqlx::raw_sql(matter_external_keys)
             .execute(&mut *conn)
             .await
+            .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+        // `documents.sanitization_state` belongs to the CORE schema, not the RAG
+        // lane. It gates every document egress path (`download_document` reads it
+        // and refuses anything that is not 'sanitized' or 'never'), so a database
+        // without it cannot serve a download at all.
+        //
+        // It was only ever created by `005_sanitization_state.sql`, which the RAG
+        // migrator applies - and that migrator aborts on its FIRST step when the
+        // pgvector extension is unavailable, so on such a box 005 never ran and
+        // the column never appeared. Measured consequence 2026-10-19: the
+        // integration test's egress-gate assertion got a 500 instead of the
+        // expected 409, because the handler's SELECT referenced a missing column.
+        //
+        // Only the `documents` half is applied here. The same migration also adds
+        // the column to `kb_chunks`, a RAG table that does not exist without
+        // pgvector; applying the whole file would fail on exactly the machines
+        // this fix is for. Both statements are `IF NOT EXISTS`, so whichever
+        // migrator runs first wins and the other is a no-op.
+        let documents_sanitization_state = "ALTER TABLE documents ADD COLUMN
+            IF NOT EXISTS sanitization_state TEXT DEFAULT 'pending'";
+        sqlx::raw_sql(documents_sanitization_state)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+        // 006/007/008 are CORE schema that was filed under the RAG migrator for
+        // no reason: every table they create references only tenants, matters,
+        // users and documents. Nothing here needs pgvector.
+        //
+        // Because they sat behind the RAG migrator, a box without the pgvector
+        // extension - which is legitimate; `main.rs` logs "RAG search will be
+        // unavailable" and continues - never created them. `/api/matters/:id/workspace`
+        // then answered 500 instead of a 200 with empty sections, and any sanitizer
+        // job or extraction record had nowhere to go. Measured 2026-10-19 by
+        // `matter_workspace_rollup`, which failed on exactly that.
+        //
+        // Order matters: 006 (document_spans) then 007 (sanitizer_jobs +
+        // redaction_ledger_rows) then 008 (document_extractions). Each is
+        // `IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`, so the RAG migrator
+        // applying them again is a no-op rather than a conflict.
+        let document_spans = include_str!("../../../migrations/006_document_spans.sql");
+        sqlx::raw_sql(document_spans)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+        let sanitizer_jobs = include_str!("../../../migrations/007_sanitizer_jobs.sql");
+        sqlx::raw_sql(sanitizer_jobs)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| TenantError::Migration(e.to_string()))?;
+
+        let document_extractions = include_str!("../../../migrations/008_document_extractions.sql");
+        sqlx::raw_sql(document_extractions)
+            .execute(&mut *conn)
+            .await
             .map_err(|e| TenantError::Migration(e.to_string()))
     }
     .await;

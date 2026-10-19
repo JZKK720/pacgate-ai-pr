@@ -161,7 +161,17 @@ pub async fn get_matter_workspace(
     // 3. RAG/sanitizer lane rollup. Chunk CONTENTS stay out of this response:
     //    they are retrievable through the query route (kb/search) which applies
     //    the data-level filter; the workspace view is metadata + status.
-    let rag_rows = sqlx::query(
+    //
+    //    DEGRADES, does not fail. `main.rs` starts the API even when the RAG
+    //    migrator could not run ("RAG search will be unavailable") because that
+    //    only happens when the pgvector extension is missing - and in that case
+    //    `kb_chunks` does not exist at all. This query used to be unconditional,
+    //    so a RAG-less database turned the whole CORE matter view into a 500:
+    //    the client could not open a matter because a search lane it was not
+    //    asking about was unavailable. Measured 2026-10-19 by
+    //    `matter_workspace_rollup`: a fresh matter answered 500 instead of 200
+    //    with empty sections. An absent RAG lane is an empty rollup, not an error.
+    let rag_rows = match sqlx::query(
         "SELECT document_id, \
                 count(*) AS chunk_count, \
                 array_agg(DISTINCT sanitization_state) AS states \
@@ -174,7 +184,21 @@ pub async fn get_matter_workspace(
     .bind(matter_id.0)
     .fetch_all(&state.db)
     .await
-    .map_err(|e| workspace_query_error(e, "rag rollup"))?;
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            // 42P01 = undefined_table. Anything else is a real fault and must
+            // still surface, so this cannot hide a broken query on a healthy DB.
+            let missing_table = matches!(
+                &e,
+                sqlx::Error::Database(db) if db.code().as_deref() == Some("42P01")
+            );
+            if !missing_table {
+                return Err(workspace_query_error(e, "rag rollup"));
+            }
+            Vec::new()
+        }
+    };
 
     let rag_documents: Vec<RagDocumentStatus> = rag_rows
         .iter()
