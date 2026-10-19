@@ -98,7 +98,11 @@ services:
       # pre-pull list) and with `ModelConfig::DEFAULT_*_TAG` in pacgate-core.
       # scripts/test-model-roster-consistency.ps1 enforces that.
       PACGATE_MODEL_MAIN: ${PACGATE_MODEL_MAIN:-deepseek-v4.1-flash:cloud}
-      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-qwen3.8:27b-mtp-q4_K_M}
+      # Was qwen3.8:27b-mtp-q4_K_M (17.0 GB), which cannot load on a 16 GB AIPC
+      # card: the tier would spill to CPU and present as a stall. 9B at 6.6 GB
+      # keeps the Mid tier usable on the hardware we ship to. Override in .env on
+      # a machine that has the VRAM.
+      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
       PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read

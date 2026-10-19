@@ -114,8 +114,8 @@ impl ModelConfig {
     ///
     /// | Tier | Fallback tag                | Use case                                       |
     /// |------|-----------------------------|------------------------------------------------|
-    /// | Main | gemma4:12b-it-qat           | Deep-think · contract review · generative agents |
-    /// | Mid  | qwen3.8:27b-mtp-q4_K_M      | Agent automation · tabular review · core tasks   |
+    /// | Main | deepseek-v4.1-flash:cloud   | Deep-think · contract review · generative agents |
+    /// | Mid  | ornith-1.5:9b               | Agent automation · tabular review · core tasks   |
     /// | Low  | gemma4:12b-it-qat           | Fast labels · short summaries · routing          |
     pub fn default_local() -> Vec<Self> {
         Self::default_local_with_base_url("http://localhost:11434")
@@ -162,8 +162,16 @@ impl ModelConfig {
     /// and never appears in `ollama ps`. `ollama signin` is already an AIPC install
     /// precondition. A firm that requires local-only processing overrides
     /// PACGATE_MODEL_MAIN in its own .env; see client-bundle/.env.example.
+    /// MID changed 2026-10-19 from `qwen3.8:27b-mtp-q4_K_M` to `ornith-1.5:9b`.
+    /// Measured: the dense 27B is 17.0 GB of weights, which cannot load on the
+    /// 16 GB card the AIPCs ship with. It does not fail loudly - Ollama spills to
+    /// CPU and the tier presents as a stall, so the Mid workflow looked broken
+    /// rather than mis-sized. The 9B is 6.6 GB and fits with headroom on a 16 GB
+    /// card. `scripts/test-aipc-capacity-fit.ps1` measures both and now blocks the
+    /// suite while any shipped tier or picker entry is over budget. A machine with
+    /// the VRAM overrides PACGATE_MODEL_MID and gets the 27B back.
     pub const DEFAULT_MAIN_TAG: &'static str = "deepseek-v4.1-flash:cloud";
-    pub const DEFAULT_MID_TAG: &'static str = "qwen3.8:27b-mtp-q4_K_M";
+    pub const DEFAULT_MID_TAG: &'static str = "ornith-1.5:9b";
     pub const DEFAULT_LOW_TAG: &'static str = "gemma4:12b-it-qat";
 
     /// Environment variables that override each tier's model tag.

@@ -8,8 +8,12 @@
 # --- pacgate-api workflow tiers (Appendix A model-overrides SQL) ---
 # Main + Low tier: fast legal execution, local GPU/NPU
 gemma4:12b-it-qat
-# Mid tier: heavier reasoning, local GPU
-qwen3.8:27b-mtp-q4_K_M
+# Mid tier: pacgate-api now defaults to ornith-1.5:9b (6.6 GB) because
+# qwen3.8:27b-mtp-q4_K_M is 17.0 GB and cannot load on a 16 GB AIPC card - it
+# spilled to CPU and presented as a stall. Measured by
+# scripts/test-aipc-capacity-fit.ps1. Restore this line only on a machine with
+# the VRAM, and set PACGATE_MODEL_MID in .env to match.
+# qwen3.8:27b-mtp-q4_K_M
 
 # --- RAG embeddings (required by pacgate-api, no alternative) ---
 nomic-embed-text:latest
@@ -18,8 +22,10 @@ nomic-embed-text:latest
 # Pacgate 2026-10-07 (rev 2): cloud roster = the TWO FLASH models per user
 # choice (deepseek-v4.1-flash, glm-5.3-flash) - fast and cheap. The heavier
 # tags (deepseek-v4-pro:cloud, glm-5.3:cloud) were dropped from the picker.
-# Cloud entries are picker OPTIONS only - the deer-flow default is
-# nemotron-3.5-lightning (local MOE) and auto-escalation stays local. Cloud
+# Cloud entries are picker OPTIONS only - the deer-flow default is gemma4-12b
+# (local, 7.2 GB) and auto-escalation stays local. It was nemotron-3.5-lightning
+# until 2026-10-19, when that 25 GB entry was withdrawn because it cannot fit a
+# 16 GB AIPC card. Cloud
 # tags have no weight layers on disk (size "-"); they appear in `ollama list`
 # but never in `ollama ps`; inference routes via ollama.com and requires
 # `ollama signin` on the AIPC before install.ps1 runs.
@@ -40,15 +46,14 @@ glm-5.3-flash:cloud
 # (ollama returns HTTP 404, with no fallback). scripts/audit-model-tags.ps1 guards
 # this class of drift.
 #
-# COST: ~53 GB of extra pre-pull (ornith-1.5:9b 6.6 GB, ornith-1.5:35b 22 GB,
-# nemotron 25 GB). If that is unwanted on the client machines, the correct
-# alternative is to REMOVE/commented-out the matching entries in
-# deer-flow-config.yaml - do not simply delete these lines, or the drift returns.
-# 2026-10-07: nemotron is now the deer-flow DEFAULT (max_tokens 8192 cap - see
-# config comments). qwen3.8 stays pre-pulled for the pacgate-api Mid workflow
-# tier but was DEMOTED from the deer-flow picker (benchmark: dense 27B is 3-5x
-# slower than the MOEs on both generation and context ingestion).
+# COST: ornith-1.5:9b is 6.6 GB. The two larger picker options that used to sit
+# here (ornith-1.5:35b at 22 GB and nemotron-3.5-lightning:30b-a3b at 25 GB) are
+# WITHDRAWN as of 2026-10-19: neither can fit a 16 GB AIPC card, so both spilled
+# to CPU and presented as a stall rather than an error. Their roster entries in
+# deer-flow-config.yaml are commented out, and these lines follow them - the rule
+# is to keep this file and that picker consistent, not to delete silently.
+# Restore all three together on a machine that has the VRAM.
+# 2026-10-07: qwen3.8 was DEMOTED from the deer-flow picker (benchmark: dense 27B
+# is 3-5x slower than the MOEs on both generation and context ingestion) and is
+# now withdrawn from the pre-pull entirely - see the Mid tier note above.
 ornith-1.5:9b
-ornith-1.5:35b
-nemotron-3.5-lightning:30b-a3b
-qwen3.8:27b-mtp-q4_K_M

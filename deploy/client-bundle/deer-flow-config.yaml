@@ -42,19 +42,29 @@
 # it. 4096 was tested first but is too tight for heavy research runs (thinking +
 # long answers share one budget). Do NOT raise back to 16384.
 models:
-  - name: nemotron-3.5-lightning-30b-local
-    display_name: Nemotron 3.5 Lightning 30B (Local)
-    description: Default. Most capable local MOE (1M tokens). Supports thinking + tools. max_tokens capped to prevent thinking loops.
-    use: langchain_openai:ChatOpenAI
-    model: nemotron-3.5-lightning:30b-a3b
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
-    supports_thinking: true
-    # Long thinking pauses on a 30B reasoning model — raise the stream chunk
-    # timeout so the gateway does not drop the connection mid-thought.
-    stream_chunk_timeout: 300
+  # Pacgate 2026-10-19: WITHDRAWN from the shipped picker - 25.0 GB against a
+  # 16 GB AIPC card. On the dev box (96 GiB) it is excellent; on a client AIPC it
+  # cannot fit, so Ollama spills to CPU and the run presents as a hang with no
+  # error. Measured residency 25.0 GB (scripts/test-aipc-capacity-fit.ps1). Kept
+  # here, commented, so a larger machine can restore it deliberately.
+  #
+  # WITHDRAWING IT ALSO MOVED models[0]. The first ACTIVE entry is what an
+  # unpinned lane falls back to; that was this 30B, which is the 2026-10-17
+  # defect (every new thread loaded 25 GB). It is now gemma4-12b-local (7.2 GB).
+  # Do not re-order the list without checking what sits first.
+  # - name: nemotron-3.5-lightning-30b-local
+  #   display_name: Nemotron 3.5 Lightning 30B (Local)
+  #   description: 1M-token MOE. Requires 25 GB VRAM - NOT available on a 16 GB AIPC.
+  #   use: langchain_openai:ChatOpenAI
+  #   model: nemotron-3.5-lightning:30b-a3b
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
+  #   supports_thinking: true
+  #   # Long thinking pauses on a 30B reasoning model - raise the stream chunk
+  #   # timeout so the gateway does not drop the connection mid-thought.
+  #   stream_chunk_timeout: 300
 
   - name: gemma4-12b-local
     display_name: Gemma 4 12B (Local)
@@ -107,15 +117,20 @@ models:
     max_tokens: 8192
     temperature: 0.1
 
-  - name: ornith-1.5-35b-local
-    display_name: Ornith 1.5 35B (Local)
-    description: Heavier local model for complex research.
-    use: langchain_openai:ChatOpenAI
-    model: ornith-1.5:35b
-    api_key: ollama
-    base_url: http://host.docker.internal:11434/v1
-    max_tokens: 8192
-    temperature: 0.1
+  # Pacgate 2026-10-19: WITHDRAWN from the shipped picker - 22.0 GB against a
+  # 16 GB AIPC card. Same failure mode as the 30B above: it loads, spills to CPU
+  # and presents as a stall rather than an error. Measured residency 22.0 GB
+  # (scripts/test-aipc-capacity-fit.ps1). Commented rather than deleted so a
+  # machine with more VRAM can restore it deliberately.
+  # - name: ornith-1.5-35b-local
+  #   display_name: Ornith 1.5 35B (Local)
+  #   description: Heavier local model for complex research. Requires 22 GB VRAM.
+  #   use: langchain_openai:ChatOpenAI
+  #   model: ornith-1.5:35b
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
 
   # Pacgate 2026-09-21: DISABLED. The tag below is not pre-pulled by
   # ollama-models.txt and is not installed on either AIPC. Selecting it in the
