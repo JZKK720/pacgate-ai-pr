@@ -96,9 +96,83 @@ in place for manual inspection.
 
 Run: `.\install.ps1 -Update`
 
-This pulls new GHCR images and restarts containers. Your data is preserved:
+This pulls the latest repository content (`git pull --ff-only`), pulls new GHCR
+images and restarts containers. Your data is preserved:
 - `./data/tenants/` (volume mount) — matters, documents, memory
 - Postgres data (named volume) — metadata database
+
+`-Update` also repairs two generated values that older releases left wrong. Both
+are additive: an existing value is never overwritten, and no secret is touched.
+
+| Value | Why it matters |
+|---|---|
+| `GATEWAY_CORS_ORIGINS` in `.env` | Sign-in is refused with **403 "cross-site auth request denied"** if the browser's address is not listed. Older installs listed port 8089 only, so signing in on port 8090 failed. `-Update` adds the missing origins. |
+| `QM_PUBLIC_URL` in `qm-pacgate/.env` | The staff portal's OAuth issuer. Older installs hardcoded `http://localhost:8181`, so anyone signing in from **another computer** was redirected to their own machine and could never complete sign-in. `-Update` sets it to this machine's hostname. |
+
+After `-Update`, recreate the affected services so they pick the new values up:
+
+```powershell
+docker compose -f compose.prod.yaml up -d --force-recreate deer-flow deer-flow-frontend
+cd qm-pacgate; docker compose -f compose.qm.yaml up -d --force-recreate auth portal core
+```
+
+A corrected `.env` does nothing to a **running** container — it must be recreated.
+
+### Signing in from another computer
+
+If staff use the portal from their own machines rather than on the AIPC itself,
+make sure the browser origin is allowed. Both of these must be true:
+
+1. `GATEWAY_CORS_ORIGINS` in `.env` contains the exact address they type, e.g.
+   `http://aipc-01.local:8089` and `http://aipc-01.local:8090`.
+2. `QM_PUBLIC_URL` in `qm-pacgate/.env` is the address they type, e.g.
+   `http://aipc-01.local:8181`.
+
+To check both at once:
+
+```powershell
+# from the repo root
+.\scripts\test-origin-coherence.ps1
+```
+
+It reports every origin this machine advertises and whether auth accepts it,
+plus whether the OAuth issuer is reachable from a browser. Use the machine name
+rather than a LAN IP where possible — a hostname survives DHCP changes.
+
+## Moving matters between machines
+
+Each AIPC has its own private database, so nothing is shared automatically. To
+copy matters (with their documents and memory) from one machine to another:
+
+```powershell
+# On the source machine - capture a bundle
+.\scripts\sync-pacgate-matters.ps1 -Action Export `
+    -BaseUrl http://localhost:8089/pacgate `
+    -Email admin@pacgate-law.com -Password '<admin password>' `
+    -OutDir D:\sync\aipc1
+
+# Copy that folder to the other machine, then - preview first
+.\scripts\sync-pacgate-matters.ps1 -Action Import `
+    -BaseUrl http://localhost:8089/pacgate `
+    -Email admin@pacgate-law.com -Password '<admin password>' `
+    -InDir D:\sync\aipc1 -WhatIf
+
+# ...and apply
+.\scripts\sync-pacgate-matters.ps1 -Action Import ... -InDir D:\sync\aipc1
+```
+
+Notes worth knowing before you run it:
+
+- **Running it twice is safe.** Import reuses what already exists and never
+  deletes anything.
+- **Documents that are not sanitized are not copied.** The API refuses to export
+  unsanitized material, and the tool reports which documents were held back
+  rather than working around it. Sanitize them first if they need to travel.
+- **Passwords do not travel.** Accounts that do not exist on the target are not
+  created. Create them there, or the imported matters will be owned by a
+  different account.
+- **Matter names are not guaranteed unique.** If two matters share a name, the
+  tool creates a new one rather than guessing which you meant, and says so.
 
 ## Troubleshooting
 
