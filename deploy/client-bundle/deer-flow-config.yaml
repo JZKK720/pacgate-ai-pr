@@ -246,15 +246,21 @@ models:
 # chooses it explicitly. Only the AUTOMATIC path changed.
 model_routing:
   enabled: true
-  # Pacgate 2026-10-07: nemotron is now BOTH the default and the escalation
-  # target. Its 1M context makes the old gemma4-overflow escalation redundant -
-  # the model that overflows at 40k tokens is no longer the one holding the
-  # conversation. local_model and cloud_model point at the same entry; the
-  # schema key name is unchanged (renaming would break deer-flow's config).
-  local_model: nemotron-3.5-lightning-30b-local
-  # LOCAL, not cloud. Renaming this key would break deer-flow's config schema, so
-  # it is still called cloud_model; read it as "the escalation target".
-  cloud_model: nemotron-3.5-lightning-30b-local
+  # Pacgate 2026-10-19: the escalation target is gemma4-12b-local (7.2 GB). It was
+  # nemotron-3.5-lightning-30b-local until that entry was withdrawn for not fitting
+  # a 16 GB AIPC card - and leaving it here would have been worse than the picker
+  # bug it came from: escalation fires AUTOMATICALLY, so a 25 GB target would load
+  # on a 16 GB machine without anyone choosing it. That is the silent stall this
+  # whole change exists to remove.
+  #
+  # The 2026-10-07 rationale (nemotron's 1M context made gemma4-overflow redundant)
+  # no longer holds, because that model is no longer shippable. With a 12B target,
+  # `message_token_threshold` below is doing the real work: escalation now happens
+  # when the conversation is genuinely large, and it stays on the same resident
+  # model rather than swapping in a bigger one. deer-flow's schema keeps the key
+  # name `cloud_model`; read it as "the escalation target".
+  local_model: gemma4-12b-local
+  cloud_model: gemma4-12b-local
   message_token_threshold: 40000
   # Pacgate 2026-10-17: DEAD SIGNAL, left at the schema default on purpose.
   # Measured live on 0.1.31: the bound surface is 44 tools (7 sandbox + 2
