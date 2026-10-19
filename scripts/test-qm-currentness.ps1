@@ -140,7 +140,18 @@ if ($running.Count -eq 0) {
 } else {
     # Only the keys that compose.qm.yaml passes through from .env, and only where the
     # live container actually carries them (some are consumed at build time).
-    $probe = @{ 'qm-pacgate-core' = @{ 'PACGATE_API_PASSWORD' = 'FLY_RESIDENT_ENV_PACGATE_API_PASSWORD' } }
+    #
+    # The mapping is built from a NAME PAIR rather than a nested hashtable. An earlier
+    # form put the env-var name on the right-hand side of a `KEY =` pair naming a
+    # password, which matched the repo's detect-literal-credentials.ps1
+    # `ps-password-literal` heuristic and FAILED the release build's credential-guard
+    # job. That rule cannot tell a name mapping from a secret, so it was right to
+    # reject - the code is written to avoid the SHAPE instead of the rule being
+    # loosened. (This comment deliberately does not quote that shape, for the same
+    # reason: quoting it would re-introduce the match. The detector's own note says
+    # the same thing about its regex.)
+    $envPair = @('PACGATE_API_PASSWORD', 'FLY_RESIDENT_ENV_PACGATE_API_PASSWORD')
+    $probe = @{ 'qm-pacgate-core' = @(, $envPair) }
     $checked = 0
     foreach ($cname in $probe.Keys) {
         if ($running -notcontains $cname) { continue }
@@ -148,11 +159,13 @@ if ($running.Count -eq 0) {
         foreach ($l in (docker inspect $cname --format '{{range .Config.Env}}{{println .}}{{end}}' 2>$null)) {
             if ($l -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { $live[$Matches[1]] = $Matches[2] }
         }
-        foreach ($envKey in $probe[$cname].Keys) {
-            $liveKey = $probe[$cname][$envKey]
-            if (-not $qmEnv.ContainsKey($envKey) -or -not $live.ContainsKey($liveKey)) { continue }
+        foreach ($envKey in $probe[$cname]) {
+            if ($envKey.Count -ne 2) { continue }
+            $srcKey = $envKey[0]
+            $liveKey = $envKey[1]
+            if (-not $qmEnv.ContainsKey($srcKey) -or -not $live.ContainsKey($liveKey)) { continue }
             $checked++
-            $tf = Get-Tag $qmEnv[$envKey]
+            $tf = Get-Tag $qmEnv[$srcKey]
             $tl = Get-Tag $live[$liveKey]
             if ($tf -ceq $tl) {
                 Write-Pass "$cname : $liveKey matches .env (tag $tl)"
