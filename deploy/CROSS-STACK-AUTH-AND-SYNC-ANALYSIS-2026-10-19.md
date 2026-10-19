@@ -427,12 +427,20 @@ Recorded because they are the kind that survive a green suite:
 
 ### 8f. Still open (owner decisions, not code defects)
 
-1. **`external_key` is unpopulated.** Sync works by name fallback; names are not unique here.
+**Status after 2026-10-19.** Items 1 and 4 are now code-complete; 2, 3 and 5 remain the
+owner's call.
+
+1. **`external_key` is unpopulated.** **REPAIRABLE now.** `PATCH /api/matters/:id` exists
+   (admin-only, 409 on a duplicate, 404 scoped to the tenant) and
+   `sync-pacgate-matters.ps1 -Action BackfillKeys` drives it with `-WhatIf` and `-NameFilter`.
+   Verified against a real build: set=200, duplicate=409, blank=null, unknown=404.
+   **Still the owner's decision:** which matters get keys, and what prefix to use.
 2. **The 50 duplicate "Sanitizer E2E" matters.** Test residue, not client data.
 3. **qm vs compose authority** - `qm.config.jsonc` has `publicUrl`/`basePort`, but compose now
    uses `QM_PUBLIC_URL`. Two levers for one value; picking one is a design decision.
-4. **`PACGATE_MODEL_MID`** still defaults to a 17 GB model in both compose files, which does not
-   fit the AIPC's 16 GB dGPU. Reported by `test-aipc-capacity-fit.ps1` as a measurement.
+4. **`PACGATE_MODEL_MID`** now defaults to `ornith-1.5:9b` (6.6 GB) in both compose files and in
+   `ModelConfig::DEFAULT_MID_TAG`, so the tier fits a 16 GB AIPC. The capacity gate is enforced
+   in the suite behind `-Strict` rather than reported as a measurement.
 5. **A version bump is still required** for these config changes to reach a built image; the
    provenance gate compares the tag against the tree and will be red until 0.1.33 is built.
 

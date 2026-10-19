@@ -56,6 +56,26 @@ qm runs separately from the main Docker Compose stack. To set it up:
 1. Edit `qm-pacgate/qm.config.jsonc` — change `MODEL_NAME`
 2. Restart: `cd qm-pacgate && npm exec qm -- down && npm exec qm -- up`
 
+### If a model does not fit
+
+The shipped picker only offers models that fit a 16 GB card. Two large models
+that used to be listed (a 25 GB 30B and a 22 GB 35B) are withdrawn, as is the
+17 GB default for the API's Mid workflow tier. The reason is worth knowing: on
+an AIPC an oversized model does **not** report an error. The machine loads it,
+spills to CPU, and the run looks like a hang with no output. That is the symptom
+that made these machines look broken, and nothing in the logs says "too big".
+
+If you add a model yourself, check it first:
+
+```powershell
+# from the repo root
+.\scripts\test-aipc-capacity-fit.ps1
+```
+
+It reports each model's measured size against this machine's budget and says
+whether it fits. A model that does not fit will not produce an error at runtime -
+it will just be slow, or appear stuck.
+
 ## Smoke testing the deer-flow outputs listing
 
 The deer-flow workspace surfaces every file the agent wrote to
@@ -173,6 +193,34 @@ Notes worth knowing before you run it:
   different account.
 - **Matter names are not guaranteed unique.** If two matters share a name, the
   tool creates a new one rather than guessing which you meant, and says so.
+
+### Which matter is which
+
+A matter's `external_key` is what makes it the *same* matter on two machines.
+Without one, sync matches on the matter's name, and names are not unique (a test
+fixture can create dozens with one name), so a document can attach to the wrong
+matter.
+
+Setting a key requires an admin. Preview first - `-WhatIf` changes nothing:
+
+```powershell
+.\scripts\sync-pacgate-matters.ps1 -Action BackfillKeys `
+    -BaseUrl http://localhost:8089/pacgate -Email admin@pacgate-law.com `
+    -Password '<admin password>' -KeyPrefix PF -WhatIf
+
+# then scope it to one group of matters and apply
+.\scripts\sync-pacgate-matters.ps1 -Action BackfillKeys `
+    -BaseUrl http://localhost:8089/pacgate -Email admin@pacgate-law.com `
+    -Password '<admin password>' -KeyPrefix PF -NameFilter 'Acme*'
+```
+
+Keys come from the prefix you supply (`PF-0001`, `PF-0002`, ...). The tool never
+invents a key on its own: a made-up identity would make two machines disagree in
+a new way. Choose a prefix that means something to your firm. Running it again is
+safe - matters that already have a key are skipped, never overwritten.
+
+If it reports **HTTP 405**, this machine is running a release from before
+external-key repair existed. Update first (`.\install.ps1 -Update`), then re-run.
 
 ## Troubleshooting
 

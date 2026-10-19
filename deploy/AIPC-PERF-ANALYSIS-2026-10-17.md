@@ -337,14 +337,17 @@ Per the measure-keep-or-revert rule, including what was considered and rejected.
 
 ## 9. What needs a decision (not codeable here)
 
-1. **What those AIPCs actually run.** Measured here the surface is 44 tools; the report
-   says 183. Those two numbers cannot both come from this config. Confirm on the
-   machines before acting on the 183 figure.
-2. **Which model should be `models[0]` on a 16 GB card.** Recommendation:
-   `gemma4:12b-it-qat` for interactive use, with `nemotron` kept as an explicitly-picked
-   long-context option. This is a commercial/quality trade-off, not a technical one.
-3. **Whether to re-enable `tool_search` now.** It is the largest remaining prompt win
-   (-8,089 tokens per call) but it carries a known, previously-shipped regression.
+**Status after 2026-10-19:**
+
+| # | Decision | Status |
+| --- | --- | --- |
+| 1 | **What those AIPCs actually run.** Measured here the surface is 44 tools; the report says 183. Those two numbers cannot both come from this config. | **OPEN.** Needs a measurement on a real AIPC. It cannot be settled from this repo. |
+| 2 | **Which model should be `models[0]` on a 16 GB card.** Recommendation was `gemma4:12b-it-qat` for interactive use. | **RESOLVED.** `models[0]` is now `gemma4-12b-local` (7.2 GB). The two over-cap entries (25 GB and 22 GB) are withdrawn with their measurements recorded, and the capacity gate now blocks the suite behind `-Strict` instead of only reporting. |
+| 3 | **Whether to re-enable `tool_search` now.** It is the largest remaining prompt win (-8,089 tokens per call) but it carries a known, previously-shipped regression. | **OPEN.** Only a live A/B on an AIPC can settle it. Implementing it on the strength of the token figure would be guessing. |
+
+Also resolved in the same pass: `PACGATE_MODEL_MID` and `ModelConfig::DEFAULT_MID_TAG` no longer
+default to the 17 GB `qwen3.8:27b-mtp-q4_K_M`; both now use `ornith-1.5:9b` (6.6 GB), and the
+three over-cap tags left the pre-pull list (64 GB of downloads nothing could select).
 
 ---
 
