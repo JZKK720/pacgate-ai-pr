@@ -193,10 +193,18 @@ treat as order-of-magnitude.
 | pacgate-db | 0.00% | 49 MiB |
 | qm admin/auth/portal/web-ui, mailpit, nginx | ~0% | 18-42 MiB each |
 
-**Total ~6.1 GiB of container memory** for the complete 15-container system at
-idle. That is the number to plan an AIPC against - note the AIPCs have 32 GB
+**Total ~4.1 GiB of container memory** for the complete 15-container system at
+idle, measured usage only (`docker stats` twice, agreeing to 2 MiB).
+
+> **Correction (2026-10-20).** An earlier revision of this file said "~6.1 GiB".
+> That was wrong: it summed `MemUsage` **including the `/ limit` half** of the
+> string for containers that have a `mem_limit`. The corrected figure is 4,160 MiB
+> = 4.06 GiB = 4.36 GB. See `deploy/AIPC-HX370-CAPACITY-VERDICT-2026-10-20.md`
+> for the per-container table and the AIPC budget arithmetic.
+
+That is the number to plan an AIPC against - note the AIPCs have 32 GB
 unified, and the LLM weights are *not* in this figure (they are in Ollama on the
-host, 7.2 GB resident for `gemma4:12b-it-qat`).
+host, 7.2 GB VRAM-resident for `gemma4:12b-it-qat`).
 
 ### Data state
 
@@ -216,8 +224,13 @@ tens of milliseconds on the control plane.
 readiness:**
 
 - **Latency and residency on the 16 GB machines.** Everything here is the 128 GB /
-  96 GiB dev box. The 6.1 GiB container footprint plus a 7.2 GB resident model is
-  comfortable here and is *most of* a 16 GB card's budget there.
+  96 GiB dev box. The measured **4.06 GiB** container footprint plus a 7.2 GB
+  VRAM-resident model is **11.8 GB of system RAM and 7.5 GB of 16 GB VRAM** on an
+  HX370 - comfortable, provided only one model is resident. With a Mid-tier model
+  warm alongside it, VRAM reaches 14.1 GB and RAM 18.4 GB, which still fits but
+  with little headroom. See
+  `deploy/AIPC-HX370-CAPACITY-VERDICT-2026-10-20.md` for the arithmetic and the
+  one recommended config change.
 - **An actual LLM completion through the full pipeline.** The generation e2e gate
   passes (19/19, real OOXML), but per-call latency under a loaded model is not
   measured here.
