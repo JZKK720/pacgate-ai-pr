@@ -257,14 +257,30 @@ try {
         if ($probeOk) {
             Write-Host "[OK] Bridge credential verified against $PacgateApiUrl" -ForegroundColor Green
         } elseif ($probeStatus -eq 401) {
-            Write-Host "ERROR: $bridgeEmail / the supplied password was REJECTED by pacgate-api (401)." -ForegroundColor Red
-            Write-Host "  Refusing to write a credential that does not work - that is exactly how the" -ForegroundColor Red
-            Write-Host "  2026-10-17 divergence happened, and it took a qm 401 to notice." -ForegroundColor Red
-            Write-Host "  Either this is a NEW account (it will be created in the next step - re-run" -ForegroundColor Yellow
-            Write-Host "  with -BridgePassword again if so), or the password is wrong for an EXISTING" -ForegroundColor Yellow
-            Write-Host "  account. To find the working value, test candidates against" -ForegroundColor Yellow
-            Write-Host "  $PacgateApiUrl/api/auth/login - a 200 means that one is live." -ForegroundColor Yellow
-            exit 1
+            # A 401 here is the NORMAL first-install outcome, not a failure.
+            #
+            # WHY THIS CHANGED (2026-10-19). Step 8b below creates the bridge
+            # account when its own login probe fails, and it says so plainly ("with
+            # open registration closed, nothing mints the bridge account on a fresh
+            # DB"). But this pre-check ran FIRST and exited 1 on 401, so on a fresh
+            # database step 8b was unreachable - the script died at the check whose
+            # entire purpose is to protect a write that had not happened yet.
+            #
+            # Measured on a genuinely fresh install: `setup-qm.ps1` refused with
+            # "the supplied password was REJECTED by pacgate-api (401)" and the qm
+            # stack then failed to boot with 7 misconfigurations, because no .env
+            # had ever been written. install.ps1 reports that only as a [WARN] and
+            # still prints "Pacgate-ai is running".
+            #
+            # Distinguishing the two 401 cases is what keeps the 2026-10-17 guard
+            # intact: if the account EXISTS and the password differs, step 8b's
+            # create attempt hits the unique constraint and its re-probe reports
+            # "exists, password DIFFERS from .env" with a [WARN]. So the real
+            # divergence is still surfaced - it is just no longer fatal before the
+            # account has had a chance to be created.
+            Write-Host "[..] Bridge account not found yet (401) - expected on a first install." -ForegroundColor Gray
+            Write-Host "     Step 8b creates it after qm is configured. If this account" -ForegroundColor Gray
+            Write-Host "     already EXISTS, step 8b will report that its password differs." -ForegroundColor Gray
         } else {
             Write-Host "[WARN] Could not verify the bridge credential (pacgate-api said $probeStatus)." -ForegroundColor Yellow
             Write-Host "  Continuing - an unreachable API is not proof the password is wrong. Re-run" -ForegroundColor Yellow
@@ -272,6 +288,89 @@ try {
         }
     } finally {
         if (Test-Path -LiteralPath $loginProbePath) { Remove-Item -LiteralPath $loginProbePath -Force -ErrorAction SilentlyContinue }
+    }
+
+    # ── Ensure-BridgeAccount ────────────────────────────────────────────────
+    # Mint the Pacgate bridge account if it does not already work.
+    #
+    # Called from BOTH exits: the first-install path (step 8b) and the
+    # ".env already exists" path. It must run on every setup-qm invocation,
+    # because a qm .env carrying valid-shaped credentials for a nonexistent
+    # account is exactly the state that 401s on the first sandbox tool call.
+    function Ensure-BridgeAccount {
+        if (-not $bridgeEmail -or -not $plainPassword) {
+            Write-Host "[..] No bridge credentials supplied - skipping bridge check." -ForegroundColor Gray
+            return
+        }
+        Write-Host "`nEnsuring the Pacgate bridge account works (login probe, then create if missing)..." -ForegroundColor Cyan
+        $pairBody = Join-Path $env:TEMP "qm-pair-$PID.json"
+        $mkBody   = Join-Path $env:TEMP "qm-mkuser-$PID.json"
+        try {
+            [System.IO.File]::WriteAllText($pairBody, (@{ email = $bridgeEmail; password = $plainPassword } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+            $bridgeLogin = $null
+            try { $bridgeLogin = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $pairBody -TimeoutSec 20 } catch { }
+            if ($bridgeLogin -and $bridgeLogin.token) {
+                Write-Host "[OK] Bridge account already works: $bridgeEmail" -ForegroundColor Green
+                return
+            }
+
+            # Creation needs an ADMIN token: /api/auth/users requires the admin
+            # role, and the bridge account it mints is deliberately only an
+            # attorney. Without this the call would 403 and the bridge would stay
+            # unminted - which is what happened on the fresh install this was
+            # written for (the account did not exist AND there was no admin token).
+            $adminToken = $null
+            $adminEmailInEnv = $null
+            $adminPassInEnv  = $null
+            $mainEnvPath = Join-Path (Split-Path -Parent $PSScriptRoot) '.env'
+            if (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.env')) { $mainEnvPath = Join-Path $PSScriptRoot '.env' }
+            if (Test-Path -LiteralPath $mainEnvPath) {
+                foreach ($line in (Get-Content -LiteralPath $mainEnvPath -ErrorAction SilentlyContinue)) {
+                    if ($line -match '^\s*PACGATE_API_EMAIL\s*=\s*(.+)$')    { $adminEmailInEnv = $Matches[1].Trim() }
+                    if ($line -match '^\s*PACGATE_API_PASSWORD\s*=\s*(.+)$') { $adminPassInEnv  = $Matches[1].Trim() }
+                }
+            }
+            if ($adminEmailInEnv -and $adminPassInEnv) {
+                $admBody = Join-Path $env:TEMP "qm-adm-$PID.json"
+                try {
+                    [System.IO.File]::WriteAllText($admBody, (@{ email = $adminEmailInEnv; password = $adminPassInEnv } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+                    $adm = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $admBody -TimeoutSec 20
+                    if ($adm.token) { $adminToken = $adm.token }
+                } catch { }
+                finally { Remove-Item $admBody -Force -ErrorAction SilentlyContinue }
+            }
+
+            if (-not $adminToken) {
+                Write-Host "[WARN] cannot create the bridge account: no admin token." -ForegroundColor Yellow
+                Write-Host "       The account it needs is PACGATE_API_EMAIL in the main .env, and" -ForegroundColor Yellow
+                Write-Host "       that login failed. Reset that password, then re-run this script." -ForegroundColor Yellow
+                Write-Host "       Until then the first sandbox tool call will 401." -ForegroundColor Yellow
+                return
+            }
+
+            [System.IO.File]::WriteAllText($mkBody, (@{ email = $bridgeEmail; password = $plainPassword; role = 'attorney' } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+            try {
+                $created = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Method Post -ContentType 'application/json' -Headers @{ Authorization = "Bearer $adminToken" } -InFile $mkBody -TimeoutSec 20
+                Write-Host "[OK] Bridge account created: $bridgeEmail (user_id $($created.user_id))" -ForegroundColor Green
+            }
+            catch {
+                # Duplicate on a re-run lands here with a 500 unique-constraint
+                # body. Re-probe login to distinguish "exists, password matches"
+                # (fine) from "exists, password DIFFERS from .env" (real problem).
+                $bridgeLogin2 = $null
+                try { $bridgeLogin2 = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $pairBody -TimeoutSec 20 } catch { }
+                if ($bridgeLogin2 -and $bridgeLogin2.token) {
+                    Write-Host "[OK] Bridge account exists (password matches .env): $bridgeEmail" -ForegroundColor Green
+                }
+                else {
+                    Write-Host "[WARN] bridge account creation failed and login does not match - the first sandbox tool call will 401." -ForegroundColor Yellow
+                    Write-Host "       Fix: reset the bridge password in pacgate-api, or update qm's .env PACGATE_API_* to the working credential." -ForegroundColor Yellow
+                }
+            }
+        }
+        finally {
+            Remove-Item $pairBody, $mkBody -Force -ErrorAction SilentlyContinue
+        }
     }
 
     # 6. Create .env
@@ -345,6 +444,12 @@ try {
             exit 1
         }
         Write-Host "[OK] qm check passed" -ForegroundColor Green
+
+        # `.env` was preserved, but the bridge account still has to exist. This
+        # used to be unreachable on a re-run: the block that mints the account sat
+        # after this return. See Ensure-BridgeAccount's own comment.
+        Ensure-BridgeAccount
+
         Write-Host "`n=== QM already bootstrapped (nothing regenerated) ===" -ForegroundColor Green
         Write-Host "  Start/refresh the stack with:" -ForegroundColor White
         Write-Host "    cd qm-pacgate" -ForegroundColor Gray
@@ -599,41 +704,17 @@ QM_PUBLIC_URL=$qmPublicUrl
     # is the BRIDGE'S OWN LOGIN: 200 proves the account exists AND that the
     # password matches what this script writes into qm's .env; any failure →
     # attempt creation once and report honestly.
-    Write-Host "`nEnsuring the Pacgate bridge account works (login probe, then create if missing)..." -ForegroundColor Cyan
-    $pairBody = Join-Path $env:TEMP "qm-pair-$PID.json"
-    $mkBody  = Join-Path $env:TEMP "qm-mkuser-$PID.json"
-    try {
-        [System.IO.File]::WriteAllText($pairBody, (@{ email = $bridgeEmail; password = $plainPassword } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
-        $bridgeLogin = $null
-        try { $bridgeLogin = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $pairBody -TimeoutSec 20 } catch { }
-        if ($bridgeLogin -and $bridgeLogin.token) {
-            Write-Host "[OK] Bridge account already works: $bridgeEmail" -ForegroundColor Green
-        }
-        else {
-            [System.IO.File]::WriteAllText($mkBody, (@{ email = $bridgeEmail; password = $plainPassword; role = 'attorney' } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
-            try {
-                $created = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/users" -Method Post -ContentType 'application/json' -InFile $mkBody -TimeoutSec 20
-                Write-Host "[OK] Bridge account created: $bridgeEmail (user_id $($created.user_id))" -ForegroundColor Green
-            }
-            catch {
-                # Duplicate on a re-run lands here with a 500 unique-constraint
-                # body. Re-probe login to distinguish "exists, password matches"
-                # (fine) from "exists, password DIFFERS from .env" (real problem).
-                $bridgeLogin = $null
-                try { $bridgeLogin = Invoke-RestMethod -Uri "$PacgateApiUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $pairBody -TimeoutSec 20 } catch { }
-                if ($bridgeLogin -and $bridgeLogin.token) {
-                    Write-Host "[OK] Bridge account exists (password matches .env): $bridgeEmail" -ForegroundColor Green
-                }
-                else {
-                    Write-Host "[WARN] bridge account creation failed and login does not match - the first sandbox tool call will 401." -ForegroundColor Yellow
-                    Write-Host "       Fix: reset the bridge password in pacgate-api, or update qm's .env PACGATE_API_* to the working credential." -ForegroundColor Yellow
-                }
-            }
-        }
-    }
-    finally {
-        Remove-Item $pairBody, $mkBody -Force -ErrorAction SilentlyContinue
-    }
+    #
+    # EXTRACTED INTO A FUNCTION 2026-10-19. This block used to sit AFTER the
+    # "`.env` already exists → return" branch, so it only ever ran on a FIRST
+    # install. On a re-run - and on any install where `.env` had been created by
+    # an earlier failed attempt - the script returned before reaching it, leaving
+    # the bridge unminted. Measured: a fresh install whose first setup-qm run had
+    # died before creating `.env`, then succeeded on the second run, ended with a
+    # qm .env full of valid-shaped credentials for an account that did not exist.
+    # Both paths now call this, because "the bridge account must exist" is true
+    # regardless of whether `.env` was just created.
+    Ensure-BridgeAccount
 
     # 9. Next steps
     Write-Host "`n=== QM Bootstrap Complete ===" -ForegroundColor Green

@@ -147,6 +147,27 @@ if ($null -eq $pac -or $null -eq $qm) {
 Write-Host ''
 Write-Host 'C1  keys present in BOTH files' -ForegroundColor Cyan
 
+# PACGATE_API_EMAIL / PACGATE_API_PASSWORD are an IDENTITY, not a shared secret,
+# and the two files are SUPPOSED to differ.
+#
+# `setup-qm.ps1` says it explicitly (line ~162): "THE BRIDGE IS A SEPARATE,
+# LEAST-PRIVILEGE SERVICE ACCOUNT ... because the sandbox runs model-directed tool
+# calls, so it gets its own attorney-scoped credential". So client-bundle/.env
+# holds the DEPLOYMENT ADMIN and qm-pacgate/.env holds the BRIDGE. Requiring them
+# to be byte-identical demanded that the bridge be an admin.
+#
+# Found 2026-10-19 on a clean install: this check failed with
+#   PACGATE_API_EMAIL    DIVERGED - pacgate 21 chars vs qm 22 chars
+#   PACGATE_API_PASSWORD DIVERGED - pacgate 32 chars vs qm 21 chars
+# while BOTH identities authenticated (admin 200, bridge 200). The check was
+# wrong, not the deployment - it would only pass if the bridge were the admin,
+# which is the over-privileged state the design avoids.
+#
+# What actually matters is that each file's identity AUTHENTICATES, so those two
+# are verified against pacgate-api under C4b below. Everything else here is a
+# genuinely shared value (OpenViking keys) and must still match exactly.
+$identityKeys = @('PACGATE_API_EMAIL', 'PACGATE_API_PASSWORD')
+
 $shared = @($pac.Keys | Where-Object { $qm.Contains($_) } | Sort-Object)
 
 if ($shared.Count -eq 0) {
@@ -154,12 +175,65 @@ if ($shared.Count -eq 0) {
 } else {
     Write-Host "    $($shared.Count) shared key(s): $($shared -join ', ')" -ForegroundColor DarkGray
     foreach ($k in $shared) {
+        if ($identityKeys -contains $k) {
+            # Report the shape so a reader can see it is intentional, never the value.
+            Write-Host ("    [ .. ] {0} differs by design: pacgate={1} chars, qm={2} chars (admin vs bridge account)" -f `
+                $k, $pac[$k].Length, $qm[$k].Length) -ForegroundColor DarkGray
+            continue
+        }
         $a = Get-SecretTag $pac[$k]
         $b = Get-SecretTag $qm[$k]
         if ($a -ceq $b) {
             Write-Pass "$k : identical (tag $a, $($pac[$k].Length) chars)"
         } else {
             Write-Fail "$k : DIVERGED - pacgate tag $a ($($pac[$k].Length) chars) vs qm tag $b ($($qm[$k].Length) chars)"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# C1b. Every identity the two files declare must actually authenticate.
+#
+# This replaces "the values are identical" with the property that matters. A
+# bridge password that differs from the admin is fine; a bridge password that no
+# longer logs in is the 2026-10-17 defect and must fail.
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'C1b each stack identity authenticates to pacgate-api' -ForegroundColor Cyan
+
+function Test-Login([string]$baseUrl, [string]$email, [string]$password) {
+    if (-not $email -or -not $password) { return -1 }
+    $probe = Join-Path $env:TEMP ("xs-probe-{0}.json" -f [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::WriteAllText($probe, (@{ email = $email; password = $password } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+        Invoke-RestMethod -Uri "$baseUrl/api/auth/login" -Method Post -ContentType 'application/json' -InFile $probe -TimeoutSec 15 | Out-Null
+        return 200
+    }
+    catch {
+        if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+        return -1
+    }
+    finally { Remove-Item $probe -Force -ErrorAction SilentlyContinue }
+}
+
+$apiBase = 'http://localhost:8089/pacgate'
+if ($SkipLive) {
+    Write-Host '    skipped (-SkipLive)' -ForegroundColor DarkGray
+}
+else {
+    foreach ($pair in @(
+        @{ label = 'pacgate (deployment admin)'; email = $pac['PACGATE_API_EMAIL']; pass = $pac['PACGATE_API_PASSWORD'] },
+        @{ label = 'qm      (bridge account)';   email = $qm['PACGATE_API_EMAIL'];  pass = $qm['PACGATE_API_PASSWORD'] }
+    )) {
+        $status = Test-Login $apiBase $pair.email $pair.pass
+        if ($status -eq 200) {
+            Write-Pass "$($pair.label) : login 200"
+        }
+        elseif ($status -eq -1) {
+            Write-Warn "$($pair.label) : pacgate-api unreachable - cannot verify"
+        }
+        else {
+            Write-Fail "$($pair.label) : login $status - this identity does not work against pacgate-api"
         }
     }
 }

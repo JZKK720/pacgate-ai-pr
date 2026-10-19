@@ -57,8 +57,8 @@ services:
       SESSION_STORE: postgres
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@pg:5432/qm
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8180}
-      PUBLIC_WEB_URL: http://localhost:8181
-      WEB_UI_PUBLIC_URL: http://localhost:8181
+      PUBLIC_WEB_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
+      WEB_UI_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
       # sandbox bridge / connectors
       # Repinned 2026-10-04 alongside qm.config.jsonc. The previous fallback was
       # `localhost:5000/pacgate-sandboxes@sha256:207a779d…`, a registry that does
@@ -141,7 +141,7 @@ services:
       PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
       CORE_API_URL: http://core:8080
       CORE_ORG_ID: pacgate
-      WEB_UI_PUBLIC_URL: http://localhost:8181
+      WEB_UI_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
       PORT: 8080
       NODE_ENV: development
     ports:
@@ -164,8 +164,8 @@ services:
       AUTH_BROKER_PREFIX: /idp
       OIDC_CLIENT_ID: qm-portal
       OIDC_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
-      OIDC_ISSUER: http://localhost:8181/idp
-      OIDC_AUTH_ENDPOINT: http://localhost:8181/idp/authorize
+      OIDC_ISSUER: ${QM_PUBLIC_URL:-http://localhost:8181}/idp
+      OIDC_AUTH_ENDPOINT: ${QM_PUBLIC_URL:-http://localhost:8181}/idp/authorize
       OIDC_TOKEN_ENDPOINT: http://auth:8080/token
       OIDC_USERINFO_ENDPOINT: http://auth:8080/userinfo
       OIDC_JWKS_URI: http://auth:8080/.well-known/jwks.json
@@ -177,7 +177,7 @@ services:
       CORE_ORG_ID: pacgate
       ADMIN_UPSTREAM: http://admin:8080
       WEB_UI_UPSTREAM: http://web-ui:8080
-      PORTAL_PUBLIC_URL: http://localhost:8181
+      PORTAL_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
       PORT: 8080
       NODE_ENV: development
     ports:
@@ -204,9 +204,9 @@ services:
       SMTP_TLS: none
       SMTP_USERNAME: ${SMTP_USERNAME}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
-      AUTH_ISSUER: http://localhost:8181/idp
+      AUTH_ISSUER: ${QM_PUBLIC_URL:-http://localhost:8181}/idp
       AUTH_CLIENT_ID: qm-portal
-      AUTH_REDIRECT_URI: http://localhost:8181/auth/callback
+      AUTH_REDIRECT_URI: ${QM_PUBLIC_URL:-http://localhost:8181}/auth/callback
       AUTH_BRAND_NAME: PacGate
       CORE_API_URL: http://core:8080
       CORE_ORG_ID: pacgate
