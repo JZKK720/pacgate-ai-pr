@@ -44,6 +44,7 @@ $targets = @(
     'scripts/test-origin-coherence.ps1'
     'scripts/sync-pacgate-matters.ps1'
     'scripts/test-aipc-capacity-fit-strict.ps1'
+    'scripts/test-skills-and-templates.ps1'
 )
 
 $bad = 0

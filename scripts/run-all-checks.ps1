@@ -585,6 +585,28 @@ $gates += 'scripts/test-sync-capability.ps1'
 # printed on every run, but that loop ignores exit codes by design. This wrapper
 # supplies -Strict and is what actually blocks.
 $gates += 'scripts/test-aipc-capacity-fit-strict.ps1'
+# SKILLS AND WORKFLOW TEMPLATES, registered 2026-10-19.
+#
+# These are declared must-haves on every machine, and NOTHING asserted them. The
+# suite had gates for MCP (2) and workflows (7) but zero for skills, and zero that
+# treated the template lane as an artifact set with a tracked source and a shipped
+# copy that must agree.
+#
+# The trap it closes: the skills do NOT ship inside the digest-pinned sandbox
+# image. Inspecting ghcr.io/jzkk720/pacgate-sandboxes at its pinned digest shows
+# tools (pacgate-qm, firecrawl-qm, claude, codex) and not one SKILL.md. Skills
+# arrive only through the compose bind-mount plus the tracked directory, so
+# deleting or renaming that directory breaks every machine at once with no build
+# failure and no error - the agent simply stops discovering a capability.
+#
+# K1 every tracked skill has SKILL.md with usable frontmatter (name+description)
+# K2 the bind mount is present, since the image carries no skills
+# K3 the tracked template set matches the shipped client-bundle copy
+# K4 every template declares id, name and steps
+#
+# Static, so it runs everywhere. Red-checked two ways: deleting a SKILL.md and
+# stripping another's frontmatter each make it exit 1.
+$gates += 'scripts/test-skills-and-templates.ps1'
 
 $failed = @()
 
