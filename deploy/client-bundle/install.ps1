@@ -1560,6 +1560,40 @@ if ($Update) {
         # otherwise read as "rese t".
         if (Test-Path (Join-Path $qmRuntime '.env')) {
             Write-Host "  (.env preserved - generated qm secrets are left untouched)" -ForegroundColor Gray
+
+            # Additive repair of a NON-SECRET key that the re-stage cannot supply.
+            #
+            # The staged compose.qm.yaml now derives six browser-facing OAuth URLs
+            # from ${QM_PUBLIC_URL:-http://localhost:8181}. A machine installed
+            # before that key existed has no QM_PUBLIC_URL in .env, so compose
+            # falls back to localhost - and because OAuth is a BROWSER redirect,
+            # remote users are sent to their own loopback and can never sign in.
+            #
+            # This is the same trap as GATEWAY_CORS_ORIGINS above: a correct
+            # tracked default does nothing on a machine whose generated file was
+            # written by an older release. -Update re-stages config but does NOT
+            # run setup-qm.ps1 (which is interactive), so without this the fix
+            # would reach AIPC 1 and AIPC 2 as dead config. The key is not a
+            # secret and is not bound to any volume, so it is safe to add here.
+            $qmEnvPath = Join-Path $qmRuntime '.env'
+            $qmEnvRaw = [System.IO.File]::ReadAllText($qmEnvPath)
+            if ($qmEnvRaw -match '(?m)^\s*QM_PUBLIC_URL\s*=') {
+                Write-Host "  [OK] QM_PUBLIC_URL already set (browser-facing OAuth origin)" -ForegroundColor Green
+            }
+            else {
+                $qmHostName = try { ([System.Net.Dns]::GetHostName()).ToLower() } catch { 'localhost' }
+                if ([string]::IsNullOrWhiteSpace($qmHostName)) { $qmHostName = 'localhost' }
+                $qmUrl = "http://${qmHostName}:8181"
+                $nl = if ($qmEnvRaw.Length -eq 0 -or $qmEnvRaw.EndsWith("`n")) { '' } else { "`r`n" }
+                [System.IO.File]::AppendAllText(
+                    $qmEnvPath,
+                    "$nl" + "QM_PUBLIC_URL=$qmUrl`r`n",
+                    [System.Text.UTF8Encoding]::new($false)
+                )
+                Write-Host "  [OK] Added QM_PUBLIC_URL=$qmUrl to the qm .env" -ForegroundColor Green
+                Write-Host "       Without it the OAuth issuer advertised localhost, so signing in" -ForegroundColor Gray
+                Write-Host "       from any other computer redirected to that computer instead." -ForegroundColor Gray
+            }
         }
     }
     elseif ((Test-Path $qmRuntime) -and -not (Test-Path $qmSource)) {
