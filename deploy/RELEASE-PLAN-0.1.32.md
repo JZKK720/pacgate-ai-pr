@@ -116,27 +116,50 @@ the one command to run when nobody is mid-session. **Read-only** — it never re
 
 ---
 
-## 5. Release checklist
+## 5. Release checklist — COMPLETED
 
-**Do not ship the current commits under `v0.1.31`.** `test-release-provenance.ps1` is correctly
-red: config that reaches a built image changed after `9d31936`, so the tag no longer identifies
+**Do not ship the current commits under `v0.1.31`.** `test-release-provenance.ps1` was correctly
+red: config that reaches a built image changed after `9d31936`, so the tag no longer identified
 what clients pull.
 
-```
-1. .\scripts\bump-release-version.ps1 -To 0.1.32          # 99 edits / 11 files
-2. commit + push the bump
-3. tag v0.1.32, push the tag                              # build-ghcr.yml builds 5 images
-4. wait for the workflow; confirm all 5 are anonymously pullable
-   (the workflow already asserts this: an anonymous manifest HEAD must return 200)
-5. .\scripts\test-release-provenance.ps1                  # must go green
-6. full suite: .\scripts\run-all-checks.ps1               # must be all-green
-```
+### Status: 0.1.32 is released and verified
 
-**Rollback:** the images are tag-addressed and the previous tags stay published, so a client
-reverts by restoring the old tag in `compose.prod.yaml` + `docker compose up -d`. No data
-migration is involved. qm and OpenViking are untouched by the release, so they need no rollback.
+| step | result |
+| --- | --- |
+| bump to 0.1.32 | done — 99 edits / 11 files, all pins verified |
+| commit + push main | done — `ec0f070` |
+| annotated tag `v0.1.32` pushed | done |
+| `build-ghcr.yml` | **success**, 15m23s, run `39183040344` |
+| all 5 images share one revision | `ec0f070bfcf2` |
+| `test-release-provenance.ps1` | **PASSED** — "v0.1.32 identifies the ec0f070bfcf2 artifacts clients will pull" |
+| anonymous pull (no `docker login`) | **5/5 HTTP 200** — public, client install path works |
 
-**Client-side after updating (AIPC 1 & 2):**
+### One thing that blocked the first attempt, worth recording
+
+The first tag push **failed in 17 seconds**: `build-ghcr.yml` stops at its credential-guard job,
+which runs `scripts/detect-literal-credentials.ps1`. That script flagged
+`test-qm-currentness.ps1:143` — my own new gate — so no image was built.
+
+Two mistakes, both mine:
+
+1. The code wrote an env-var **name mapping** in a shape the `ps-password-literal` heuristic
+   cannot distinguish from a secret (a password-named key with a long token right of `=`). The
+   rule was correct to reject it; the code was rewritten as a name-pair array so the shape does
+   not exist.
+2. My first repair added a comment **quoting** that shape, re-introducing the match one line
+   lower — exactly the trap the detector's own note warns about. The comment now describes the
+   shape without reproducing it.
+
+**Process lesson:** after `git add` I ran `assert-no-staged-secrets.ps1` and treated it as
+sufficient. It is a different, narrower guard. `detect-literal-credentials.ps1` reads the git
+index (`git ls-files`), so it *would* have caught this locally — I simply did not run it. Both
+now run before every commit.
+
+The tag was force-re-pointed to the fixed commit. That was safe **only** because the failed run
+produced no images; had it built some, the old tag would have had to be left alone and a new
+patch version cut instead.
+
+### Client-side after updating (AIPC 1 & 2)
 
 ```
 .\install.ps1 -Update
@@ -145,12 +168,17 @@ migration is involved. qm and OpenViking are untouched by the release, so they n
 .\scripts\test-qm-currentness.ps1             # is qm stale? restart if so, when idle
 ```
 
-The credential fixes ride in qm's `.env`... **except on a machine that never re-runs
-`setup-qm.ps1`**. `install.ps1 -Update` preserves `qm-pacgate/.env` and does not rewrite it, so a
-machine carrying the OLD divergent password stays divergent. **That is precisely what
-`test-cross-stack-credentials.ps1` now catches on the client** — run it after updating, and if
-C1 fails, set `OPENVIKING_API_KEY`/`PACGATE_API_PASSWORD` in `qm-pacgate/.env` to the values in
-`client-bundle/.env`, then recreate `core`.
+`install.ps1 -Update` preserves `qm-pacgate/.env` and never rewrites it, so a machine carrying the
+OLD divergent password **stays divergent**. That is exactly what
+`test-cross-stack-credentials.ps1` now catches on the client: if C1 fails, set
+`OPENVIKING_API_KEY` / `PACGATE_API_PASSWORD` in `qm-pacgate/.env` to the values in
+`client-bundle/.env`, then recreate `core`. This cannot be fully automated because it edits a
+live credential on a running staff-facing stack.
+
+**Rollback:** images are tag-addressed and `0.1.31` stays published, so a client reverts by
+pointing `compose.prod.yaml` back at `:0.1.31` and running `docker compose up -d`. No data
+migration is involved, and qm/OpenViking are untouched by the release so need no rollback.
+
 
 ---
 
