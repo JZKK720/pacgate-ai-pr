@@ -528,16 +528,17 @@ $measurements = @(
     # model runs there happily and the defect is invisible until it reaches a 16 GB
     # AIPC. That is precisely why this needs a gate rather than a review.
     #
-    # REGISTERED AS A MEASUREMENT, NOT A GATE, on purpose. Run normally it reports
-    # the capacity exposures and exits 0. Run with -Strict it exits 1, and it
-    # currently WOULD fail on real findings:
-    #   - PACGATE_MODEL_MID defaults to qwen3.8:27b-mtp-q4_K_M (17 GB) in BOTH
-    #     compose files - unconditional, so it is a capacity bug, not a preference;
-    #   - two active deer-flow roster entries are over-cap (nemotron 25 GB,
-    #     ornith-35b 22 GB).
-    # Making that blocking is a single switch flip, but which models the SHIPPED
-    # roster offers is a product decision that is still open. Promote it to `$gates`
-    # with -Strict once that call is made - the warnings above are the input to it.
+    # PROMOTED TO A GATE 2026-10-19. It was registered here because "which models
+    # the SHIPPED roster offers is a product decision that is still open". That
+    # call is now made: a model larger than the target card cannot ship as a
+    # default - on a 16 GB AIPC it does not error, it spills to CPU and presents
+    # as a hang, which is the symptom that made these machines look broken.
+    #
+    # It is enforced through scripts/test-aipc-capacity-fit-strict.ps1 (registered
+    # in $gates), not from here. This loop ignores exit codes by design, and the
+    # script only fails under -Strict - so registering it here would have kept
+    # reporting green while the 17 GB mid tier shipped. Kept in the measurements
+    # list so the full size table is still printed on every suite run.
     'scripts/test-aipc-capacity-fit.ps1'
 )
 
@@ -572,6 +573,18 @@ $gates += 'scripts/test-cross-stack-credentials.ps1'
 #
 # It is static (no live stack needed), so it runs everywhere.
 $gates += 'scripts/test-sync-capability.ps1'
+# AIPC CAPACITY, promoted from a measurement to a gate 2026-10-19.
+#
+# The model roster decision was left open on purpose ("which models the SHIPPED
+# roster offers is a product decision"). It is now made: a model larger than the
+# target card cannot ship as a default. On a 16 GB AIPC an over-cap tag does not
+# error - Ollama spills to CPU and the run presents as a hang, which is the exact
+# symptom that made the AIPCs look broken.
+#
+# The capacity SCRIPT is still listed in $measurements so its full size table is
+# printed on every run, but that loop ignores exit codes by design. This wrapper
+# supplies -Strict and is what actually blocks.
+$gates += 'scripts/test-aipc-capacity-fit-strict.ps1'
 
 $failed = @()
 
