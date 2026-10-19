@@ -438,6 +438,23 @@ $liveStackGates = @(
     # compose.prod.yaml, while both declare `name: pacgate-ai-bundle` (same project).
     # Exits 2 when nothing is reachable, so a clean machine is not a false red.
     'scripts/test-lane-connectivity.ps1'
+    # qm CURRENTNESS, registered 2026-10-18. `install.ps1 -Update` deliberately does
+    # NOT restart the qm stack - "a restart of the co-working stack is user-visible
+    # (qm is where staff work)" - which is the right call, and which means qm can sit
+    # on stale definitions or a stale .env indefinitely while -Update reports success.
+    # That is exactly what happened: qm held a pacgate-api password the API rejected,
+    # through every update and a fully green suite.
+    #
+    # The answer is not to auto-restart a staff-facing stack. It is to make staleness
+    # visible so the operator restarts when nobody is mid-session. This gate is
+    # read-only - it starts nothing and restarts nothing.
+    #
+    # Q1 compares the staged deploy against tracked source (the -Update re-stage), by
+    # content, so a silently-failed stage that leaves last release's definitions is
+    # caught. Q3 compares each running container's LIVE env against its .env, which is
+    # the check that catches a corrected file the container never picked up.
+    # Exits 2 when qm is not deployed, since that is normal on a box without it.
+    'scripts/test-qm-currentness.ps1'
 )
 
 

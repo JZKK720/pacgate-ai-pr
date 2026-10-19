@@ -117,7 +117,7 @@ services:
       # Keep these three in sync with deploy/client-bundle/ollama-models.txt (the
       # pre-pull list) and with `ModelConfig::DEFAULT_*_TAG` in pacgate-core.
       # scripts/test-model-roster-consistency.ps1 enforces that.
-      PACGATE_MODEL_MAIN: ${PACGATE_MODEL_MAIN:-gemma4:12b-it-qat}
+      PACGATE_MODEL_MAIN: ${PACGATE_MODEL_MAIN:-deepseek-v4.1-flash:cloud}
       PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-qwen3.8:27b-mtp-q4_K_M}
       PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
       RUST_LOG: info

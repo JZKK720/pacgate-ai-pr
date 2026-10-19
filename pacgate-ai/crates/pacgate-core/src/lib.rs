@@ -146,7 +146,23 @@ impl ModelConfig {
     /// 500 on every `/api/workflows/:id/execute` whenever the box's actual roster
     /// names differed. A model tag that no local Ollama serves returns HTTP 404
     /// with no fallback, so a stale pin here takes down all workflows at once.
-    pub const DEFAULT_MAIN_TAG: &'static str = "gemma4:12b-it-qat";
+    ///
+    /// MAIN changed 2026-10-18 from `gemma4:12b-it-qat` to the cloud flash model.
+    /// Measured: the local 12B drives a document workflow for one step
+    /// (`list_documents`, `kb_search`) and stops - it never reaches `generate_docx`.
+    /// The route still returns 200 and reports success, so the defect surfaced as an
+    /// EMPTY RESULT rather than an error, and the only symptom was "no document was
+    /// produced". Same test, only this tag changed: 2 failed at 60.7s vs 19/19 at
+    /// 18.2s with a valid OOXML file and intact Chinese.
+    ///
+    /// This follows the agreed architecture (2026-08-30): the cloud model does main
+    /// prompting and end results; local models are utility-only (title, memory,
+    /// summarizer, VLM). `deepseek-v4.1-flash:cloud` carries no weight layers on
+    /// disk - it is served through ollama.com, so it still resolves in `ollama list`
+    /// and never appears in `ollama ps`. `ollama signin` is already an AIPC install
+    /// precondition. A firm that requires local-only processing overrides
+    /// PACGATE_MODEL_MAIN in its own .env; see client-bundle/.env.example.
+    pub const DEFAULT_MAIN_TAG: &'static str = "deepseek-v4.1-flash:cloud";
     pub const DEFAULT_MID_TAG: &'static str = "qwen3.8:27b-mtp-q4_K_M";
     pub const DEFAULT_LOW_TAG: &'static str = "gemma4:12b-it-qat";
 
