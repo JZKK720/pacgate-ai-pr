@@ -99,7 +99,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Export', 'Import')]
+    [ValidateSet('Export', 'Import', 'BackfillKeys')]
     [string]$Action,
 
     [string]$BaseUrl = 'http://localhost:8089/pacgate',
@@ -116,7 +116,16 @@ param(
     # Import only: create missing user accounts. Off by default because account
     # provisioning is a policy decision - a machine may deliberately have fewer
     # accounts than its peer.
-    [switch]$CreateMissingUsers
+    [switch]$CreateMissingUsers,
+
+    # BackfillKeys only: prefix for generated keys, e.g. "PF" -> PF-0001.
+    # Required, so identity is never invented without the operator naming it.
+    # An invented key makes two machines disagree in a NEW way, which is worse
+    # than the ambiguous-name problem the backfill exists to solve.
+    [string]$KeyPrefix,
+
+    # BackfillKeys only: limit to matters whose name matches this wildcard.
+    [string]$NameFilter = '*'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -210,6 +219,76 @@ function Get-ContentType([string]$name) {
         '\.csv$'  { 'text/csv' }
         default   { 'application/octet-stream' }
     }
+}
+
+# ===========================================================================
+# BACKFILL KEYS
+# ===========================================================================
+if ($Action -eq 'BackfillKeys') {
+    if ([string]::IsNullOrWhiteSpace($KeyPrefix)) {
+        Write-Bad '-KeyPrefix is required for BackfillKeys (for example -KeyPrefix PF).'
+        Write-Note 'Keys are never generated without an explicit prefix: silently inventing'
+        Write-Note 'identity would make two machines disagree in a new way.'
+        exit 1
+    }
+
+    Write-Step "Authenticating to $BaseUrl"
+    $h = New-Headers (Get-Token)
+    Write-Ok "authenticated as $Email"
+
+    Write-Step 'Finding matters without an external key'
+    # NOT wrapped in @(...): Invoke-RestMethod emits a JSON array as a single
+    # object, so @( ) around the CALL nests it and .Count becomes 1. That exact
+    # mistake already made a re-import create duplicate matters in this file.
+    $all = Get-Api '/api/matters' $h
+    if ($null -eq $all) { $all = @() }
+
+    # -like with a '*' default matches everything, so -NameFilter is opt-in.
+    $unkeyed = @($all | Where-Object { (-not $_.external_key) -and $_.name -like $NameFilter })
+
+    if ($unkeyed.Count -eq 0) {
+        Write-Ok 'every matter in scope already has an external key'
+        exit 0
+    }
+    Write-Ok "$($unkeyed.Count) matter(s) need a key"
+
+    $seq = 0
+    foreach ($m in ($unkeyed | Sort-Object created_at)) {
+        $seq++
+        $key = '{0}-{1:D4}' -f $KeyPrefix, $seq
+        if ($PSCmdlet.ShouldProcess("matter '$($m.name)'", "set external_key=$key")) {
+            try {
+                $body = @{ external_key = $key } | ConvertTo-Json -Compress
+                Invoke-RestMethod -Uri "$BaseUrl/api/matters/$($m.id)" -Method Patch `
+                    -Headers $h -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+                Write-Ok "'$($m.name)' -> $key"
+            }
+            catch {
+                $status = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+                if ($status -eq 405) {
+                    # The route is admin-only and was added 2026-10-19. A 405 means
+                    # this release predates it: PATCH /api/matters/:id does not
+                    # exist in the running image, so no key can be set. Saying so
+                    # beats "Method Not Allowed", which reads like a bug in the
+                    # script rather than a stale deployment.
+                    Write-Bad "'$($m.name)' -> $key failed (HTTP 405)."
+                    Write-Note 'This pacgate-api release does not serve PATCH /api/matters/:id:'
+                    Write-Note 'external_key repair was added in the release after 0.1.32.'
+                    Write-Note 'Update this machine first: .\install.ps1 -Update'
+                    break
+                }
+                Write-Bad "'$($m.name)' -> $key failed (HTTP $status): $($_.Exception.Message)"
+            }
+        }
+    }
+
+    Write-Step 'Backfill complete'
+    if ($script:failures -gt 0) {
+        Write-Note 'Not all matters were keyed - see the failures above.'
+        exit 1
+    }
+    Write-Note 'Keys are now stable across machines, so Import can match exactly.'
+    exit 0
 }
 
 # ===========================================================================

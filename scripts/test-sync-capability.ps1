@@ -163,6 +163,37 @@ else {
     Write-Info 'no explicit statement of what is excluded - a reader may assume it is complete'
 }
 
+# ---------------------------------------------------------------------------
+# S6. The external-key backfill exists and cannot invent identity silently.
+#
+# PATCH /api/matters/:id alone repairs nothing - someone has to run it, and the
+# 59 NULL-keyed matters had no repair path at all until 2026-10-19. Two things
+# make a backfill safe to hand an operator:
+#   - an explicit -KeyPrefix, so keys are never fabricated without them saying so
+#     (an invented identity makes two machines disagree in a NEW way);
+#   - PATCH, because the key can only be set on an existing matter that way.
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'S6  external-key backfill is available and explicit' -ForegroundColor Cyan
+if ($src -notmatch 'BackfillKeys') {
+    Write-Fail 'no BackfillKeys action - the NULL-keyed matters have no repair path'
+}
+else {
+    Write-Pass 'exposes a BackfillKeys action'
+}
+if ($src -match 'BackfillKeys' -and $src -notmatch '\$KeyPrefix') {
+    Write-Fail 'backfill has no explicit prefix - it would fabricate identity without operator intent'
+}
+else {
+    Write-Pass 'backfill requires an operator-supplied prefix'
+}
+if ($src -match "-Method\s+'?Patch'?") {
+    Write-Pass 'uses PATCH, matching the repair route'
+}
+else {
+    Write-Fail 'backfill does not PATCH - it cannot set a key on an existing matter'
+}
+
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "RESULT: $script:failures cross-machine transfer problem(s). ($script:passed passed)" -ForegroundColor Red
