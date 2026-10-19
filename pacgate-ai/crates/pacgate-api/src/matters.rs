@@ -255,12 +255,75 @@ pub async fn get_matter(
     Ok(Json(matter))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PatchMatterRequest {
+    /// A missing field and an explicit null both mean "clear the key".
+    pub external_key: Option<String>,
+}
+
+/// Set a matter's cross-machine identity.
+///
+/// WHY THIS EXISTS (2026-10-19). `create_matter` accepts external_key, but
+/// nothing could change it afterwards: this router served only GET, POST and
+/// DELETE on `/api/matters/:id`. So matters created before the column existed
+/// were permanently NULL-keyed, and cross-machine import had to match on `name`
+/// - which is not unique (one name occurred 50 times on the dev box), so
+/// documents could attach to the wrong matter. A write-once identity field is
+/// not an identity field.
+///
+/// Deliberately narrow: only external_key. Renaming, re-describing and
+/// re-persona are separate concerns with their own audit requirements.
+pub async fn patch_matter(
+    State(state):      State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id):          Path<String>,
+    Json(req):         Json<PatchMatterRequest>,
+) -> Result<Json<Matter>, ApiError> {
+    // Admin only: the key is what qm and the sync tool bind a matter to, so any
+    // attorney could otherwise capture another matter's inbound integration
+    // traffic by claiming its key.
+    if claims.system_role != crate::auth::PLATFORM_ADMIN_ROLE {
+        return Err(ApiError::forbidden(
+            "Setting a matter external key requires the admin role.",
+        ));
+    }
+
+    let matter_id: MatterId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid matter id: {e}")))?;
+    let (tenant_id, _) = claims_to_ids(&claims)?;
+
+    // Trim, and treat an all-whitespace key as an explicit clear rather than
+    // storing "   " as an identity.
+    let key = req
+        .external_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
+
+    let matter = state
+        .matter_store
+        .update_external_key(&tenant_id, &matter_id, key)
+        .await
+        .map_err(|e| match e {
+            // Same discrimination get_matter makes: a missing matter is a 404,
+            // not a 500.
+            TenantError::MatterNotFound(_) => ApiError::not_found("matter not found"),
+            // A key already owned by another matter is a user error, so 409.
+            TenantError::ExternalKeyConflict(_) => ApiError::conflict(
+                "another matter in this tenant already uses that external key",
+            ),
+            other => ApiError::internal(other.to_string()),
+        })?;
+
+    Ok(Json(matter))
+}
+
 pub async fn delete_matter(
     State(state):      State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(id):          Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let matter_id: MatterId = id
+) -> Result<Json<serde_json::Value>, ApiError> {    let matter_id: MatterId = id
         .parse()
         .map_err(|e| ApiError::bad_request(format!("invalid matter id: {e}")))?;
     let (tenant_id, _) = claims_to_ids(&claims)?;
