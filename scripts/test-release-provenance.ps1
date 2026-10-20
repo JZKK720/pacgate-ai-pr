@@ -256,10 +256,6 @@ $contextPrefixes = @(
     # context: '.' for the two deer-flow images - only their COPY sources reach
     # a layer, so a repo-root context does NOT make every file an input.
     'pacgate-adapters/python/pacgate_deerflow_adapter/',
-    # The deer-flow image bakes the client-bundle config (single source of
-    # truth since 2026-10-20; it used to bake deploy/deer-flow-pacgate/config.yaml,
-    # which had drifted and is no longer a build input).
-    'deploy/client-bundle/deer-flow-config.yaml',
     'deploy/deer-flow-pacgate/config.yaml',
     'deploy/deer-flow-src/frontend/',
     'deploy/frontend-patches/files/'   # CI copies these INTO the frontend context

@@ -48,12 +48,7 @@
 param(
     [string[]]$Configs = @(
         'deploy/client-bundle/deer-flow-config.yaml',
-        # Pacgate 2026-10-20: the deer-flow IMAGE now bakes the client-bundle
-        # config (see deploy/deer-flow-pacgate/Dockerfile), so checking the old
-        # hand-maintained copy here tested a file no image and no mount uses.
-        # The other gate that covers the image (test-chat-no-auto-egress.ps1)
-        # resolves the Dockerfile's COPY source rather than hard-coding a path.
-        'deploy/client-bundle/deer-flow-config.yaml'
+        'deploy/deer-flow-pacgate/config.yaml'
     )
 )
 

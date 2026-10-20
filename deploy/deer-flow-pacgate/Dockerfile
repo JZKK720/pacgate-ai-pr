@@ -64,21 +64,7 @@ RUN python3 -c "import urllib.request,os,sys; \
 
 # Ship a minimal startup-safe DeerFlow config. This keeps the wrapper bootable
 # on a clean machine; runtime env can still override the memory backend inputs.
-#
-# Pacgate 2026-10-20: bake the SAME file the client bundle ships, not a second
-# hand-maintained copy. This used to COPY deploy/deer-flow-pacgate/config.yaml,
-# which had drifted a long way - it was missing the entire `auth`, `database`,
-# `checkpointer`, `agents_api`, `model_routing` and `summarization` sections, one
-# model entry, and the reasoning-effort suppression on every model.
-#
-# At runtime the bind mount (./deer-flow-config.yaml:/app/backend/config.yaml)
-# overwrites this, so the drift was invisible in the normal path; it only bites
-# when the mount is absent - `docker-compose run`, an image-only start, or a
-# diagnostic shell - and then the agent comes up with no auth or database
-# config. A duplicate config sitting under a bind mount is a latent trap, so
-# this is now the single source of truth. That file uses no env substitution, so
-# a plain COPY is faithful.
-COPY deploy/client-bundle/deer-flow-config.yaml /app/backend/config.yaml
+COPY deploy/deer-flow-pacgate/config.yaml /app/backend/config.yaml
 
 # The adapter package is installed here and enabled via config.yaml. For actual
 # Pacgate-backed memory, pass PACGATE_API_EMAIL/PASSWORD or PACGATE_JWT_TOKEN

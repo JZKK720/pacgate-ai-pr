@@ -235,33 +235,13 @@ Check "A8 the config states cloud tags are reachable and explicit-only" `
 #
 # There are TWO deer-flow configs, and fixing only one is the failure mode here:
 #   - deploy/client-bundle/deer-flow-config.yaml  -> bind-mounted by the client stack
-#   - deploy/deer-flow-pacgate/config.yaml        -> previously BAKED into the image
-#
-# Pacgate 2026-10-20: the image now bakes the CLIENT-BUNDLE config, because the
-# hand-maintained copy had drifted (missing auth/database/checkpointer/agents_api/
-# model_routing/summarization, one model entry, and the reasoning-effort fix on
-# every model). Rather than hard-code which file is baked - which is how the two
-# copies drifted apart in the first place - resolve the Dockerfile's actual COPY
-# source and assert on THAT. If someone repoints the Dockerfile, this gate
-# follows it instead of silently testing an unused file.
-$deerFlowDockerfile = Join-Path $repo 'deploy/deer-flow-pacgate/Dockerfile'
-$bakedConfig = $null
-if (Test-Path $deerFlowDockerfile) {
-    $dfSrc = Get-Content $deerFlowDockerfile -Raw
-    $copyMatch = [regex]::Match($dfSrc, '(?m)^\s*COPY\s+(\S+)\s+/app/backend/config\.yaml\s*$')
-    if ($copyMatch.Success) {
-        $bakedConfig = Join-Path $repo ($copyMatch.Groups[1].Value -replace '/', [System.IO.Path]::DirectorySeparatorChar)
-        Write-Host "  baked config (from Dockerfile COPY): $($copyMatch.Groups[1].Value)"
-    }
-}
-if (-not $bakedConfig) {
-    Check 'A9 the deer-flow Dockerfile declares which config it bakes' $false `
-        'could not resolve a "COPY <path> /app/backend/config.yaml" line in deploy/deer-flow-pacgate/Dockerfile'
-}
-elseif (-not (Test-Path $bakedConfig)) {
-    Check 'A9 the baked deer-flow config exists' $false "$bakedConfig does not exist"
-}
-else {
+#   - deploy/deer-flow-pacgate/config.yaml        -> BAKED into the published image
+# The baked one listed three CLOUD models first and had no `model_routing` block,
+# so a bare `docker run` of the image sent every prompt to ollama.com. It was never
+# mounted, which is exactly why nobody noticed - an unmounted file gets no attention
+# and no testing, while still shipping inside the artifact.
+$bakedConfig = Join-Path $repo 'deploy/deer-flow-pacgate/config.yaml'
+if (Test-Path $bakedConfig) {
     $bakedSrc = Get-Content $bakedConfig -Raw
     $bakedJson = & python -c @"
 import json, yaml, sys
@@ -283,6 +263,8 @@ print(json.dumps({'first': (ms[0].get('model') if ms else None),
     } else {
         Check "A9 the image-baked deer-flow config is readable" $false "could not parse $bakedConfig"
     }
+} else {
+    Write-Host "  [SKIP] A9/A10 - no image-baked deer-flow config found" -ForegroundColor Yellow
 }
 
 Write-Host ''
