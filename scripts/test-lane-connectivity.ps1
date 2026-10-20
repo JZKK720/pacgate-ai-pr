@@ -78,6 +78,60 @@ function Write-Fail([string]$m) { Write-Host "  [FAIL] $m" -ForegroundColor Red;
 function Write-Info([string]$m) { Write-Host "  [ .. ] $m" -ForegroundColor DarkGray }
 function Write-Skip([string]$m) { Write-Host "  [skip] $m" -ForegroundColor Yellow; $script:unreachable++ }
 
+# Run a native command and return its combined stdout+stderr as a string.
+#
+# WHY THIS EXISTS (found 2026-10-20). A bare `docker exec ... 2>&1` is NOT safe
+# under Windows PowerShell 5.1: the native stderr write becomes a
+# NativeCommandError terminating error, so the assignment throws instead of
+# capturing. `run-all-checks.ps1` deliberately falls back to `powershell` (5.1)
+# when `pwsh` is absent - which is the normal case on a client machine - so this
+# gate passed on the dev box and FAILED on a machine without PowerShell 7.
+#
+# Measured: `powershell -File scripts/test-lane-connectivity.ps1` died at E6 with
+# `docker : [eval]:1 ... NativeCommandError`, exit 1, while the same script under
+# pwsh reported 11 passed. The E6/E7 assertions - the whole reason this gate
+# exists - therefore never ran on a 5.1 host.
+function Invoke-NativeCapture {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { return (& $Script 2>&1 | Out-String).Trim() }
+    finally { $ErrorActionPreference = $previous }
+}
+
+# Run a Node snippet INSIDE a container by piping the SCRIPT BODY on stdin.
+#
+# WHY NOT `docker exec ... sh -c "<script>"` (found 2026-10-20)
+#   That form depends on the host shell handing the quoting through untouched.
+#   Windows PowerShell 5.1 mangles the nested quotes, so `sh` received broken
+#   syntax and printed `sh: syntax error`, which the gate then classified as
+#   "the container could not reach pacgate-api (network/DNS)" - a FALSE failure
+#   pointing at the network when the real problem was the host shell.
+#   Measured: under `powershell` (5.1) E6 and E7 both reported network failures,
+#   while under `pwsh` the same script reported 11 passed. Since run-all-checks
+#   deliberately falls back to 5.1 on machines without PowerShell 7, the two
+#   most important assertions in this gate were unusable there.
+#
+# Piping to `docker exec -i <c> node` removes shell quoting from the path
+# entirely: node reads the program from stdin. Verified 200 under 5.1 with the
+# real 542-character E6 body.
+function Invoke-NodeInContainer {
+    param(
+        [Parameter(Mandatory = $true)][string]$Container,
+        [Parameter(Mandatory = $true)][string]$Command
+    )
+    # The caller passes `node -e "<body>"`; strip the wrapper and feed the body.
+    $body = $Command
+    if ($body -match '^node\s+-e\s+"(.*)"\s*$') { $body = $Matches[1] }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        return ($body | & docker exec -i $Container node 2>&1 | Out-String).Trim()
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Get-Http([string]$url, [hashtable]$headers = @{}, [int]$timeout = 12) {
     try {
         $r = Invoke-WebRequest -Uri $url -Headers $headers -TimeoutSec $timeout -UseBasicParsing
@@ -209,7 +263,7 @@ if ($running.Count -eq 0) {
     Write-Skip 'qm-pacgate-core is not running'
 } else {
     $js = 'node -e "const h=require(''http'');const b=JSON.stringify({email:process.env.FLY_RESIDENT_ENV_PACGATE_API_EMAIL,password:process.env.FLY_RESIDENT_ENV_PACGATE_API_PASSWORD});const u=new URL(process.env.FLY_RESIDENT_ENV_PACGATE_API_URL+''/api/auth/login'');const q=h.request({hostname:u.hostname,port:u.port,path:u.pathname,method:''POST'',headers:{''Content-Type'':''application/json'',''Content-Length'':Buffer.byteLength(b)}},r=>{let d='''';r.on(''data'',c=>d+=c);r.on(''end'',()=>{console.log(r.statusCode)});});q.on(''error'',e=>console.log(''ERR''));q.write(b);q.end();"'
-    $out = (docker exec qm-pacgate-core sh -c $js 2>&1 | Out-String).Trim()
+    $out = Invoke-NodeInContainer -Container 'qm-pacgate-core' -Command $js
     if ($out -match '^200') { Write-Pass 'authenticated from inside the container (HTTP 200)' }
     elseif ($out -match '^401') { Write-Fail 'the container''s resident credential was REJECTED (401) - every pacgate tool call from a sandbox fails' }
     elseif ($out -match 'ERR') { Write-Fail 'the container could not reach pacgate-api (network/DNS)' }
@@ -230,7 +284,7 @@ if ($running.Count -eq 0) {
     # the EDGE (does the credential authenticate) needs only the status code; the
     # tool inventory is covered by E3 from the host.
     $js2 = 'node -e "const h=require(''http'');const b=JSON.stringify({jsonrpc:''2.0'',id:1,method:''tools/list'',params:{}});const u=new URL(process.env.FLY_RESIDENT_ENV_OPENVIKING_URL+''/mcp'');const q=h.request({hostname:u.hostname,port:u.port,path:u.pathname,method:''POST'',headers:{''Content-Type'':''application/json'',''Accept'':''application/json, text/event-stream'',''Content-Length'':Buffer.byteLength(b),''X-API-Key'':process.env.FLY_RESIDENT_ENV_OPENVIKING_API_KEY}},r=>{r.resume();r.on(''end'',()=>{console.log(r.statusCode);});});q.on(''error'',e=>console.log(''ERR''));q.write(b);q.end();"'
-    $out2 = (docker exec qm-pacgate-core sh -c $js2 2>&1 | Out-String).Trim()
+    $out2 = Invoke-NodeInContainer -Container 'qm-pacgate-core' -Command $js2
     if ($out2 -match '^200') { Write-Pass 'OpenViking /mcp accepted the container''s client key (HTTP 200)' }
     elseif ($out2 -match '^401') { Write-Fail 'OpenViking /mcp REJECTED the container''s client key (401) - every ov-* sandbox tool fails' }
     elseif ($out2 -match '^403') { Write-Fail 'OpenViking /mcp rejected the account scope (403)' }
@@ -265,7 +319,7 @@ if (-not $apiUp) {
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'E9  data plane (pacgate-db)' -ForegroundColor Cyan
-$dbOut = (docker exec pacgate-db psql -U pacgate -d pacgate -tAc "select count(*) from tenants" 2>&1 | Out-String).Trim()
+$dbOut = Invoke-NativeCapture { docker exec pacgate-db psql -U pacgate -d pacgate -tAc "select count(*) from tenants" }
 if ($dbOut -match '^\d+$') {
     if ([int]$dbOut -gt 0) { Write-Pass "pacgate-db answers; $dbOut tenant row(s)" }
     else { Write-Fail 'pacgate-db answers but has ZERO tenants - seeding never ran' }
@@ -281,8 +335,15 @@ Write-Host ''
 Write-Host 'E10 container provenance (report only)' -ForegroundColor Cyan
 $mix = @{}
 foreach ($c in @('pacgate-api', 'openviking', 'deer-flow', 'deer-flow-frontend', 'pacgate-mcp', 'pacgate-db', 'pacgate-nginx')) {
-    $cfg = (docker inspect $c --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>$null | Out-String).Trim()
-    if (-not $cfg) { continue }
+    # 5.1-safe capture. A bare `2>$null` on this command is not enough: under
+    # Windows PowerShell 5.1 the Go template's double quotes are mangled before
+    # docker sees them, docker fails with `function "com" not defined`, and that
+    # stderr write becomes a NativeCommandError that kills the script - so this
+    # reporting block took down the whole gate AFTER E6/E7 had passed.
+    # Measured 2026-10-20: `powershell -File test-lane-connectivity.ps1` exited 1
+    # at this line while pwsh reported a clean pass.
+    $cfg = Invoke-NativeCapture { docker inspect $c --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' }
+    if (-not $cfg -or $cfg -match 'template parsing error|NativeCommandError') { continue }
     $leaf = Split-Path $cfg -Leaf
     if (-not $mix.ContainsKey($leaf)) { $mix[$leaf] = @() }
     $mix[$leaf] += $c

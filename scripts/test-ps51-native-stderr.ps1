@@ -63,6 +63,20 @@ $repoScripts = @(
     'scripts/test-auth-provisioning-gate.ps1'
 )
 
+# Live-stack gates are run by run-all-checks through the SAME launcher that falls
+# back to Windows PowerShell 5.1, so their redirection must be 5.1-safe too.
+# These were missed because they "worked on the dev box" - which has pwsh.
+#
+# test-lane-connectivity.ps1 was the proof (found 2026-10-20): under 5.1 it died
+# at `docker exec ... 2>&1` (E6), then at a `docker inspect --format '{{index ...
+# "com..."}}'` where 5.1 mangles the nested quotes, and reported its two most
+# important assertions - the qm->pacgate-api and qm->openviking EDGES - as
+# network failures. Under pwsh the same file reported 11 passed. A gate that
+# fails for a reason unrelated to the system it inspects is worse than no gate.
+$liveStackScripts = @(
+    'scripts/test-lane-connectivity.ps1'
+)
+
 $pass = 0
 $fail = 0
 function Check($name, $cond, $detail = '') {
@@ -175,6 +189,41 @@ try {
             if ($l -match 'SkipHttpErrorCheck|StatusCodeVariable|AsHashtable|AsByteStream|ProgressAction|FollowSymlink') { $exec += $n }
         }
         Check "$name has no PowerShell 7-only parameters" ($exec.Count -eq 0) "lines: $($exec -join ', ')"
+    }
+
+    # Live-stack gates: the same rules the client scripts are held to, because
+    # run-all-checks launches them through a launcher that falls back to 5.1.
+    Write-Host ''
+    Write-Host 'STATIC: live-stack gates survive Windows PowerShell 5.1'
+    foreach ($rel in $liveStackScripts) {
+        $path = Join-Path $repoRoot $rel
+        $name = Split-Path $rel -Leaf
+        if (-not (Test-Path $path)) { Check "$name exists" $false $path; continue }
+
+        $exec = @()
+        $n = 0
+        foreach ($l in (Get-Content $path)) {
+            $n++
+            if ($l -match '^\s*#') { continue }
+            if ($l -match 'SkipHttpErrorCheck|StatusCodeVariable|AsHashtable|AsByteStream|ProgressAction|FollowSymlink') { $exec += $n }
+        }
+        Check "$name has no PowerShell 7-only parameters" ($exec.Count -eq 0) "lines: $($exec -join ', ')"
+
+        # A bare `2>&1` on a native command is a terminating error under 5.1.
+        # Only a wrapper function's own body may contain one, so the check allows
+        # exactly the wrapper patterns this repo uses and nothing else.
+        $bare = @()
+        $n = 0
+        foreach ($l in (Get-Content $path)) {
+            $n++
+            if ($l -match '^\s*#') { continue }
+            if ($l -notmatch '2>&1') { continue }
+            if ($l -match 'return \(& \$Script 2>&1') { continue }                 # Invoke-NativeCapture body
+            if ($l -match 'docker exec -i \$Container node 2>&1') { continue }     # Invoke-NodeInContainer body
+            if ($l -match 'Invoke-WithNativeStderr|Invoke-NativeCapture|Invoke-NodeInContainer') { continue }  # wrapped call
+            $bare += $n
+        }
+        Check "$name wraps every 2>&1 redirection" ($bare.Count -eq 0) "unwrapped lines: $($bare -join ', ')"
     }
 
     $fnAst = $ast.FindAll({

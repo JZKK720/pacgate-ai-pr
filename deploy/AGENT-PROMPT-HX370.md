@@ -44,7 +44,10 @@ pre-flight script. Confirm the image pins are 0.1.34:
 All five must read :0.1.34. If they do not, STOP and report.
 
 STEP 2 - pre-flight (read-only)
-  pwsh -File scripts\preflight-install.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\preflight-install.ps1
+Run it with whatever PowerShell this machine has. If `pwsh` exists use it,
+otherwise `powershell` (Windows PowerShell 5.1) - both are supported. Do NOT
+install PowerShell 7 just to run these scripts.
 It exits 1 if anything is a blocker. Report its FULL output.
 Two things in that output need your judgement, not a fix:
   - The hardware tier line. Record the OS-visible RAM, the discrete VRAM, and
@@ -76,17 +79,19 @@ once. Let it finish. Capture the output.
 
 STEP 5 - verify (this is the acceptance bar, not a formality)
   cd C:\pacgate-ai-pr
-  pwsh -File scripts\run-all-checks.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-all-checks.ps1
+This launcher picks pwsh when present and falls back to `powershell` itself -
+do not hand-pick the shell for it.
 On the authoring machine this reports "ALL 45 GATES PASSED". Expect the same.
 A gate that fails here is a REAL finding about this hardware - report it with
 its full output. Do not re-run until green, and do not edit the gate.
 
-Then these targeted checks, and report each result:
-  pwsh -File scripts\test-aipc-capacity-fit-strict.ps1
-  pwsh -File scripts\test-ollama-context-scope.ps1
-  pwsh -File scripts\test-cross-stack-credentials.ps1
-  pwsh -File scripts\test-lane-connectivity.ps1
-  pwsh -File scripts\test-origin-coherence.ps1
+Then these targeted checks, and report each result (same shell form):
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-aipc-capacity-fit-strict.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-ollama-context-scope.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-cross-stack-credentials.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-lane-connectivity.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-origin-coherence.ps1
 
 STEP 6 - prove the model context pin actually took effect
   ollama ps
