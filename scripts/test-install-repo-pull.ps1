@@ -292,6 +292,31 @@ try {
     Check 'non-ASCII collision WAS detected' ($out8 -match 'Cannot refresh the repo')
     Check 'did NOT fast-forward' (-not ($out8 -match 'Repo updated'))
     Write-Host ''
+    # ── CASE 9: detached HEAD (the documented rollback) -> must NOT move ────
+    # A `git checkout <tag>` leaves HEAD detached, and `git rev-parse
+    # --abbrev-ref HEAD` reports the literal string "HEAD" there. That made the
+    # installer compare against origin/HEAD and run
+    # `git pull --ff-only origin HEAD`, which fast-forwarded the detached tree
+    # onto main. MEASURED: from v0.1.33 that pull jumped 9af44db -> 3b235ed, so a
+    # rollback silently un-rolled itself while reporting success.
+    #
+    # A tag checkout is a deliberate pin. -Update must update IMAGES and leave
+    # the tree exactly where it is.
+    Write-Host 'CASE 9: detached HEAD (pinned tag) -> -Update must NOT move the tree'
+    $c9 = New-Clone 'detached'
+    Publish-Change $c9.Upstream 'v2'
+    # Detach at the FIRST commit, which is the analogue of "checked out a tag".
+    $firstCommit = (Git $c9.Clone @('rev-list','--max-parents=0','HEAD') | Out-String).Trim()
+    $null = Git $c9.Clone @('checkout','--quiet',$firstCommit)
+    $headBefore = (Git $c9.Clone @('rev-parse','HEAD') | Out-String).Trim()
+    $out9 = Run-Installer $c9.Clone
+    $headAfter = (Git $c9.Clone @('rev-parse','HEAD') | Out-String).Trim()
+    Check 'detached HEAD did NOT move' ($headAfter -eq $headBefore) "before=$($headBefore.Substring(0,7)) after=$($headAfter.Substring(0,7)) - the rollback un-rolled itself"
+    Check 'detached HEAD is reported as pinned' ($out9 -match 'pinned at|detached')
+    Check 'detached HEAD did not claim to have updated the repo' (-not ($out9 -match 'Repo updated'))
+    Check 'detached HEAD still exits 0' ($LASTEXITCODE -eq 0 -or $out9 -notmatch 'FAIL')
+    Write-Host ''
+
     Write-Host "RESULT: $script:pass passed, $script:fail failed" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })
 }
 finally {

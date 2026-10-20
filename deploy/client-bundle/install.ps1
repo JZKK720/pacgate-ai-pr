@@ -661,6 +661,31 @@ if ($Update -and -not $SkipRepoPull) {
                 }
                 else {
                     $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+
+                    # A DETACHED HEAD is not a branch. `git rev-parse --abbrev-ref
+                    # HEAD` reports the literal string "HEAD" there, which made
+                    # $remoteRef "origin/HEAD" and $branch "HEAD" - and
+                    # `git pull --ff-only origin HEAD` then fast-forwarded the
+                    # detached checkout onto whatever origin/HEAD points at.
+                    #
+                    # MEASURED 2026-10-20: on a `git checkout v0.1.33` tree (the
+                    # documented rollback), that pull moved HEAD from 9af44db to
+                    # 3b235ed - it silently UNDID the rollback and carried on with
+                    # main. A rollback that quietly un-rolls itself is worse than
+                    # no rollback, because the operator believes it worked.
+                    #
+                    # A detached checkout is a deliberate pin. Never move it.
+                    if ($branch -eq 'HEAD') {
+                        $described = ''
+                        try { $described = (git describe --tags --exact-match HEAD 2>$null | Out-String).Trim() } catch { }
+                        $where = if ($described) { $described } else { $before.Substring(0,7) }
+                        Write-Host "[OK] Repo is pinned at $where (detached) - leaving it alone." -ForegroundColor Green
+                        Write-Host "     Images still update below. To follow a branch instead: git checkout main" -ForegroundColor DarkGray
+                        $branch = $null
+                    }
+                }
+
+                if ($branch) {
                     $remoteRef = "origin/$branch"
 
                     $behind = 0
