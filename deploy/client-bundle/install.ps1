@@ -83,10 +83,21 @@ function Get-OllamaResidencyProfile {
     } catch { }
 
     if ($sysGiB -ge 56) {
-        # Only reachable on a machine that truly exposes >= 56 GiB to Windows.
+        # Plenty of SYSTEM memory. Whether that translates into a big tier
+        # depends on the GPU, because VRAM is what decides how many model
+        # instances fit. A 64 GB host paired with a 16 GB card (a real
+        # configuration - the second dev box) must NOT get the 3-model tier that
+        # was earned by system memory alone: the third model would have nowhere
+        # to live. Only a card with room for three resident models qualifies.
+        if ($vramGiB -ge 24) {
+            return [pscustomobject]@{
+                Tier = 'high'; MaxLoaded = 3; ContextLength = 65536; NumParallel = 2
+                MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-high-'
+            }
+        }
         return [pscustomobject]@{
-            Tier = 'high'; MaxLoaded = 3; ContextLength = 65536; NumParallel = 2
-            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-high-'
+            Tier = 'big-ram-small-vram'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-'
         }
     }
     if ($sysGiB -ge 24) {
