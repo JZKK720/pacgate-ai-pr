@@ -79,6 +79,19 @@ if (-not $SkipOcrPull -and $script:OcrImage) {
 $gates = @(    'scripts/test-install-render.ps1'
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
+    # install.ps1 -Update executes the OLD body after refreshing the repo, because
+    # PowerShell parses a whole script before running it. Any step defined BEFORE
+    # the repo refresh was therefore undeliverable in a single update - the machine
+    # would keep running the previous version's early steps. install.ps1 now hands
+    # off once (hash-keyed) to the script the refresh just wrote; this gate proves
+    # it, including a control that reproduces the loss.
+    'scripts/test-installer-self-update.ps1'
+    # Pacgate must NOT reconfigure a shared Ollama server. The machine-wide
+    # context setting belongs to the operator (other tools use the same server),
+    # so context is pinned per model via a derived tag instead. This gate fails
+    # if the installer ever writes the app database again, and fails if the repo
+    # defaults start naming a derived tag that no registry can serve.
+    'scripts/test-ollama-context-scope.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot

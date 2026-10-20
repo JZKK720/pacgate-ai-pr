@@ -122,6 +122,16 @@ services:
       # card: the tier would spill to CPU and present as a stall. 9B at 6.6 GB
       # keeps the Mid tier usable on the hardware we ship to. Override in .env on
       # a machine that has the VRAM.
+      #
+      # NOTE the repo default stays the RAW tag on purpose. install.ps1 step 2b
+      # also creates a `pacgate-mid` tag that bakes in `num_ctx` (the OpenAI
+      # endpoint this API uses IGNORES a per-request num_ctx - verified
+      # 2026-10-20 - so without a pin the model loads at the machine-wide context
+      # and costs 9.22 GB instead of 6.12 GB). That pinned tag is a MACHINE
+      # artifact, so the installer writes it into .env rather than into this
+      # default: it cannot be pre-pulled from any registry, and a repo default
+      # that names it would break `ModelConfig::from_env` on a machine where the
+      # installer never ran.
       PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
       PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
       RUST_LOG: info

@@ -38,6 +38,77 @@ function Get-QmPowerShell {
 }
 $QmPowerShell = Get-QmPowerShell
 
+# Resolve the residency tier for this machine from its OS-visible memory.
+#
+# WHY THIS EXISTS (measured 2026-10-20)
+#   The two shipped hardware classes are documented as "128 GB dev box" vs
+#   "32 GB AIPC", but what Ollama actually binds against is OS-VISIBLE system
+#   memory, and on a unified-memory APU that is far below the DIMM total. The
+#   Ryzen AI MAX+ 395 dev box reports 8 x 16 GiB DIMMs (128 GiB) but Windows
+#   exposes only 31.65 GiB, because the iGPU's fixed UMA carve-out (96 GiB
+#   dedicated, per the registry qwMemorySize key) is taken before the OS boots.
+#   So the dev box and an HX370 land in the SAME residency bucket - which is
+#   the opposite of what the hardware labels suggest, and the reason a
+#   single hard-coded tier would ship wrong on one of them.
+#
+#   The scheduler's own log line records which limit bound:
+#     msg="llama-server model predicted to exceed available memory, evicting"
+#     predicted="6.2 GiB" available="6.0 GiB" gpu_free="100.6 GiB"
+#     system_free="6.0 GiB" system_limited=true
+#   On a 96 GiB iGPU with 13.4 GiB of models resident, VRAM was never the
+#   constraint (gpu_free 100.6 GiB) - system memory was. Tiers are therefore
+#   keyed on system memory, with a secondary VRAM consideration only for the
+#   AIPC's discrete card.
+function Get-OllamaResidencyProfile {
+    $sysGiB = 0
+    try {
+        $sysGiB = [math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1MB, 1)
+    } catch { }
+
+    # Discrete VRAM, via the registry key that is NOT truncated to 4 GiB the way
+    # AdapterRAM is. A unified-memory iGPU reports an enormous value here (96 GiB
+    # on the dev box) that is NOT usable for co-residency, so it is only ever
+    # reported, never used to raise a limit.
+    $vramGiB = 0
+    try {
+        $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+        Get-ChildItem $cls -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\d{4}$' } | ForEach-Object {
+            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            $raw = $p.'HardwareInformation.qwMemorySize'
+            if ($raw -and [int64]$raw -gt 0) {
+                $g = [math]::Round([int64]$raw / 1GB, 1)
+                if ($g -lt 64) { $vramGiB = [math]::Max($vramGiB, $g) }   # ignore UMA carve-outs
+            }
+        }
+    } catch { }
+
+    if ($sysGiB -ge 56) {
+        # Only reachable on a machine that truly exposes >= 56 GiB to Windows.
+        return [pscustomobject]@{
+            Tier = 'high'; MaxLoaded = 3; ContextLength = 65536; NumParallel = 2
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-high-'
+        }
+    }
+    if ($sysGiB -ge 24) {
+        # AIPC HX370 and any unified-memory APU whose carve-out leaves ~32 GiB.
+        # 32768 is chosen, not 16384, because deer-flow escalates local->local at
+        # a 40000 message-token threshold; a 16k cap would make that escalation
+        # structurally unreachable, while 32k is 80% of 40k so it still fires
+        # just before the window is exhausted.
+        # Measured residency at NUM_PARALLEL=2: gemma4 7.63 GB (flat 8k->64k,
+        # it is QAT/weight-dominated), ornith-1.5:9b 6.12 GB, nomic 0.31 GB.
+        return [pscustomobject]@{
+            Tier = 'standard'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-'
+        }
+    }
+    # Low-memory fallback: one resident model, minimum viable context.
+    return [pscustomobject]@{
+        Tier = 'constrained'; MaxLoaded = 1; ContextLength = 16384; NumParallel = 1
+        MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-low-'
+    }
+}
+
 # Run a native command that may write to stderr WITHOUT the Windows built-in
 # PowerShell 5.1 turning that stderr into a terminating error.
 #
@@ -122,6 +193,23 @@ function Invoke-ApiRequest {
 
 Write-Host "=== Pacgate-ai Installer ===" -ForegroundColor Cyan
 
+# Fingerprint the script that is actually executing.
+#
+# PowerShell parses this whole file before running any of it, so a later
+# `install.ps1 -Update` still runs the OLD body even after step 3b replaces the
+# file on disk. Recording what we are running lets step 3c detect that mismatch
+# and hand off to the new script exactly once (see the comment there).
+$script:PacgateInstallScriptHash = $null
+try {
+    $selfFile = $PSCommandPath
+    if (-not $selfFile) { $selfFile = $MyInvocation.MyCommand.Path }
+    if ($selfFile -and (Test-Path $selfFile)) {
+        $script:PacgateInstallScriptHash = (Get-FileHash -Path $selfFile -Algorithm SHA256).Hash
+        $env:PACGATE_INSTALL_SCRIPT_HASH = $script:PacgateInstallScriptHash
+    }
+} catch { }
+
+
 # 1. Check Docker
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: Docker Desktop not found. Install from https://docs.docker.com/desktop/" -ForegroundColor Red
@@ -140,6 +228,333 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     exit 1
 }
 Write-Host "[OK] Ollama detected" -ForegroundColor Green
+
+# 2b. Apply the model-residency profile for THIS machine.
+#
+# WHY THIS EXISTS (measured 2026-10-20)
+#   Nothing in this bundle ever set an OLLAMA_* variable, so every deployment
+#   ran on Ollama's defaults: OLLAMA_CONTEXT_LENGTH=0 (auto-picked from VRAM,
+#   which resolves to the model's OWN maximum - 262144 for gemma4), and
+#   OLLAMA_NUM_PARALLEL=1 (one server slot per model).
+#
+#   Both defaults are wrong on a 32 GiB-class machine, and the measurements are
+#   not subtle:
+#     - Same 9B model, 262144 ctx -> 14 GB resident; 8192 ctx -> 5.7 GB.
+#       The KV cache alone was 8.3 GB of avoidable residency.
+#     - Neither pacgate-api nor deer-flow ever sends num_ctx (deer-flow passes
+#       only max_tokens/temperature; pacgate-llm posts to /v1/chat/completions,
+#       whose body has no num_ctx field), so the auto value is what gets used.
+#       OLLAMA_CONTEXT_LENGTH DOES apply to that endpoint - verified: context
+#       went 262144 -> 16384 and residency 7.9 -> 7.6 GB.
+#     - With NUM_PARALLEL=1, three concurrent utility calls ran strictly
+#       serialised (1.63 s / 3.02 s / 4.32 s, 5.35 s wall). At NUM_PARALLEL=2-3
+#       the same three finished in 2.88 s for ~1 GB more KV. That serialisation
+#       is the "hangs with no generation" symptom: a title call, a memory
+#       update and a summarizer can all queue behind the user's own chat on one
+#       slot.
+#
+#   OLLAMA_MAX_LOADED_MODELS is NOT the primary lever and is deliberately not
+#   set to 1: the scheduler's automatic default is already 3 per GPU, and the
+#   binding limit is a memory-fit check (system_limited=true above), so forcing
+#   1 only makes eviction unconditional. Verified: with MAX=1, loading gemma4
+#   (7.6 GB) evicted a resident ornith (5.6 GB) even with 100 GiB of GPU memory
+#   free; with MAX=2/3 the same pair co-resides when system memory allows.
+#
+# These are USER-level environment variables because Ollama's Windows installer
+# runs as a normal user process (not a service), so HKCU is what it reads.
+# Writes are idempotent and only touch OLLAMA_* names.
+function Set-OllamaResidencyEnv {
+    param([Parameter(Mandatory)] $Profile)
+
+    $desired = [ordered]@{
+        OLLAMA_MAX_LOADED_MODELS = [string]$Profile.MaxLoaded
+        OLLAMA_CONTEXT_LENGTH    = [string]$Profile.ContextLength
+        OLLAMA_NUM_PARALLEL      = [string]$Profile.NumParallel
+        # 15m keeps the utility tag warm across a normal working gap without
+        # pinning memory forever. The cloud main model costs 0 GB local.
+        OLLAMA_KEEP_ALIVE        = '15m'
+    }
+
+    $changed = @()
+    foreach ($k in $desired.Keys) {
+        $want = $desired[$k]
+        $have = [Environment]::GetEnvironmentVariable($k, 'User')
+        if ($have -ne $want) {
+            [Environment]::SetEnvironmentVariable($k, $want, 'User')
+            # Keep the current process in sync so a restart in this session sees it.
+            Set-Item -Path "Env:$k" -Value $want
+            $changed += "$k=$(if ($have) { $have } else { '<unset>' })->$want"
+        }
+    }
+    return $changed
+}
+
+# The Ollama DESKTOP APP stores a machine-wide `context_length` in
+# %LOCALAPPDATA%\Ollama\db.sqlite (`settings` table) and passes it to the server
+# it spawns, where it OVERRIDES OLLAMA_CONTEXT_LENGTH.
+#
+# WE DELIBERATELY DO NOT TOUCH THAT VALUE. Ollama is shared infrastructure on
+# these machines - other tools use the same server and expect the operator's own
+# context setting. Rewriting a global preference to suit one consumer is the
+# wrong fix even though it works, so the app's value is only ever READ and the
+# per-model pin below is used instead.
+#
+# Measured, so the read is not academic: with env=32768 and db=131072 the server
+# starts at 131072, and with both at 32768 it starts at 32768. The env var alone
+# is a no-op on any machine where the app has been run.
+function Get-OllamaAppContextLength {
+    $info = [pscustomobject]@{ Path = $null; Value = $null; Status = 'not-applicable'; Detail = '' }
+
+    $db = Join-Path $env:LOCALAPPDATA 'Ollama\db.sqlite'
+    if (-not (Test-Path $db)) {
+        $info.Detail = 'no app database (OLLAMA_CONTEXT_LENGTH is authoritative)'
+        return $info
+    }
+    $info.Path = $db
+
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $py) {
+        $info.Status = 'unknown'
+        $info.Detail = 'python not found; cannot read the app setting'
+        return $info
+    }
+
+    $readScript = @'
+import sqlite3, os
+p = os.path.join(os.environ["LOCALAPPDATA"], "Ollama", "db.sqlite")
+try:
+    con = sqlite3.connect("file:%s?mode=ro" % p, uri=True)
+    r = con.execute("select context_length from settings where id=1").fetchone()
+    print(r[0] if r else "")
+    con.close()
+except Exception as e:
+    print("ERR:%s" % e)
+'@
+    try {
+        # 2>$null (not 2>&1): PS 5.1 injects NativeCommandError decoration on
+        # `2>&1` even inside the helper, so that form is banned repo-wide. We only
+        # need stdout here - a failure yields an unusable value, reported as
+        # 'unknown' rather than silently mistaken for a number.
+        $out = (Invoke-WithNativeStderr { $readScript | & $py.Source - 2>$null } | Out-String).Trim()
+    } catch {
+        $out = "ERR:$_"
+    }
+
+    if ($out -match '^\d+$') {
+        $info.Value = [int]$out
+        $info.Status = 'read'
+    } else {
+        $info.Status = 'unknown'
+        $info.Detail = $out
+    }
+    return $info
+}
+
+# Build a per-model derived tag that pins num_ctx, instead of changing anything
+# machine-wide.
+#
+# WHY THIS EXISTS (measured 2026-10-20)
+#   The OpenAI-compatible endpoint that BOTH pacgate-llm and deer-flow use offers
+#   no per-request context control. Verified: sending `options.num_ctx` or a
+#   top-level `num_ctx` on /v1/chat/completions is IGNORED - the model still
+#   loaded at the shared 131072 and stayed 9.22 GB. `/api/generate` honours
+#   num_ctx, but neither client can use that endpoint (deer-flow is langchain
+#   OpenAI-compatible, pacgate-llm posts to /v1/chat/completions).
+#
+#   `ollama create` lets us copy the weights into a derived tag with
+#   `PARAMETER num_ctx` baked in. Verified on this box: `pacgate-ornith:9b`
+#   loaded through /v1 at ctx 32768 and 6.12 GB, while `ornith-1.5:9b` on the
+#   same server still loaded at 131072 and 9.22 GB. Scope is the model, not the
+#   machine - which is exactly the boundary that was wrong before.
+#
+#   The derived tag shares the base model's blobs, so it costs no extra disk.
+function Ensure-OllamaContextPinnedTag {
+    param(
+        [Parameter(Mandatory)] [string]$BaseTag,
+        [Parameter(Mandatory)] [string]$PinnedTag,
+        [Parameter(Mandatory)] [int]$ContextLength,
+        [Parameter(Mandatory)] [string]$OllamaExe
+    )
+
+    $result = [pscustomobject]@{ Tag = $PinnedTag; Status = 'unknown'; Detail = '' }
+
+    # Already pinned correctly? Then this is a no-op and must say so.
+    try {
+        $shown = (Invoke-WithNativeStderr { & $OllamaExe show $PinnedTag --modelfile 2>$null } | Out-String)
+        if ($shown -and $shown -match "num_ctx\s+$ContextLength\b" -and $shown -match "FROM\s+$([regex]::Escape($BaseTag))\b") {
+            $result.Status = 'already-pinned'
+            return $result
+        }
+    } catch { }
+
+    try {
+        $modelfile = @"
+FROM $BaseTag
+PARAMETER num_ctx $ContextLength
+"@
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("pacgate-{0}.Modelfile" -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+        [System.IO.File]::WriteAllText($tmp, $modelfile, [System.Text.UTF8Encoding]::new($false))
+        try {
+            $create = (Invoke-WithNativeStderr { & $OllamaExe create $PinnedTag -f $tmp 2>$null } | Out-String)
+        } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+
+        $after = (Invoke-WithNativeStderr { & $OllamaExe show $PinnedTag --modelfile 2>$null } | Out-String)
+        if ($after -match "num_ctx\s+$ContextLength\b") {
+            $result.Status = 'pinned'
+            return $result
+        }
+        $result.Status = 'failed'
+        $result.Detail = "created but num_ctx $ContextLength not visible in the modelfile"
+        return $result
+    } catch {
+        $result.Status = 'failed'
+        $result.Detail = "$_"
+        return $result
+    }
+}
+
+$residency = Get-OllamaResidencyProfile
+try {
+    $envChanged = Set-OllamaResidencyEnv -Profile $residency
+} catch {
+    Write-Host "[WARN] Could not persist Ollama residency settings: $_" -ForegroundColor Yellow
+    $envChanged = @()
+}
+
+# Read (never write) the app's machine-wide context_length. Ollama is shared
+# infrastructure here, so this value is reported and respected, not overridden.
+$appCtx = $null
+try {
+    $appCtx = Get-OllamaAppContextLength
+} catch {
+    $appCtx = [pscustomobject]@{ Path = $null; Value = $null; Status = 'unknown'; Detail = "$_" }
+}
+
+if ($envChanged.Count -gt 0) {
+    Write-Host "[OK] Ollama residency profile '$($residency.Tier)': $($envChanged -join '; ')" -ForegroundColor Green
+} else {
+    Write-Host "[OK] Ollama residency env for profile '$($residency.Tier)' already applied" -ForegroundColor Green
+}
+
+switch ($appCtx.Status) {
+    'read' {
+        if ($appCtx.Value -eq [int]$residency.ContextLength) {
+            Write-Host "[OK] Ollama app context_length is already $($appCtx.Value)" -ForegroundColor Green
+        } else {
+            Write-Host "[NOTE] Ollama app context_length is $($appCtx.Value) (machine-wide, shared with other tools)." -ForegroundColor DarkGray
+            Write-Host "       Pacgate does not change it. It gets $($residency.ContextLength) from per-model" -ForegroundColor DarkGray
+            Write-Host "       pinned tags instead - see below." -ForegroundColor DarkGray
+        }
+    }
+    'not-applicable' { Write-Host "[OK] No Ollama app database ($($appCtx.Detail))" -ForegroundColor DarkGray }
+    default { Write-Host "[NOTE] Could not read the Ollama app context_length ($($appCtx.Detail)); proceeding with pinned tags." -ForegroundColor DarkGray }
+}
+
+# Pin context PER MODEL. This is the part that actually reaches pacgate-api and
+# deer-flow, because neither can pass num_ctx on /v1/chat/completions (verified:
+# the field is ignored there). Pinned tags are scoped to Pacgate's own models and
+# leave the shared server setting and every other Ollama consumer untouched.
+$pinnedPairs = @(
+    @{ Base = $residency.MidTag;    Pinned = "$($residency.PinnedPrefix)mid" },
+    @{ Base = $residency.LowTag;    Pinned = "$($residency.PinnedPrefix)low" }
+)
+$pinSucceeded = @()
+foreach ($pair in $pinnedPairs) {
+    if (-not $pair.Base) { continue }
+    $p = $null
+    try {
+        $p = Ensure-OllamaContextPinnedTag -BaseTag $pair.Base -PinnedTag $pair.Pinned `
+                 -ContextLength ([int]$residency.ContextLength) -OllamaExe 'ollama'
+    } catch {
+        $p = [pscustomobject]@{ Tag = $pair.Pinned; Status = 'failed'; Detail = "$_" }
+    }
+    if ($p.Status -in @('pinned', 'already-pinned')) { $pinSucceeded += $pair.Pinned }
+    switch ($p.Status) {
+        'pinned'        { Write-Host "[OK] Pinned $($pair.Base) -> $($pair.Pinned) at ctx $($residency.ContextLength)" -ForegroundColor Green }
+        'already-pinned' { Write-Host "[OK] $($p.Tag) already pinned at ctx $($residency.ContextLength)" -ForegroundColor Green }
+        default {
+            Write-Host "[WARN] Could not pin $($pair.Base) to ctx $($residency.ContextLength): $($p.Detail)" -ForegroundColor Yellow
+            Write-Host "       Workflows will still run, but this model will load at the shared" -ForegroundColor Yellow
+            Write-Host "       context ($($appCtx.Value)) and use more memory than budgeted." -ForegroundColor Yellow
+        }
+    }
+}
+
+
+# Persist the pinned tags into .env, which is where per-machine model choices
+# belong. The repo default must stay the raw tag (it is what `ModelConfig::from_env`
+# falls back to and what `ollama-models.txt` pre-pulls); the derived tag exists
+# only on a machine where this installer has run, so it cannot be a repo default.
+#
+# Only .env gets this, and only when the pin actually succeeded - a failed pin
+# leaves the raw tag in place, which still works and merely costs more memory.
+if (Test-Path '.\.env') {
+    $envText = [System.IO.File]::ReadAllText((Resolve-Path '.\.env'))
+    $wantWrites = @()
+    foreach ($pair in $pinnedPairs) {
+        $pinnedName = "$($pair.Pinned):latest"
+        if ($pinSucceeded -contains $pair.Pinned) {
+            $wantWrites += ,@($(if ($pair.Pinned -like '*-mid') { 'PACGATE_MODEL_MID' } else { 'PACGATE_MODEL_LOW' }), $pinnedName)
+        }
+    }
+    foreach ($w in $wantWrites) {
+        $key = $w[0]; $val = $w[1]
+        if ($envText -match "(?m)^\s*$key\s*=\s*$([regex]::Escape($val))\s*$") {
+            Write-Host "[OK] .env already sets $key=$val" -ForegroundColor Green
+        } else {
+            # Replace an existing assignment in place, else append. In-place
+            # matters: a duplicate key would make compose's behaviour depend on
+            # line order.
+            if ($envText -match "(?m)^\s*$key\s*=") {
+                $envText = [regex]::Replace($envText, "(?m)^\s*$key\s*=.*$", "$key=$val")
+                Write-Host "[OK] Updated $key=$val in .env (pinned context)" -ForegroundColor Green
+            } else {
+                $nl = if ($envText.Length -eq 0 -or $envText.EndsWith("`n")) { '' } else { "`r`n" }
+                $envText = $envText + $nl + "$key=$val`r`n"
+                Write-Host "[OK] Added $key=$val to .env (pinned context)" -ForegroundColor Green
+            }
+            [System.IO.File]::WriteAllText((Resolve-Path '.\.env'), $envText, [System.Text.UTF8Encoding]::new($false))
+        }
+    }
+}
+
+# The env vars (MAX_LOADED_MODELS / NUM_PARALLEL / KEEP_ALIVE) are read only at
+# server start, so a running server needs one restart to pick them up. The
+# context setting does NOT come through here - it is baked into the pinned tags.
+if ($envChanged.Count -gt 0) {
+    $ollamaRunning = @(Get-Process -Name 'ollama app','ollama' -ErrorAction SilentlyContinue).Count -gt 0
+    if ($ollamaRunning) {
+        Write-Host "     Restarting Ollama so it picks up the new residency settings..." -ForegroundColor DarkGray
+        try {
+            Get-Process -Name 'ollama app','ollama' -ErrorAction SilentlyContinue |
+                ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds 3
+            $appExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama app.exe'
+            if (Test-Path $appExe) {
+                Start-Process -FilePath $appExe | Out-Null
+            } else {
+                Start-Process -FilePath 'ollama' -ArgumentList 'app' -ErrorAction SilentlyContinue | Out-Null
+            }
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+                Start-Sleep -Seconds 1
+                try {
+                    Invoke-RestMethod -Uri 'http://localhost:11434/api/version' -TimeoutSec 2 | Out-Null
+                    $ready = $true; break
+                } catch { }
+            }
+            if ($ready) {
+                Write-Host "[OK] Ollama restarted with the residency settings applied" -ForegroundColor Green
+            } else {
+                Write-Host "[WARN] Ollama did not answer on 11434 within 30s - start it manually." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[WARN] Ollama restart failed ($_); restart it manually to apply." -ForegroundColor Yellow
+        }
+    }
+}
 
 # 3. Check .env
 if (-not (Test-Path .env)) {
@@ -329,6 +744,43 @@ if ($Update -and -not $SkipRepoPull) {
         finally {
             Pop-Location
         }
+    }
+}
+
+# 3c. Self-update handoff: this file is now STALE.
+#
+# WHY THIS EXISTS (found 2026-10-20)
+#   PowerShell reads and parses the WHOLE script before executing line 1, so
+#   everything above ran from the OLD install.ps1, while the repo refresh at 3b
+#   has already replaced this file on disk. Nothing before step 3b re-runs.
+#
+#   That made every install-logic fix a NON-DELIVERABLE: a machine that ran
+#   `install.ps1 -Update` executed the previous version's early steps, and the
+#   operator would have to run the script a SECOND time by hand to get them.
+#   Concretely, the Ollama residency step (2b) shipped in the same commit as
+#   this handoff would have been skipped on the very update that introduced it.
+#
+#   The refresh only fast-forwards a clean tree, so a stale script and a new
+#   script cannot both legitimately be running; and the handoff is keyed to a
+#   content hash, so it fires exactly once per changed script and cannot loop.
+if ($Update -and -not $SkipRepoPull) {
+    $selfPath = $PSCommandPath
+    if (-not $selfPath) { $selfPath = $MyInvocation.MyCommand.Path }
+    if ($selfPath -and (Test-Path $selfPath)) {
+        $selfHash = (Get-FileHash -Path $selfPath -Algorithm SHA256).Hash
+        $ranHash = $env:PACGATE_INSTALL_SCRIPT_HASH
+        if ($ranHash -and $ranHash -ne $selfHash) {
+            Write-Host ""
+            Write-Host "[NOTICE] installer changed in this update - handing off to the new version." -ForegroundColor Cyan
+            Write-Host "         Steps before the repo refresh ran from the previous script;" -ForegroundColor DarkGray
+            Write-Host "         re-running now so the new steps actually take effect." -ForegroundColor DarkGray
+            $childArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $selfPath, '-Update')
+            if ($SkipRepoPull) { $childArgs += '-SkipRepoPull' }
+            $env:PACGATE_INSTALL_SCRIPT_HASH = $selfHash
+            & $QmPowerShell @childArgs
+            exit $LASTEXITCODE
+        }
+        $env:PACGATE_INSTALL_SCRIPT_HASH = $selfHash
     }
 }
 

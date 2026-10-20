@@ -102,6 +102,12 @@ services:
       # card: the tier would spill to CPU and present as a stall. 9B at 6.6 GB
       # keeps the Mid tier usable on the hardware we ship to. Override in .env on
       # a machine that has the VRAM.
+      #
+      # The repo default stays the RAW tag: install.ps1 step 2b also creates a
+      # `pacgate-mid` tag with `num_ctx` baked in (the OpenAI endpoint this API
+      # uses IGNORES a per-request num_ctx - verified 2026-10-20), but that tag
+      # is a machine artifact that cannot be pre-pulled from a registry, so the
+      # installer writes it into .env instead of this default.
       PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
       PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
       RUST_LOG: info

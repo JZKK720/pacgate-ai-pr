@@ -75,6 +75,30 @@ models:
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    # Pacgate 2026-10-20: SUPPRESS THE REASONING CHANNEL on local models too.
+    #
+    # The two cloud entries below have carried this fix since 2026-10-09; the
+    # local ones never did, and the omission was expensive. gemma4 is a
+    # thinking-capable model, so when the caller builds it with
+    # thinking_enabled=False and the config sets NO when_thinking_disabled,
+    # `deer-flow-model-factory.py` matches none of its disable branches and
+    # sends nothing - the model then spends the whole max_tokens budget on
+    # invisible `reasoning` and returns EMPTY content.
+    #
+    # Measured live 2026-10-20 against the local Ollama /v1 endpoint with a
+    # title-shaped prompt (max_tokens 200):
+    #   without reasoning_effort=none -> 7.7 s, 200/200 tokens, 809 chars of
+    #                                    reasoning, content = "" (finish=length)
+    #   with    reasoning_effort=none -> 0.48 s, 9 tokens, clean title
+    # That is 16x the latency for zero output on EVERY title, memory and
+    # summarization call, and it also holds the Ollama server slot open that
+    # much longer - which is exactly what makes concurrent utility lanes look
+    # like a hang. `supports_reasoning_effort` must be true as well or the
+    # factory strips the key again (see the pop at the end of the merge).
+    supports_thinking: true
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
 
   # Dedicated memory-update model. Referenced by memory.model_name below.
   # Background memory updates run OUTSIDE any user-visible run, so a runaway
@@ -90,6 +114,13 @@ models:
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 2048
     temperature: 0.1
+    # Same reasoning-channel fix as gemma4-12b-local above (2026-10-20). This
+    # entry matters MOST: memory updates are unattended and fire on every turn,
+    # so an unbudgeted reasoning burn here is invisible but constant.
+    supports_thinking: true
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
 
   # Pacgate 2026-10-07 (rev 2): qwen3.8:27b DEMOTED from the picker. Benchmark
   # on the 8060S iGPU (warm, ~3k ctx): dense 27B = 26 t/s gen / 225 t/s
@@ -116,6 +147,14 @@ models:
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    # Pacgate 2026-10-20: same reasoning-channel suppression as the gemma4
+    # entries. This model is used as the pacgate-api MID tier and as a research
+    # fallback, and a MID call that silently returns empty content is
+    # indistinguishable from a hang at the UI.
+    supports_thinking: true
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
 
   # Pacgate 2026-10-19: WITHDRAWN from the shipped picker - 22.0 GB against a
   # 16 GB AIPC card. Same failure mode as the 30B above: it loads, spills to CPU
