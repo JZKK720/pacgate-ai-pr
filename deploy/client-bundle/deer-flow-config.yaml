@@ -450,7 +450,33 @@ uploads:
 # The sandbox tools (bash/ls/read_file/etc.) are NOT MCP tools, so they remain
 # always-bound; only the MCP servers (pacgate/firecrawl/officecli/legal) defer.
 tool_search:
-  enabled: false  # EVIDENCE (2026-09-12): deferral makes ALL models call MCP tools without promoting first -> "deferred, not promoted" loop, never reaching write_file. With tool names normalized to underscores, tools are now bound directly so the agent can use them reliably.
+  # Pacgate 2026-10-21: ENABLED, with the failure mode fixed rather than avoided.
+  #
+  # It was disabled on 2026-09-12 with this evidence: "deferral makes ALL models
+  # call MCP tools without promoting first -> 'deferred, not promoted' loop, never
+  # reaching write_file." That was accurate, but the cause was the middleware, not
+  # the models: on a blocked call it returned an error telling the model to call
+  # tool_search first and retry. Small local models (gemma4:12b, ornith-1.5:9b)
+  # routinely fail to complete that two-step dance, so the run burned turns and
+  # never reached the tool it wanted.
+  #
+  # patches/deer-flow-deferred-tool-filter.py now promotes the tool on first call
+  # and executes it in the SAME turn, so deferral is invisible to the model. The
+  # schema is bound from the next turn on, which is exactly when it is worth paying
+  # for.
+  #
+  # WHY IT IS WORTH IT (measured on the HX370 box, 0.1.34):
+  #   MCP tool schemas      32,023 chars (~8,005 tokens)
+  #   sandbox + builtins    10,559 chars (~2,639 tokens)
+  #   total bound           42,582 chars (~10,645 tokens)
+  # Deferring the MCP half removes 75% of the bound surface from every call. At the
+  # measured 528 tok/s prefill that is ~15 s of fixed cost per turn, on every turn.
+  #
+  # The sandbox tools (bash/ls/read_file/write_file/str_replace/glob/grep) are NOT
+  # MCP tools, so they stay always-bound - which is what the agent actually uses:
+  # across 828 checkpoints and 2,664 tool calls on this box, bash/read_file/
+  # write_file/str_replace/present_files carried 2,284 of them.
+  enabled: true
 
 # Persist LangGraph thread state + thread list to SQLite. Without a
 # 'checkpointer' section deer-flow falls back to InMemoryStore, so the thread

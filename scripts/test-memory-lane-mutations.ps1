@@ -17,6 +17,11 @@ function Pass($m) { Write-Host "  PASS  $m" -ForegroundColor Green }
 $gate = 'scripts/test-memory-lane.ps1'
 if (-not (Test-Path $gate)) { Write-Host "exit 2 - gate not found at $gate" -ForegroundColor Yellow; exit 2 }
 
+# Resolve the launcher once. Hardcoding 'pwsh' makes this harness crash on any
+# box that only has Windows PowerShell 5.1, and a crash mid-run leaves the tree
+# mutated because the restore never executes.
+$script:psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+
 $targets = @(
     'deploy/client-bundle/.env.example'
     'deploy/client-bundle/deer-flow-config.yaml'
@@ -51,9 +56,17 @@ function Test-MutationRejected {
     $mut = $orig.Replace($Find, $ReplaceWith)
     [System.IO.File]::WriteAllText($abs, $mut)
 
-    $output = & pwsh -NoProfile -File $gate 2>&1 | Out-String
-    $code = $LASTEXITCODE
-    [System.IO.File]::WriteAllText($abs, $orig)
+    # try/finally, not a bare restore: if the launcher is missing or the gate
+    # throws, the restore must still run. A crash here previously left the tree
+    # mutated with the .bak siblings already deleted, so the next run captured
+    # the broken state as its "original" and every later mutation looked absent.
+    try {
+        $output = & $script:psExe -NoProfile -File $gate 2>&1 | Out-String
+        $code = $LASTEXITCODE
+    }
+    finally {
+        [System.IO.File]::WriteAllText($abs, $orig)
+    }
 
     if ($code -eq 1) {
         Pass "$Name -> rejected"
@@ -120,7 +133,7 @@ foreach ($t in $targets) {
 
 # End state must be a clean pass, proving the restores are real and not just
 # "the gate fails on everything".
-$final = & pwsh -NoProfile -File $gate 2>&1 | Out-String
+$final = & $script:psExe -NoProfile -File $gate 2>&1 | Out-String
 if ($LASTEXITCODE -eq 0) { Pass 'gate passes once every mutation is reverted' }
 else { Fail "gate still fails after restore - the tree is not back to its original state"; Write-Host $final }
 

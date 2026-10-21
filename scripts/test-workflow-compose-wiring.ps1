@@ -27,6 +27,16 @@
 #   A4  The mount source (./workflows) exists next to the compose file - a mount
 #       of a missing directory silently yields an empty mount, which reproduces
 #       the original symptom (built-ins only) in a different way.
+#   A5  Patch-mount parity: compose.prod.yaml and compose.bundle.yaml bind the
+#       SAME set of ./patches/*.py files. This is the same drift class as A3 but
+#       for the patch layer, and it had already happened: bundle was missing
+#       deer-flow-present-file.py, pacgate-adapter-client.py and
+#       deer-flow-deferred-tool-filter.py. A missing patch mount does not error -
+#       the container silently runs the unpatched upstream file, so the defect is
+#       invisible until a user hits the behaviour the patch was written to fix.
+#   A6  Every referenced patch file exists on disk. A bind mount of a missing
+#       file makes Docker create a DIRECTORY at that path, which breaks the
+#       import in a way that looks nothing like a missing file.
 #
 # Usage:  pwsh -File scripts/test-workflow-compose-wiring.ps1
 # Exit:   0 = wiring complete and consistent, 1 = defect, 2 = could not check.
@@ -72,6 +82,26 @@ function Get-ComposeFileInfo {
     return $info
 }
 
+# Collect every ./patches/<name>.py bind mount in the file, attributed to the
+# service that owns it. Returns objects so A5 can compare sets and A6 can check
+# the source file exists.
+function Get-PatchMounts {
+    param($Info)
+
+    $found = @()
+    foreach ($name in $Info.Services.Keys) {
+        $body = ($Info.Services[$name] -join "`n")
+        foreach ($m in [regex]::Matches($body, '(?m)^\s*-\s*\./patches/([A-Za-z0-9._-]+\.py):(\S+)')) {
+            $found += [pscustomobject]@{
+                Service = $name
+                File    = $m.Groups[1].Value
+                Target  = $m.Groups[2].Value
+            }
+        }
+    }
+    return $found
+}
+
 $candidates = @(Get-ChildItem -LiteralPath $RepoRoot -Recurse -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'compose*.yaml' -or $_.Name -like 'compose*.yml' } |
     Where-Object { $_.FullName -notmatch '\\node_modules\\|\\target\\|\\\.git\\' })
@@ -102,6 +132,7 @@ foreach ($file in $candidates) {
     $apiFiles += [pscustomobject]@{
         Rel = $rel; Path = $file.FullName; Dir = $file.DirectoryName
         HasEnv = $hasEnv; HasMount = $hasMount
+        Patches = @(Get-PatchMounts -Info $info)
     }
 
     Write-Host "  $rel"
@@ -180,6 +211,64 @@ if ($baseline.Count -gt 1) {
         Info 'A fix applied to one compose file and not the other is the exact gap this catches.'
         $script:failures++
     }
+}
+
+# A5 - patch-mount parity across the tracked, deployable compose files.
+#
+# Same drift class as A3, but for the patch layer. A missing patch mount does not
+# fail loudly: the container starts and silently runs the unpatched upstream
+# file, so the regression only surfaces when a user hits the behaviour the patch
+# existed to fix. That is how bundle came to be missing three mounts.
+Write-Host ''
+Write-Host '  patch-mount parity across files defining pacgate-api'
+$patchBaseline = @($apiFiles | Where-Object { $_.Rel -match 'compose\.(prod|bundle)\.yaml$' })
+if ($patchBaseline.Count -gt 1) {
+    $sets = @{}
+    foreach ($f in $patchBaseline) {
+        $sets[$f.Rel] = @($f.Patches | ForEach-Object { $_.File } | Sort-Object -Unique)
+    }
+    $names = @($sets.Keys | Sort-Object)
+    $ref = $names[0]
+    $drift = $false
+    for ($i = 1; $i -lt $names.Count; $i++) {
+        $other = $names[$i]
+        $onlyRef = @($sets[$ref] | Where-Object { $sets[$other] -notcontains $_ })
+        $onlyOther = @($sets[$other] | Where-Object { $sets[$ref] -notcontains $_ })
+        if ($onlyRef.Count -gt 0 -or $onlyOther.Count -gt 0) {
+            $drift = $true
+            Fail "A5 patch mounts differ between $ref and $other"
+            if ($onlyRef.Count -gt 0) { Info ("  only in {0}: {1}" -f $ref, ($onlyRef -join ', ')) }
+            if ($onlyOther.Count -gt 0) { Info ("  only in {0}: {1}" -f $other, ($onlyOther -join ', ')) }
+            Info 'A missing patch mount runs the unpatched upstream file with no error.'
+            $script:failures++
+        }
+    }
+    if (-not $drift) {
+        Pass ("A5 prod and bundle bind the same {0} patch file(s)" -f $sets[$ref].Count)
+    }
+}
+
+# A6 - every referenced patch file must exist. Docker creates a DIRECTORY when a
+# bind-mount source is missing, which breaks the import in a way that looks
+# nothing like a missing file.
+Write-Host ''
+Write-Host '  patch mount sources exist'
+$missing = @()
+foreach ($f in $apiFiles) {
+    foreach ($p in $f.Patches) {
+        $src = Join-Path $f.Dir (Join-Path 'patches' $p.File)
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+            $missing += "$($f.Rel) -> patches/$($p.File)"
+        }
+    }
+}
+if ($missing.Count -gt 0) {
+    foreach ($m in $missing) { Fail "A6 missing patch source: $m" }
+    Info 'Docker creates a directory at the target when the source is absent.'
+    $script:failures++
+} else {
+    $total = @($apiFiles | ForEach-Object { $_.Patches } | ForEach-Object { $_.File } | Sort-Object -Unique).Count
+    Pass "A6 all $total referenced patch file(s) exist on disk"
 }
 
 Write-Host ''

@@ -40,6 +40,11 @@ if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 $guard = Join-Path $RepoRoot 'scripts\test-workflow-compose-wiring.ps1'
 $src = Join-Path $RepoRoot 'deploy\client-bundle'
 
+# Resolve the PowerShell executable to re-invoke the guard with. Prefer pwsh when
+# present, otherwise fall back to the host that is running this harness.
+$script:psExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+if (-not $script:psExe) { $script:psExe = (Get-Process -Id $PID).Path }
+
 if (-not (Test-Path $guard)) { Write-Host "guard not found: $guard" -ForegroundColor Red; exit 1 }
 if (-not (Test-Path $src)) { Write-Host "compose dir not found: $src" -ForegroundColor Red; exit 1 }
 
@@ -52,6 +57,14 @@ $wfSrc = Join-Path $src 'workflows'
 if (Test-Path $wfSrc) {
     Get-ChildItem $wfSrc -File -Filter '*.yaml' | Select-Object -First 5 |
         Copy-Item -Destination (Join-Path $tmp 'workflows')
+}
+
+# A6 checks that every referenced patch file exists, so the throwaway copy needs
+# the patches directory too. Copying it also keeps fault 6 honest: it deletes a
+# real file from the copy rather than relying on an already-absent one.
+$patchSrc = Join-Path $src 'patches'
+if (Test-Path $patchSrc) {
+    Copy-Item $patchSrc (Join-Path $tmp 'patches') -Recurse -Force
 }
 
 $prod = Join-Path $tmp 'compose.prod.yaml'
@@ -122,7 +135,11 @@ function Insert-InBlock {
 }
 
 function Invoke-Guard {
-    $out = & pwsh -NoProfile -File $guard -RepoRoot $tmp 2>&1
+    # Use the CURRENT PowerShell host rather than a hardcoded `pwsh`. Windows
+    # PowerShell 5.1 ships with the OS; PowerShell 7 does not, so hardcoding pwsh
+    # made this harness unrunnable on a stock machine - and a guard harness that
+    # cannot run proves nothing.
+    $out = & $script:psExe -NoProfile -ExecutionPolicy Bypass -File $guard -RepoRoot $tmp 2>&1
     return @{ Exit = $LASTEXITCODE; Text = ($out -join "`n") }
 }
 
@@ -177,6 +194,20 @@ Restore-Baseline
 $wf = Join-Path $tmp 'workflows'
 if (Test-Path $wf) { Rename-Item $wf 'workflows_renamed' }
 Assert-Case 'missing mount source detected (A4)' 1 $true (Invoke-Guard) 'A4'
+
+Write-Host ''
+Write-Host '=== fault 5: patch-mount drift - the bundle loses a patch mount ===' -ForegroundColor Cyan
+Restore-Baseline
+$inj = Remove-InBlock -Path $bundle -Service 'deer-flow' -Pattern '\./patches/deer-flow-deferred-tool-filter\.py:'
+Assert-Case 'patch-mount drift detected (A5)' 1 $inj (Invoke-Guard) 'A5'
+
+Write-Host ''
+Write-Host '=== fault 6: patch source missing - Docker would create a directory ===' -ForegroundColor Cyan
+Restore-Baseline
+$patchFile = Join-Path $tmp 'patches\deer-flow-deferred-tool-filter.py'
+$patchGone = $false
+if (Test-Path -LiteralPath $patchFile) { Remove-Item -LiteralPath $patchFile -Force; $patchGone = $true }
+Assert-Case 'missing patch source detected (A6)' 1 $patchGone (Invoke-Guard) 'A6'
 
 Restore-Baseline
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue

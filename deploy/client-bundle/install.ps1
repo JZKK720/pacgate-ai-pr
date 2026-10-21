@@ -92,12 +92,16 @@ function Get-OllamaResidencyProfile {
         if ($vramGiB -ge 24) {
             return [pscustomobject]@{
                 Tier = 'high'; MaxLoaded = 3; ContextLength = 65536; NumParallel = 2
-                MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-high-'
+                CacheRamMiB = 4096; SystemGiB = $sysGiB
+                MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
             }
         }
         return [pscustomobject]@{
             Tier = 'big-ram-small-vram'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
-            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-'
+            # Generous host RAM, but a small card means the runner is the only
+            # large consumer. 2 GiB of prompt cache is still ~30x one prompt.
+            CacheRamMiB = 2048; SystemGiB = $sysGiB
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
         }
     }
     if ($sysGiB -ge 24) {
@@ -110,13 +114,15 @@ function Get-OllamaResidencyProfile {
         # it is QAT/weight-dominated), ornith-1.5:9b 6.12 GB, nomic 0.31 GB.
         return [pscustomobject]@{
             Tier = 'standard'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
-            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-'
+            CacheRamMiB = 1024; SystemGiB = $sysGiB
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
         }
     }
     # Low-memory fallback: one resident model, minimum viable context.
     return [pscustomobject]@{
         Tier = 'constrained'; MaxLoaded = 1; ContextLength = 16384; NumParallel = 1
-        MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'; PinnedPrefix = 'pacgate-low-'
+        CacheRamMiB = 512; SystemGiB = $sysGiB
+        MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
     }
 }
 
@@ -284,6 +290,42 @@ function Set-OllamaResidencyEnv {
         # 15m keeps the utility tag warm across a normal working gap without
         # pinning memory forever. The cloud main model costs 0 GB local.
         OLLAMA_KEEP_ALIVE        = '15m'
+
+        # Pacgate 2026-10-21: cap llama.cpp's PROMPT CACHE, which is HOST RAM and
+        # grows independently of the model and of VRAM.
+        #
+        # WHY (measured on the HX370 box, Ollama 0.40.6 / llama-server build 620d2225c)
+        #   llama.cpp keeps a cache of whole prompt states so a follow-up call can
+        #   skip re-processing its prefix. Its default budget is 8192 MiB, and the
+        #   observed footprint was ~6.5 GiB of the host's 61.6 GiB:
+        #
+        #     cache state: 4 prompts, 6506.381 MiB (limits: 8192.000 MiB, ...)
+        #     prompt 0000020EF62A9EF0: 5097 tokens, checkpoints: 7, 1927.274 MiB
+        #
+        #   Each saved prompt costs roughly its context in KV bytes plus ~240 KiB
+        #   per checkpoint (7 cp x 320 MiB for a 5097-token prompt). On a machine
+        #   already sitting at 0.03 MB available memory during a workflow, that is
+        #   the difference between paging and not.
+        #
+        #   The cache is also NOT earning its keep on these models. gemma4 is a
+        #   sliding-window hybrid (`is_swa_any = 1`), and llama.cpp itself reports:
+        #     forcing full prompt re-processing due to lack of cache data
+        #     (likely due to SWA or hybrid/recurrent memory ...)
+        #   Measured reuse over a full day: 22.8% of requested prompt tokens were
+        #   skipped, and 48.5% of prefill events got ZERO reuse. Capping the cache
+        #   therefore costs little on the hit rate while returning gigabytes.
+        #
+        # HOW IT REACHES llama-server: Ollama spawns it as a child process, so an
+        # inherited environment variable is enough - no flag is passed for this.
+        # VERIFIED end to end on this box: with LLAMA_ARG_CACHE_RAM=512 the runner's
+        # own log switched from the 8192 default to
+        #     cache state: 1 prompts, 20.457 MiB (limits: 512.000 MiB, 8192 tokens, ...)
+        # so the value really does bind. A bad value is loud rather than silent
+        # (llama-server exits with `error while handling environment variable ...`).
+        #
+        # Sizing: 512 MiB is still ~30x a short title/memory prompt, 1024 MiB covers
+        # several 8k utility prompts - which is the actual traffic on these lanes.
+        LLAMA_ARG_CACHE_RAM      = [string]$Profile.CacheRamMiB
     }
 
     $changed = @()
@@ -307,8 +349,9 @@ function Set-OllamaResidencyEnv {
 # WE DELIBERATELY DO NOT TOUCH THAT VALUE. Ollama is shared infrastructure on
 # these machines - other tools use the same server and expect the operator's own
 # context setting. Rewriting a global preference to suit one consumer is the
-# wrong fix even though it works, so the app's value is only ever READ and the
-# per-model pin below is used instead.
+# wrong fix even though it works, so the app's value is only ever READ and
+# reported. Context for Pacgate's own models comes from OLLAMA_CONTEXT_LENGTH,
+# which is scoped to the Ollama process this installer configures.
 #
 # Measured, so the read is not academic: with env=32768 and db=131072 the server
 # starts at 131072, and with both at 32768 it starts at 32768. The env var alone
@@ -361,71 +404,8 @@ except Exception as e:
     return $info
 }
 
-# Build a per-model derived tag that pins num_ctx, instead of changing anything
-# machine-wide.
-#
-# WHY THIS EXISTS (measured 2026-10-20)
-#   The OpenAI-compatible endpoint that BOTH pacgate-llm and deer-flow use offers
-#   no per-request context control. Verified: sending `options.num_ctx` or a
-#   top-level `num_ctx` on /v1/chat/completions is IGNORED - the model still
-#   loaded at the shared 131072 and stayed 9.22 GB. `/api/generate` honours
-#   num_ctx, but neither client can use that endpoint (deer-flow is langchain
-#   OpenAI-compatible, pacgate-llm posts to /v1/chat/completions).
-#
-#   `ollama create` lets us copy the weights into a derived tag with
-#   `PARAMETER num_ctx` baked in. Verified on this box: `pacgate-ornith:9b`
-#   loaded through /v1 at ctx 32768 and 6.12 GB, while `ornith-1.5:9b` on the
-#   same server still loaded at 131072 and 9.22 GB. Scope is the model, not the
-#   machine - which is exactly the boundary that was wrong before.
-#
-#   The derived tag shares the base model's blobs, so it costs no extra disk.
-function Ensure-OllamaContextPinnedTag {
-    param(
-        [Parameter(Mandatory)] [string]$BaseTag,
-        [Parameter(Mandatory)] [string]$PinnedTag,
-        [Parameter(Mandatory)] [int]$ContextLength,
-        [Parameter(Mandatory)] [string]$OllamaExe
-    )
-
-    $result = [pscustomobject]@{ Tag = $PinnedTag; Status = 'unknown'; Detail = '' }
-
-    # Already pinned correctly? Then this is a no-op and must say so.
-    try {
-        $shown = (Invoke-WithNativeStderr { & $OllamaExe show $PinnedTag --modelfile 2>$null } | Out-String)
-        if ($shown -and $shown -match "num_ctx\s+$ContextLength\b" -and $shown -match "FROM\s+$([regex]::Escape($BaseTag))\b") {
-            $result.Status = 'already-pinned'
-            return $result
-        }
-    } catch { }
-
-    try {
-        $modelfile = @"
-FROM $BaseTag
-PARAMETER num_ctx $ContextLength
-"@
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("pacgate-{0}.Modelfile" -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
-        [System.IO.File]::WriteAllText($tmp, $modelfile, [System.Text.UTF8Encoding]::new($false))
-        try {
-            $create = (Invoke-WithNativeStderr { & $OllamaExe create $PinnedTag -f $tmp 2>$null } | Out-String)
-        } finally {
-            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-        }
-
-        $after = (Invoke-WithNativeStderr { & $OllamaExe show $PinnedTag --modelfile 2>$null } | Out-String)
-        if ($after -match "num_ctx\s+$ContextLength\b") {
-            $result.Status = 'pinned'
-            return $result
-        }
-        $result.Status = 'failed'
-        $result.Detail = "created but num_ctx $ContextLength not visible in the modelfile"
-        return $result
-    } catch {
-        $result.Status = 'failed'
-        $result.Detail = "$_"
-        return $result
-    }
-}
-
+# Read (never write) the app's machine-wide context_length. Ollama is shared
+# infrastructure here, so this value is reported and respected, not overridden.
 $residency = Get-OllamaResidencyProfile
 try {
     $envChanged = Set-OllamaResidencyEnv -Profile $residency
@@ -434,8 +414,6 @@ try {
     $envChanged = @()
 }
 
-# Read (never write) the app's machine-wide context_length. Ollama is shared
-# infrastructure here, so this value is reported and respected, not overridden.
 $appCtx = $null
 try {
     $appCtx = Get-OllamaAppContextLength
@@ -455,85 +433,115 @@ switch ($appCtx.Status) {
             Write-Host "[OK] Ollama app context_length is already $($appCtx.Value)" -ForegroundColor Green
         } else {
             Write-Host "[NOTE] Ollama app context_length is $($appCtx.Value) (machine-wide, shared with other tools)." -ForegroundColor DarkGray
-            Write-Host "       Pacgate does not change it. It gets $($residency.ContextLength) from per-model" -ForegroundColor DarkGray
-            Write-Host "       pinned tags instead - see below." -ForegroundColor DarkGray
+            Write-Host "       Pacgate does not change it. Pacgate's own models get $($residency.ContextLength)" -ForegroundColor DarkGray
+            Write-Host "       from OLLAMA_CONTEXT_LENGTH, which is scoped to the Ollama process." -ForegroundColor DarkGray
         }
     }
     'not-applicable' { Write-Host "[OK] No Ollama app database ($($appCtx.Detail))" -ForegroundColor DarkGray }
-    default { Write-Host "[NOTE] Could not read the Ollama app context_length ($($appCtx.Detail)); proceeding with pinned tags." -ForegroundColor DarkGray }
+    default { Write-Host "[NOTE] Could not read the Ollama app context_length ($($appCtx.Detail)); proceeding." -ForegroundColor DarkGray }
 }
 
-# Pin context PER MODEL. This is the part that actually reaches pacgate-api and
-# deer-flow, because neither can pass num_ctx on /v1/chat/completions (verified:
-# the field is ignored there). Pinned tags are scoped to Pacgate's own models and
-# leave the shared server setting and every other Ollama consumer untouched.
-$pinnedPairs = @(
-    @{ Base = $residency.MidTag;    Pinned = "$($residency.PinnedPrefix)mid" },
-    @{ Base = $residency.LowTag;    Pinned = "$($residency.PinnedPrefix)low" }
-)
-$pinSucceeded = @()
-foreach ($pair in $pinnedPairs) {
-    if (-not $pair.Base) { continue }
-    $p = $null
-    try {
-        $p = Ensure-OllamaContextPinnedTag -BaseTag $pair.Base -PinnedTag $pair.Pinned `
-                 -ContextLength ([int]$residency.ContextLength) -OllamaExe 'ollama'
-    } catch {
-        $p = [pscustomobject]@{ Tag = $pair.Pinned; Status = 'failed'; Detail = "$_" }
-    }
-    if ($p.Status -in @('pinned', 'already-pinned')) { $pinSucceeded += $pair.Pinned }
-    switch ($p.Status) {
-        'pinned'        { Write-Host "[OK] Pinned $($pair.Base) -> $($pair.Pinned) at ctx $($residency.ContextLength)" -ForegroundColor Green }
-        'already-pinned' { Write-Host "[OK] $($p.Tag) already pinned at ctx $($residency.ContextLength)" -ForegroundColor Green }
-        default {
-            Write-Host "[WARN] Could not pin $($pair.Base) to ctx $($residency.ContextLength): $($p.Detail)" -ForegroundColor Yellow
-            Write-Host "       Workflows will still run, but this model will load at the shared" -ForegroundColor Yellow
-            Write-Host "       context ($($appCtx.Value)) and use more memory than budgeted." -ForegroundColor Yellow
-        }
-    }
-}
-
-
-# Persist the pinned tags into .env, which is where per-machine model choices
-# belong. The repo default must stay the raw tag (it is what `ModelConfig::from_env`
-# falls back to and what `ollama-models.txt` pre-pulls); the derived tag exists
-# only on a machine where this installer has run, so it cannot be a repo default.
+# ── Model selection: the operator picks, the installer only reports ─────────
 #
-# Only .env gets this, and only when the pin actually succeeded - a failed pin
-# leaves the raw tag in place, which still works and merely costs more memory.
-if (Test-Path '.\.env') {
-    $envText = [System.IO.File]::ReadAllText((Resolve-Path '.\.env'))
-    $wantWrites = @()
-    foreach ($pair in $pinnedPairs) {
-        $pinnedName = "$($pair.Pinned):latest"
-        if ($pinSucceeded -contains $pair.Pinned) {
-            $wantWrites += ,@($(if ($pair.Pinned -like '*-mid') { 'PACGATE_MODEL_MID' } else { 'PACGATE_MODEL_LOW' }), $pinnedName)
-        }
+# WHY THE DERIVED-TAG MECHANISM WAS REMOVED (2026-10-21)
+#   The installer used to run `ollama create` to build `pacgate-mid` / `pacgate-low`
+#   tags with `PARAMETER num_ctx` baked in, then write those names into .env. It
+#   worked, but it was the wrong shape for a shipped product:
+#
+#   1. Those tags exist only on a machine where this installer ran. They are in
+#      neither origin/main nor any ghcr image, so they cannot be pre-pulled and
+#      cannot be a repo default. Every deployment therefore diverged from the
+#      published artifact in a way nothing else could reproduce.
+#
+#   2. It created a SECOND name for the same weights. Ollama keys residency by tag
+#      name, so `pacgate-low` and `gemma4:12b-it-qat` (identical blobs, verified via
+#      `ollama show --modelfile`) could not co-reside. Measured on the HX370 box:
+#      switching between them cost 15.9 s and 15.4 s of reload, and the day's log
+#      held 56 llama-server starts, 55 model loads and 13 evictions. That churn was
+#      the single largest latency source, and it was self-inflicted.
+#
+#   3. It assumed one fixed context per tier. A machine with more VRAM should be
+#      able to run a wider window, and a machine with less should be able to run a
+#      narrower one, without the installer having decided in advance.
+#
+#   So the model roster is now exactly what the operator selects from the standard
+#   Ollama tags that `ollama-models.txt` pre-pulls. Context is bounded by
+#   OLLAMA_CONTEXT_LENGTH (set above, per hardware tier) rather than by a derived
+#   tag, which keeps ONE name per weight set and lets the scheduler keep it warm.
+#
+#   CAVEAT, measured: the Ollama desktop app's db.sqlite `context_length` OVERRIDES
+#   OLLAMA_CONTEXT_LENGTH. On the HX370 box the tier says 32768 but `ollama ps`
+#   reports 65536, because the app's value wins. That is the operator's setting and
+#   is deliberately not touched - but it means the tier's ContextLength is a
+#   REQUEST, not a guarantee, and nothing should budget VRAM from it without
+#   reading the effective value back.
+#
+# WHAT THIS FUNCTION DOES
+#   Reports what is installed and what the tier suggests, and writes nothing. The
+#   operator's choice lives in .env (PACGATE_MODEL_MAIN/MID/LOW) and in the
+#   deer-flow picker; both already accept any installed tag.
+function Get-ModelSelectionReport {
+    param([Parameter(Mandatory)] $Profile)
+
+    $report = [pscustomobject]@{
+        Installed = @()
+        Suggested = [ordered]@{}
+        Missing   = @()
     }
-    foreach ($w in $wantWrites) {
-        $key = $w[0]; $val = $w[1]
-        if ($envText -match "(?m)^\s*$key\s*=\s*$([regex]::Escape($val))\s*$") {
-            Write-Host "[OK] .env already sets $key=$val" -ForegroundColor Green
-        } else {
-            # Replace an existing assignment in place, else append. In-place
-            # matters: a duplicate key would make compose's behaviour depend on
-            # line order.
-            if ($envText -match "(?m)^\s*$key\s*=") {
-                $envText = [regex]::Replace($envText, "(?m)^\s*$key\s*=.*$", "$key=$val")
-                Write-Host "[OK] Updated $key=$val in .env (pinned context)" -ForegroundColor Green
-            } else {
-                $nl = if ($envText.Length -eq 0 -or $envText.EndsWith("`n")) { '' } else { "`r`n" }
-                $envText = $envText + $nl + "$key=$val`r`n"
-                Write-Host "[OK] Added $key=$val to .env (pinned context)" -ForegroundColor Green
-            }
-            [System.IO.File]::WriteAllText((Resolve-Path '.\.env'), $envText, [System.Text.UTF8Encoding]::new($false))
-        }
+    try {
+        $out = (Invoke-WithNativeStderr { & ollama list 2>$null } | Out-String)
+        $report.Installed = @(
+            ($out -split "`r?`n") | Select-Object -Skip 1 |
+                ForEach-Object { ($_ -split '\s+')[0] } |
+                Where-Object { $_ -and $_ -notmatch '^NAME$' }
+        )
+    } catch { }
+
+    # The tier's suggestion is a STARTING POINT, not a pin. Both are standard tags
+    # from ollama-models.txt, so they are pullable on any machine.
+    $report.Suggested['PACGATE_MODEL_MID'] = $Profile.MidTag
+    $report.Suggested['PACGATE_MODEL_LOW'] = $Profile.LowTag
+    foreach ($k in $report.Suggested.Keys) {
+        $tag = $report.Suggested[$k]
+        if ($report.Installed -notcontains $tag) { $report.Missing += $tag }
+    }
+    return $report
+}
+
+$modelReport = $null
+try { $modelReport = Get-ModelSelectionReport -Profile $residency } catch { }
+
+if ($modelReport) {
+    Write-Host "[OK] Model selection is the operator's: standard Ollama tags, no derived tags" -ForegroundColor Green
+    foreach ($k in $modelReport.Suggested.Keys) {
+        $tag = $modelReport.Suggested[$k]
+        $state = if ($modelReport.Installed -contains $tag) { 'installed' } else { 'NOT installed' }
+        Write-Host ("     {0,-20} {1,-28} {2}" -f $k, $tag, $state) -ForegroundColor DarkGray
+    }
+    if ($modelReport.Missing.Count -gt 0) {
+        Write-Host "     Missing tags are pulled by this installer; if one is still absent, run:" -ForegroundColor Yellow
+        Write-Host "       ollama pull <tag>" -ForegroundColor Yellow
+    }
+    Write-Host "     To use a different local model, set PACGATE_MODEL_MID/LOW in .env to any" -ForegroundColor DarkGray
+    Write-Host "     installed tag, or pick it in the deer-flow model picker." -ForegroundColor DarkGray
+    # Do NOT claim the tier's ContextLength is what the model will load at. The
+    # Ollama desktop app's db.sqlite value OVERRIDES OLLAMA_CONTEXT_LENGTH, and on
+    # this box it is 65536 while the tier says 32768 - verified with `ollama ps`.
+    # Reporting the tier value as fact is how a capacity budget stops matching
+    # reality, so the effective value is read back instead.
+    $effectiveCtx = if ($appCtx -and $appCtx.Status -eq 'read') { $appCtx.Value } else { $null }
+    if ($effectiveCtx) {
+        Write-Host "     Effective context is $effectiveCtx (from the Ollama app setting, which wins" -ForegroundColor DarkGray
+        Write-Host "     over OLLAMA_CONTEXT_LENGTH=$($residency.ContextLength)). Change it in the Ollama app if needed." -ForegroundColor DarkGray
+    } else {
+        Write-Host "     Context comes from OLLAMA_CONTEXT_LENGTH=$($residency.ContextLength) unless the Ollama" -ForegroundColor DarkGray
+        Write-Host "     desktop app has its own context_length set, which takes precedence." -ForegroundColor DarkGray
     }
 }
 
-# The env vars (MAX_LOADED_MODELS / NUM_PARALLEL / KEEP_ALIVE) are read only at
-# server start, so a running server needs one restart to pick them up. The
-# context setting does NOT come through here - it is baked into the pinned tags.
+# The env vars (MAX_LOADED_MODELS / NUM_PARALLEL / KEEP_ALIVE /
+# LLAMA_ARG_CACHE_RAM / CONTEXT_LENGTH) are read only at server start, so a
+# running server needs one restart to pick them up.
 if ($envChanged.Count -gt 0) {
     $ollamaRunning = @(Get-Process -Name 'ollama app','ollama' -ErrorAction SilentlyContinue).Count -gt 0
     if ($ollamaRunning) {

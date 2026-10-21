@@ -92,6 +92,13 @@ $gates = @(    'scripts/test-install-render.ps1'
     # if the installer ever writes the app database again, and fails if the repo
     # defaults start naming a derived tag that no registry can serve.
     'scripts/test-ollama-context-scope.ps1'
+    # tool_search deferral removes ~73% of the bound tool schema from EVERY prompt
+    # (measured 10,645 -> 2,823 tokens). It was disabled because the middleware
+    # told the model to call tool_search first and retry, which small local models
+    # never completed. The patch promotes-and-executes in one turn. The static test
+    # proves the code and the mount; the runtime test proves it actually runs.
+    'scripts/test-tool-search-deferral.ps1'
+    'scripts/test-deferred-tool-runtime.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot

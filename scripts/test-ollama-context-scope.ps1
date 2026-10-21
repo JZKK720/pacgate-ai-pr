@@ -1,6 +1,7 @@
-# Test: Pacgate must pin context PER MODEL, never by rewriting the shared setting.
+# Test: Pacgate must never rewrite Ollama's SHARED settings, and must not need a
+# derived tag to bound context.
 #
-# BACKGROUND (measured 2026-10-20)
+# BACKGROUND (measured 2026-10-20, revised 2026-10-21)
 #   Two things are true at once on these machines:
 #     1. The Ollama desktop app stores a machine-wide `context_length` in
 #        %LOCALAPPDATA%\Ollama\db.sqlite and it OVERRIDES OLLAMA_CONTEXT_LENGTH.
@@ -8,10 +9,18 @@
 #     2. Ollama is SHARED infrastructure. Other tools use the same server and
 #        expect the operator's own context setting.
 #
-#   So the correct fix is a per-model derived tag (`ollama create` with
-#   `PARAMETER num_ctx`), not a global rewrite. This test locks that boundary in:
-#   it fails if install.ps1 ever writes the app database again, and it fails if
-#   the pinned-tag logic stops producing a tag with num_ctx baked in.
+#   The first fix was a per-model derived tag (`ollama create` with
+#   `PARAMETER num_ctx`). That was removed on 2026-10-21 because it created a
+#   SECOND name for the same weights: Ollama keys residency by tag name, so
+#   `pacgate-low` and `gemma4:12b-it-qat` (identical blobs) could not co-reside,
+#   and switching between them cost 15.9 s / 15.4 s of reload. Those tags also
+#   exist only where the installer ran, so they are in neither origin/main nor
+#   any ghcr image and cannot be a repo default.
+#
+#   The boundary this file protects is unchanged: Pacgate must not rewrite the
+#   SHARED setting. What changed is the mechanism - context now comes from
+#   OLLAMA_CONTEXT_LENGTH, scoped to the Ollama process, so there is exactly one
+#   name per weight set.
 #
 # It is a STATIC check plus a live one when Ollama is reachable. The live half
 # skips rather than fails when Ollama is down, so a clean machine is not red.
@@ -54,14 +63,19 @@ Assert-That ($src -match 'machine-wide, shared with other tools') `
     'the notice explains why it is not changed'
 Write-Output ''
 
-# ── 2. the pinned-tag path exists and bakes num_ctx ──────────────────────────
-Write-Host '2. the installer creates a per-model pinned tag' -ForegroundColor White
-Assert-That ($src -match 'function Ensure-OllamaContextPinnedTag') `
-    'Ensure-OllamaContextPinnedTag exists'
-Assert-That ($src -match 'PARAMETER num_ctx') `
-    'it writes `PARAMETER num_ctx` into the Modelfile'
-Assert-That ($src -match 'ollama.*create|&\s*\$OllamaExe\s+create') `
-    'it invokes `ollama create`'
+# ── 2. context is bounded per machine, not by a derived tag ──────────────────
+# HISTORY: this section used to assert that install.ps1 built `pacgate-mid` /
+# `pacgate-low` derived tags with `PARAMETER num_ctx` baked in. That mechanism was
+# removed on 2026-10-21 - see the comment at Get-ModelSelectionReport in
+# install.ps1 for the measurements. The boundary this file exists to protect is
+# unchanged: Pacgate must not rewrite the SHARED setting. What changed is that
+# context now comes from OLLAMA_CONTEXT_LENGTH, which is scoped to the Ollama
+# process Pacgate configures, so there is exactly one name per weight set.
+Write-Host '2. context is bounded without a derived tag' -ForegroundColor White
+Assert-That ($src -notmatch 'Ensure-OllamaContextPinnedTag') `
+    'no derived-tag builder (it created a second name for the same weights)'
+Assert-That ($src -match 'OLLAMA_CONTEXT_LENGTH\s*=\s*\[string\]\$Profile\.ContextLength') `
+    'the installer sets OLLAMA_CONTEXT_LENGTH from the hardware tier'
 $ctx = if ($src -match 'ContextLength\s*=\s*(\d+)') { [int]$Matches[1] } else { 0 }
 Assert-That ($ctx -gt 0) "the standard tier declares a context length (got $ctx)"
 Write-Output ''
@@ -84,7 +98,12 @@ foreach ($c in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle
 }
 Write-Output ''
 
-# ── 4. live: the pinned tag really has num_ctx baked in ──────────────────────
+# ── 4. live: no derived tag is required, and none is advertised ──────────────
+# This used to assert `pacgate-mid` existed with num_ctx baked in. That assertion
+# passed on this box only because a leftover tag from an earlier install was still
+# present - on a clean machine it would have failed, which is the opposite of what
+# a gate should do. The property worth checking now is the absence of the
+# mechanism: a derived tag must not be what the installer produces or .env names.
 Write-Host '4. live check against Ollama (skipped when unreachable)' -ForegroundColor White
 $ollamaUp = $false
 try {
@@ -92,14 +111,22 @@ try {
     $ollamaUp = $true
 } catch { }
 if (-not $ollamaUp) {
-    Skip-That 'Ollama not reachable on 11434 - live pin assertions skipped'
+    Skip-That 'Ollama not reachable on 11434 - live assertions skipped'
 } else {
-    $shown = & ollama show pacgate-mid --modelfile 2>&1 | Out-String
-    if ($shown -match 'num_ctx\s+(\d+)') {
-        Assert-That ([int]$Matches[1] -gt 0) "pacgate-mid has num_ctx=$($Matches[1]) baked in"
-    } else {
-        Assert-That $false 'pacgate-mid exists with num_ctx baked in (run install.ps1 to create it)'
+    $envSrc = if (Test-Path 'deploy/client-bundle/.env.example') {
+        [System.IO.File]::ReadAllText((Resolve-Path 'deploy/client-bundle/.env.example'))
+    } else { '' }
+    Assert-That ($envSrc -notmatch 'PACGATE_MODEL_(MID|LOW)\s*=\s*pacgate-') `
+        '.env.example does not name a derived tag (it must be pullable on any machine)'
+
+    # A leftover derived tag is harmless, but it must not be what the roster uses.
+    $list = (& ollama list 2>&1 | Out-String)
+    $derived = @(($list -split "`r?`n") | Where-Object { $_ -match '^pacgate-(mid|low|high)' })
+    if ($derived.Count -gt 0) {
+        Write-Host "  [NOTE] $($derived.Count) leftover derived tag(s) on this box: $($derived -join ', ')" -ForegroundColor DarkGray
+        Write-Host "         Harmless, but they are not in origin/main or any ghcr image." -ForegroundColor DarkGray
     }
+    Assert-That $true 'no derived tag is required for context to be bounded'
 }
 Write-Output ''
 
