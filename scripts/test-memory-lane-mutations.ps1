@@ -54,7 +54,27 @@ function Test-MutationRejected {
         return
     }
     $mut = $orig.Replace($Find, $ReplaceWith)
-    [System.IO.File]::WriteAllText($abs, $mut)
+
+    # Retry the write. A transient lock (antivirus, an editor, a concurrent gate
+    # reading the file) used to throw straight out of the harness and abort the
+    # whole run mid-mutation. Retrying turns a flake into a slow pass; if the lock
+    # is real, the final attempt still throws and the finally below restores.
+    function Write-WithRetry([string]$path, [string]$text) {
+        $last = $null
+        for ($i = 0; $i -lt 10; $i++) {
+            try {
+                [System.IO.File]::WriteAllText($path, $text)
+                return
+            }
+            catch {
+                $last = $_
+                Start-Sleep -Milliseconds (100 * ($i + 1))
+            }
+        }
+        throw $last
+    }
+
+    Write-WithRetry $abs $mut
 
     # try/finally, not a bare restore: if the launcher is missing or the gate
     # throws, the restore must still run. A crash here previously left the tree
@@ -65,7 +85,7 @@ function Test-MutationRejected {
         $code = $LASTEXITCODE
     }
     finally {
-        [System.IO.File]::WriteAllText($abs, $orig)
+        Write-WithRetry $abs $orig
     }
 
     if ($code -eq 1) {
