@@ -334,22 +334,50 @@ if ($dbOut -match '^\d+$') {
 Write-Host ''
 Write-Host 'E10 container provenance (report only)' -ForegroundColor Cyan
 $mix = @{}
+$provenanceUnavailable = 0
 foreach ($c in @('pacgate-api', 'openviking', 'deer-flow', 'deer-flow-frontend', 'pacgate-mcp', 'pacgate-db', 'pacgate-nginx')) {
-    # 5.1-safe capture. A bare `2>$null` on this command is not enough: under
-    # Windows PowerShell 5.1 the Go template's double quotes are mangled before
-    # docker sees them, docker fails with `function "com" not defined`, and that
-    # stderr write becomes a NativeCommandError that kills the script - so this
-    # reporting block took down the whole gate AFTER E6/E7 had passed.
-    # Measured 2026-10-20: `powershell -File test-lane-connectivity.ps1` exited 1
-    # at this line while pwsh reported a clean pass.
-    $cfg = Invoke-NativeCapture { docker inspect $c --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' }
-    if (-not $cfg -or $cfg -match 'template parsing error|NativeCommandError') { continue }
-    $leaf = Split-Path $cfg -Leaf
+    # Read the label with `docker inspect` and pick the field in PowerShell,
+    # rather than passing a Go template that contains nested double quotes.
+    #
+    # WHY (found 2026-10-21): `--format '{{index .Config.Labels "com...."}}'`
+    # works under pwsh and SILENTLY FAILS under Windows PowerShell 5.1, which
+    # strips the inner quotes so docker receives `com.docker...` unquoted and
+    # fails with `function "com" not defined`.
+    #
+    # The first fix only suppressed that message, which turned a loud failure into
+    # a quiet one: E10 printed nothing at all under 5.1 while printing the
+    # provenance line under pwsh. Because E10 is report-only, no assertion could
+    # catch the loss - the operator simply never saw which compose files were in
+    # play, which is the entire reason this section exists (a mix of
+    # compose.bundle.yaml and compose.prod.yaml sharing one project name means
+    # whichever runs `up -d` reconfigures the shared services).
+    #
+    # Getting the value is better than tolerating its absence: this form has no
+    # quoting for a shell to mangle, and it reports honestly when unreadable.
+    $cfg = ''
+    $raw = Invoke-NativeCapture { docker inspect $c }
+    if ($raw -and $raw -notmatch 'Error:|NativeCommandError') {
+        try {
+            $obj = $raw | ConvertFrom-Json
+            $labels = $obj[0].Config.Labels
+            if ($labels) {
+                $cfg = [string]$labels.'com.docker.compose.project.config_files'
+            }
+        } catch { }
+    }
+    if (-not $cfg) { $provenanceUnavailable++; continue }
+    # config_files can be a comma-separated list when several -f were used.
+    $leaf = (($cfg -split ',')[0].Trim() | Split-Path -Leaf)
     if (-not $mix.ContainsKey($leaf)) { $mix[$leaf] = @() }
     $mix[$leaf] += $c
 }
 foreach ($k in ($mix.Keys | Sort-Object)) {
     Write-Info "$k : $($mix[$k] -join ', ')"
+}
+if ($provenanceUnavailable -gt 0) {
+    # Report the gap instead of printing nothing. Silence here previously made a
+    # 5.1 run indistinguishable from "provenance is fine".
+    Write-Info "$provenanceUnavailable container(s): provenance label unreadable (not a failure)"
 }
 if ($mix.Keys.Count -gt 1) {
     Write-Host '        NOTE: more than one compose file is in play. Both compose.bundle.yaml and' -ForegroundColor DarkGray
