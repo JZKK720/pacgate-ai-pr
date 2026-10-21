@@ -29,16 +29,7 @@ fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
         matter_id: pacgate_core::MatterId(row.get::<uuid::Uuid, _>("matter_id")),
         tenant_id: pacgate_core::TenantId(row.get::<uuid::Uuid, _>("tenant_id")),
         name: row.get("name"),
-        format: match row.get::<String, _>("format").as_str() {
-            "docx" => pacgate_core::DocumentFormat::Docx,
-            "pdf" => pacgate_core::DocumentFormat::Pdf,
-            "txt" => pacgate_core::DocumentFormat::Txt,
-            "markdown" => pacgate_core::DocumentFormat::Markdown,
-            "xlsx" => pacgate_core::DocumentFormat::Xlsx,
-            "pptx" => pacgate_core::DocumentFormat::Pptx,
-            "html" => pacgate_core::DocumentFormat::Html,
-            _ => pacgate_core::DocumentFormat::Txt,
-        },
+        format: pacgate_core::DocumentFormat::from_storage_key(&row.get::<String, _>("format")),
         version: row.get::<i32, _>("version") as u32,
         storage_path: row.get("storage_path"),
         created_at: row.get("created_at"),
@@ -256,6 +247,11 @@ pub async fn download_document(
         DocumentFormat::Txt => "text/plain; charset=utf-8",
         DocumentFormat::Markdown => "text/markdown; charset=utf-8",
         DocumentFormat::Html => "text/html; charset=utf-8",
+        DocumentFormat::ImagePng => "image/png",
+        DocumentFormat::ImageJpeg => "image/jpeg",
+        DocumentFormat::ImageTiff => "image/tiff",
+        DocumentFormat::ImageBmp => "image/bmp",
+        DocumentFormat::ImageWebp => "image/webp",
     };
 
     let extension = match doc.format {
@@ -266,6 +262,11 @@ pub async fn download_document(
         DocumentFormat::Txt => "txt",
         DocumentFormat::Markdown => "md",
         DocumentFormat::Html => "html",
+        DocumentFormat::ImagePng => "png",
+        DocumentFormat::ImageJpeg => "jpg",
+        DocumentFormat::ImageTiff => "tif",
+        DocumentFormat::ImageBmp => "bmp",
+        DocumentFormat::ImageWebp => "webp",
     };
 
     Response::builder()

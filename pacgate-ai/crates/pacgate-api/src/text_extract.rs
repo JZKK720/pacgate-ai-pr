@@ -262,7 +262,12 @@ pub fn extract_text_native(format: &DocumentFormat, bytes: &[u8]) -> TextExtract
         DocumentFormat::Html => extract_html(bytes),
         // Images and PDFs are the raster lane's job. Saying so is not a failure of
         // this function; routing them here would be the bug (spec section 3).
-        DocumentFormat::Pdf => {
+        DocumentFormat::Pdf
+        | DocumentFormat::ImagePng
+        | DocumentFormat::ImageJpeg
+        | DocumentFormat::ImageTiff
+        | DocumentFormat::ImageBmp
+        | DocumentFormat::ImageWebp => {
             TextExtraction::failed("ooxml-zip-scan", "format not handled by the text-native lane")
         }
     }
