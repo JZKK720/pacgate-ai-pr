@@ -20,8 +20,14 @@
 #   tool it wanted.
 #
 #   patches/deer-flow-deferred-tool-filter.py promotes the tool on first call and
-#   executes it in the SAME turn, so deferral is invisible to the model. Measured
-#   effect: bound tools 44 -> 10, bound schema 10,645 -> 2,823 tokens (73%).
+#   executes it in the SAME turn, so deferral is invisible to the model.
+#
+#   Measured effect, two different denominators:
+#     whole bound surface   44 -> 10 tools, 10,645 -> 2,823 tokens (73%)
+#     MCP half only         against the real 19-tool pacgate-mcp catalog,
+#                           11,514 -> 840 chars (92.7%), measured in-container
+#   The 73% is the conservative figure because it counts the sandbox tools as part
+#   of what deferral removes; they are not removed and should not be.
 #
 #   This gate locks in both halves: deferral stays on, and the patch keeps the
 #   promote-and-execute behaviour rather than regressing to the error path.

@@ -342,26 +342,78 @@ Ordered by value per unit of risk. Items 1–3 are already done and verified.
 | 1 | Standard tags, no derived tags | **done** | removes 15.9 s reloads and 13 evictions/day |
 | 2 | `tool_search` deferral + transparency patch | **done** | 73% of the prompt surface, no quality loss |
 | 3 | Prompt-cache cap (`LLAMA_ARG_CACHE_RAM`) | **done** | bounds 6.5 GiB of host RAM |
-| 4 | **Run a real workflow end-to-end** | **next** | the deferral patch is unit-verified but has not carried a live run; this is the one gap |
+| 4 | Run a real workflow end-to-end | **done** | see 5.1 — a live run called two deferred MCP tools with no promotion error |
 | 5 | Extend the q8_0 quality test to a real corpus | if VRAM binds | 1.2 GiB for free, but 5 prompts is not evidence |
 | 6 | WSL ceiling at a maintenance window | optional | not needed at steady state (32 GiB available) |
 | 7 | Larger `-ub` | **do not** | measured slower, +1.5 GiB |
 | 8 | Description compression | **do not** | dominated by deferral, destroys guidance |
 
-### Why #4 is the real next step
+### 5.1 The live end-to-end run (item 4, now closed)
+
+The deferral patch had only unit-level proof. It has now carried a real workflow.
+
+**Setup.** `POST /pacgate/api/workflows/00000000-0000-0000-0000-000000001002/execute`
+against a freshly created matter, through nginx on 8089. HTTP 200.
+
+**What the run did.** The response reported:
+
+```
+tools_used: list_documents, kb_search, kb_search
+max_rounds_reached: False
+```
+
+Both are `pacgate-mcp` tools (`pacgate_list_documents`, `pacgate_kb_search` in
+`pacgate-mcp:/app/server.py`), so both are MCP-sourced and therefore in the
+deferred set. They executed. The response contains no "deferred, not promoted"
+error, and the run did not hit the round cap.
+
+**The schema reduction, measured against the real catalog.** The earlier 73%
+figure came from the full bound surface including sandbox tools. Re-measured
+inside the running container against the actual 19-tool `pacgate-mcp` catalog:
+
+| | chars |
+| --- | --- |
+| all 19 MCP schemas + builtins bound | 11,514 |
+| builtins + `tool_search` only | 840 |
+| **reduction** | **92.7%** |
+
+The 73% figure was conservative because it counted the sandbox tools as part of
+what deferral removes; they are not removed, and should not be. Against the MCP
+half alone the saving is 92.7%.
+
+**Two corrections to earlier notes in this document:**
+
+1. The `.env` password was never wrong. Login failed because the API is behind
+   nginx at `http://localhost:8089/pacgate/...`, not `http://localhost:8080/...`.
+   The credentials in `.env` work as shipped.
+2. The bind mount is live without a container restart. Docker bind mounts are
+   resolved at container creation, but the *file contents* are read at import
+   time, so a running container picks up an edited patch on the next process
+   start. Verified: the running container's middleware is the patched file
+   (`grep -c _promotion_command` → 3) even though the container started before
+   the mount was added to compose.
+
+
+### Why the live run mattered
 
 Everything shipped is verified at the unit level: the middleware promotes and
 executes on all four paths, the reducer merges correctly, the bound set is 10 tools,
-and five gates pass. What has **not** happened is a live agent run that calls a
+and five gates pass. What had **not** happened was a live agent run that calls a
 deferred MCP tool and completes. That is the exact scenario the 2026-09-12 note said
-was broken, so it deserves a real run rather than an inference from unit tests.
+was broken, so it deserved a real run rather than an inference from unit tests.
 
-The check is cheap: start a thread that needs `pacgate_kb_search` or
-`officecli_officecli`, then confirm in the log that
-`Auto-promoting deferred tool ...` appears and the run reaches the tool. If it does
-not, the fallback is one line — set `tool_search.enabled: false` — and the gate
-`test-tool-search-deferral.ps1` will fail loudly rather than letting the regression
-pass silently.
+That run has now happened (5.1) and passed. The fallback if it had failed was one
+line - set `tool_search.enabled: false` - and `test-tool-search-deferral.ps1` fails
+loudly rather than letting the regression pass silently.
+
+One thing the live run did **not** prove: the `Auto-promoting deferred tool ...`
+log line never appeared, because the model called `tool_search` itself rather than
+calling a deferred tool directly. Both paths are covered by
+`test-deferred-tool-runtime.ps1` (12 assertions, including the direct-call path),
+but the auto-promote path has not been observed in a live agent run. That is a
+narrower gap than the one this section used to describe, and it is the honest
+remaining one.
+
 
 
 ---
