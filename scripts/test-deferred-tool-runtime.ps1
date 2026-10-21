@@ -26,6 +26,12 @@
 #   R5  A call to a NON-deferred tool passes through untouched (no spurious
 #       promotion, handler result returned as-is).
 #   R6  The async path behaves identically to the sync path.
+#   R7  The deferred-tools prompt section TELLS the model a direct call works.
+#       Without this the auto-promote path exists but is never selected: measured
+#       on 0.1.34, the section was a bare list of names with no instruction verb,
+#       and the live run called tool_search first, so the auto-promote line never
+#       fired. A runtime probe cannot catch that - the middleware was correct the
+#       whole time - so it is asserted on the RENDERED text instead.
 #
 # Usage:  powershell -File scripts/test-deferred-tool-runtime.ps1
 # Exit:   0 = all assertions pass, 1 = a failure, 2 = could not check (no stack).
@@ -142,6 +148,27 @@ try:
     apromoted = isinstance(ares, Command) and "promoted" in (ares.update or {})
     check("R6 async path promotes", apromoted, type(ares).__name__)
     check("R6 async handler still executed", ran3["n"] == 1, ran3["n"])
+
+    # R7: the prompt section must say a DIRECT call is supported.
+    #
+    # This is the gap the 2026-10-21 live run exposed. The middleware promoted
+    # correctly, but <available-deferred-tools> was a bare list and tool_search's
+    # own description says a name is not callable "until fetched", so the model
+    # fetched first and the auto-promote path was never exercised. Asserting on
+    # the rendered text is the only way to catch that: the code was right.
+    from deerflow.tools.builtins.tool_search import get_deferred_tools_prompt_section
+
+    rendered = get_deferred_tools_prompt_section(
+        deferred_names=frozenset({"pacgate_kb_search", "pacgate_list_documents"})
+    )
+    lowered = rendered.lower()
+    check("R7 section names every deferred tool", "pacgate_kb_search" in rendered and "pacgate_list_documents" in rendered, rendered[:120])
+    check("R7 section tells the model a direct call works", "directly" in lowered, rendered[-200:])
+    check("R7 section says promotion needs no fetch first", "no" in lowered and "need to fetch it first" in lowered, rendered[-200:])
+    check("R7 section keeps tool_search as the fallback", "tool_search" in rendered, rendered[-200:])
+    # The empty case must stay empty: a stray instruction with no names would
+    # put deferral guidance in every prompt even when nothing is deferred.
+    check("R7 empty deferred set renders nothing", get_deferred_tools_prompt_section(deferred_names=frozenset()) == "", "non-empty")
 
     out["ok"] = True
 except Exception:

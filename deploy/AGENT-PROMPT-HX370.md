@@ -93,12 +93,25 @@ Then these targeted checks, and report each result (same shell form):
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-lane-connectivity.ps1
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-origin-coherence.ps1
 
-STEP 6 - prove the model context pin actually took effect
+STEP 6 - prove the model context is the one the machine chose
   ollama ps
-After a workflow run, the Pacgate tags must show a SMALL context, not the
-machine-wide one. Expected: pacgate-mid at ctx 32768 and roughly 6.1 GB, and
-pacgate-low at ctx 32768 and roughly 7.6 GB.
-If they load at 131072 / 9.2 GB instead, the pin did not apply - report it.
+After a workflow run, report the CONTEXT column for whichever local models
+loaded. Pacgate no longer creates derived tags: there is no pacgate-mid or
+pacgate-low to look for, and a run that shows the BASE tags is the expected
+result, not a failure.
+
+Expected on a 32 GiB-or-more machine: the base tags (ornith-1.5:9b and/or
+gemma4:12b-it-qat) load at ctx 32768. If they load at 131072 with a large KV
+allocation instead, the installed OLLAMA_CONTEXT_LENGTH or the per-model pin
+in deer-flow-config.yaml did not apply - report it.
+
+Do NOT run `ollama create`, and do not expect derived tags. That mechanism was
+removed on 2026-10-21 because the tags existed in no published image, could not
+be pre-pulled, and split one model into two residency names that evicted each
+other (measured 15.9 s / 15.4 s reloads). A leftover pacgate-mid / pacgate-low
+on a machine that was upgraded rather than freshly installed is harmless: it is
+unused and shares its blobs with the base tag, so it costs no disk.
+
 Also confirm the shared app setting was NOT changed by reading it, not by
 changing it:
   ollama ps   (and report the CONTEXT column values)
@@ -110,7 +123,7 @@ Give me:
   - install: exit status, and the count of models pulled
   - gates: the exact final line from run-all-checks (e.g. "ALL 45 GATES PASSED")
     plus every failing gate verbatim if any
-  - ollama ps: the CONTEXT column for pacgate-mid and pacgate-low
+  - ollama ps: the CONTEXT column for whatever local model loaded
   - anything that surprised you, stated plainly
 
 Rules for the report:

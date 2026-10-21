@@ -77,10 +77,15 @@ $ghcr = python scripts/check-ghcr-anon.py $version 2>&1 | Select-Object -Last 1
 if ($ghcr -match 'NOT public|404') { Ok "GHCR $version not published yet ($($ghcr.Trim()))" }
 else { Bad "GHCR $version already has images: $ghcr" }
 
-# 7. the workflow must still trigger on this tag pattern
+# 7. the workflow must still trigger on THIS release's tag pattern
+# Derived from $version, not hardcoded: the previous form checked "v0.1.*" while
+# releasing 0.1.19, so it would pass vacuously for any later minor. A preflight
+# that cannot fail on the tag it is releasing is not a preflight (see the header).
 $wf = Get-Content '.github/workflows/build-ghcr.yml' -Raw
-if ($wf -match '"v0\.1\.\*"') { Ok 'workflow still triggers on v0.1.*' }
-else { Bad 'workflow no longer triggers on v0.1.* - a tag push would do NOTHING' }
+$minorPattern = 'v' + (($version -split '\.')[0..1] -join '.') + '.*'
+$minorRegex = '"' + ([regex]::Escape($minorPattern)) + '"'
+if ($wf -match $minorRegex) { Ok "workflow still triggers on $minorPattern" }
+else { Bad "workflow does not trigger on $minorPattern - a tag push for $tag would do NOTHING" }
 
 # 8. namespace must resolve identically on both paths
 if ($wf -match '(?m)^\s*GHCR_NAMESPACE:\s*(\S+)') { Ok "GHCR_NAMESPACE = $($Matches[1]) (used by BOTH tag push and dispatch)" }

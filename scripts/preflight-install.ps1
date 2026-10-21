@@ -11,7 +11,7 @@
 #
 # Usage:
 #   pwsh -File scripts\preflight-install.ps1
-#   pwsh -File scripts\preflight-install.ps1 -Tag 0.1.34
+#   pwsh -File scripts\preflight-install.ps1 -Tag 0.2.0
 #
 # Exit codes: 0 = ready;  1 = blocker found (read the FAIL lines);  2 = cannot check
 

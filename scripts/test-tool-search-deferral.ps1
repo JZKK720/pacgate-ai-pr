@@ -89,6 +89,30 @@ Assert-That ($src -match 'merged\s*=\s*dict\(result\.update') `
 $csrc = if (Test-Path $compose) { Get-Content -LiteralPath $compose -Raw } else { '' }
 Assert-That ($csrc -match 'deer-flow-deferred-tool-filter\.py:/app/backend/packages/harness/deerflow/agents/middlewares/deferred_tool_filter_middleware\.py') `
     'compose.prod.yaml mounts the patch over the middleware'
+
+# ── 2b. the prompt section must SAY a direct call works ───────────────────────
+# Measured 2026-10-21: the middleware promoted correctly, but the rendered
+# <available-deferred-tools> section was a bare list of names with no instruction
+# verb, and tool_search's own description says a name is not callable "until
+# fetched". So the model fetched first and the auto-promote path never ran live.
+# A middleware-only assertion cannot catch this - the code was right and the
+# prompt was the defect. Assert on the rendered TEXT, not on the file.
+$promptPatch = Join-Path $PSScriptRoot '..\deploy\client-bundle\patches\deer-flow-tool-search-prompt.py'
+if (-not (Test-Path $promptPatch)) {
+    Fail 'the deferred-tools prompt patch is missing'
+} else {
+    $psrc = Get-Content -LiteralPath $promptPatch -Raw
+    Assert-That ($psrc -match 'callable DIRECTLY by name') `
+        'the prompt section tells the model a direct call works'
+    Assert-That ($psrc -match 'no\\n"\s*$|need to fetch it first|there is no') `
+        'the prompt section says promotion needs no fetch first'
+    Assert-That ($psrc -match 'tool_search') `
+        'the prompt section keeps tool_search as the documented fallback'
+    Assert-That ($psrc -match 'if not deferred_names:\s*\r?\n\s*return ""') `
+        'an empty deferred set still renders nothing (no stray guidance)'
+    Assert-That ($csrc -match 'deer-flow-tool-search-prompt\.py:/app/backend/packages/harness/deerflow/tools/builtins/tool_search\.py') `
+        'compose.prod.yaml mounts the prompt patch over tool_search.py'
+}
 Write-Output ''
 
 # ── 3. the always-bound set stays small ──────────────────────────────────────

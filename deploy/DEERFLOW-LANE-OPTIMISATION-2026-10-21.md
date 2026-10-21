@@ -437,13 +437,36 @@ That run has now happened (5.1) and passed. The fallback if it had failed was on
 line - set `tool_search.enabled: false` - and `test-tool-search-deferral.ps1` fails
 loudly rather than letting the regression pass silently.
 
-One thing the live run did **not** prove: the `Auto-promoting deferred tool ...`
-log line never appeared, because the model called `tool_search` itself rather than
-calling a deferred tool directly. Both paths are covered by
-`test-deferred-tool-runtime.ps1` (12 assertions, including the direct-call path),
-but the auto-promote path has not been observed in a live agent run. That is a
-narrower gap than the one this section used to describe, and it is the honest
-remaining one.
+**CLOSED 2026-10-21.** The `Auto-promoting deferred tool ...` line never appeared
+in the first live run, because the model called `tool_search` itself rather than
+calling a deferred tool directly. That was not a middleware defect - the
+middleware promoted correctly all along - it was a missing instruction. The
+`<available-deferred-tools>` section rendered a bare list of names with no
+instruction verb at all, and `tool_search`'s own description says a name is not
+callable "until fetched", so the model fetched first. The transparent path
+existed but was never selected.
+
+`patches/deer-flow-tool-search-prompt.py` now renders both paths, direct first:
+
+```
+These tools are callable DIRECTLY by name, with their normal arguments.
+Calling one promotes its schema automatically for later turns - there is no
+need to fetch it first. Use `tool_search` only when you need to read a full
+schema before calling, or to discover a tool not listed here.
+```
+
+Observed in a live run, 2026-10-21 13:31, deer-flow gateway, `gemma4:12b-it-qat`:
+
+```
+Auto-promoting deferred tool 'pacgate_pacgate_kb_search' on first call (tool_search deferral is transparent)
+Auto-promoting deferred tool 'pacgate_pacgate_list_matters' on first call (tool_search deferral is transparent)
+Auto-promoting deferred tool 'pacgate_pacgate_kb_search' on first call (tool_search deferral is transparent)
+```
+
+The run called three deferred tools directly and `tool_search` **zero** times, so
+the path that had never fired is now the path the model chooses. `R7` in
+`test-deferred-tool-runtime.ps1` asserts the rendered text so this cannot regress
+silently; a middleware-only test could not have caught it.
 
 
 
