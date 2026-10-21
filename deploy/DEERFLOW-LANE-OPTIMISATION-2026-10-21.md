@@ -1,7 +1,7 @@
 # deer-flow lane optimisation: model selection, prompt surface, and the WSL ceiling
 
 **Date:** 2026-10-21
-**Machine:** HX370 (`CUBECLOUD01`) — RX 7600 XT 15.98 GB VRAM, 61.62 GiB RAM,
+**Machine:** HX370 (`CUBECLOUD01`) - RX 7600 XT 15.98 GB VRAM, 61.62 GiB RAM,
 Docker VM 30.17 GiB, Ollama 0.40.6, deer-flow 0.1.34
 **Supersedes:** the derived-tag recommendation in
 `CONCURRENCY-AND-VRAM-2026-10-21.md` §6.5 and the `tool_search: enabled: false`
@@ -106,7 +106,7 @@ Call tool_search first to expose and promote this tool's schema, then retry.
 The model then had to (a) understand the instruction, (b) emit a second call to
 `tool_search`, (c) wait for the schema, and (d) re-emit the original call with
 correct arguments. Small local models (gemma4:12b, ornith-1.5:9b) routinely fail at
-(b) or (d). The recorded symptom — "never reaching write_file" — is exactly that.
+(b) or (d). The recorded symptom - "never reaching write_file" - is exactly that.
 
 ### The fix
 
@@ -132,7 +132,7 @@ and a catalog change drops stale names.
 | --- | --- | --- |
 | bound tools | 44 | **10** |
 | bound schema | 10,645 tok | **2,823 tok** |
-| saving | — | **73%** |
+| saving | - | **73%** |
 
 The 10 always-bound tools are the sandbox surface the agent actually uses. Across
 828 checkpoints and 2,664 tool calls on this box, `bash`/`read_file`/`write_file`/
@@ -141,7 +141,7 @@ The 10 always-bound tools are the sandbox surface the agent actually uses. Acros
 ### What the research says
 
 Anthropic's Tool Search Tool reports the same shape of result: ~85% token reduction
-(77K → 8.7K) and **accuracy improvements**, not regressions — Opus 4 went 49% → 74%
+(77K → 8.7K) and **accuracy improvements**, not regressions - Opus 4 went 49% → 74%
 on MCP evaluations. Their guidance is to use it when definitions exceed 10K tokens
 and there are 10+ tools, which is exactly this case. The failure here was
 implementation, not the technique.
@@ -168,7 +168,7 @@ Confirmed: `wsl -l -v` shows `docker-desktop` **Running**, and
 | all containers | 9.53 GiB |
 
 So ~22 GiB is charged to Windows but used by nothing. `drop_caches` inside the
-guest succeeded and **did not reduce `vmmemWSL`** — so this is not reclaimable guest
+guest succeeded and **did not reduce `vmmemWSL`** - so this is not reclaimable guest
 cache, it is the VM's allocated footprint.
 
 **It is also not permanent.** Later in the same session, under ordinary load,
@@ -184,12 +184,12 @@ The alarming reading was taken **during a workflow peak**. At steady state:
 | --- | --- | --- |
 | Available | **0.03 MB** | **32.6 GiB** |
 | Committed | 71.1 GB | 59.2 GB |
-| Pages/sec | — | **9** |
-| Pagefile usage | — | 35.8% |
+| Pages/sec | - | **9** |
+| Pagefile usage | - | 35.8% |
 
 **There is no memory pressure at steady state.** The 30 GiB VM footprint is
 headroom Windows has not needed to reclaim, not a leak. The earlier "50 of 64 GB"
-reading was commit charge during a peak, and it was real then — but it is not the
+reading was commit charge during a peak, and it was real then - but it is not the
 standing condition.
 
 ### What can be done without a restart
@@ -211,7 +211,7 @@ memory=24GB
 autoMemoryReclaim=gradual
 ```
 
-and apply it at the next planned restart. Pacgate does not write `.wslconfig` — it
+and apply it at the next planned restart. Pacgate does not write `.wslconfig` - it
 is per-user and machine-wide, governing every WSL distro, which is the same boundary
 violation as rewriting Ollama's shared context setting.
 
@@ -222,7 +222,7 @@ violation as rewriting Ollama's shared context setting.
 Each of these was **measured**, not estimated. Two of the three turned out to be
 worse ideas than they looked, which is why they are not shipped.
 
-### 4.1 Larger `-ub` batch size — measured SLOWER, rejected
+### 4.1 Larger `-ub` batch size - measured SLOWER, rejected
 
 **The idea.** Ollama picks `-b 512 -ub 512` when the context is 131072, and
 `-b 2048` when it is 65536. A larger physical batch should raise prefill
@@ -230,7 +230,7 @@ throughput, and the extra cost looked small.
 
 **How to set it.** `num_batch` IS a valid Modelfile parameter (confirmed: it
 appears in the binary's parameter list, and `ollama create` accepts it). A derived
-tag with `PARAMETER num_batch 2048` does take effect — the runner logged
+tag with `PARAMETER num_batch 2048` does take effect - the runner logged
 `n_batch = 2048, n_ubatch = 2048`.
 
 **What it actually cost.** Not the ~435 MiB I estimated. Measured:
@@ -244,7 +244,7 @@ tag with `PARAMETER num_batch 2048` does take effect — the runner logged
 
 That is **+1,522 MiB**, not +435 MiB.
 
-**What it actually bought.** Nothing — it was slower. Same 16,908-token prompt,
+**What it actually bought.** Nothing - it was slower. Same 16,908-token prompt,
 two runs each:
 
 | config | prefill | throughput |
@@ -259,11 +259,11 @@ reason is that gemma4 is a sliding-window hybrid: a larger ubatch does not help
 when attention is already windowed, and the bigger compute buffer costs cache
 locality. Do not revisit this without a different model architecture.
 
-### 4.2 `OLLAMA_KV_CACHE_TYPE=q8_0` — works, saves 1.4 GiB, quality holds
+### 4.2 `OLLAMA_KV_CACHE_TYPE=q8_0` - works, saves 2.7 GB, quality holds
 
 **The idea.** Quantize the KV cache from f16 to q8_0 to halve it.
 
-**Measured saving.** The KV cache is larger than the earlier report claimed —
+**Measured saving.** The KV cache is larger than the earlier report claimed -
 **3,008 MiB**, not 3,008 total across both buffers as assumed. With q8_0:
 
 | | f16 (default) | q8_0 |
@@ -274,7 +274,7 @@ locality. Do not revisit this without a different model architecture.
 | compute | 185 MiB | 384 MiB |
 | **total** | **9,831 MiB** | **8,620 MiB** |
 
-**Saving: 1,211 MiB** (9,831 → 8,620). The env var is honoured — the runner logged
+**Saving: 1,211 MiB** (9,831 → 8,620). The env var is honoured - the runner logged
 `K (q8_0): 544.00 MiB, V (q8_0): 544.00 MiB`.
 
 **Quality test.** Four deterministic prompts (temperature 0), fp16 vs q8_0:
@@ -294,15 +294,46 @@ locality. Do not revisit this without a different model architecture.
 | fp16 | `4,750,000 RMB` ✅ |
 | q8_0 | `4,750,000 RMB` ✅ |
 
-**Verdict: viable, but not shipped.** It is a real 1.2 GiB saving with no observed
-quality loss at 7.5k context. It is held back because (a) the box currently has
-6.4 GiB of VRAM free, so the saving buys nothing today, and (b) the quality test
-above is 5 prompts, not a benchmark — shipping a quantization change on that
-evidence would repeat the mistake this whole investigation was correcting. If VRAM
-ever becomes the binding constraint, this is the first lever to pull, and the test
-above is the baseline to extend.
+**Verdict: viable, and now measured on a real corpus.** It is a real saving with no
+observed quality loss. It is still not shipped, for one reason only: the box
+currently has 6.4 GiB of VRAM free, so the saving buys nothing today. If VRAM ever
+becomes the binding constraint, this is the first lever to pull.
 
-### 4.3 Tool description compression — measured 47%, but the wrong lever now
+**Real-corpus confirmation (2026-10-21, later the same day).** The 5-prompt test
+above was not evidence enough to ship, so it was extended to a real document: the
+8,002-character Chinese data-governance section actually stored in this deployment
+(`data/tenants/.../docs/presented-data-governance-section_v1.md`). Eight
+deterministic questions (temperature 0) that require reading the document - six
+numeric retention/destruction facts spread across its length, one needle at the
+tail, one principle stated near the top:
+
+| KV type | runner size at ctx 32768 | quality |
+| --- | --- | --- |
+| f16 (default) | **9.7 GB** | 8/8 |
+| q8_0 | **7.0 GB** | 8/8 |
+
+**2.7 GB saved at identical context, 8/8 on both.** The runner-size figures are
+`ollama ps` readings at the same `num_ctx`, which is a stronger measurement than
+the buffer arithmetic above because it is what the scheduler actually reserves.
+
+**How it was tested without touching the machine.** The first attempt set
+`OLLAMA_KV_CACHE_TYPE` as a User environment variable - which is exactly the
+machine-wide change this investigation exists to avoid, and it was reverted
+immediately. The correct method is a second `ollama serve` on its own port with
+the variable scoped to that process:
+
+```powershell
+$env:OLLAMA_KV_CACHE_TYPE = 'q8_0'
+$env:OLLAMA_HOST = '127.0.0.1:11435'
+ollama serve
+```
+
+The scoped server's own startup log confirms `OLLAMA_KV_CACHE_TYPE:q8_0`, and the
+main server on 11434 is untouched. That is the pattern to use for any future
+Ollama experiment on a shared machine.
+
+
+### 4.3 Tool description compression - measured 47%, but the wrong lever now
 
 **The idea.** Shorten tool descriptions to cut the bound schema.
 
@@ -316,8 +347,8 @@ above is the baseline to extend.
 
 **Why it is rejected.** The descriptions carry real usage guidance, not padding:
 
-- `officecli` (4,002 chars) contains the **delivery gate** — validate clean, check
-  `view issues`, then a visual screenshot audit — plus the `load_skill` routing
+- `officecli` (4,002 chars) contains the **delivery gate** - validate clean, check
+  `view issues`, then a visual screenshot audit - plus the `load_skill` routing
   table. Truncating it removes the instructions that stop the agent delivering a
   broken document.
 - `openviking_add_resource` (2,395 chars) documents the async upload handshake and
@@ -325,7 +356,7 @@ above is the baseline to extend.
 - A duplicate-sentence scan found **zero** redundancy in 8 of 9 large descriptions.
 
 **And it is now redundant.** Deferral already removes 73% of the bound surface
-(10,645 → 2,823 tokens) **without losing any description text** — the full schema
+(10,645 → 2,823 tokens) **without losing any description text** - the full schema
 is fetched on demand. Compression would save a further ~1,300 tokens while
 destroying the guidance. That is the wrong trade.
 
@@ -342,8 +373,8 @@ Ordered by value per unit of risk. Items 1–3 are already done and verified.
 | 1 | Standard tags, no derived tags | **done** | removes 15.9 s reloads and 13 evictions/day |
 | 2 | `tool_search` deferral + transparency patch | **done** | 73% of the prompt surface, no quality loss |
 | 3 | Prompt-cache cap (`LLAMA_ARG_CACHE_RAM`) | **done** | bounds 6.5 GiB of host RAM |
-| 4 | Run a real workflow end-to-end | **done** | see 5.1 — a live run called two deferred MCP tools with no promotion error |
-| 5 | Extend the q8_0 quality test to a real corpus | if VRAM binds | 1.2 GiB for free, but 5 prompts is not evidence |
+| 4 | Run a real workflow end-to-end | **done** | see 5.1 - a live run called two deferred MCP tools with no promotion error |
+| 5 | Extend the q8_0 quality test to a real corpus | **done** | 8/8 on both f16 and q8_0 against a real 8k Chinese document; 2.7 GB saved at ctx 32768. Still not shipped: VRAM is not the binding constraint today |
 | 6 | WSL ceiling at a maintenance window | optional | not needed at steady state (32 GiB available) |
 | 7 | Larger `-ub` | **do not** | measured slower, +1.5 GiB |
 | 8 | Description compression | **do not** | dominated by deferral, destroys guidance |

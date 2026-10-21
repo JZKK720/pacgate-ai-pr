@@ -118,6 +118,20 @@ if (Test-Path $envExample) {
     Assert-That $false ".env.example missing at $envExample"
 }
 
+# ── 5. KV cache quantization stays an OPERATOR lever, not an installer default ─
+# Measured 2026-10-21 on a real 8,002-char Chinese document, 8 deterministic
+# questions, identical context (32768):
+#     f16 (default)  9.7 GB runner   8/8
+#     q8_0           7.0 GB runner   8/8
+# So it is a real 2.7 GB saving with no observed quality loss. It is still NOT
+# shipped, because VRAM is not the binding constraint on this box (6.4 GiB free).
+# The property to protect is that the installer does not silently quantize a
+# shared server's KV cache - that is the operator's call, and it is the same
+# boundary as the context setting one layer up.
+Write-Host '5. KV cache quantization is not applied by the installer' -ForegroundColor White
+Assert-That ($src -notmatch 'OLLAMA_KV_CACHE_TYPE') `
+    'the installer does not set OLLAMA_KV_CACHE_TYPE (operator lever, quality trade-off)'
+
 Write-Output ''
 if ($script:Failed -gt 0) {
     Write-Host ("RESULT: {0} passed, {1} FAILED" -f $script:Passed, $script:Failed) -ForegroundColor Red
