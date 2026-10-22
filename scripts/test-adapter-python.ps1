@@ -72,8 +72,19 @@ $env:PYTHONPATH = $adapterRoot
 
 Push-Location $suiteDir
 try {
-    $out = & $python -m unittest discover -s . -v 2>&1 | Out-String
-    $code = $LASTEXITCODE
+    # PACGATE 2026-10-22: unittest writes its per-test progress lines to STDERR,
+    # and under $ErrorActionPreference='Stop' in Windows PowerShell 5.1 the first
+    # native stderr write is a TERMINATING error. The gate therefore died on the
+    # first test name ("... ok") and reported exit=1 with the suite actually
+    # green. Lower the preference for the duration of the call; the exit code is
+    # the verdict, so it must be read rather than thrown.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $python -m unittest discover -s . -v 2>&1 | Out-String
+        $code = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $prevEap }
 }
 finally {
     Pop-Location

@@ -113,8 +113,17 @@ if (Test-Path $dfPath) {
 # wherever it appears, including in a service that is not named ocr-service and
 # in an override file added later. This is the check that would have caught the
 # 0.1.21 volume when 0.1.28 baked.
-$composes = @(Get-ChildItem -Recurse -Path deploy -Include *.yaml, *.yml -File |
-    Where-Object { $_.FullName -notmatch '\\node_modules\\' })
+#
+# SCOPE: compose files only. A recursive scan of all of `deploy/` walks
+# `client-bundle/data/`, which is the GITIGNORED deer-flow runtime tree - it
+# contains per-thread symlinks and a `.venv` whose lib64 entry cannot be read on
+# Windows. Measured 2026-10-22: the unfiltered -Recurse threw
+# "The file cannot be accessed by the system" and aborted this gate before it
+# asserted anything. Runtime data can never contain a compose file anyway, so
+# excluding it removes no coverage.
+$skipDirs = @('\\data\\', '\\node_modules\\', '\\__pycache__\\', '\\.venv\\')
+$composes = @(Get-ChildItem -Recurse -Path deploy -Include *.yaml, *.yml -File -ErrorAction SilentlyContinue |
+    Where-Object { $f = $_.FullName; -not ($skipDirs | Where-Object { $f -match $_ }) })
 Assert-True ($composes.Count -ge 2) "found compose files to scan ($($composes.Count))"
 
 $shadowHits = @()

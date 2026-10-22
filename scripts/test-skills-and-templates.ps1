@@ -146,9 +146,22 @@ else {
 }
 
 # Live confirmation when a qm container happens to be running.
+#
+# PACGATE 2026-10-22: `docker inspect --format '{{range .Mounts}}{{.Destination}}{{"|"}}{{end}}'`
+# FAILED HERE with `template parsing error: template: :1: unexpected "|" in command`.
+# Windows PowerShell 5.1 strips the inner double quotes out of a single-quoted
+# native argument before docker sees it, so Go received `{{|}}` - the same defect
+# class already fixed in the E10 gate. Separating mounts with a plain character
+# avoids embedded quotes entirely, and the call runs with the preference lowered
+# because a native stderr write under `Stop` aborts the whole gate.
 $qmCore = @(docker ps --format '{{.Names}}' 2>$null | Where-Object { $_ -like '*qm-pacgate-core*' })
 if ($qmCore.Count -gt 0) {
-    $mounted = docker inspect $qmCore[0] --format '{{range .Mounts}}{{.Destination}}{{"|"}}{{end}}' 2>$null
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $mounted = (& docker inspect $qmCore[0] --format '{{range .Mounts}}{{.Destination}}{{end}}' 2>$null | Out-String).Trim()
+    }
+    finally { $ErrorActionPreference = $prevEap }
     if ($mounted -and $mounted -match '/layer/skills') {
         Write-Pass "running container has /layer/skills mounted ($($qmCore[0]))"
     }
