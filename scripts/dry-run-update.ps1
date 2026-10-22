@@ -126,8 +126,21 @@ Write-Host '--- 3. repo refresh would be a no-op ---' -ForegroundColor Cyan
 $head = (git rev-parse HEAD).Trim()
 $remote = ''
 try { $remote = (git ls-remote origin refs/heads/main 2>$null | ForEach-Object { $_.Split()[0] }).Trim() } catch { }
-Check 'local HEAD equals origin/main' ($remote -and $head -eq $remote) `
-    ("local {0} vs origin {1}" -f $head.Substring(0, 7), $(if ($remote) { $remote.Substring(0, 7) } else { 'unreachable' }))
+
+# The property is "a pull would change nothing", not "HEAD is byte-identical to
+# origin/main". A machine that carries local commits ahead of origin is ALSO a
+# no-op for `git pull --ff-only` - it fast-forwards nothing and exits 0 - and
+# that is the normal state of a dev box that has committed a local fix. Testing
+# equality instead reported a healthy ahead-by-N tree as a failure, which is the
+# same class of defect as a gate that can never fail: it trains the reader to
+# ignore the line.
+$behind = 0
+if ($remote) {
+    $counts = (git rev-list --left-right --count "HEAD...$remote" 2>$null)
+    if ($counts -match '^\s*(\d+)\s+(\d+)\s*$') { $behind = [int]$Matches[2] }
+}
+Check 'a pull would be a no-op (local is not behind origin/main)' ($remote -and $behind -eq 0) `
+    ("local {0} vs origin {1}; behind by {2} commit(s)" -f $head.Substring(0, 7), $(if ($remote) { $remote.Substring(0, 7) } else { 'unreachable' }), $behind)
 
 # ── 4. The staleness probe (step 7e) reports the TRUE state ────────────────
 Write-Output ''
