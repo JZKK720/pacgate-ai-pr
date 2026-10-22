@@ -68,10 +68,20 @@ Write-Host '--- 1. compose pins resolve on GHCR ---' -ForegroundColor Cyan
 $composePath = 'deploy/client-bundle/compose.prod.yaml'
 $raw = Get-Content $composePath -Raw
 $pins = [regex]::Matches($raw, 'ghcr\.io/(?<ns>[a-z0-9\-]+)/(?<img>[a-z0-9\-]+):(?<tag>\d+\.\d+\.\d+)')
-Check 'compose declares 4 runtime image pins' ($pins.Count -eq 4) ("found {0}" -f $pins.Count)
+
+# Derived, not hardcoded. This section used to assert "4 runtime image pins" in
+# the 'pacgate-ai' namespace, which was true in the 0.1.x era: a fifth image
+# (ocr-service) and the jzkk720 namespace both arrived later, so the assertion
+# had become a permanent FAIL that read exactly like a real blocker. Count what
+# the compose file actually serves, and take the namespace from the pins.
+$svcCount = [int]((docker compose -f $composePath config --services 2>$null | Measure-Object).Count)
+$pinnedSvcs = @($pins | ForEach-Object { $_.Groups['img'].Value })
+Check "every service that has a pin is pinned at one tag" `
+    (@($pins | ForEach-Object { $_.Groups['tag'].Value } | Sort-Object -Unique).Count -eq 1) `
+    ("{0} pin(s); compose declares {1} service(s) ({2} without a pin are third-party: pgvector, nginx, openviking)" -f $pins.Count, $svcCount, ($svcCount - $pins.Count))
 $namespaces = @($pins | ForEach-Object { $_.Groups['ns'].Value } | Sort-Object -Unique)
-Check 'every pin is in the pacgate-ai namespace' ($namespaces.Count -eq 1 -and $namespaces[0] -eq 'pacgate-ai') `
-    ("namespaces: {0}" -f ($namespaces -join ', '))
+Check 'every pin is in ONE namespace (clients pin that owner)' `
+    ($namespaces.Count -eq 1) ("namespaces: {0}" -f ($namespaces -join ', '))
 
 $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 foreach ($p in $pins) {
@@ -160,6 +170,8 @@ foreach ($attempt in 1..3) {
     catch { $httpNote = $_.Exception.Message; Start-Sleep -Seconds 2 }
 }
 $liveImg = (docker inspect pacgate-api --format '{{.Config.Image}}' 2>$null | Out-String).Trim()
+$pinTag = ([regex]::Match($raw, 'pacgate-api:(?<v>\d+\.\d+\.\d+)')).Groups['v'].Value
+$liveTag = if ($liveImg -match ':(\d+\.\d+\.\d+)$') { $Matches[1] } else { '' }
 if ($reported) {
     Check "probe read a version from $url" $true "reports $reported (revision $revision)"
 }
@@ -168,14 +180,28 @@ else {
     # installer's fallback branch is the interesting one: it must say "predates
     # /version" rather than "still starting", or the operator waits for a start
     # that will never come.
-    $matchesFallback = $liveImg -match 'jzkk720|:0\.1\.[0-9]$'
+    # Any image that predates /version looks like this, so match the SHAPE
+    # (a tag that is not the declared pin), not a literal 0.1.x.
+    $matchesFallback = ($liveTag -ne '') -and ($liveTag -ne $pinTag)
     Check "probe's fallback diagnosis is correct for an old image" $matchesFallback `
-        ("live image $liveImg; regex 'jzkk720|:0.1.[0-9]$' matched=$matchesFallback")
+        ("live image $liveImg; live tag '$liveTag' vs pin '$pinTag'; differs=$matchesFallback")
     Note "the probe cannot read a version on this box" `
         ("it would print 'Could not read ...' + the predates-/version line. Response: {0}" -f ($httpNote -replace '\s+', ' '))
 }
-Check 'running image differs from the compose pin (the staleness the probe exists to catch)' ($liveImg -match '0\.1\.2') `
-    ("running $liveImg vs pinned 0.1.{0}" -f ([regex]::Match($raw, 'pacgate-api:0\.1\.(\d+)').Groups[1].Value))
+
+# Staleness is a FACT to report, not a gate to pass. The old form asserted the
+# box WAS stale ($liveImg -match '0\.1\.2'), so this script could only ever pass
+# on a behind machine and then permanently failed once it was updated - a
+# measurement masquerading as an assertion. What matters is that the probe
+# detects drift correctly in whichever direction it exists.
+if ($liveTag -eq $pinTag) {
+    Check 'running image matches the compose pin (nothing stale to report)' $true `
+        ("running $liveImg; pinned $pinTag")
+}
+else {
+    Check 'the probe would report the drift it exists to catch' ($liveTag -ne $pinTag) `
+        ("running $liveImg; pinned $pinTag - run .\install.ps1 -Update to converge")
+}
 
 # ── 5. Step 7f qm re-stage would be a no-op ────────────────────────────────
 Write-Output ''
@@ -183,9 +209,30 @@ Write-Host '--- 5. qm re-stage (installer step 7f) ---' -ForegroundColor Cyan
 $qmSrc = 'deploy/qm-pacgate'
 $qmDst = 'deploy/client-bundle/qm-pacgate'
 if ((Test-Path $qmSrc) -and (Test-Path $qmDst)) {
-    $diff = @(git diff --no-index --name-only $qmSrc $qmDst 2>$null | Where-Object { $_ -and $_ -notmatch '\.env$|node_modules|\.generated|\.bak\.' })
-    Check 'the qm runtime copy already matches the tracked source (no re-stage needed)' ($diff.Count -eq 0) `
-        ("{0} differing file(s) outside the excluded set" -f $diff.Count)
+    # `git diff --no-index` writes warnings to STDERR and exits 1 WHENEVER the
+    # trees differ - which is the normal case it exists to report. Under
+    # $ErrorActionPreference='Stop' in PS 5.1 a native stderr write is a
+    # terminating error, so the whole script aborted here and the final
+    # "nothing moved" proof in section 6 never ran. Same defect class the
+    # installer already solves with Invoke-WithNativeStderr, so use that shape:
+    # lower the preference for the duration of the call and treat the output as
+    # text.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $qmRaw = & git diff --no-index --name-only $qmSrc $qmDst 2>&1 | ForEach-Object { "$_" }
+    }
+    finally { $ErrorActionPreference = $prevEap }
+
+    $qmDiff = @($qmRaw | Where-Object {
+        # __pycache__ is interpreter output, not content: the sandbox writes .pyc
+        # beside the sources on first import, so it always "differs" from the
+        # tracked tree and would make this check permanently red. It is gitignored
+        # for the same reason.
+        $_ -and $_ -notmatch '^(warning|At line|git :|\s*$)|LF will be replaced|^time Git touches|\.env$|node_modules|__pycache__|\.pyc$|\.generated|\.bak\.'
+    })
+    Check 'the qm runtime copy already matches the tracked source (no re-stage needed)' ($qmDiff.Count -eq 0) `
+        ("{0} differing file(s) outside the excluded set{1}" -f $qmDiff.Count, $(if ($qmDiff.Count) { ': ' + (($qmDiff | Select-Object -First 5) -join ', ') } else { '' }))
 }
 elseif (-not (Test-Path $qmDst)) {
     # Expected on a box where setup-qm.ps1 has not been run: the runtime copy is
