@@ -67,20 +67,42 @@ foreach ($f in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle
 }
 
 # 5. the tag must not already exist
+#
+# A network failure is NOT evidence the tag exists. The previous form tested
+# truthiness of the COMBINED output, so a "Failed to connect" message made -not
+# $rt false and the gate reported "0.2.0 already exists" - a false blocker that
+# looks exactly like a real one. Distinguish the two: only a ref line means the
+# tag is present; anything else means we could not check.
 $lt = git rev-parse -q --verify "refs/tags/$tag" 2>&1
-$rt = git ls-remote --tags origin $tag 2>&1
-if (-not $lt -and -not $rt) { Ok "$tag absent locally and on origin" }
-else { Bad "$tag already exists (local='$lt' remote='$rt')" }
+if ($lt) {
+    Bad "$tag already exists locally ($lt)"
+} else {
+    $rt = git ls-remote --tags origin $tag 2>&1 | Out-String
+    if ($rt -match "refs/tags/$([regex]::Escape($tag))(\^\{)?\s*$") {
+        Bad "$tag already exists on origin"
+    } elseif ($rt -match 'failed to connect|unable to access|could not resolve|Connection was reset|Could not connect') {
+        # Cannot verify. Report it as unknown rather than as either verdict, and
+        # stop the release: tagging blind is how a duplicate tag gets published.
+        Bad "$tag existence on origin UNVERIFIED (network): $($rt.Trim())"
+    } else {
+        Ok "$tag absent locally and on origin"
+    }
+}
 
 # 6. the images must not already exist
 $ghcr = python scripts/check-ghcr-anon.py $version 2>&1 | Select-Object -Last 1
 if ($ghcr -match 'NOT public|404') { Ok "GHCR $version not published yet ($($ghcr.Trim()))" }
 else { Bad "GHCR $version already has images: $ghcr" }
 
-# 7. the workflow must still trigger on this tag pattern
+# 7. the workflow must still trigger on THIS release's tag pattern
+# Derived from $version, not hardcoded: the previous form checked "v0.1.*" while
+# releasing 0.1.19, so it would pass vacuously for any later minor. A preflight
+# that cannot fail on the tag it is releasing is not a preflight (see the header).
 $wf = Get-Content '.github/workflows/build-ghcr.yml' -Raw
-if ($wf -match '"v0\.1\.\*"') { Ok 'workflow still triggers on v0.1.*' }
-else { Bad 'workflow no longer triggers on v0.1.* - a tag push would do NOTHING' }
+$minorPattern = 'v' + (($version -split '\.')[0..1] -join '.') + '.*'
+$minorRegex = '"' + ([regex]::Escape($minorPattern)) + '"'
+if ($wf -match $minorRegex) { Ok "workflow still triggers on $minorPattern" }
+else { Bad "workflow does not trigger on $minorPattern - a tag push for $tag would do NOTHING" }
 
 # 8. namespace must resolve identically on both paths
 if ($wf -match '(?m)^\s*GHCR_NAMESPACE:\s*(\S+)') { Ok "GHCR_NAMESPACE = $($Matches[1]) (used by BOTH tag push and dispatch)" }

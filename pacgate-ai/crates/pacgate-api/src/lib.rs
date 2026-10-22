@@ -27,7 +27,7 @@ pub use text_extract::{extract_text_native, TextExtraction};
 use axum::{
     extract::DefaultBodyLimit,
     middleware,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use tower::ServiceBuilder;
@@ -80,6 +80,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/matters", get(matters::list_matters))
         .route("/api/matters/:id", get(matters::get_matter))
         .route("/api/matters/:id", delete(matters::delete_matter))
+        // Set or clear a matter's cross-machine identity. Added 2026-10-19:
+        // external_key was write-once (creation only), so matters created before
+        // the column existed could never be repaired and cross-machine import
+        // had to match on a non-unique name. Admin-only; 409 on a duplicate key.
+        .route("/api/matters/:id", patch(matters::patch_matter))
         .route("/api/matters/:id/memory", get(matters::get_matter_memory))
         .route("/api/matters/:id/memory", post(matters::save_matter_memory))
         .route(

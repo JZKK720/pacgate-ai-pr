@@ -2,13 +2,77 @@
 
 Priority: **P0 — do this before anything else** · Effort: **S–M** · Depends on: —
 
+> ## ⚠️ SECOND EXPOSURE, found 2026-10-15 - rotation is still outstanding
+>
+> This plan's 2026-09-15 sweep covered three files in the `pacgate-ai-assets` subtree and
+> missed a fourth. `deploy/BENCHMARK-REPORT-2026-10-08.md` (added later, by `011b9da` on
+> 2026-10-09, tracked on `origin/main` only) carried the **live** `pacgate-api` admin
+> password in plain text, **byte-identical to the running `deploy/client-bundle/.env`**,
+> plus two deer-flow account passwords and the qm sandbox bridge password.
+>
+> Both repos are **public** (`JZKK720/pacgate-ai-pr` and `pacgate-ai/pacgate-ai-pr`).
+>
+> **Why the September sweep missed it:** the detector's `md-Password` rule required a
+> **bold** field name (`| **Password** |`). This file used plain `| Password |` and, for
+> two rows, no label at all (values only, under a header-declared table). Measured: zero
+> matches on the file. The detector also had no `exit` statement, so it always returned 0,
+> and it could not even be parsed by PowerShell 5.1 - the client AIPC's only shell.
+>
+> **A FIFTH site, same credential, different shape:** `scripts/run-benchmark.ps1` and
+> `scripts/test-model-picker-e2e.ps1` each hardcoded the deer-flow admin password in a
+> parameter default (`[string]$DfPassword = '<literal>'`). That shape matched **no** rule
+> at all - not markdown, not CJK, not a known key format. Both scripts now resolve it at
+> runtime from `-Password` / `PACGATE_DEERFLOW_PASSWORD` / the gitignored
+> `deploy/client-bundle/.deer-flow-credentials`, and the picker gate reports CANNOT CHECK
+> (exit 2) when none is set rather than failing.
+>
+> **Redacted in HEAD 2026-10-15** (values → `[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]`), and the
+> detector is fixed, exit-coded and wired into `run-all-checks.ps1`.
+>
+> **Redaction does not remove it from history.** Measured with
+> `scripts/check-credential-state.ps1`: `ORIGIN: LIVE x7` against `LOCAL: LIVE x2`, and
+> `git log -S` finds each value in up to 7 commits back to `011b9da`. The rotation in
+> Step 1 below is therefore **still mandatory and still not done** - it now covers these
+> four additional values too.
+
 ## Status
 
-Redaction is **done and pushed to origin**. The fork is a **one-click fix** (see
-below) — no credential transfer needed. Rotation and history purge are
-**outstanding**.
+For the **2026-09-15 exposure** (the three `pacgate-ai-assets` files): redaction is **done
+and pushed to origin**. Rotation and history purge are **outstanding**.
 
-## Push state (verified 2026-09-16)
+For the **2026-10-15 exposure** (`deploy/BENCHMARK-REPORT-2026-10-08.md`): redaction is
+done **locally and not yet pushed**. Rotation is **outstanding**.
+
+Push state, re-measured 2026-10-15 with `scripts/check-credential-state.ps1`:
+
+| Location | 2026-09-15 exposure | 2026-10-15 exposure |
+| --- | --- | --- |
+| Local `HEAD` | redacted | redacted (uncommitted) |
+| `origin/main` (`JZKK720`) | redacted | **STILL LIVE x7** until pushed |
+| fork `main` (`pacgate-ai`) | not present (fork predates the assets subtree) | not present (fork predates the file) |
+
+Push state, re-measured 2026-10-15. Measured with `git cat-file -e <rev>:<path>` rather
+than by inference:
+
+| Location | 2026-09-15 exposure (`OPERATOR.md` etc.) | 2026-10-15 exposure (`BENCHMARK-REPORT-2026-10-08.md`) |
+| --- | --- | --- |
+| Local `HEAD` | removed (`ec17f28`) | redacted (uncommitted) |
+| `origin/main` (`JZKK720`) | removed (`ec17f28`) | **STILL LIVE x7** until pushed |
+| fork `main` (`pacgate-ai`) | removed (`ec17f28`) | not present (fork predates the file) |
+| **git history** (`01a4644`, `b293590`, `011b9da`) | **STILL PRESENT** | **STILL PRESENT** |
+
+Two corrections to what this file said on 2026-09-16:
+
+- The fork was **not** "STILL LIVE". It does contain the assets subtree (55 files), but
+  `ec17f28` removed the credential carriers there too. Both credential files are absent at
+  `fork/main`. `git cat-file -e fork/main:<path>` fails for both. Verify this way rather
+  than trusting the table.
+- "Redaction is done and pushed to origin" was true of `HEAD` and remained true of the
+  **content** - but it was never true of **history**. Both exposures are still fully
+  readable with `git log -S` at `01a4644`, `b293590` and `011b9da`, which is precisely
+  what Step 2 (the purge) exists to fix and has never been run.
+
+## Push state (verified 2026-09-16, for the 2026-09-15 exposure)
 
 | Location | State |
 | --- | --- |

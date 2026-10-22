@@ -79,6 +79,18 @@ impl FsDocumentStore {
             Some("xlsx") => "xlsx",
             Some("pptx") => "pptx",
             Some("html") | Some("htm") => "html",
+            // Raster images. These are NOT text-native: they carry no extractable
+            // text in the file, so `pacgate-api/src/extract.rs` routes them to
+            // ocr-service, which already returns images "as-is" (see
+            // `_prepare_pages` in deploy/ocr-service/app.py). Accepting them here
+            // is what gives a client a path to the OCR lane at all - until
+            // 2026-10-21 the only way in was a PDF, so a photo or a scan could not
+            // be submitted even though the OCR service handled it correctly.
+            Some("png") => "png",
+            Some("jpg") | Some("jpeg") => "jpeg",
+            Some("tif") | Some("tiff") => "tiff",
+            Some("bmp") => "bmp",
+            Some("webp") => "webp",
             _ => {
                 // Name what was rejected and what is accepted. The legacy binary
                 // formats are called out with a specific remedy because clients do
@@ -96,7 +108,8 @@ impl FsDocumentStore {
                     ),
                     _ => format!(
                         ".{ext} is not a supported format. Supported: \
-                         .docx .xlsx .pptx .pdf .txt .md .html"
+                         .docx .xlsx .pptx .pdf .txt .md .html \
+                         .png .jpg .jpeg .tif .tiff .bmp .webp (images go to OCR)"
                     ),
                 };
                 return Err(pacgate_core::PacgateError::ValidationError(msg));
@@ -354,6 +367,11 @@ impl FsDocumentStore {
             "xlsx" => "xlsx",
             "pptx" => "pptx",
             "html" => "html",
+            "png" => "png",
+            "jpeg" => "jpg",
+            "tiff" => "tif",
+            "bmp" => "bmp",
+            "webp" => "webp",
             _ => "bin",
         };
         format!(
@@ -457,16 +475,7 @@ impl FsDocumentStore {
 
 fn row_to_document(row: &sqlx::postgres::PgRow) -> Document {
     let format_str: String = row.get("format");
-    let format = match format_str.as_str() {
-        "docx" => DocumentFormat::Docx,
-        "pdf" => DocumentFormat::Pdf,
-        "txt" => DocumentFormat::Txt,
-        "markdown" => DocumentFormat::Markdown,
-        "xlsx" => DocumentFormat::Xlsx,
-        "pptx" => DocumentFormat::Pptx,
-        "html" => DocumentFormat::Html,
-        _ => DocumentFormat::Txt,
-    };
+    let format = DocumentFormat::from_storage_key(&format_str);
     Document {
         id: DocumentId(row.get::<Uuid, _>("id")),
         matter_id: MatterId(row.get::<Uuid, _>("matter_id")),
@@ -535,6 +544,16 @@ impl FsDocumentStore {
             DocumentFormat::Pdf => Err(pacgate_core::PacgateError::StorageError(
                 "PDF has no native text layer in this store; use the OCR/convert lane for text"
                     .to_string(),
+            )),
+            // Same reasoning as PDF: a raster carries no text layer to read. Saying
+            // so names the right lane instead of surfacing "stream did not contain
+            // valid UTF-8" from the UTF-8 arm below, which reads as corruption.
+            DocumentFormat::ImagePng
+            | DocumentFormat::ImageJpeg
+            | DocumentFormat::ImageTiff
+            | DocumentFormat::ImageBmp
+            | DocumentFormat::ImageWebp => Err(pacgate_core::PacgateError::StorageError(
+                "image has no native text layer; use the OCR lane for text".to_string(),
             )),
             // Txt / Markdown / Html are UTF-8 by definition.
             _ => String::from_utf8(bytes).map_err(|e| {
@@ -911,6 +930,25 @@ mod tests {
         assert!(
             err.to_string().contains("OCR"),
             "error should point at the OCR/convert lane; got {err}"
+        );
+    }
+
+    /// An image must name the OCR lane the same way a PDF does. Left to the
+    /// UTF-8 arm it would report "stream did not contain valid UTF-8", which
+    /// reads as a corrupt file rather than "this belongs on a different lane".
+    #[test]
+    fn read_text_image_names_the_ocr_lane() {
+        let dir = std::env::temp_dir().join(format!("pacgate-read-img-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("scan.png");
+        std::fs::write(&path, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).expect("write png");
+
+        let out = FsDocumentStore::read_text(&path, DocumentFormat::ImagePng);
+        std::fs::remove_dir_all(&dir).ok();
+        let err = out.expect_err("an image has no in-store text layer; it must direct to OCR");
+        assert!(
+            err.to_string().contains("OCR"),
+            "error should point at the OCR lane, not report invalid UTF-8; got {err}"
         );
     }
 

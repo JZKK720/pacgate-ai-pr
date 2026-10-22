@@ -5,7 +5,7 @@
 #
 # ENCODING: PowerShell on a CJK Windows locale decodes native-command output
 # using the console codepage (GBK), which mangles UTF-8 that git emits. Without
-# the two lines below, CJK credentials (密码：...) arrive as mojibake and this
+# the two lines below, CJK credentials (a CJK password label) arrive as mojibake and this
 # guard silently misses exactly the case it was written for. Verified by test.
 $prevConsole = [Console]::OutputEncoding
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -21,11 +21,22 @@ finally {
 }
 
 $rules = [ordered]@{
-    'cjk-密码'    = '密码\s*[：:]\s*(?:&#xA;)?(?<v>[^\s|`]+)'
-    'cjk-登录名'  = '(?:统一)?登录名\s*[：:]\s*(?<v>[^\s|`]+)'
+    'cjk-password' = '\u5BC6\u7801\s*[\uFF1A:]\s*(?:&#xA;)?(?<v>[^\s|`]+)'
+    'cjk-login'    = '(?:\u7EDF\u4E00)?\u767B\u5F55\u540D\s*[\uFF1A:]\s*(?<v>[^\s|`]+)'
     'api-token'   = 'API\s*:\s*`?(?<v>[A-Za-z0-9_\\\-]{16,})'
-    'md-Password' = '\|\s*\*\*Password\*\*\s*\|\s*`(?<v>[^`]+)`'
-    'md-Email'    = '\|\s*\*\*Email\*\*\s*\|\s*`(?<v>[^`]+)`'
+    # Field name may or may not be BOLD. Requiring `**` is the blind spot that let a
+    # LIVE pacgate-api password through this exact guard into a public repo on
+    # 2026-10-09. See the long note in detect-literal-credentials.ps1.
+    #
+    # `[^`\s]+` (no whitespace) is deliberate: this guard runs on a git DIFF, and
+    # prose like
+    #   `| **Password** |` ... `| Password |`
+    # has two adjacent code spans. Allowing whitespace let the capture run across the
+    # gap and report `). This file used plain ` as a credential - measured on
+    # plans/013-credential-rotation.md, which documents this very rule. A real
+    # credential value never contains a space.
+    'md-Password' = '\|\s*(?:\*\*)?\s*[Pp]assword\s*(?:\*\*)?\s*\|\s*`(?<v>[^`\s]+)`'
+    'md-Email'    = '\|\s*\*\*Email\*\*\s*\|\s*`(?<v>[^`\s]+)`'
     'known-keys'  = '(?<v>vq_key_[A-Za-z0-9_\\\-]{10,}|sk-[A-Za-z0-9_\-]{16,}|gh[pous]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{35})'
 }
 
@@ -54,8 +65,8 @@ foreach ($line in ($diff -split "`r?`n")) {
             if ($v -match 'REDACTED') { continue }
             # Skip placeholders and documentation stand-ins. The angle-bracket
             # case matters because docs describing the format (e.g.
-            # "密码：<value>") would otherwise trip this guard.
-            if ($v -match '^(待填写|待补|xxx|\*+|-+|□+)$') { continue }
+            # "a CJK password label then <value>") would otherwise trip this guard.
+            if ($v -match '^(\u5F85\u586B\u5199|\u5F85\u8865|xxx|\*+|-+|\u25A1+)$') { continue }
             if ($v -match '^<.*>$') { continue }
             if ($v -match '^\$\{|^\{\{') { continue }
             if ($v.Length -lt 5) { continue }

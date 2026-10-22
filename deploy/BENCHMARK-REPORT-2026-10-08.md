@@ -53,7 +53,7 @@ Reading: the two MOEs (nemotron, ornith) dominate the dense 27B on both ingestio
 |---|---|
 | URL | `http://localhost:8089/pacgate` (via nginx) or `http://localhost:8080` (internal) |
 | Email | `admin@pacgate-law.com` |
-| Password | `46c549b61afb5273` |
+| Password | `[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]` |
 | Source | `deploy/client-bundle/.env` → `PACGATE_API_EMAIL` / `PACGATE_API_PASSWORD` |
 | Verified | MCP-lane login 200; 222 workflows / 46 categories returned |
 
@@ -61,10 +61,53 @@ Reading: the two MOEs (nemotron, ornith) dominate the dense 27B on both ingestio
 
 | Account | Email | Password | Role | Verified |
 |---|---|---|---|---|
-| Platform admin | `admin@pacgate-law.com` | `9delujmycbrktj9u5mo9js8t` | admin | **200** |
-| Attorney (personal) | `joeyzh@live.com` | `k4tvxwq8mz2nre6h1os0uy3d` | user | **200** |
+| Platform admin | `admin@pacgate-law.com` | `[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]` | admin | **200** |
+| Attorney (personal) | `joeyzh@live.com` | `[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]` | user | **200** |
 
-**IMPORTANT - password reset performed 2026-10-08:** the previous deer-flow passwords were human-set at `/initialize` and were NOT recoverable (all candidate passwords from proof-run logs returned 401; brute-force protection returned 429). Both accounts were reset to the values above by writing a fresh `$dfv2$` hash (bcrypt of b64(sha256(password)), the format in `app/gateway/auth/password.py`) directly into the live store `deploy/client-bundle/data/deer-flow/data/deerflow.db` from inside the container. No other fields were touched; thread/run/checkpoint history is intact. Change these passwords after first login if desired (deer-flow has `/api/v1/auth/change-password`).
+**IMPORTANT - password reset performed 2026-10-08:** the previous deer-flow passwords were human-set at `/initialize` and were NOT recoverable (all candidate passwords from proof-run logs returned 401; brute-force protection returned 429). Both accounts were reset to the values in the table above by writing a fresh `$dfv2$` hash (bcrypt of b64(sha256(password)), the format in `app/gateway/auth/password.py`) directly into the live store `deploy/client-bundle/data/deer-flow/data/deerflow.db` from inside the container. No other fields were touched; thread/run/checkpoint history is intact. Change these passwords after first login if desired (deer-flow has `/api/v1/auth/change-password`).
+
+> ## ⚠️ LITERAL CREDENTIALS REMOVED FROM THIS FILE 2026-10-15
+>
+> The passwords in §3.1, §3.2 and §3.4 were **live** values written in plain text into a
+> file tracked in the **public** repository `JZKK720/pacgate-ai-pr`. They are now replaced
+> with `[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]`.
+>
+> **Redacting this file did NOT undo the exposure.** The values remain in every commit
+> back to `011b9da` (2026-10-09) and in every clone, and `scripts/check-credential-state.ps1`
+> measures `ORIGIN: LIVE x7` against `LOCAL: LIVE x2` precisely because of that. Reading
+> them is a `git log -S` away for anyone with the repo.
+>
+> Therefore these credentials must be **ROTATED**, not merely hidden - treat them as
+> compromised. Rotation targets:
+>
+> | Credential | Where to rotate |
+> |---|---|
+> | pacgate-api admin (`§3.1`, LIVE - byte-identical to the running `.env`) | `deploy/client-bundle/.env` → `PACGATE_API_PASSWORD`, recreate core, re-register |
+> | qm sandbox bridge (`§3.4`) | `deploy/client-bundle/qm-pacgate/.env` → `PACGATE_API_PASSWORD` (must match the pair above) |
+> | deer-flow admin + attorney (`§3.2`) | deer-flow's own store - write a fresh `$dfv2$` hash into `deerflow.db` (see the reset recipe below, still accurate) |
+>
+> The account *emails* are deliberately left in place: they are identifiers, not secrets,
+> and `admin@pacgate-law.com` is already published by design in
+> `deploy/client-bundle/.env.example`. The detector in `scripts/detect-literal-credentials.ps1`
+> intentionally does not treat a bare address as a finding.
+>
+> **SUPERSEDED 2026-10-15 by `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` Stage 5.** This table is
+> the DEVELOPMENT credential and applies to this dev box only. Client AIPCs establish their
+> deer-flow admin through deer-flow's own `/initialize`, and those passwords are not in this
+> repository.
+>
+> Two things this report got right that are easy to get wrong, both still worth reading:
+> the password format is `bcrypt(b64(sha256(password)))`, and a reset is done by writing a
+> hash straight into `deerflow.db` without touching anything else. What it did NOT make
+> clear is that **deer-flow's store is entirely separate from `pacgate-api`'s** - so
+> `PACGATE_API_EMAIL` / `PACGATE_API_PASSWORD` from `.env` are the *API* principal and will
+> return `401 invalid_credentials` against the deer-flow login. That distinction is now
+> spelled out in the handbook, because it reads exactly like a wrong password.
+>
+> Also note the deer-flow login endpoint uses `OAuth2PasswordRequestForm`, so a probe must
+> send `application/x-www-form-urlencoded` with a `username` field - **not** JSON. A JSON
+> probe returns `422 Field required: username`, which is a third way to misdiagnose this as
+> a credential problem.
 
 ### 3.3 qm lane (co-work, :8181)
 
@@ -90,7 +133,7 @@ Reading: the two MOEs (nemotron, ornith) dominate the dense 27B on both ingestio
 | Field | Value |
 |---|---|
 | Email | `admin@pacgate-law.com` |
-| Password | `nHriwchrXMdR1QVuA0SLt1ZP` |
+| Password | `[REDACTED-ROTATE-AND-SEE-GIT-HISTORY]` |
 | Source | `deploy/client-bundle/qm-pacgate/.env` → `PACGATE_API_EMAIL` / `PACGATE_API_PASSWORD` |
 
 This pair is what the qm sandbox lane uses to call pacgate-api (workflow categories, KB search). It must match the pair the main stack actually provisioned - a stale pair here was the root cause of the 2026-10-07 sandbox 401. If sandboxes start failing with "invalid email or password", copy the working pair from `deploy/client-bundle/.env` into `qm-pacgate/.env` and recreate core.

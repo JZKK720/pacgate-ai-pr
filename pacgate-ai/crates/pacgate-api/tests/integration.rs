@@ -256,7 +256,9 @@ mod tests {
             search: Arc::new(pacgate_search::default_router()),
             rag: None,
             embedding: pacgate_rag::EmbeddingService::new("http://127.0.0.1:1", "nomic-embed-text"),
-            db: pool,
+            // Cloned, not moved: the PATCH section below promotes a test user to
+            // admin through this same pool, so the handle must outlive the state.
+            db: pool.clone(),
             // A test harness gets its own semaphore. Size is irrelevant here:
             // these tests drive one request at a time.
             sanitize_slots: Arc::new(tokio::sync::Semaphore::new(
@@ -488,6 +490,177 @@ mod tests {
             response.status(),
             StatusCode::BAD_REQUEST,
             "a malformed matter id is a 400, distinct from the 404 for a missing one"
+        );
+
+        // ── 6b. PATCH external_key: the cross-machine identity ──
+        //
+        // external_key could only be set at creation before this route existed,
+        // so a matter created before the column could never be repaired, and
+        // cross-machine import had to match on `name` - which is not unique (50
+        // matters shared one name on the dev box). Four behaviours make it safe:
+        // set succeeds, duplicate is 409 (not 500), blank clears, unknown is 404.
+        //
+        // PROMOTE FIRST. The route is admin-only, and this test database persists
+        // across runs, so the freshly registered user is NOT the first account and
+        // bootstrap_roles gave it `system_role = "user"`. Asserting 200 without
+        // promoting would test the 403 path, not the repair path - and "first user
+        // is admin" is a different gate's subject (test-auth-provisioning-gate).
+        sqlx::query("UPDATE users SET system_role = 'admin' WHERE email = $1")
+            .bind(&test_email)
+            .execute(&pool)
+            .await
+            .expect("promote the test user to platform admin");
+        let relogin_body = serde_json::json!({
+            "email": test_email,
+            "password": "test-password-123",
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&relogin_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "re-login should return 200");
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let relogin: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("re-login response is valid JSON");
+        let admin_token = relogin["token"]
+            .as_str()
+            .expect("re-login response contains token")
+            .to_string();
+
+        let patch_key = format!("patch-key-{}", uuid::Uuid::new_v4());
+        let patch_body = serde_json::json!({ "external_key": patch_key });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/matters/{matter_id}"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::from(serde_json::to_vec(&patch_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "setting a free external key must succeed for an admin"
+        );
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let patched: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("patch response is valid JSON");
+        assert_eq!(
+            patched["external_key"].as_str(),
+            Some(patch_key.as_str()),
+            "the patched key must come back in the response"
+        );
+
+        // Duplicate on another matter in the same tenant -> 409, NOT 500.
+        // The partial unique index (tenant_id, external_key) enforces this; a raw
+        // sqlx error would surface as a 500 that reads like a server fault.
+        let second = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/matters")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({ "name": "Patch Conflict Target" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK, "second matter creation should succeed");
+        let body_bytes = axum::body::to_bytes(second.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let second_matter: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("second matter is valid JSON");
+        let second_id = second_matter["id"].as_str().expect("second matter has id");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/matters/{second_id}"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::from(serde_json::to_vec(&patch_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "a duplicate external key must be 409, not a 500 database error"
+        );
+
+        // A whitespace-only key clears the field instead of storing "   ".
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/matters/{second_id}"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::from(r#"{"external_key":"   "}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a blank key is a clear, not an error"
+        );
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let cleared: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("clear response is valid JSON");
+        assert!(
+            cleared["external_key"].is_null(),
+            "a whitespace key must be stored as null, never as '   '"
+        );
+
+        // An unknown id stays a 404, matching get_matter.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/matters/{}", uuid::Uuid::new_v4()))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::from(r#"{"external_key":"nobody-home"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "patching an unknown matter id must be 404"
         );
 
         let memory_body = serde_json::json!({

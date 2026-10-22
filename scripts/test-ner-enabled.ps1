@@ -106,8 +106,20 @@ try {
 catch { $dockerOk = $false }
 
 if ($dockerOk) {
-    $exists = & docker image inspect $image --format '{{.Id}}' 2>$null
-    if ($LASTEXITCODE -eq 0 -and $exists) {
+    # PACGATE 2026-10-22: `docker image inspect` on a MISSING image writes
+    # "No such image" to STDERR. Under $ErrorActionPreference='Stop' in Windows
+    # PowerShell 5.1 that is a terminating error, so this gate died before it
+    # reached its own (correct) "image not built; skipped" branch - the exact
+    # shape of a check that reports a build problem when there is none.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $exists = (& docker image inspect $image --format '{{.Id}}' 2>$null | Out-String).Trim()
+        $inspectCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $prevEap }
+
+    if ($inspectCode -eq 0 -and $exists) {
         # Check for the THREE MODEL FILES BY NAME, not by counting files. A count
         # is wrong the moment anything else lands in that directory - the build
         # also writes SHA256SUMS there, so a count-of-3 expectation was red on a

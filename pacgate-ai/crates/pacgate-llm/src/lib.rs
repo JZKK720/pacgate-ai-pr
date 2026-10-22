@@ -4,6 +4,7 @@
 //! DeepSeek, and any custom OpenAI-compatible endpoint.
 
 use std::pin::Pin;
+use std::sync::LazyLock;
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -59,6 +60,12 @@ pub struct OaiFunctionDef {
     pub parameters:  serde_json::Value,
 }
 
+/// The `reasoning_effort` value sent with every completion request.
+///
+/// See `ChatRequest::reasoning_effort` for the measurement that justifies it.
+/// Shared `LazyLock` so both the blocking and streaming paths reuse one value.
+static REASONING_OFF: LazyLock<Option<String>> = LazyLock::new(|| Some("none".to_string()));
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub model:       String,
@@ -68,6 +75,30 @@ pub struct ChatRequest {
     pub stream:      bool,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tools:       Vec<OaiTool>,
+    /// Suppresses the invisible reasoning channel on thinking-capable models.
+    ///
+    /// Pacgate 2026-10-20: this client never sent it, and that was the local-model
+    /// Pacgate 2026-10-20: this client never sent it, and that was the local-model
+    /// hang. Measured against the local Ollama `/v1/chat/completions` endpoint
+    /// with a title-shaped prompt at max_tokens=200:
+    ///
+    /// | request                          | wall  | tokens | content |
+    /// |----------------------------------|-------|--------|---------|
+    /// | no `reasoning_effort`            | 7.7 s | 200    | ""      |
+    /// | `reasoning_effort: "none"`       | 0.48s | 9      | clean   |
+    ///
+    /// Without it the model spends the ENTIRE token budget emitting hidden
+    /// `reasoning`, returns `finish_reason=length` with empty content, and holds
+    /// the Ollama server slot for those 7.7 s - so a Low-tier call appears to
+    /// hang and every other lane queues behind it (`OLLAMA_NUM_PARALLEL`
+    /// defaults to 1). deer-flow's cloud entries have carried this fix since
+    /// 2026-10-09; the Rust stack never did.
+    ///
+    /// `"none"` rather than `"minimal"`: `minimal` still permits reasoning. If a
+    /// future provider rejects the field, `skip_serializing_if` means it can be
+    /// disabled per tier without touching the wire format for anyone else.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,6 +223,7 @@ impl LlmClient for OpenAiCompatClient {
             temperature: self.temperature,
             stream:      false,
             tools,
+            reasoning_effort: REASONING_OFF.clone(),
         };
 
         debug!(url = %self.chat_url(), "LLM complete request");
@@ -271,6 +303,7 @@ impl LlmClient for OpenAiCompatClient {
             temperature: self.temperature,
             stream:      true,
             tools,
+            reasoning_effort: REASONING_OFF.clone(),
         };
 
         let response = self
@@ -412,6 +445,48 @@ impl LlmRouter {
             }
         }
         Err(PacgateError::LlmError(format!("no model config for tier {tier:?}")))
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    fn sample_request(reasoning: Option<String>) -> ChatRequest {
+        ChatRequest {
+            model: "gemma4:12b-it-qat".into(),
+            messages: vec![],
+            max_tokens: 200,
+            temperature: 0.1,
+            stream: false,
+            tools: vec![],
+            reasoning_effort: reasoning,
+        }
+    }
+
+    /// The request body must carry `reasoning_effort: "none"`.
+    ///
+    /// Guard against a future refactor dropping the field: without it gemma4
+    /// spends the whole token budget on hidden reasoning and returns empty
+    /// content after ~16x the latency (measured 2026-10-20; see the field docs).
+    #[test]
+    fn request_serializes_reasoning_effort_none() {
+        let wire = serde_json::to_string(&sample_request(REASONING_OFF.clone())).unwrap();
+        assert!(
+            wire.contains(r#""reasoning_effort":"none""#),
+            "reasoning_effort missing from wire body: {wire}"
+        );
+    }
+
+    /// Omitting it must not emit a null field, so a provider that rejects the
+    /// key only breaks if we deliberately opt in.
+    #[test]
+    fn request_omits_reasoning_effort_when_none() {
+        let wire = serde_json::to_string(&sample_request(None)).unwrap();
+        assert!(
+            !wire.contains("reasoning_effort"),
+            "unexpected reasoning_effort in wire body: {wire}"
+        );
     }
 }
 

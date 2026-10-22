@@ -114,8 +114,8 @@ impl ModelConfig {
     ///
     /// | Tier | Fallback tag                | Use case                                       |
     /// |------|-----------------------------|------------------------------------------------|
-    /// | Main | gemma4:12b-it-qat           | Deep-think · contract review · generative agents |
-    /// | Mid  | qwen3.8:27b-mtp-q4_K_M      | Agent automation · tabular review · core tasks   |
+    /// | Main | deepseek-v4.1-flash:cloud   | Deep-think · contract review · generative agents |
+    /// | Mid  | ornith-1.5:9b               | Agent automation · tabular review · core tasks   |
     /// | Low  | gemma4:12b-it-qat           | Fast labels · short summaries · routing          |
     pub fn default_local() -> Vec<Self> {
         Self::default_local_with_base_url("http://localhost:11434")
@@ -146,8 +146,32 @@ impl ModelConfig {
     /// 500 on every `/api/workflows/:id/execute` whenever the box's actual roster
     /// names differed. A model tag that no local Ollama serves returns HTTP 404
     /// with no fallback, so a stale pin here takes down all workflows at once.
-    pub const DEFAULT_MAIN_TAG: &'static str = "gemma4:12b-it-qat";
-    pub const DEFAULT_MID_TAG: &'static str = "qwen3.8:27b-mtp-q4_K_M";
+    ///
+    /// MAIN changed 2026-10-18 from `gemma4:12b-it-qat` to the cloud flash model.
+    /// Measured: the local 12B drives a document workflow for one step
+    /// (`list_documents`, `kb_search`) and stops - it never reaches `generate_docx`.
+    /// The route still returns 200 and reports success, so the defect surfaced as an
+    /// EMPTY RESULT rather than an error, and the only symptom was "no document was
+    /// produced". Same test, only this tag changed: 2 failed at 60.7s vs 19/19 at
+    /// 18.2s with a valid OOXML file and intact Chinese.
+    ///
+    /// This follows the agreed architecture (2026-08-30): the cloud model does main
+    /// prompting and end results; local models are utility-only (title, memory,
+    /// summarizer, VLM). `deepseek-v4.1-flash:cloud` carries no weight layers on
+    /// disk - it is served through ollama.com, so it still resolves in `ollama list`
+    /// and never appears in `ollama ps`. `ollama signin` is already an AIPC install
+    /// precondition. A firm that requires local-only processing overrides
+    /// PACGATE_MODEL_MAIN in its own .env; see client-bundle/.env.example.
+    /// MID changed 2026-10-19 from `qwen3.8:27b-mtp-q4_K_M` to `ornith-1.5:9b`.
+    /// Measured: the dense 27B is 17.0 GB of weights, which cannot load on the
+    /// 16 GB card the AIPCs ship with. It does not fail loudly - Ollama spills to
+    /// CPU and the tier presents as a stall, so the Mid workflow looked broken
+    /// rather than mis-sized. The 9B is 6.6 GB and fits with headroom on a 16 GB
+    /// card. `scripts/test-aipc-capacity-fit.ps1` measures both and now blocks the
+    /// suite while any shipped tier or picker entry is over budget. A machine with
+    /// the VRAM overrides PACGATE_MODEL_MID and gets the 27B back.
+    pub const DEFAULT_MAIN_TAG: &'static str = "deepseek-v4.1-flash:cloud";
+    pub const DEFAULT_MID_TAG: &'static str = "ornith-1.5:9b";
     pub const DEFAULT_LOW_TAG: &'static str = "gemma4:12b-it-qat";
 
     /// Environment variables that override each tier's model tag.
@@ -323,6 +347,48 @@ pub enum DocumentFormat {
     Pptx,
     /// `.html`/`.htm` — read by stripping tags, not rasterised.
     Html,
+    /// Raster images — the OCR lane's input.
+    ///
+    /// Added 2026-10-21 so a client has a path to OCR at all. Images carry no
+    /// extractable text of their own, so `extract_text_native` declines them and
+    /// `pacgate-api/src/extract.rs` forwards them to ocr-service, whose
+    /// `_prepare_pages` returns images as-is. ocr-service could always do this;
+    /// only the store allowlist and the OCR call's filename stood in the way.
+    ImagePng,
+    ImageJpeg,
+    ImageTiff,
+    ImageBmp,
+    ImageWebp,
+}
+
+impl DocumentFormat {
+    /// Parse the `documents.format` column.
+    ///
+    /// That column holds a STORAGE KEY written by `FsDocumentStore::upload_bytes`
+    /// ("markdown", "jpeg", ...), not a serde spelling. Every reader must come
+    /// through here: the mapping used to be duplicated in `pacgate-api` and
+    /// `pacgate-docx`, and adding the raster formats to one copy left the other
+    /// reporting every image as `Txt` - which sent it down the UTF-8 text lane.
+    ///
+    /// An unknown key falls back to `Txt` rather than erroring, because the
+    /// signature is infallible at both call sites (a row mapper). The store
+    /// allowlist is the gate that keeps unknown keys out.
+    pub fn from_storage_key(key: &str) -> Self {
+        match key {
+            "docx" => Self::Docx,
+            "pdf" => Self::Pdf,
+            "markdown" => Self::Markdown,
+            "xlsx" => Self::Xlsx,
+            "pptx" => Self::Pptx,
+            "html" => Self::Html,
+            "png" => Self::ImagePng,
+            "jpeg" => Self::ImageJpeg,
+            "tiff" => Self::ImageTiff,
+            "bmp" => Self::ImageBmp,
+            "webp" => Self::ImageWebp,
+            _ => Self::Txt,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1538,5 +1604,48 @@ mod model_config_tests {
     fn tenant_config_defaults_when_empty() {
         let config: TenantConfig = serde_json::from_str("{}").unwrap();
         assert!(config.model_overrides.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod document_format_tests {
+    use super::DocumentFormat;
+
+    /// The `documents.format` column holds storage keys, not serde spellings.
+    /// The bug this pins: the key->variant mapping was duplicated, so the raster
+    /// formats were added to one copy and missed in the other, and a `.png`
+    /// resolved to `Txt` - which hands binary bytes to the UTF-8 text lane.
+    #[test]
+    fn storage_keys_map_to_their_own_variant() {
+        let cases = [
+            ("docx", DocumentFormat::Docx),
+            ("pdf", DocumentFormat::Pdf),
+            ("txt", DocumentFormat::Txt),
+            ("markdown", DocumentFormat::Markdown),
+            ("xlsx", DocumentFormat::Xlsx),
+            ("pptx", DocumentFormat::Pptx),
+            ("html", DocumentFormat::Html),
+            ("png", DocumentFormat::ImagePng),
+            ("jpeg", DocumentFormat::ImageJpeg),
+            ("tiff", DocumentFormat::ImageTiff),
+            ("bmp", DocumentFormat::ImageBmp),
+            ("webp", DocumentFormat::ImageWebp),
+        ];
+        for (key, expected) in cases {
+            assert_eq!(
+                DocumentFormat::from_storage_key(key),
+                expected,
+                "storage key {key:?} must not fall through to another variant"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_storage_key_falls_back_to_txt() {
+        assert_eq!(
+            DocumentFormat::from_storage_key("doc"),
+            DocumentFormat::Txt,
+            "a legacy key is not silently reinterpreted as an image"
+        );
     }
 }

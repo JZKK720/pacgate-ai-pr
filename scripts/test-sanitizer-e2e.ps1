@@ -319,9 +319,36 @@ Check "ledger row written" ([int]($dbLedger | Select-Object -First 1) -ge 1)
 $dbAudit = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""SELECT count(*) FROM audit_log WHERE action = 'document.sanitize'"" 2>&1"
 Check "audit row written" ([int]($dbAudit | Select-Object -First 1) -ge 1)
 
+# Remove the matter this run created BEFORE the containers go away.
+#
+# WHY (2026-10-19): the test creates a matter hard-named "Sanitizer E2E" on every
+# run and only ever cleaned up its CONTAINERS. Measured consequence: 50 separate
+# matters of that name had accumulated on this dev box between 2026-10-12 and
+# 2026-10-19, one per run, each with a "case" document. They are pure fixture
+# residue, and because the name is not unique they also made cross-machine import
+# ambiguous - the exact problem matters.external_key exists to solve.
+#
+# ORDER IS LOAD-BEARING: this must run BEFORE Remove-E2EContainers. The fixture
+# matter lives in the e2e container's own database on 127.0.0.1:8097, so once that
+# container is gone the DELETE has nothing to talk to. The first version of this
+# cleanup ran after the teardown and silently did nothing ("connection refused"),
+# leaving a 51st row behind. A test that writes durable rows must remove them, or
+# the suite slowly turns the database into a record of every run.
+if ($matter -and $matter.id) {
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/matters/$($matter.id)" -Method Delete -Headers $hdr -TimeoutSec 15 | Out-Null
+        Write-Output "  [cleanup] removed the fixture matter $($matter.id)"
+    }
+    catch {
+        Write-Output "  [cleanup] could not remove fixture matter $($matter.id): $($_.Exception.Message)"
+        Write-Output "            It is harmless but leaves a 'Sanitizer E2E' row behind."
+    }
+}
+
 # Cleanup on BOTH paths. The final line here used to be the only cleanup, so any
 # early exit - a failed assertion, an exception, or Ctrl-C - left the containers
 # running. Reuses the same helper as the pre-clean, so a fix to one applies to
 # both.
 Remove-E2EContainers
+
 if ($script:fail -eq 0) { Write-Output '== RESULT: PASS ==' } else { Write-Output "== RESULT: FAIL ($($script:fail)) =="; exit 1 }

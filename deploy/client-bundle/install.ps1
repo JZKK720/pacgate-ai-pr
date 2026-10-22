@@ -38,6 +38,94 @@ function Get-QmPowerShell {
 }
 $QmPowerShell = Get-QmPowerShell
 
+# Resolve the residency tier for this machine from its OS-visible memory.
+#
+# WHY THIS EXISTS (measured 2026-10-20)
+#   The two shipped hardware classes are documented as "128 GB dev box" vs
+#   "32 GB AIPC", but what Ollama actually binds against is OS-VISIBLE system
+#   memory, and on a unified-memory APU that is far below the DIMM total. The
+#   Ryzen AI MAX+ 395 dev box reports 8 x 16 GiB DIMMs (128 GiB) but Windows
+#   exposes only 31.65 GiB, because the iGPU's fixed UMA carve-out (96 GiB
+#   dedicated, per the registry qwMemorySize key) is taken before the OS boots.
+#   So the dev box and an HX370 land in the SAME residency bucket - which is
+#   the opposite of what the hardware labels suggest, and the reason a
+#   single hard-coded tier would ship wrong on one of them.
+#
+#   The scheduler's own log line records which limit bound:
+#     msg="llama-server model predicted to exceed available memory, evicting"
+#     predicted="6.2 GiB" available="6.0 GiB" gpu_free="100.6 GiB"
+#     system_free="6.0 GiB" system_limited=true
+#   On a 96 GiB iGPU with 13.4 GiB of models resident, VRAM was never the
+#   constraint (gpu_free 100.6 GiB) - system memory was. Tiers are therefore
+#   keyed on system memory, with a secondary VRAM consideration only for the
+#   AIPC's discrete card.
+function Get-OllamaResidencyProfile {
+    $sysGiB = 0
+    try {
+        $sysGiB = [math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1MB, 1)
+    } catch { }
+
+    # Discrete VRAM, via the registry key that is NOT truncated to 4 GiB the way
+    # AdapterRAM is. A unified-memory iGPU reports an enormous value here (96 GiB
+    # on the dev box) that is NOT usable for co-residency, so it is only ever
+    # reported, never used to raise a limit.
+    $vramGiB = 0
+    try {
+        $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+        Get-ChildItem $cls -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\d{4}$' } | ForEach-Object {
+            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            $raw = $p.'HardwareInformation.qwMemorySize'
+            if ($raw -and [int64]$raw -gt 0) {
+                $g = [math]::Round([int64]$raw / 1GB, 1)
+                if ($g -lt 64) { $vramGiB = [math]::Max($vramGiB, $g) }   # ignore UMA carve-outs
+            }
+        }
+    } catch { }
+
+    if ($sysGiB -ge 56) {
+        # Plenty of SYSTEM memory. Whether that translates into a big tier
+        # depends on the GPU, because VRAM is what decides how many model
+        # instances fit. A 64 GB host paired with a 16 GB card (a real
+        # configuration - the second dev box) must NOT get the 3-model tier that
+        # was earned by system memory alone: the third model would have nowhere
+        # to live. Only a card with room for three resident models qualifies.
+        if ($vramGiB -ge 24) {
+            return [pscustomobject]@{
+                Tier = 'high'; MaxLoaded = 3; ContextLength = 65536; NumParallel = 2
+                CacheRamMiB = 4096; SystemGiB = $sysGiB
+                MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
+            }
+        }
+        return [pscustomobject]@{
+            Tier = 'big-ram-small-vram'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
+            # Generous host RAM, but a small card means the runner is the only
+            # large consumer. 2 GiB of prompt cache is still ~30x one prompt.
+            CacheRamMiB = 2048; SystemGiB = $sysGiB
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
+        }
+    }
+    if ($sysGiB -ge 24) {
+        # AIPC HX370 and any unified-memory APU whose carve-out leaves ~32 GiB.
+        # 32768 is chosen, not 16384, because deer-flow escalates local->local at
+        # a 40000 message-token threshold; a 16k cap would make that escalation
+        # structurally unreachable, while 32k is 80% of 40k so it still fires
+        # just before the window is exhausted.
+        # Measured residency at NUM_PARALLEL=2: gemma4 7.63 GB (flat 8k->64k,
+        # it is QAT/weight-dominated), ornith-1.5:9b 6.12 GB, nomic 0.31 GB.
+        return [pscustomobject]@{
+            Tier = 'standard'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
+            CacheRamMiB = 1024; SystemGiB = $sysGiB
+            MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
+        }
+    }
+    # Low-memory fallback: one resident model, minimum viable context.
+    return [pscustomobject]@{
+        Tier = 'constrained'; MaxLoaded = 1; ContextLength = 16384; NumParallel = 1
+        CacheRamMiB = 512; SystemGiB = $sysGiB
+        MidTag = 'ornith-1.5:9b'; LowTag = 'gemma4:12b-it-qat'
+    }
+}
+
 # Run a native command that may write to stderr WITHOUT the Windows built-in
 # PowerShell 5.1 turning that stderr into a terminating error.
 #
@@ -122,6 +210,23 @@ function Invoke-ApiRequest {
 
 Write-Host "=== Pacgate-ai Installer ===" -ForegroundColor Cyan
 
+# Fingerprint the script that is actually executing.
+#
+# PowerShell parses this whole file before running any of it, so a later
+# `install.ps1 -Update` still runs the OLD body even after step 3b replaces the
+# file on disk. Recording what we are running lets step 3c detect that mismatch
+# and hand off to the new script exactly once (see the comment there).
+$script:PacgateInstallScriptHash = $null
+try {
+    $selfFile = $PSCommandPath
+    if (-not $selfFile) { $selfFile = $MyInvocation.MyCommand.Path }
+    if ($selfFile -and (Test-Path $selfFile)) {
+        $script:PacgateInstallScriptHash = (Get-FileHash -Path $selfFile -Algorithm SHA256).Hash
+        $env:PACGATE_INSTALL_SCRIPT_HASH = $script:PacgateInstallScriptHash
+    }
+} catch { }
+
+
 # 1. Check Docker
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: Docker Desktop not found. Install from https://docs.docker.com/desktop/" -ForegroundColor Red
@@ -140,6 +245,328 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     exit 1
 }
 Write-Host "[OK] Ollama detected" -ForegroundColor Green
+
+# 2b. Apply the model-residency profile for THIS machine.
+#
+# WHY THIS EXISTS (measured 2026-10-20)
+#   Nothing in this bundle ever set an OLLAMA_* variable, so every deployment
+#   ran on Ollama's defaults: OLLAMA_CONTEXT_LENGTH=0 (auto-picked from VRAM,
+#   which resolves to the model's OWN maximum - 262144 for gemma4), and
+#   OLLAMA_NUM_PARALLEL=1 (one server slot per model).
+#
+#   Both defaults are wrong on a 32 GiB-class machine, and the measurements are
+#   not subtle:
+#     - Same 9B model, 262144 ctx -> 14 GB resident; 8192 ctx -> 5.7 GB.
+#       The KV cache alone was 8.3 GB of avoidable residency.
+#     - Neither pacgate-api nor deer-flow ever sends num_ctx (deer-flow passes
+#       only max_tokens/temperature; pacgate-llm posts to /v1/chat/completions,
+#       whose body has no num_ctx field), so the auto value is what gets used.
+#       OLLAMA_CONTEXT_LENGTH DOES apply to that endpoint - verified: context
+#       went 262144 -> 16384 and residency 7.9 -> 7.6 GB.
+#     - With NUM_PARALLEL=1, three concurrent utility calls ran strictly
+#       serialised (1.63 s / 3.02 s / 4.32 s, 5.35 s wall). At NUM_PARALLEL=2-3
+#       the same three finished in 2.88 s for ~1 GB more KV. That serialisation
+#       is the "hangs with no generation" symptom: a title call, a memory
+#       update and a summarizer can all queue behind the user's own chat on one
+#       slot.
+#
+#   OLLAMA_MAX_LOADED_MODELS is NOT the primary lever and is deliberately not
+#   set to 1: the scheduler's automatic default is already 3 per GPU, and the
+#   binding limit is a memory-fit check (system_limited=true above), so forcing
+#   1 only makes eviction unconditional. Verified: with MAX=1, loading gemma4
+#   (7.6 GB) evicted a resident ornith (5.6 GB) even with 100 GiB of GPU memory
+#   free; with MAX=2/3 the same pair co-resides when system memory allows.
+#
+# These are USER-level environment variables because Ollama's Windows installer
+# runs as a normal user process (not a service), so HKCU is what it reads.
+# Writes are idempotent and only touch OLLAMA_* names.
+# Ollama is SHARED infrastructure: it serves VS Code / Copilot and anything else
+# the operator points at it. Pacgate therefore REPORTS the residency settings and
+# never writes them.
+#
+# WHY THE WRITES WERE REMOVED (2026-10-22)
+#   This function used to persist five values as User-scope environment variables
+#   and then restart the server so it would pick them up. Two things were wrong:
+#
+#   1. User scope is not local. Every Ollama server the operator starts inherits
+#      those variables, so "Pacgate's own models get 32768" was never true - the
+#      whole machine got 32768, including the server VS Code / Copilot uses.
+#   2. The restart was destructive. It killed the running server, which dropped
+#      live client sessions; the Copilot provider's ephemeral port never came
+#      back and the operator saw "Could not connect to local model provider".
+#
+#   The values are still computed, because they are what the operator needs when
+#   sizing a machine and what the docs quote. They are printed as a
+#   recommendation, not applied.
+function Get-OllamaResidencyReport {
+    param([Parameter(Mandatory)] $Profile)
+
+    $recommended = @(
+        @{ Name = 'OLLAMA_MAX_LOADED_MODELS'; Value = [string]$Profile.MaxLoaded }
+        @{ Name = 'OLLAMA_CONTEXT_LENGTH';    Value = [string]$Profile.ContextLength }
+        @{ Name = 'OLLAMA_NUM_PARALLEL';      Value = [string]$Profile.NumParallel }
+        # 15m keeps the utility tag warm across a normal working gap without
+        # pinning memory forever. The cloud main model costs 0 GB local.
+        @{ Name = 'OLLAMA_KEEP_ALIVE';        Value = '15m' }
+
+        # Pacgate 2026-10-21: cap llama.cpp's PROMPT CACHE, which is HOST RAM and
+        # grows independently of the model and of VRAM.
+        #
+        # WHY (measured on the HX370 box, Ollama 0.40.6 / llama-server build 620d2225c)
+        #   llama.cpp keeps a cache of whole prompt states so a follow-up call can
+        #   skip re-processing its prefix. Its default budget is 8192 MiB, and the
+        #   observed footprint was ~6.5 GiB of the host's 61.6 GiB:
+        #
+        #     cache state: 4 prompts, 6506.381 MiB (limits: 8192.000 MiB, ...)
+        #     prompt 0000020EF62A9EF0: 5097 tokens, checkpoints: 7, 1927.274 MiB
+        #
+        #   Each saved prompt costs roughly its context in KV bytes plus ~240 KiB
+        #   per checkpoint (7 cp x 320 MiB for a 5097-token prompt). On a machine
+        #   already sitting at 0.03 MB available memory during a workflow, that is
+        #   the difference between paging and not.
+        #
+        #   The cache is also NOT earning its keep on these models. gemma4 is a
+        #   sliding-window hybrid (`is_swa_any = 1`), and llama.cpp itself reports:
+        #     forcing full prompt re-processing due to lack of cache data
+        #     (likely due to SWA or hybrid/recurrent memory ...)
+        #   Measured reuse over a full day: 22.8% of requested prompt tokens were
+        #   skipped, and 48.5% of prefill events got ZERO reuse. Capping the cache
+        #   therefore costs little on the hit rate while returning gigabytes.
+        #
+        # HOW AN OPERATOR APPLIES IT: Ollama spawns llama-server as a child
+        # process, so the variable has to be in the environment of the server
+        # process. Pacgate does not set it - that would be machine-wide. To apply
+        # it, start a second `ollama serve` on its own port with the variable
+        # scoped to that process, and point Pacgate at that port.
+        # VERIFIED end to end on this box: with LLAMA_ARG_CACHE_RAM=512 the runner's
+        # own log switched from the 8192 default to
+        #     cache state: 1 prompts, 20.457 MiB (limits: 512.000 MiB, 8192 tokens, ...)
+        # so the value really does bind. A bad value is loud rather than silent
+        # (llama-server exits with `error while handling environment variable ...`).
+        #
+        # Sizing: 512 MiB is still ~30x a short title/memory prompt, 1024 MiB covers
+        # several 8k utility prompts - which is the actual traffic on these lanes.
+        @{ Name = 'LLAMA_ARG_CACHE_RAM';      Value = [string]$Profile.CacheRamMiB }
+    )
+
+    $rows = @()
+    foreach ($item in $recommended) {
+        $rows += [pscustomobject]@{
+            Name        = $item.Name
+            Recommended = $item.Value
+            Effective   = [Environment]::GetEnvironmentVariable($item.Name, 'User')
+        }
+    }
+    return $rows
+}
+
+# The Ollama DESKTOP APP stores a machine-wide `context_length` in
+# %LOCALAPPDATA%\Ollama\db.sqlite (`settings` table) and passes it to the server
+# it spawns, where it OVERRIDES OLLAMA_CONTEXT_LENGTH.
+#
+# WE DELIBERATELY DO NOT TOUCH THAT VALUE. Ollama is shared infrastructure on
+# these machines - other tools use the same server and expect the operator's own
+# context setting. Rewriting a global preference to suit one consumer is the
+# wrong fix even though it works, so the app's value is only ever READ and
+# reported. Context for Pacgate's own models comes from OLLAMA_CONTEXT_LENGTH,
+# which is scoped to the Ollama process this installer configures.
+#
+# Measured, so the read is not academic: with env=32768 and db=131072 the server
+# starts at 131072, and with both at 32768 it starts at 32768. The env var alone
+# is a no-op on any machine where the app has been run.
+function Get-OllamaAppContextLength {
+    $info = [pscustomobject]@{ Path = $null; Value = $null; Status = 'not-applicable'; Detail = '' }
+
+    $db = Join-Path $env:LOCALAPPDATA 'Ollama\db.sqlite'
+    if (-not (Test-Path $db)) {
+        $info.Detail = 'no app database (OLLAMA_CONTEXT_LENGTH is authoritative)'
+        return $info
+    }
+    $info.Path = $db
+
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $py) {
+        $info.Status = 'unknown'
+        $info.Detail = 'python not found; cannot read the app setting'
+        return $info
+    }
+
+    $readScript = @'
+import sqlite3, os
+p = os.path.join(os.environ["LOCALAPPDATA"], "Ollama", "db.sqlite")
+try:
+    con = sqlite3.connect("file:%s?mode=ro" % p, uri=True)
+    r = con.execute("select context_length from settings where id=1").fetchone()
+    print(r[0] if r else "")
+    con.close()
+except Exception as e:
+    print("ERR:%s" % e)
+'@
+    try {
+        # 2>$null (not 2>&1): PS 5.1 injects NativeCommandError decoration on
+        # `2>&1` even inside the helper, so that form is banned repo-wide. We only
+        # need stdout here - a failure yields an unusable value, reported as
+        # 'unknown' rather than silently mistaken for a number.
+        $out = (Invoke-WithNativeStderr { $readScript | & $py.Source - 2>$null } | Out-String).Trim()
+    } catch {
+        $out = "ERR:$_"
+    }
+
+    if ($out -match '^\d+$') {
+        $info.Value = [int]$out
+        $info.Status = 'read'
+    } else {
+        $info.Status = 'unknown'
+        $info.Detail = $out
+    }
+    return $info
+}
+
+# Read (never write) the app's machine-wide context_length. Ollama is shared
+# infrastructure here, so this value is reported and respected, not overridden.
+$residency = Get-OllamaResidencyProfile
+$residencyRows = @()
+try {
+    $residencyRows = @(Get-OllamaResidencyReport -Profile $residency)
+} catch {
+    Write-Host "[WARN] Could not compute the Ollama residency recommendation: $_" -ForegroundColor Yellow
+}
+
+$appCtx = $null
+try {
+    $appCtx = Get-OllamaAppContextLength
+} catch {
+    $appCtx = [pscustomobject]@{ Path = $null; Value = $null; Status = 'unknown'; Detail = "$_" }
+}
+
+Write-Host "[OK] Ollama residency profile '$($residency.Tier)' (recommendation only - not applied)" -ForegroundColor Green
+foreach ($row in $residencyRows) {
+    $have = if ($row.Effective) { $row.Effective } else { '<unset>' }
+    $mark = if ($row.Effective -eq $row.Recommended) { '=' } else { '->' }
+    Write-Host ("     {0,-26} {1} {2}   (recommended {3})" -f $row.Name, $have, $mark, $row.Recommended) -ForegroundColor DarkGray
+}
+Write-Host "     Ollama is shared with other tools, so Pacgate does not change these." -ForegroundColor DarkGray
+Write-Host "     To apply them, start a second 'ollama serve' on its own port with the" -ForegroundColor DarkGray
+Write-Host "     variables scoped to that process, and point Pacgate at that port." -ForegroundColor DarkGray
+
+switch ($appCtx.Status) {
+    'read' {
+        if ($appCtx.Value -eq [int]$residency.ContextLength) {
+            Write-Host "[OK] Ollama app context_length is already $($appCtx.Value)" -ForegroundColor Green
+        } else {
+            Write-Host "[NOTE] Ollama app context_length is $($appCtx.Value) (machine-wide, shared with other tools)." -ForegroundColor DarkGray
+            Write-Host "       Pacgate does not change it. The tier recommendation is $($residency.ContextLength)," -ForegroundColor DarkGray
+            Write-Host "       but the app setting wins, so $($appCtx.Value) is what models actually load at." -ForegroundColor DarkGray
+        }
+    }
+    'not-applicable' { Write-Host "[OK] No Ollama app database ($($appCtx.Detail))" -ForegroundColor DarkGray }
+    default { Write-Host "[NOTE] Could not read the Ollama app context_length ($($appCtx.Detail)); proceeding." -ForegroundColor DarkGray }
+}
+
+# ── Model selection: the operator picks, the installer only reports ─────────
+#
+# WHY THE DERIVED-TAG MECHANISM WAS REMOVED (2026-10-21)
+#   The installer used to run `ollama create` to build `pacgate-mid` / `pacgate-low`
+#   tags with `PARAMETER num_ctx` baked in, then write those names into .env. It
+#   worked, but it was the wrong shape for a shipped product:
+#
+#   1. Those tags exist only on a machine where this installer ran. They are in
+#      neither origin/main nor any ghcr image, so they cannot be pre-pulled and
+#      cannot be a repo default. Every deployment therefore diverged from the
+#      published artifact in a way nothing else could reproduce.
+#
+#   2. It created a SECOND name for the same weights. Ollama keys residency by tag
+#      name, so `pacgate-low` and `gemma4:12b-it-qat` (identical blobs, verified via
+#      `ollama show --modelfile`) could not co-reside. Measured on the HX370 box:
+#      switching between them cost 15.9 s and 15.4 s of reload, and the day's log
+#      held 56 llama-server starts, 55 model loads and 13 evictions. That churn was
+#      the single largest latency source, and it was self-inflicted.
+#
+#   3. It assumed one fixed context per tier. A machine with more VRAM should be
+#      able to run a wider window, and a machine with less should be able to run a
+#      narrower one, without the installer having decided in advance.
+#
+#   So the model roster is now exactly what the operator selects from the standard
+#   Ollama tags that `ollama-models.txt` pre-pulls. Context is whatever the
+#   operator's own Ollama server is configured for - Pacgate reports the tier's
+#   recommendation and does not apply it, which keeps ONE name per weight set and
+#   lets the scheduler keep it warm.
+#
+#   CAVEAT, measured: the Ollama desktop app's db.sqlite `context_length` OVERRIDES
+#   OLLAMA_CONTEXT_LENGTH. On the HX370 box the tier says 32768 but `ollama ps`
+#   reports 65536, because the app's value wins. That is the operator's setting and
+#   is deliberately not touched - but it means the tier's ContextLength is a
+#   REQUEST, not a guarantee, and nothing should budget VRAM from it without
+#   reading the effective value back.
+#
+# WHAT THIS FUNCTION DOES
+#   Reports what is installed and what the tier suggests, and writes nothing. The
+#   operator's choice lives in .env (PACGATE_MODEL_MAIN/MID/LOW) and in the
+#   deer-flow picker; both already accept any installed tag.
+function Get-ModelSelectionReport {
+    param([Parameter(Mandatory)] $Profile)
+
+    $report = [pscustomobject]@{
+        Installed = @()
+        Suggested = [ordered]@{}
+        Missing   = @()
+    }
+    try {
+        $out = (Invoke-WithNativeStderr { & ollama list 2>$null } | Out-String)
+        $report.Installed = @(
+            ($out -split "`r?`n") | Select-Object -Skip 1 |
+                ForEach-Object { ($_ -split '\s+')[0] } |
+                Where-Object { $_ -and $_ -notmatch '^NAME$' }
+        )
+    } catch { }
+
+    # The tier's suggestion is a STARTING POINT, not a pin. Both are standard tags
+    # from ollama-models.txt, so they are pullable on any machine.
+    $report.Suggested['PACGATE_MODEL_MID'] = $Profile.MidTag
+    $report.Suggested['PACGATE_MODEL_LOW'] = $Profile.LowTag
+    foreach ($k in $report.Suggested.Keys) {
+        $tag = $report.Suggested[$k]
+        if ($report.Installed -notcontains $tag) { $report.Missing += $tag }
+    }
+    return $report
+}
+
+$modelReport = $null
+try { $modelReport = Get-ModelSelectionReport -Profile $residency } catch { }
+
+if ($modelReport) {
+    Write-Host "[OK] Model selection is the operator's: standard Ollama tags, no derived tags" -ForegroundColor Green
+    foreach ($k in $modelReport.Suggested.Keys) {
+        $tag = $modelReport.Suggested[$k]
+        $state = if ($modelReport.Installed -contains $tag) { 'installed' } else { 'NOT installed' }
+        Write-Host ("     {0,-20} {1,-28} {2}" -f $k, $tag, $state) -ForegroundColor DarkGray
+    }
+    if ($modelReport.Missing.Count -gt 0) {
+        Write-Host "     Missing tags are pulled by this installer; if one is still absent, run:" -ForegroundColor Yellow
+        Write-Host "       ollama pull <tag>" -ForegroundColor Yellow
+    }
+    Write-Host "     To use a different local model, set PACGATE_MODEL_MID/LOW in .env to any" -ForegroundColor DarkGray
+    Write-Host "     installed tag, or pick it in the deer-flow model picker." -ForegroundColor DarkGray
+    # Do NOT claim the tier's ContextLength is what the model will load at. The
+    # Ollama desktop app's db.sqlite value OVERRIDES OLLAMA_CONTEXT_LENGTH, and on
+    # this box it is 65536 while the tier says 32768 - verified with `ollama ps`.
+    # Reporting the tier value as fact is how a capacity budget stops matching
+    # reality, so the effective value is read back instead.
+    $effectiveCtx = if ($appCtx -and $appCtx.Status -eq 'read') { $appCtx.Value } else { $null }
+    if ($effectiveCtx) {
+        Write-Host "     Effective context is $effectiveCtx (from the Ollama app setting, which wins" -ForegroundColor DarkGray
+        Write-Host "     over any OLLAMA_CONTEXT_LENGTH). Change it in the Ollama app if needed." -ForegroundColor DarkGray
+    } else {
+        Write-Host "     Context is whatever your Ollama server is configured for. The tier" -ForegroundColor DarkGray
+        Write-Host "     recommendation is $($residency.ContextLength); Pacgate does not apply it." -ForegroundColor DarkGray
+    }
+}
+
+# The residency values above are a RECOMMENDATION and are deliberately not
+# applied. Ollama is shared with VS Code / Copilot and anything else the operator
+# points at it, so Pacgate neither writes its environment nor restarts it. An
+# operator who wants the recommendation applied starts a second `ollama serve` on
+# its own port with the variables scoped to that process.
 
 # 3. Check .env
 if (-not (Test-Path .env)) {
@@ -235,6 +662,33 @@ if ($Update -and -not $SkipRepoPull) {
                 }
                 else {
                     $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+
+                    # A DETACHED HEAD is not a branch. `git rev-parse --abbrev-ref
+                    # HEAD` reports the literal string "HEAD" there, which made
+                    # $remoteRef "origin/HEAD" and $branch "HEAD" - and
+                    # `git pull --ff-only origin HEAD` then fast-forwarded the
+                    # detached checkout onto whatever origin/HEAD points at.
+                    #
+                    # MEASURED 2026-10-20: on a `git checkout v0.1.33` tree (the
+                    # documented rollback), that pull moved HEAD from 9af44db to
+                    # 3b235ed - it silently UNDID the rollback and carried on with
+                    # main. A rollback that quietly un-rolls itself is worse than
+                    # no rollback, because the operator believes it worked.
+                    #
+                    # A detached checkout is a deliberate pin. Never move it.
+                    if ($branch -eq 'HEAD') {
+                        $described = ''
+                        try {
+                            $described = (Invoke-WithNativeStderr { git describe --tags --exact-match HEAD 2>$null } | Out-String).Trim()
+                        } catch { }
+                        $where = if ($described) { $described } else { $before.Substring(0,7) }
+                        Write-Host "[OK] Repo is pinned at $where (detached) - leaving it alone." -ForegroundColor Green
+                        Write-Host "     Images still update below. To follow a branch instead: git checkout main" -ForegroundColor DarkGray
+                        $branch = $null
+                    }
+                }
+
+                if ($branch) {
                     $remoteRef = "origin/$branch"
 
                     $behind = 0
@@ -332,6 +786,43 @@ if ($Update -and -not $SkipRepoPull) {
     }
 }
 
+# 3c. Self-update handoff: this file is now STALE.
+#
+# WHY THIS EXISTS (found 2026-10-20)
+#   PowerShell reads and parses the WHOLE script before executing line 1, so
+#   everything above ran from the OLD install.ps1, while the repo refresh at 3b
+#   has already replaced this file on disk. Nothing before step 3b re-runs.
+#
+#   That made every install-logic fix a NON-DELIVERABLE: a machine that ran
+#   `install.ps1 -Update` executed the previous version's early steps, and the
+#   operator would have to run the script a SECOND time by hand to get them.
+#   Concretely, the Ollama residency step (2b) shipped in the same commit as
+#   this handoff would have been skipped on the very update that introduced it.
+#
+#   The refresh only fast-forwards a clean tree, so a stale script and a new
+#   script cannot both legitimately be running; and the handoff is keyed to a
+#   content hash, so it fires exactly once per changed script and cannot loop.
+if ($Update -and -not $SkipRepoPull) {
+    $selfPath = $PSCommandPath
+    if (-not $selfPath) { $selfPath = $MyInvocation.MyCommand.Path }
+    if ($selfPath -and (Test-Path $selfPath)) {
+        $selfHash = (Get-FileHash -Path $selfPath -Algorithm SHA256).Hash
+        $ranHash = $env:PACGATE_INSTALL_SCRIPT_HASH
+        if ($ranHash -and $ranHash -ne $selfHash) {
+            Write-Host ""
+            Write-Host "[NOTICE] installer changed in this update - handing off to the new version." -ForegroundColor Cyan
+            Write-Host "         Steps before the repo refresh ran from the previous script;" -ForegroundColor DarkGray
+            Write-Host "         re-running now so the new steps actually take effect." -ForegroundColor DarkGray
+            $childArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $selfPath, '-Update')
+            if ($SkipRepoPull) { $childArgs += '-SkipRepoPull' }
+            $env:PACGATE_INSTALL_SCRIPT_HASH = $selfHash
+            & $QmPowerShell @childArgs
+            exit $LASTEXITCODE
+        }
+        $env:PACGATE_INSTALL_SCRIPT_HASH = $selfHash
+    }
+}
+
 # 4. Create data directories
 if (-not (Test-Path $DataDir)) {
     New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
@@ -360,29 +851,106 @@ if (Test-Path $envPath) {
 }
 
 # 4b-i. Render OpenViking config (OPENVIKING_CONF_CONTENT) from template + secrets
+#
+# RENDER-AND-COMPARE, not render-if-absent.
+#
+# This block previously rendered ONLY when the key was missing from .env:
+#
+#     $needsRender = -not (Test-Path env:OPENVIKING_CONF_CONTENT) -and
+#         (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and ...))
+#
+# Once .env carried the key, that guard was false forever and the template was
+# never read again. Verified on this box 2026-10-17: `OPENVIKING_CONF_CONTENT=` IS
+# present in .env, so the guard skips and the template has not been re-rendered
+# since. Commit e180fc8 changed the template's VLM from `gemma4:12b-it-q8_0` (13 GB)
+# to `gemma4:12b-it-qat` (7.2 GB) on 2026-09-21 - and every machine that had already
+# rendered kept q8_0, silently, across every subsequent -Update.
+#
+# This is the IDENTICAL defect the extensions config below was fixed for
+# (see deploy/AIPC-UPDATE-GAP-ANALYSIS.md 3a). That path was converted to
+# render-and-compare; this one was left behind.
+#
+# The container reads OPENVIKING_CONF_CONTENT from its ENVIRONMENT (verified:
+# `docker exec openviking` sees the var), so .env is the authoritative source and
+# this is the right place to fix it. openviking/ov.conf on the host is
+# container-generated state and is deliberately left alone.
 $ovTemplate = ".\openviking\ov.conf.template"
 if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
-    $needsRender = -not (Test-Path env:OPENVIKING_CONF_CONTENT) -and
-        (-not ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT') -and $envVars['OPENVIKING_CONF_CONTENT']))
-    if ($needsRender -and $envVars.ContainsKey('OPENVIKING_ROOT_API_KEY') -and
-        $envVars['OPENVIKING_ROOT_API_KEY'] -notmatch '^change-me') {
+    $ovKey = $envVars['OPENVIKING_ROOT_API_KEY']
+    if (-not $ovKey -or $ovKey -match '^change-me') {
+        # Cannot render without a usable key. Preserve the previous lenient
+        # behaviour (do not fail an otherwise-good install) but SAY so, because a
+        # silent skip is what hid this class of drift.
+        Write-Host "[WARN] OPENVIKING_ROOT_API_KEY is unset or still 'change-me' - not re-rendering OPENVIKING_CONF_CONTENT." -ForegroundColor Yellow
+    } else {
         # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
         # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
         $conf = Get-Content $ovTemplate -Raw -Encoding UTF8
-        $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $envVars['OPENVIKING_ROOT_API_KEY'])
+        $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $ovKey)
         $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
-        # Append with an explicit leading newline: PowerShell 5.1's Add-Content
-        # glues the new line onto the last line when .env has no trailing
-        # newline, fusing e.g. OPENVIKING_API_KEY=<val> with
-        # OPENVIKING_CONF_CONTENT=<json> on one line (corrupting both).
-        $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
-        $prefix = if ($rawEnv.Length -eq 0 -or $rawEnv.EndsWith("`n")) { '' } else { "`r`n" }
-        [System.IO.File]::AppendAllText(
-            (Resolve-Path $envPath),
-            "$prefix" + "OPENVIKING_CONF_CONTENT=$minified`r`n",
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT into .env" -ForegroundColor Green
+
+        $ovExisting = if ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT')) { $envVars['OPENVIKING_CONF_CONTENT'] } else { '' }
+        # Compare minified-to-minified so a whitespace-only difference does not look
+        # like a change and churn the file on every run.
+        $ovUnchanged = ($null -ne $ovExisting) -and ($ovExisting.Trim() -eq $minified.Trim())
+
+        if ($ovUnchanged) {
+            Write-Host "[OK] OPENVIKING_CONF_CONTENT already current" -ForegroundColor Green
+        } else {
+            # Rewrite IN PLACE: preserve every other line, including comments and
+            # secrets. Appending here would leave the stale line above the new one,
+            # and docker compose's last-one-wins behaviour would make that "work"
+            # while the file silently accumulated a stale copy on every update.
+            $ovLines = Get-Content $envPath
+            $ovFound = $false
+            $ovOut = foreach ($line in $ovLines) {
+                if ($line -match '^\s*OPENVIKING_CONF_CONTENT\s*=') {
+                    $ovFound = $true
+                    "OPENVIKING_CONF_CONTENT=$minified"
+                } else { $line }
+            }
+            if (-not $ovFound) {
+                # Append with an explicit leading newline: PowerShell 5.1's Add-Content
+                # glues the new line onto the last line when .env has no trailing
+                # newline, fusing e.g. OPENVIKING_API_KEY=<val> with
+                # OPENVIKING_CONF_CONTENT=<json> on one line (corrupting both).
+                $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
+                $prefix = if ($rawEnv.Length -eq 0 -or $rawEnv.EndsWith("`n")) { '' } else { "`r`n" }
+                $ovOut = @($ovLines)
+                $ovOut += "$prefix" + "OPENVIKING_CONF_CONTENT=$minified"
+            }
+            # No BOM: docker compose chokes on a BOM in .env, and Set-Content adds one
+            # by default on Windows PowerShell.
+            #
+            # Resolve to an ABSOLUTE path first. `$envPath` is ".\\.env", and .NET's
+            # current directory does NOT follow PowerShell's Set-Location - so a
+            # relative path here can silently write somewhere other than the
+            # directory this script believes it is in. The original AppendAllText
+            # called Resolve-Path for exactly this reason; keep that property.
+            [System.IO.File]::WriteAllLines((Resolve-Path $envPath), $ovOut, [System.Text.UTF8Encoding]::new($false))
+            Write-Host "[OK] Rendered OPENVIKING_CONF_CONTENT from template (it was stale)" -ForegroundColor Green
+
+            # Name what changed. The silent version of this is what let q8_0 survive
+            # the qat rename, and the VLM is the one lane whose staleness is invisible
+            # at runtime - extraction still works, just on a 13 GB model instead of 7.2.
+            $ovModels = @{}
+            foreach ($ovM in [regex]::Matches($minified, '"model":\s*"([^"]+)"')) {
+                $ovModels[$ovM.Groups[1].Value] = $true
+            }
+            foreach ($ovName in @('gemma4:12b-it-q8_0', 'gemma4:12b-it-qat')) {
+                if ($ovModels.ContainsKey($ovName)) {
+                    Write-Host "     OpenViking VLM now: $ovName" -ForegroundColor Yellow
+                }
+            }
+            if ($minified -match '"model":\s*"gemma4:12b-it-q8_0"') {
+                Write-Host "     NOTE: the template still names q8_0 (13 GB). qat is 7.2 GB and shares one resident model with the other utility lanes." -ForegroundColor Yellow
+            }
+
+            # Same-run visibility: docker compose reads ${OPENVIKING_CONF_CONTENT}
+            # from the process environment, so this avoids needing a second run.
+            $envVars['OPENVIKING_CONF_CONTENT'] = $minified
+            $env:OPENVIKING_CONF_CONTENT = $minified
+        }
     }
 }
 
@@ -509,15 +1077,9 @@ $gwCors = if ($envVars.ContainsKey('GATEWAY_CORS_ORIGINS')) { $envVars['GATEWAY_
 if ([string]::IsNullOrWhiteSpace($gwCors)) {
     # Derive this machine's browser origins. The browser may reach the
     # ingress via ANY of: hostname, every non-loopback IPv4, or localhost.
-    # Each is http://<host>:<nginx-host-port>. The port must be DERIVED
-    # (docker compose port nginx 80), not hardcoded - this dev box publishes
-    # 8081 while compose declares 8089, and an AIPC may have either.
-    $corsPort = $null
-    try {
-        $corsPortOut = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port nginx 80 2>$null | Out-String).Trim() }
-        if ($corsPortOut -match ':(\d+)\s*$') { $corsPort = $Matches[1] }
-    } catch { $corsPort = $null }
-    if (-not $corsPort) { $corsPort = '8089' }
+    # Each is http://<host>:<published-port>. The ports must be DERIVED
+    # (docker compose port <svc> <container-port>), not hardcoded - this dev box
+    # publishes 8081 while compose declares 8089, and an AIPC may have either.
 
     $corsHosts = New-Object System.Collections.Generic.List[string]
     $corsHosts.Add('localhost')
@@ -532,7 +1094,34 @@ if ([string]::IsNullOrWhiteSpace($gwCors)) {
         foreach ($ip in $lanIps) { if (-not $corsHosts.Contains($ip)) { $corsHosts.Add($ip) } }
     } catch { }
 
-    $derivedOrigins = ($corsHosts | ForEach-Object { "http://$_`:$corsPort" }) -join ','
+    # Derive BOTH published browser ports, not just the ingress port.
+    #
+    # Defect fixed 2026-10-19. This used to emit http://<host>:<nginx-port> only.
+    # Because compose declares ${GATEWAY_CORS_ORIGINS:-<default>}, writing that
+    # narrower value into .env REPLACED a better default - the compose default
+    # lists both :8089 and :8090, and the derived value silently dropped :8090.
+    # Measured consequence on the dev box: a browser on :8090 was refused by the
+    # gateway (403 "Cross-site auth request denied") while :8089 worked, so the
+    # machine appeared to have a broken auth service rather than a missing origin.
+    #
+    # :8090 is deer-flow-frontend's published port and serves the same app; both
+    # are legitimate sign-in origins. Enumerate the ports compose actually
+    # publishes for nginx (80) and deer-flow-frontend (3000) and fall back to the
+    # declared defaults when the stack is not up yet (first install runs this
+    # before `up`).
+    $corsPorts = New-Object System.Collections.Generic.List[string]
+    foreach ($svcPort in @(@('nginx', '80', '8089'), @('deer-flow-frontend', '3000', '8090'))) {
+        $svcName = $svcPort[0]; $containerPort = $svcPort[1]; $fallback = $svcPort[2]
+        $published = $null
+        try {
+            $out = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port $svcName $containerPort 2>$null | Out-String).Trim() }
+            if ($out -match ':(\d+)\s*$') { $published = $Matches[1] }
+        } catch { $published = $null }
+        if (-not $published) { $published = $fallback }
+        if (-not $corsPorts.Contains($published)) { $corsPorts.Add($published) }
+    }
+
+    $derivedOrigins = ($corsHosts | ForEach-Object { $h = $_; $corsPorts | ForEach-Object { "http://${h}:$_" } }) -join ','
     # Compose reads ${GATEWAY_CORS_ORIGINS:-...} - the value must be SET in
     # .env so it overrides the compose default, which is localhost-only.
     $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
@@ -545,8 +1134,12 @@ if ([string]::IsNullOrWhiteSpace($gwCors)) {
     $envVars['GATEWAY_CORS_ORIGINS'] = $derivedOrigins
     Write-Host "[OK] Derived GATEWAY_CORS_ORIGINS for this machine: $derivedOrigins" -ForegroundColor Green
     Write-Host "     Browser sign-in/register now accepts this machine's hostname and LAN IP." -ForegroundColor Gray
-    if ($corsPort -ne '8089') {
-        Write-Host "     NOTE: the ingress port is $corsPort (not the default 8089); origins use it." -ForegroundColor Gray
+    Write-Host "     Feeds BOTH origin gates (gateway CORS + frontend trusted origins)." -ForegroundColor Gray
+    if ($corsPorts.Count -gt 1) {
+        Write-Host "     Ports covered: $(($corsPorts | ForEach-Object { $_ }) -join ', ') (ingress + frontend)." -ForegroundColor Gray
+    }
+    if ($corsPorts -notcontains '8089') {
+        Write-Host "     NOTE: the ingress port is $($corsPorts[0]) (not the default 8089); origins use it." -ForegroundColor Gray
     }
 }
 else {
@@ -561,11 +1154,97 @@ else {
         Write-Host "       and registration ('Cross-site auth request denied.')." -ForegroundColor Yellow
         Write-Host "       Fix: add this machine's browser origin to .env, e.g." -ForegroundColor Yellow
         $fixHost = try { [System.Net.Dns]::GetHostName().ToLower() } catch { '<machine-host>' }
-        Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,$gwCors" -ForegroundColor Gray
+        Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,http://${fixHost}:8090,$gwCors" -ForegroundColor Gray
         Write-Host "       then re-run this script." -ForegroundColor Yellow
     }
     else {
-        Write-Host "[OK] GATEWAY_CORS_ORIGINS set: $gwCors" -ForegroundColor Green
+        # Present-but-incomplete is the AIPC failure mode, not localhost-only.
+        #
+        # Fixed 2026-10-19. The old code only WARNed when the value was
+        # localhost-only, and did nothing when it covered some hosts but not all
+        # published ports. On a client AIPC the installer had already written
+        # http://<host>:8089 for the ingress port only, so re-running -Update
+        # found the key present, skipped derivation, and left :8090 dead for
+        # ever: the machine stayed 403 on the frontend port across every
+        # upgrade, and no release could fix it. A value that is missing hosts or
+        # ports is a defect, not a preference.
+        #
+        # Repair is ADDITIVE ONLY. Origins are never removed, so an operator who
+        # deliberately allowlisted extra hosts keeps them, and narrowing access
+        # by hand still works because a fully-covered list is left untouched.
+        $corsPorts = New-Object System.Collections.Generic.List[string]
+        foreach ($svcPort in @(@('nginx', '80', '8089'), @('deer-flow-frontend', '3000', '8090'))) {
+            $published = $null
+            try {
+                $out = Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml port $svcPort[0] $svcPort[1] 2>$null | Out-String).Trim() }
+                if ($out -match ':(\d+)\s*$') { $published = $Matches[1] }
+            } catch { $published = $null }
+            if (-not $published) { $published = $svcPort[2] }
+            if (-not $corsPorts.Contains($published)) { $corsPorts.Add($published) }
+        }
+        $corsHosts = New-Object System.Collections.Generic.List[string]
+        # localhost MUST be in the additive set too. It is the origin used when
+        # someone browses the app ON the AIPC itself, and the historical .env
+        # written by the old derivation had it only for :8089.
+        $corsHosts.Add('localhost')
+        try { $corsHosts.Add(([System.Net.Dns]::GetHostName()).ToLower()) } catch { }
+        try {
+            $lanIps = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+                Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } |
+                ForEach-Object { $_.GetIPProperties().UnicastAddresses } |
+                Where-Object { $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
+                ForEach-Object { $_.Address.ToString() } |
+                Where-Object { $_ -notmatch '^(127\.|169\.254\.)' }
+            foreach ($ip in $lanIps) { if (-not $corsHosts.Contains($ip)) { $corsHosts.Add($ip) } }
+        } catch { }
+
+        $existing = New-Object System.Collections.Generic.List[string]
+        foreach ($o in $corsSet) { if (-not $existing.Contains($o)) { $existing.Add($o) } }
+        $added = New-Object System.Collections.Generic.List[string]
+        foreach ($h in $corsHosts) {
+            foreach ($p in $corsPorts) {
+                $candidate = "http://${h}:${p}"
+                if (-not $existing.Contains($candidate)) { $existing.Add($candidate); $added.Add($candidate) }
+            }
+        }
+
+        if ($added.Count -gt 0) {
+            $merged = $existing -join ','
+            $rawEnv = [System.IO.File]::ReadAllText((Resolve-Path $envPath))
+            $lines = [regex]::Split($rawEnv, '\r\n|\n')
+            $out = New-Object System.Collections.Generic.List[string]
+            $replaced = $false
+            foreach ($line in $lines) {
+                if (-not $replaced -and $line -match '^\s*GATEWAY_CORS_ORIGINS\s*=') {
+                    $out.Add("GATEWAY_CORS_ORIGINS=$merged"); $replaced = $true
+                } else { $out.Add($line) }
+            }
+            $text = ($out -join "`r`n")
+            if (-not $text.EndsWith("`r`n")) { $text += "`r`n" }
+            [System.IO.File]::WriteAllText((Resolve-Path $envPath), $text, [System.Text.UTF8Encoding]::new($false))
+            $envVars['GATEWAY_CORS_ORIGINS'] = $merged
+            Write-Host "[OK] GATEWAY_CORS_ORIGINS was incomplete - added $($added.Count) origin(s)." -ForegroundColor Green
+            Write-Host "     Added: $($added -join ', ')" -ForegroundColor Gray
+            Write-Host "     Both origin gates (gateway + frontend) now admit this machine." -ForegroundColor Gray
+            Write-Host "     Recreate the affected services for it to take effect:" -ForegroundColor Gray
+            Write-Host "       docker compose -f compose.prod.yaml up -d --force-recreate deer-flow deer-flow-frontend" -ForegroundColor Gray
+        }
+        elseif ($onlyLocal) {
+            # Loud, specific, actionable: this exact value produces the 403 that
+            # looks like a broken auth service. Deliberately NOT auto-fixed when
+            # the list is otherwise complete - an operator who SET a restricted
+            # value may be doing so on purpose.
+            Write-Host "[WARN] GATEWAY_CORS_ORIGINS is localhost-only ($gwCors)." -ForegroundColor Yellow
+            Write-Host "       Users browsing http://<machine-host>:8089 will get 403 on sign-in" -ForegroundColor Yellow
+            Write-Host "       and registration ('Cross-site auth request denied.')." -ForegroundColor Yellow
+            Write-Host "       Fix: add this machine's browser origin to .env, e.g." -ForegroundColor Yellow
+            $fixHost = try { [System.Net.Dns]::GetHostName().ToLower() } catch { '<machine-host>' }
+            Write-Host "         GATEWAY_CORS_ORIGINS=http://${fixHost}:8089,http://${fixHost}:8090,$gwCors" -ForegroundColor Gray
+            Write-Host "       then re-run this script." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "[OK] GATEWAY_CORS_ORIGINS set: $gwCors" -ForegroundColor Green
+        }
     }
 }
 
@@ -1372,6 +2051,40 @@ if ($Update) {
         # otherwise read as "rese t".
         if (Test-Path (Join-Path $qmRuntime '.env')) {
             Write-Host "  (.env preserved - generated qm secrets are left untouched)" -ForegroundColor Gray
+
+            # Additive repair of a NON-SECRET key that the re-stage cannot supply.
+            #
+            # The staged compose.qm.yaml now derives six browser-facing OAuth URLs
+            # from ${QM_PUBLIC_URL:-http://localhost:8181}. A machine installed
+            # before that key existed has no QM_PUBLIC_URL in .env, so compose
+            # falls back to localhost - and because OAuth is a BROWSER redirect,
+            # remote users are sent to their own loopback and can never sign in.
+            #
+            # This is the same trap as GATEWAY_CORS_ORIGINS above: a correct
+            # tracked default does nothing on a machine whose generated file was
+            # written by an older release. -Update re-stages config but does NOT
+            # run setup-qm.ps1 (which is interactive), so without this the fix
+            # would reach AIPC 1 and AIPC 2 as dead config. The key is not a
+            # secret and is not bound to any volume, so it is safe to add here.
+            $qmEnvPath = Join-Path $qmRuntime '.env'
+            $qmEnvRaw = [System.IO.File]::ReadAllText($qmEnvPath)
+            if ($qmEnvRaw -match '(?m)^\s*QM_PUBLIC_URL\s*=') {
+                Write-Host "  [OK] QM_PUBLIC_URL already set (browser-facing OAuth origin)" -ForegroundColor Green
+            }
+            else {
+                $qmHostName = try { ([System.Net.Dns]::GetHostName()).ToLower() } catch { 'localhost' }
+                if ([string]::IsNullOrWhiteSpace($qmHostName)) { $qmHostName = 'localhost' }
+                $qmUrl = "http://${qmHostName}:8181"
+                $nl = if ($qmEnvRaw.Length -eq 0 -or $qmEnvRaw.EndsWith("`n")) { '' } else { "`r`n" }
+                [System.IO.File]::AppendAllText(
+                    $qmEnvPath,
+                    "$nl" + "QM_PUBLIC_URL=$qmUrl`r`n",
+                    [System.Text.UTF8Encoding]::new($false)
+                )
+                Write-Host "  [OK] Added QM_PUBLIC_URL=$qmUrl to the qm .env" -ForegroundColor Green
+                Write-Host "       Without it the OAuth issuer advertised localhost, so signing in" -ForegroundColor Gray
+                Write-Host "       from any other computer redirected to that computer instead." -ForegroundColor Gray
+            }
         }
     }
     elseif ((Test-Path $qmRuntime) -and -not (Test-Path $qmSource)) {

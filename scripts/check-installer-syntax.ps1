@@ -36,6 +36,15 @@ $targets = @(
     'scripts/audit-qm-bootstrap.ps1'
     'scripts/scheduled-update.ps1'
     'scripts/register-scheduled-update.ps1'
+    'scripts/test-aipc-capacity-fit.ps1'
+    'scripts/test-cross-stack-credentials.ps1'
+    'deploy/client-bundle/setup-qm.ps1'
+    'scripts/test-lane-connectivity.ps1'
+    'scripts/test-qm-currentness.ps1'
+    'scripts/test-origin-coherence.ps1'
+    'scripts/sync-pacgate-matters.ps1'
+    'scripts/test-aipc-capacity-fit-strict.ps1'
+    'scripts/test-skills-and-templates.ps1'
 )
 
 $bad = 0

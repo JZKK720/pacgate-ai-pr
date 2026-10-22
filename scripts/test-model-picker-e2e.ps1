@@ -21,38 +21,52 @@
 [CmdletBinding()]
 param(
     [string]$NginxUrl = 'http://localhost:8089',
-    # deer-flow admin. Resolved from deploy/client-bundle/.deer-flow-credentials
-    # below unless overridden here.
-    #
-    # These were HARDCODED literals that went stale when the credential was
-    # rotated (the credentials file records a 2026-10-09 reset). Combined with the
-    # JSON/form-data mismatch fixed at the login call, that made this gate report
-    # CANNOT CHECK against a healthy deer-flow on every run - and because exit 2 is
-    # the "not a failure" carve-out, it silently stopped testing anything while
-    # still appearing in the suite output. A gate that can never fail is not a gate.
-    [string]$Email,
-    [string]$Password,
+    [string]$Email = 'admin@pacgate-law.com',
+    # NOT hardcoded. A live deer-flow password sat here until 2026-10-15 in a PUBLIC
+    # repo. Resolved per machine from -Password, then PACGATE_DEERFLOW_PASSWORD, then
+    # the gitignored deploy/client-bundle/.deer-flow-credentials. With none of those
+    # the gate reports CANNOT CHECK (exit 2) instead of failing - see below.
+    [string]$Password = '',
     [string]$Model = 'gemma4-12b-local',
     [int]$TimeoutSec = 420
 )
 
+# deer-flow has a SEPARATE identity store from pacgate-api, so .env's
+# PACGATE_API_PASSWORD is the API principal and returns 401 here. The deer-flow admin
+# is created by deer-flow's own /initialize, so the credential must be supplied.
+function Resolve-DeerFlowPassword {
+    if ($Password) { return $Password }
+    if ($env:PACGATE_DEERFLOW_PASSWORD) { return $env:PACGATE_DEERFLOW_PASSWORD }
+    if ($env:DEER_FLOW_PASSWORD) { return $env:DEER_FLOW_PASSWORD }
+    $f = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.deer-flow-credentials'
+    if (Test-Path -LiteralPath $f) {
+        # Both key names are accepted: machines provisioned before 2026-10-15 wrote
+        # DEER_FLOW_PASSWORD, and the documented format is PACGATE_DEERFLOW_PASSWORD.
+        # Reading only one of them silently turned this gate into CANNOT CHECK.
+        $m = Select-String -LiteralPath $f -Pattern '^\s*(?:PACGATE_DEERFLOW_PASSWORD|DEER_FLOW_PASSWORD)\s*=\s*(.+?)\s*$' | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    return $null
+}
+
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
-# The credentials file is per-machine and gitignored, so it is the authority; the
-# literals above are only a fallback for a machine that has not run /setup.
-if (-not $Email -or -not $Password) {
-    $dfCred = Join-Path $repoRoot 'deploy\client-bundle\.deer-flow-credentials'
-    if (Test-Path $dfCred) {
-        foreach ($line in (Get-Content $dfCred -ErrorAction SilentlyContinue)) {
-            if (-not $Email -and $line -match '^\s*DEER_FLOW_EMAIL\s*=\s*(.+)$') { $Email = $Matches[1].Trim() }
-            if (-not $Password -and $line -match '^\s*DEER_FLOW_PASSWORD\s*=\s*(.+)$') { $Password = $Matches[1].Trim() }
-        }
-    }
-    if (-not $Email) { $Email = 'admin@pacgate-law.com' }
-}
 $pass = 0
 $fail = 0
+
+# Resolve once, up front. CANNOT CHECK is reported before any assertion runs, so a
+# machine with no deer-flow credential does not produce a misleading red or a
+# misleading green.
+$Password = Resolve-DeerFlowPassword
+if (-not $Password) {
+    Write-Host '[SKIP] CANNOT CHECK: no deer-flow credential available.' -ForegroundColor Yellow
+    Write-Host '       Pass -Password, set PACGATE_DEERFLOW_PASSWORD, or write' -ForegroundColor Yellow
+    Write-Host '       deploy/client-bundle/.deer-flow-credentials (gitignored).' -ForegroundColor Yellow
+    Write-Host 'RESULT: 0 passed, 0 failed (CANNOT CHECK - no credential)' -ForegroundColor Yellow
+    exit 2
+}
+
 function Check($name, $cond, $detail = '') {
     if ($cond) { Write-Host "  [PASS] $name" -ForegroundColor Green; $script:pass++ }
     else {

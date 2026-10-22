@@ -79,6 +79,26 @@ if (-not $SkipOcrPull -and $script:OcrImage) {
 $gates = @(    'scripts/test-install-render.ps1'
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
+    # install.ps1 -Update executes the OLD body after refreshing the repo, because
+    # PowerShell parses a whole script before running it. Any step defined BEFORE
+    # the repo refresh was therefore undeliverable in a single update - the machine
+    # would keep running the previous version's early steps. install.ps1 now hands
+    # off once (hash-keyed) to the script the refresh just wrote; this gate proves
+    # it, including a control that reproduces the loss.
+    'scripts/test-installer-self-update.ps1'
+    # Pacgate must NOT reconfigure a shared Ollama server. The machine-wide
+    # context setting belongs to the operator (other tools use the same server),
+    # so context is pinned per model via a derived tag instead. This gate fails
+    # if the installer ever writes the app database again, and fails if the repo
+    # defaults start naming a derived tag that no registry can serve.
+    'scripts/test-ollama-context-scope.ps1'
+    # tool_search deferral removes ~73% of the bound tool schema from EVERY prompt
+    # (measured 10,645 -> 2,823 tokens). It was disabled because the middleware
+    # told the model to call tool_search first and retry, which small local models
+    # never completed. The patch promotes-and-executes in one turn. The static test
+    # proves the code and the mount; the runtime test proves it actually runs.
+    'scripts/test-tool-search-deferral.ps1'
+    'scripts/test-deferred-tool-runtime.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot
@@ -277,6 +297,25 @@ $gates = @(    'scripts/test-install-render.ps1'
     # ASCII-ONLY by design, because the client AIPC has only Windows PowerShell 5.1
     # and 5.1 cannot parse a BOM-less script holding non-ASCII literals.
     'scripts/test-compose-healthchecks.ps1'
+
+    # PROVES no literal credential value is tracked. Registered 2026-10-15, after
+    # this exact script - which existed for a year - failed to notice a LIVE
+    # pacgate-api password sitting in a PUBLIC repo. Two reasons it was blind, both
+    # fixed before registering it here:
+    #
+    #   1. Its md-Password rule required a BOLD field name (`| **Password** |`).
+    #      deploy/BENCHMARK-REPORT-2026-10-08.md used `| Password |` and a
+    #      header-declared table with no per-row label at all. Neither matched.
+    #   2. It had NO exit statement, so it always returned 0 and could not have
+    #      failed CI even if the rule had fired. A detector that cannot fail is
+    #      documentation, not a control.
+    #
+    # It is now shape-agnostic (bold/plain/labelled/unlabelled), exits 1 on findings,
+    # and reads with -Encoding UTF8 - without which PowerShell 5.1 decodes a UTF-8
+    # CJK label as mojibake and every CJK rule silently misses (measured: the same
+    # planted credential scanned CLEAN, exit 0 on 5.1 and was found after the fix).
+    # ASCII-only, so 5.1 can parse it.
+    'scripts/detect-literal-credentials.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
@@ -399,6 +438,67 @@ $liveStackGates = @(
     # that image is not present.
     'scripts/test-officecli-mcp.ps1'
     'scripts/test-format-coverage-e2e.ps1'
+    # THE EDGES, registered 2026-10-18. Every other live-stack gate here tests a
+    # COMPONENT or a public endpoint. Nothing tested the LANES BETWEEN components,
+    # and that is exactly where three separate defects survived a green suite:
+    # qm held a pacgate-api password the API rejected; qm's OPENVIKING_API_KEY
+    # authenticated with nothing (no per-client key is registered in the service,
+    # and OpenViking /health needs no key so the obvious check passed); and the qm
+    # bridge ran as the deployment admin instead of a least-privilege account.
+    #
+    # `smoke-full-stack.ps1` above reports lane REACHABILITY, which is a different
+    # question - a lane can be up and the credential on it dead. The decisive
+    # difference is that this gate probes from the CALLER's side, inside its own
+    # container with its own resident environment (E6, E7). A host-side probe
+    # cannot prove those, because host and container do not share an environment -
+    # which is precisely how a 401 on qm's copy stayed invisible.
+    #
+    # It also reports container PROVENANCE, after this box was found running a mix:
+    # pacgate-api + openviking from compose.bundle.yaml, the rest from
+    # compose.prod.yaml, while both declare `name: pacgate-ai-bundle` (same project).
+    # Exits 2 when nothing is reachable, so a clean machine is not a false red.
+    'scripts/test-lane-connectivity.ps1'
+    # qm CURRENTNESS, registered 2026-10-18. `install.ps1 -Update` deliberately does
+    # NOT restart the qm stack - "a restart of the co-working stack is user-visible
+    # (qm is where staff work)" - which is the right call, and which means qm can sit
+    # on stale definitions or a stale .env indefinitely while -Update reports success.
+    # That is exactly what happened: qm held a pacgate-api password the API rejected,
+    # through every update and a fully green suite.
+    #
+    # The answer is not to auto-restart a staff-facing stack. It is to make staleness
+    # visible so the operator restarts when nobody is mid-session. This gate is
+    # read-only - it starts nothing and restarts nothing.
+    #
+    # Q1 compares the staged deploy against tracked source (the -Update re-stage), by
+    # content, so a silently-failed stage that leaves last release's definitions is
+    # caught. Q3 compares each running container's LIVE env against its .env, which is
+    # the check that catches a corrected file the container never picked up.
+    # Exits 2 when qm is not deployed, since that is normal on a box without it.
+    'scripts/test-qm-currentness.ps1'
+    # BROWSER-ORIGIN and OAuth reachability, registered 2026-10-19.
+    #
+    # This is the gate whose ABSENCE let a client-facing auth breakage ship through
+    # a fully green 40-gate suite. test-lane-connectivity.ps1 probes from INSIDE
+    # containers, so it proves service-to-service lanes; it never sends a browser
+    # Origin header. The auth gates therefore all passed while every sign-in from
+    # another computer returned 403 - refused BEFORE authentication, so it read as
+    # "blocked from OAuth" rather than as a wrong password.
+    #
+    # O1  every origin this machine advertises is not 403 (422/400/401 = reached auth)
+    # O2  the frontend port :8090 is represented, not just the ingress port
+    # O3  DEER_FLOW_TRUSTED_ORIGINS covers the machine and matches GATEWAY_CORS_ORIGINS
+    # O4  both allowlists are substitution-derived from one value
+    # O5  the OIDC discovery document advertises a browser-reachable issuer
+    #
+    # O5 exists because OAuth is a BROWSER redirect: the issuer is resolved on the
+    # user's machine, so a localhost issuer sends every remote user to their own
+    # loopback and sign-in can never complete - with no server-side error at all.
+    # Token exchange keeps working via the in-cluster OIDC_TOKEN_ENDPOINT, which is
+    # why a server-side probe passed while browser sign-in was dead.
+    #
+    # It sends a deliberately WRONG credential (creates no state) and exits 2 when
+    # the stack is down, so a clean machine is not a false red.
+    'scripts/test-origin-coherence.ps1'
 )
 
 
@@ -416,7 +516,117 @@ $measurements = @(
     # delete it, and no commit can turn this green. See
     # deploy/DEFECT-sanitized-content-not-served.md.
     'scripts/audit-sanitized-chunk-egress.ps1'
+
+    # Auxiliary model lanes must be pinned BY NAME. Registered 2026-10-17, after
+    # `title.model_name` was found unset in BOTH shipped configs - which sent title
+    # generation to `models[0]`, a 25 GB `ollama ps` resident, on EVERY new thread.
+    # On the 16 GB AIPC dGPUs that model does not fit, so it either OOMs or evicts
+    # the model the user's chat is already on; the following call pays a full reload
+    # and the 420 s stream idle watchdog eventually kills it.
+    #
+    # The memory lane was pinned for the SAME class of bug on 2026-10-07 (a 43k-token
+    # loop on the single Ollama runner slot). The title lane was missed, and
+    # `summarization` was missed too - measured the same day to fall back to
+    # models[0] as well, because the middleware builds its own model and never
+    # receives the chat model. Nothing in the repo asserted what an auxiliary lane
+    # resolves to, so all three could regress silently.
+    #
+    # STATIC - reads the two tracked configs only, no containers and no YAML module
+    # (the AIPCs ship Windows PowerShell 5.1, which has no ConvertFrom-Yaml).
+    # Red-checked by reintroducing each pin's removal and by pinning a non-existent
+    # model name; the summarization assertions correctly SKIP when that lane is
+    # disabled, since deer-flow defaults `enabled` to false.
+    'scripts/test-auxiliary-model-pins.ps1'
+
+    # Capacity fitness, registered 2026-10-17. `audit-model-tags.ps1` already gates
+    # tag OBTAINABILITY (HTTP 404 at runtime); nothing gated whether a tag can
+    # actually RUN on the smallest supported client GPU, and those are different
+    # failures - an un-fittable model pulls fine, lists fine, then spills to CPU or
+    # evicts the chat model.
+    #
+    # The dev box for this project has a 96 GiB iGPU carve-out, so every over-cap
+    # model runs there happily and the defect is invisible until it reaches a 16 GB
+    # AIPC. That is precisely why this needs a gate rather than a review.
+    #
+    # PROMOTED TO A GATE 2026-10-19. It was registered here because "which models
+    # the SHIPPED roster offers is a product decision that is still open". That
+    # call is now made: a model larger than the target card cannot ship as a
+    # default - on a 16 GB AIPC it does not error, it spills to CPU and presents
+    # as a hang, which is the symptom that made these machines look broken.
+    #
+    # It is enforced through scripts/test-aipc-capacity-fit-strict.ps1 (registered
+    # in $gates), not from here. This loop ignores exit codes by design, and the
+    # script only fails under -Strict - so registering it here would have kept
+    # reporting green while the 17 GB mid tier shipped. Kept in the measurements
+    # list so the full size table is still printed on every suite run.
+    'scripts/test-aipc-capacity-fit.ps1'
 )
+
+# Cross-stack credential agreement, registered 2026-10-17. This is the gate
+# whose ABSENCE let a real divergence survive: the deployment has TWO .env files
+# (client-bundle/.env and client-bundle/qm-pacgate/.env, separate compose projects
+# at separate directories), and four keys are shared BY VALUE with nothing
+# synchronising them. PACGATE_API_PASSWORD diverged, so qm-pacgate-core held a value
+# that returns 401 against pacgate-api - proved by login probe, 200 vs 401.
+#
+# The whole 39-gate suite stayed green through it, because every existing test
+# drives pacgate-api using client-bundle/.env and NOTHING crossed the stack
+# boundary. Registered as a GATE, not a measurement: there is no judgement call
+# here, shared secrets agreeing is a hard requirement.
+#
+# It exits 2 (CANNOT CHECK) on a fresh clone where neither .env exists - those
+# files are gitignored and per-machine by design.
+$gates += 'scripts/test-cross-stack-credentials.ps1'
+# CROSS-MACHINE TRANSFER, registered 2026-10-19.
+#
+# The question "how do Matters, skills, tools, templates and recorded matters
+# reach the other AIPC?" had NO answer in this repository - no export route, no
+# import route, no replication script, no documentation. It was not broken, it
+# had never been built, and a capability that does not exist passes every gate
+# because nothing asserts that it should.
+#
+# This gate asserts the capability exists and stays coherent: the tool parses,
+# every API route it calls is actually served by pacgate-api, it is keyed on the
+# natural keys that exist (tenant slug, user email, matters.external_key) rather
+# than on per-machine uuids, it never deletes a matter, and it moves no password
+# hashes. Those are exactly the ways a sync tool fails destructively.
+#
+# It is static (no live stack needed), so it runs everywhere.
+$gates += 'scripts/test-sync-capability.ps1'
+# AIPC CAPACITY, promoted from a measurement to a gate 2026-10-19.
+#
+# The model roster decision was left open on purpose ("which models the SHIPPED
+# roster offers is a product decision"). It is now made: a model larger than the
+# target card cannot ship as a default. On a 16 GB AIPC an over-cap tag does not
+# error - Ollama spills to CPU and the run presents as a hang, which is the exact
+# symptom that made the AIPCs look broken.
+#
+# The capacity SCRIPT is still listed in $measurements so its full size table is
+# printed on every run, but that loop ignores exit codes by design. This wrapper
+# supplies -Strict and is what actually blocks.
+$gates += 'scripts/test-aipc-capacity-fit-strict.ps1'
+# SKILLS AND WORKFLOW TEMPLATES, registered 2026-10-19.
+#
+# These are declared must-haves on every machine, and NOTHING asserted them. The
+# suite had gates for MCP (2) and workflows (7) but zero for skills, and zero that
+# treated the template lane as an artifact set with a tracked source and a shipped
+# copy that must agree.
+#
+# The trap it closes: the skills do NOT ship inside the digest-pinned sandbox
+# image. Inspecting ghcr.io/jzkk720/pacgate-sandboxes at its pinned digest shows
+# tools (pacgate-qm, firecrawl-qm, claude, codex) and not one SKILL.md. Skills
+# arrive only through the compose bind-mount plus the tracked directory, so
+# deleting or renaming that directory breaks every machine at once with no build
+# failure and no error - the agent simply stops discovering a capability.
+#
+# K1 every tracked skill has SKILL.md with usable frontmatter (name+description)
+# K2 the bind mount is present, since the image carries no skills
+# K3 the tracked template set matches the shipped client-bundle copy
+# K4 every template declares id, name and steps
+#
+# Static, so it runs everywhere. Red-checked two ways: deleting a SKILL.md and
+# stripping another's frontmatter each make it exit 1.
+$gates += 'scripts/test-skills-and-templates.ps1'
 
 $failed = @()
 

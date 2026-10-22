@@ -245,9 +245,34 @@ pub async fn extract_document(
         .clone()
         .ok_or_else(|| ApiError::internal("ocr-service not configured (OCR_SERVICE_URL unset)"))?;
 
+    // The filename MUST carry the real extension.
+    //
+    // ocr-service decides how to prepare input with
+    //     suffix = os.path.splitext(file.filename or "doc")[1] or ".pdf"
+    // and `_prepare_pages` rasterises only when suffix == ".pdf"; anything else is
+    // passed to PaddleOCR as an image.
+    //
+    // This call used to send `.file_name("document")`, whose splitext is empty, so
+    // ocr-service fell back to ".pdf" and every extraction took the PDF path. A PDF
+    // worked by ACCIDENT; a PNG was handed to pdf2image and returned
+    // `incomplete = true` with zero text. Measured 2026-10-21:
+    //   filename "document"  -> text_len 0,   incomplete true
+    //   filename "probe.png" -> text_len 60,  incomplete false
+    // So the format stored on the document (written by FsDocumentStore, e.g. "png")
+    // is forwarded as the extension. PDFs keep ".pdf" and are unaffected.
+    let ocr_ext = match doc_format.as_str() {
+        "png" => "png",
+        "jpeg" => "jpg",
+        "tiff" => "tif",
+        "bmp" => "bmp",
+        "webp" => "webp",
+        _ => "pdf",
+    };
+    let ocr_filename = format!("document.{ocr_ext}");
+
     let client = reqwest::Client::new();
     let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name("document")
+        .file_name(ocr_filename)
         .mime_str("application/octet-stream")
         .map_err(|e| ApiError::internal(e.to_string()))?;
     let form = reqwest::multipart::Form::new().part("file", part);

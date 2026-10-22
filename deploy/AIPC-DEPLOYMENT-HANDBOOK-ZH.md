@@ -103,11 +103,11 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.1.31` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.1.31` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.1.31` | 已发布，公开。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.1.31` | 已发布，公开。 |
-| `ghcr.io/jzkk720/ocr-service:0.1.31` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
+| `ghcr.io/jzkk720/pacgate-api:0.2.1` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.1` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.1` | 已发布，公开。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.1` | 已发布，公开。 |
+| `ghcr.io/jzkk720/ocr-service:0.2.1` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
@@ -413,7 +413,43 @@ docker compose -f compose.qm.yaml up -d
 
 ## Stage 5：验证 deer-flow（两台机器）
 
-在每台机器上，验证研究工作空间：
+**deer-flow 有自己独立的登录体系，与 `pacgate-api` 的登录相互独立。**
+这是「密码不对」报告最常见的单一原因，因此在尝试登录之前请先读这一节。
+
+存在两个独立身份存储，且不共用密码：
+
+| 界面 | URL | 身份存储 | 密码来源 |
+| --- | --- | --- | --- |
+| pacgate-api（API，由 `install.ps1` 预置） | `/pacgate/api/auth/login` | Postgres `users` 表 | `.env` → `PACGATE_API_PASSWORD` |
+| **deer-flow（研究界面）** | `/api/v1/auth/*` | SQLite `data/deer-flow/data/deerflow.db` | 由 deer-flow 自身的首次运行设置决定 |
+
+`PACGATE_API_EMAIL` / `PACGATE_API_PASSWORD` 是 **pacgate-api** 的主体凭据，**不是**
+deer-flow 的凭据。把它们用于 deer-flow 登录会返回 `401 invalid_credentials` —— 这读起来
+与「密码错误」完全一样，但实际是「主体不对」。`install.ps1` 不会创建 deer-flow 管理员；
+它也无法创建，因为 deer-flow 的管理员是由其自身的 `/initialize` 建立的。
+
+登录 deer-flow：
+
+```powershell
+# 打开 http://localhost:8089/research/
+# 若提示设置管理员，请先完成设置 —— 该账户属于 deer-flow 自身。
+# 否则，使用此前设置的 deer-flow 管理员账户登录。
+```
+
+如果 deer-flow 管理员密码确实丢失，可以在不影响其他任何数据的前提下重建。密码格式为
+bcrypt(base64(sha256(password)))，由 `app/gateway/auth/password.py` 写入：
+
+```powershell
+# 1. deer-flow 认为自己是否已完成初始化？（needs_setup=false 表示管理员已存在）
+curl.exe -s http://localhost:8089/api/v1/auth/setup-status
+
+# 2. 向 deer-flow 自己的存储写入新的哈希以重置管理员密码。
+#    需在容器内针对 /data/deer-flow/data/deerflow.db 执行。
+#    完整示例见 deploy/BENCHMARK-REPORT-2026-10-08.md —— 2026-10-08 曾在首次设置的
+#    密码被确认不可恢复后照此操作。登录后请到「设置 → 账户」修改密码。
+```
+
+随后验证研究工作空间可用：
 
 ```powershell
 # 打开 http://localhost:8089/research/
@@ -422,6 +458,9 @@ docker compose -f compose.qm.yaml up -d
 # 验证：回复包含引用
 # 验证：回复已保存到事项记忆
 ```
+
+一个无需凭据的机械检查：用明知错误的密码登录，必须返回 **401 `invalid_credentials`**
+—— 而不是 403（意味着 Origin 门控配置有误，浏览器会被挡在外面），也不是 5xx（认证服务异常）。
 
 ## Stage 5.5：全链路操作 — deer-flow ↔ QM ↔ OpenViking
 

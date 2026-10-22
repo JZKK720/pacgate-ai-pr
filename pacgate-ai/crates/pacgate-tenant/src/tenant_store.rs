@@ -202,13 +202,49 @@ impl MatterStore {
         Ok(row_to_matter(&row))
     }
 
+    /// Set or clear a matter's external key.
+    ///
+    /// WHY (2026-10-19). `POST /api/matters` accepts external_key, but no route
+    /// could change it afterwards, so a matter created before the column existed
+    /// was permanently NULL-keyed. Cross-machine import then had to match on
+    /// `name`, which is not unique (50 matters shared one name on the dev box),
+    /// so documents could attach to the wrong matter. A write-once identity field
+    /// is not an identity field.
+    ///
+    /// Scoped by tenant in the WHERE clause rather than by a prior read: a matter
+    /// belonging to another tenant matches zero rows and reports NotFound, so a
+    /// caller cannot probe for ids outside their tenant by watching for a
+    /// different error.
+    ///
+    /// A duplicate key arrives as ExternalKeyConflict (see `From<sqlx::Error>`)
+    /// so the API can answer 409 instead of 500.
+    #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str(), matter_id = %matter_id.as_str()))]
+    pub async fn update_external_key(
+        &self,
+        tenant_id: &TenantId,
+        matter_id: &MatterId,
+        key: Option<&str>,
+    ) -> Result<Matter, TenantError> {
+        let row = sqlx::query(
+            "UPDATE matters SET external_key = $1, updated_at = NOW()
+             WHERE id = $2 AND tenant_id = $3
+             RETURNING id, tenant_id, name, description, external_key, persona_id, created_by, created_at, updated_at",
+        )
+        .bind(key)
+        .bind(matter_id.0)
+        .bind(tenant_id.0)
+        .fetch_one(&self.db)
+        .await?;
+
+        Ok(row_to_matter(&row))
+    }
+
     #[instrument(skip(self), fields(tenant_id = %tenant_id.as_str(), matter_id = %matter_id.as_str()))]
     pub async fn delete(
         &self,
         tenant_id: &TenantId,
         matter_id: &MatterId,
-    ) -> Result<(), TenantError> {
-        let result = sqlx::query("DELETE FROM matters WHERE id = $1 AND tenant_id = $2")
+    ) -> Result<(), TenantError> {        let result = sqlx::query("DELETE FROM matters WHERE id = $1 AND tenant_id = $2")
             .bind(matter_id.0)
             .bind(tenant_id.0)
             .execute(&self.db)

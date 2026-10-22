@@ -23,11 +23,26 @@
 
 models:
   # ── LOCAL FIRST: this is the default (models[0]) ──────────────────────────
-  - name: nemotron-3.5-lightning-30b-local
-    display_name: Nemotron 3.5 Lightning 30B (Local GPU)
-    description: LOCAL default. GPU-accelerated, 1M context. Long-context legal reasoning without egress.
+  # Pacgate 2026-10-19: models[0] is gemma4-12b-local (7.2 GB). The 25 GB
+  # nemotron that sat here is withdrawn for the same reason as in the client
+  # config: it cannot fit a 16 GB AIPC card, so a bare run of the published image
+  # on client hardware would spill to CPU and present as a hang with no error.
+  # Commented rather than deleted, with the measurement recorded.
+  # - name: nemotron-3.5-lightning-30b-local
+  #   display_name: Nemotron 3.5 Lightning 30B (Local GPU)
+  #   description: Requires 25 GB VRAM - NOT available on a 16 GB AIPC.
+  #   use: langchain_openai:ChatOpenAI
+  #   model: nemotron-3.5-lightning:30b-a3b
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
+
+  - name: gemma4-12b-local
+    display_name: Gemma 4 12B (Local GPU)
+    description: LOCAL default. 7.2 GB, fits a 16 GB AIPC card with headroom.
     use: langchain_openai:ChatOpenAI
-    model: nemotron-3.5-lightning:30b-a3b
+    model: gemma4:12b-it-qat
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
@@ -161,4 +176,17 @@ memory:
   # first config model with no generation cap, and a confused run can loop tens
   # of thousands of tokens on the single Ollama runner slot, stalling every
   # chat. gemma4-12b-memory carries a hard 2048 max_tokens (entry below).
+  model_name: gemma4-12b-memory
+
+# Pacgate 2026-10-17: PIN the title-generation model.
+#
+# Same root cause as in the client config: `title.model_name` unset meant
+# `title_middleware.py` called `create_chat_model()` with no name, resolving to
+# `models[0]` - here nemotron-3.5-lightning:30b-a3b, 25 GB resident. That ran on
+# EVERY new thread, loading or evicting a 25 GB model on the single Ollama
+# runner slot for a six-word title. This file is baked into the standalone
+# image, so an image started without the client bind-mount has no other pin.
+# gemma4-12b-memory is the only 12B entry here, so title and memory converge on
+# one resident model.
+title:
   model_name: gemma4-12b-memory
