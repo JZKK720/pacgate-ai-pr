@@ -28,6 +28,11 @@ gateway serves. The MCP spec timeouts (timedelta) still route through
 langchain-mcp-adapters' deprecated streamablehttp_client, which converts
 them to httpx.Timeout(total=timeout, read=sse_read_timeout) - so we set the
 same shape via httpx_client_factory to avoid the deprecation path entirely.
+
+Pacgate patch 2026-10-15: forward the per-server headers on the httpx client.
+The factory previously declared ``**_kwargs`` and dropped everything, so no
+configured ``X-API-Key``/``Authorization`` ever reached the wire. See the
+docstring of _httpx_timeout_factory for the measured failure chain.
 """
 
 import logging
@@ -49,18 +54,40 @@ PACGATE_MCP_TOOL_TIMEOUT_S = float(900)
 PACGATE_MCP_SSE_READ_TIMEOUT_S = float(300)
 
 
-def _httpx_timeout_factory(**_kwargs: Any) -> httpx.AsyncClient:
+def _httpx_timeout_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
     """Build the httpx.AsyncClient with Pacgate's MCP timeout shape.
 
-    Mirrors mcp.shared._httpx_utils.create_mcp_http_client follow_redirects
-    default; only the Timeout differs (total=900, read=300 per MCP shape
-    httpx.Timeout(total, read=sse_read)).
+    Signature mirrors mcp.shared._httpx_utils.create_mcp_http_client, as
+    called by mcp.client.streamable_http (headers=, timeout=, auth=).
+
+    ``timeout`` is accepted and deliberately ignored: the caller passes the
+    MCP SDK default shape, and replacing it with PACGATE_MCP_TOOL_TIMEOUT_S is
+    the entire point of this patch (see the module docstring).
+
+    ``headers`` and ``auth`` MUST be forwarded. Until 2026-10-15 this took
+    ``**_kwargs`` and dropped them, so every server carrying an ``X-API-Key``
+    or ``Authorization`` header authenticated as anonymous. OpenViking
+    answered 401, and because
+    deerflow.mcp.tools._load_mcp_tools() awaits
+    MultiServerMCPClient.get_tools() for all servers under a single
+    try/except, that one 401 returned [] for every server - including the
+    healthy pacgate server. Measured symptom on v0.1.31:
+    "Total tools loaded: 7, built-in tools: 2, MCP tools: 0".
     """
-    timeout = httpx.Timeout(
-        PACGATE_MCP_TOOL_TIMEOUT_S,
-        read=PACGATE_MCP_TOOL_TIMEOUT_S,
+    del timeout
+    return httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(
+            PACGATE_MCP_TOOL_TIMEOUT_S,
+            read=PACGATE_MCP_TOOL_TIMEOUT_S,
+        ),
+        headers=headers,
+        auth=auth,
     )
-    return httpx.AsyncClient(follow_redirects=True, timeout=timeout)
 
 
 def build_server_params(server_name: str, config: McpServerConfig) -> dict[str, Any]:
