@@ -569,8 +569,19 @@ try {
     }
     $qmPublicUrl = $qmPublicUrl.TrimEnd('/')
 
+    # ADMIN_GRANTS is `email:role`, NOT a bare email. Core's parseAdminGrants
+    # splits on the LAST colon and silently DROPS any entry whose role is not
+    # exactly `org_admin` - so a bare address parses to [] and, because the
+    # postgres store is durable, bootAdminGrantSeed seeds NOTHING. The result is
+    # a deployment where the admin can sign in but is not an admin, with no
+    # error anywhere: the portal simply derives /admin access from a grant that
+    # does not exist. Measured on AIPC2 2026-10-22: admin_grants was empty and
+    # the value in .env was the bare address.
+    #
+    # AUTH_ALLOWED_EMAILS is the opposite - a PLAIN list, no suffix. The two
+    # keys look alike and take different formats; keep them visibly different.
     $envContent = @"
-ADMIN_GRANTS=$adminEmail
+ADMIN_GRANTS=${adminEmail}:org_admin
 AUTH_ALLOWED_EMAILS=$adminEmail
 ANTHROPIC_API_KEY=
 MODEL_API_KEY=ollama
