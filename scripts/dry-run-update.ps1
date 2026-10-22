@@ -103,21 +103,23 @@ $repoTop = (git rev-parse --show-toplevel).Trim()
 $dirty = @(git -C $repoTop status --porcelain)
 Pop-Location
 
-# The installer's guard is `$dirty = git status --porcelain; if ($dirty)`. That
-# means it treats UNTRACKED files as dirty too, and skips the repo refresh on a
-# tree git itself would happily fast-forward. This is a real behaviour worth
-# knowing before a client update: an operator who left a scratch file behind
-# gets "skipping the repo update" and only images move. It is a WARN in the
-# installer, not a failure - but the repo silently stays behind.
+# The installer's guard is `git status --porcelain --untracked-files=no`, so it
+# blocks only on TRACKED edits. Untracked files are reported and kept, and the
+# refresh proceeds - unless one of them collides with a path the incoming commit
+# adds, which git itself refuses and the installer pre-checks.
 #
-# Counted separately so the report distinguishes the two cases.
+# This note used to claim the opposite ("the installer's guard skips the repo
+# pull for these"). That was true of an older bare `git status --porcelain`
+# guard and stopped being true when it was narrowed; a stale note here is worse
+# than none, because it tells an operator their update is image-only when the
+# repo is in fact refreshing.
 $untracked = @($dirty | Where-Object { $_ -match '^\?\?' })
 $tracked = @($dirty | Where-Object { $_ -notmatch '^\?\?' })
 Check 'no TRACKED local edits (which would truly block a fast-forward)' ($tracked.Count -eq 0) `
     ("{0} tracked change(s)" -f $tracked.Count)
 if ($untracked.Count -gt 0) {
-    Note "$($untracked.Count) untracked file(s) present - the installer's guard skips the repo pull for these" `
-        'harmless for git --ff-only, but it means ONLY images update; commit or remove them for a full refresh'
+    Note "$($untracked.Count) untracked file(s) present - kept, and they do NOT block the repo refresh" `
+        'the installer narrows its guard to tracked state; only a name collision with an incoming path blocks'
 }
 
 # ── 3. The repo is already at origin/main (pull would be a no-op) ──────────
