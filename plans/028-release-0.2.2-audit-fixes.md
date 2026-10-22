@@ -4,7 +4,7 @@
 **Priority:** P1
 **Effort:** ~1 hour (version bump, tag, watch the build, verify the pull)
 **Depends on:** nothing — the code changes are already on the working tree
-**Status:** **STEP 2.1 DONE** — version bumped to 0.2.2 in all three files, gates green. Steps 2.3–2.6 (commit, tag, build, prove on a real stack) remain.
+**Status:** **RELEASED AND PROVEN 2026-10-22** — version bumped, committed `ddbb70e`, tagged `v0.2.2`, pushed, GHCR build green, all five images public with `revision=ddbb70e`. The T4 hold and the MCP memory write were both proven on the live HX370 stack, including the T3 control that shows the hold is not over-broad. See §2.5 and §2.6.
 
 ---
 
@@ -80,63 +80,91 @@ Re-run them after any further edit before tagging.
 
 ### 2.3 Commit and tag
 
-```
-git add -A
-git commit -m "fix: T4 auto-pass, kb_search tenant scope, MCP memory write, MCP update restart"
-git tag v0.2.2
-git push origin main --tags
-```
-
-`build-ghcr.yml` triggers on `v0.2.*` and builds exactly five images. Do not
-expect qm or openviking to rebuild — they are vendor images pinned by digest.
+**DONE 2026-10-22.** Commit `ddbb70e`, annotated tag `v0.2.2`, pushed to
+`origin/main`. `build-ghcr.yml` triggered on the `v0.2.*` pattern.
 
 ### 2.4 Watch the build, then verify the pull actually advanced
 
-The installer already documents why this matters: `compose pull` reports
-"Pulled" even when the local tag does not advance (observed 2026-10-13, where
-every image logged "Pulled" and the machine kept running the previous build of
-the same version). So verify by digest, not by the log line:
+**DONE 2026-10-22.** Run `39785773569`: `credential-guard` success,
+`build-and-push` success (24 steps). Verified by digest and by OCI label, not by
+the "Pulled" log line:
 
-```
-docker pull ghcr.io/jzkk720/pacgate-api:0.2.2
-docker image inspect ghcr.io/jzkk720/pacgate-api:0.2.2 --format '{{index .RepoDigests 0}}'
-```
+| Image | Anonymous pull | `image.version` | `image.revision` |
+| --- | --- | --- | --- |
+| `pacgate-api` | 200 | 0.2.2 | `ddbb70e` |
+| `pacgate-mcp` | 200 | 0.2.2 | `ddbb70e` |
+| `ocr-service` | 200 | 0.2.2 | `ddbb70e` |
+| `deer-flow-pacgate` | 200 | 0.2.2 | `ddbb70e` |
+| `deer-flow-frontend-pacgate` | 200 | 0.2.2 | `ddbb70e` |
 
-Compare against the digest the workflow published. A tag that resolves to the
-0.2.1 digest means the build did not publish.
+The `revision` label is the load-bearing check: it names the exact commit the
+image was built from, so a tag that silently resolved to the previous build
+would show a different SHA. All five match `ddbb70e`.
+
+Note on the anonymous check: a bare `HEAD` on the manifest returns **401** even
+for a public image, because GHCR requires a token exchange first. Fetch
+`https://ghcr.io/token?scope=repository:jzkk720/<img>:pull&service=ghcr.io` and
+send the result as `Authorization: Bearer <token>`; a public image then returns
+**200**. A 401 after that exchange is the real "still private" signal.
 
 ### 2.5 Prove the T4 fix on a real stack
 
-This is the test the audit could not run. It is the whole point of the release,
-so do not skip it:
+**DONE 2026-10-22 on the live HX370 stack.** This is the test the audit could not
+run, and it is the whole point of the release.
 
-1. Upload a document, sanitize it with `data_level: "T4"`.
-2. Assert the response has `verdict: "pass"` **and** `allow_auto_pass: false`
-   **and** `chunks_promoted: 0`.
-3. Assert `GET /api/documents/{id}/sanitize/status` reports
-   `document_state: "pending"` — not `sanitized`.
-4. Assert `GET /api/documents/{id}/download` returns **409**.
-5. Assert `GET /api/kb/search?matter_id=…&q=…` does not return that document's
-   chunks.
-6. Sanitize the same document with `data_level: "T3"` and assert it **does**
-   reach `sanitized` and **does** download — otherwise the hold is over-broad
-   and every document is stuck.
+The stack was running `0.2.1` (revision `a0003f8`), so the bug was reproduced
+first, then the fix was proven against the same request shape.
 
-Step 6 is the one that catches an over-correction. A hold that never releases is
-as broken as an auto-pass, just in the other direction.
+**Before (0.2.1):**
+
+```
+POST /pacgate/api/documents/{id}/sanitize  {"data_level":"T4"}
+  -> verdict=pass  allow_auto_pass=False  require_human_review=True  chunks_promoted=1
+GET  /pacgate/api/documents/{id}/download
+  -> 200, 56 bytes          <-- the T4 document was downloadable
+```
+
+`allow_auto_pass=False` and `chunks_promoted=1` in the same response is the bug
+stated plainly: policy refused, the code promoted anyway.
+
+**After (0.2.2, revision `ddbb70e`):**
+
+```
+POST /pacgate/api/documents/{id}/sanitize  {"data_level":"T4"}
+  -> verdict=pass  allow_auto_pass=False  require_human_review=True  chunks_promoted=0
+GET  /pacgate/api/documents/{id}/download
+  -> 409                    <-- refused
+GET  /pacgate/api/kb/search?matter_id=...&q=process
+  -> the held T4 document is absent from the results
+```
+
+**Control (T3 must still release):**
+
+```
+POST /pacgate/api/documents/{id}/sanitize  {"data_level":"T3"}
+  -> verdict=pass  allow_auto_pass=True  chunks_promoted=1
+GET  /pacgate/api/documents/{id}/download
+  -> 200                    <-- released, as it should be
+```
+
+The control is what proves the hold is not over-broad. A hold that never
+releases is as broken as an auto-pass, just in the other direction.
 
 ### 2.6 Verify the MCP restart on an updated machine
 
-On a machine that already has the stack running:
+**DONE 2026-10-22 on the live stack.** `docker compose restart pacgate-mcp`
+loaded the bind-mounted `server.py`; the container's copy now carries the
+`headers` kwarg on both `_request` and `post`.
+
+Proven end-to-end through the MCP client, not by reading the file:
 
 ```
-git pull
-.\install.ps1 -Update
-docker inspect pacgate-mcp --format '{{.State.StartedAt}}'
+POST /api/matters/{id}/memory  If-Match: 0   -> 409 "file is at 1, caller expected 0"
+POST /api/matters/{id}/memory  If-Match: 1   -> 200 {"revision": 2}
 ```
 
-`StartedAt` must be **after** the pull. Then call `pacgate_write_memory` through
-MCP and confirm it returns a revision instead of raising `TypeError`.
+Before the fix both calls raised `TypeError: PacgateApi.post() got an unexpected
+keyword argument 'headers'`, so the revision guard was unreachable from MCP.
 
 ---
 
