@@ -55,6 +55,13 @@ deploy/client-bundle/openviking/ov.conf.bak.*
 # next `install.ps1 -Update` then silently skips the repo refresh.
 deploy/qm-pacgate/qm.config.jsonc.bak.*
 
+# The static docker CLI that compose.qm.yaml bind-mounts into the sandbox.
+# setup-qm.ps1 FETCHES it (43 MB, SHA-256 verified) rather than vendoring it, so
+# it is present on every machine that has run the setup and absent from a fresh
+# clone. Without this rule it shows as untracked forever, and an untracked file
+# in the repo dir is exactly what makes `git status --porcelain` non-empty.
+deploy/qm-pacgate/patch/docker-cli/docker
+
 # Deer-flow admin login credentials (per-machine, created at runtime in the
 # container's local SQLite DB; NOT in .env). Never commit.
 #
