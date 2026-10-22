@@ -18,9 +18,14 @@
 #   any ghcr image and cannot be a repo default.
 #
 #   The boundary this file protects is unchanged: Pacgate must not rewrite the
-#   SHARED setting. What changed is the mechanism - context now comes from
-#   OLLAMA_CONTEXT_LENGTH, scoped to the Ollama process, so there is exactly one
-#   name per weight set.
+#   SHARED setting. 2026-10-22: the SECOND mechanism was removed too. The
+#   installer used to write OLLAMA_CONTEXT_LENGTH / OLLAMA_NUM_PARALLEL /
+#   OLLAMA_MAX_LOADED_MODELS / OLLAMA_KEEP_ALIVE / LLAMA_ARG_CACHE_RAM as
+#   machine-wide User environment variables, then restart the server. Those are
+#   User-scope, so they are inherited by EVERY Ollama server the operator starts
+#   - including the one VS Code / Copilot talks to - and the restart killed live
+#   client sessions. Pacgate now writes nothing and restarts nothing; it reports
+#   the effective values and leaves the server alone.
 #
 # It is a STATIC check plus a live one when Ollama is reachable. The live half
 # skips rather than fails when Ollama is down, so a clean machine is not red.
@@ -74,10 +79,34 @@ Write-Output ''
 Write-Host '2. context is bounded without a derived tag' -ForegroundColor White
 Assert-That ($src -notmatch 'Ensure-OllamaContextPinnedTag') `
     'no derived-tag builder (it created a second name for the same weights)'
-Assert-That ($src -match 'OLLAMA_CONTEXT_LENGTH\s*=\s*\[string\]\$Profile\.ContextLength') `
-    'the installer sets OLLAMA_CONTEXT_LENGTH from the hardware tier'
+Assert-That ($src -notmatch 'OLLAMA_CONTEXT_LENGTH\s*=\s*\[string\]') `
+    'the installer does not write OLLAMA_CONTEXT_LENGTH into the shared server'
 $ctx = if ($src -match 'ContextLength\s*=\s*(\d+)') { [int]$Matches[1] } else { 0 }
-Assert-That ($ctx -gt 0) "the standard tier declares a context length (got $ctx)"
+Assert-That ($ctx -gt 0) "the standard tier still declares a context length for reporting (got $ctx)"
+Write-Output ''
+
+# ── 2b. the shared server is never reconfigured or restarted ─────────────────
+# Ollama serves VS Code / Copilot and anything else the operator points at it.
+# A User-scope environment variable is inherited by every server that operator
+# starts, so writing one is a machine-wide change even though it looks local.
+# Measured 2026-10-22: the installer had written five of them, and its restart
+# step killed the Copilot provider session (ephemeral port, never recovered).
+Write-Host '2b. the installer leaves the shared Ollama server alone' -ForegroundColor White
+Assert-That ($src -notmatch 'SetEnvironmentVariable') `
+    'no machine-wide environment write (User scope is inherited by every server)'
+Assert-That ($src -notmatch 'Set-Item\s+-Path\s+"?Env:') `
+    'no process-scope environment write either'
+foreach ($v in @('OLLAMA_CONTEXT_LENGTH', 'OLLAMA_NUM_PARALLEL', 'OLLAMA_MAX_LOADED_MODELS', 'OLLAMA_KEEP_ALIVE', 'LLAMA_ARG_CACHE_RAM')) {
+    # Match an ASSIGNMENT (`NAME = value`), not a mention. The installer is
+    # allowed - and expected - to name these in the recommendation table and in
+    # the comments that explain why it does not apply them.
+    Assert-That ($src -notmatch ('(?m)^\s*' + [regex]::Escape($v) + '\s*=')) `
+        "the installer does not assign $v"
+}
+Assert-That ($src -notmatch 'Stop-Process') `
+    'the installer never kills the shared Ollama process'
+Assert-That ($src -notmatch 'Restarting Ollama') `
+    'the installer does not restart the shared Ollama server'
 Write-Output ''
 
 # ── 3. the repo DEFAULTS must stay on raw tags ───────────────────────────────

@@ -48,9 +48,11 @@ Assert-That (Test-Path $installer) "installer present at $installer"
 $src = Get-Content -LiteralPath $installer -Raw
 
 # ── 1. the prompt cache is bounded, in every tier ────────────────────────────
+# The installer REPORTS this value; it does not apply it. Ollama is shared with
+# VS Code / Copilot, so a User-scope variable would change the whole machine.
 Write-Host '1. llama.cpp prompt cache is capped' -ForegroundColor White
 Assert-That ($src -match 'LLAMA_ARG_CACHE_RAM') `
-    'installer sets LLAMA_ARG_CACHE_RAM (prompt cache is HOST RAM, unrelated to VRAM)'
+    'installer reports LLAMA_ARG_CACHE_RAM (prompt cache is HOST RAM, unrelated to VRAM)'
 Assert-That ($src -match 'CacheRamMiB') `
     'the value comes from the hardware profile rather than a magic number at the call site'
 # Every tier must carry it: a missing one silently falls back to the 8192 MiB default.
@@ -88,9 +90,10 @@ Assert-That ($src -match 'function\s+Get-ModelSelectionReport') `
 $reportBody = if ($src -match '(?s)function\s+Get-ModelSelectionReport\s*\{.*?\n\}') { $Matches[0] } else { '' }
 Assert-That ($reportBody -ne '' -and $reportBody -notmatch 'WriteAllText|SetEnvironmentVariable') `
     'the model selection helper writes nothing'
-# Context now comes from the env var, so it must be set for every tier.
-Assert-That ($src -match 'OLLAMA_CONTEXT_LENGTH\s*=\s*\[string\]\$Profile\.ContextLength') `
-    'context is bounded by OLLAMA_CONTEXT_LENGTH, one name per weight set'
+# Context is whatever the operator's own Ollama server is configured for. The
+# installer reports the tier's recommendation and must not apply it.
+Assert-That ($src -notmatch 'OLLAMA_CONTEXT_LENGTH\s*=\s*\[string\]') `
+    'context is not written into the shared server (reported, not applied)'
 
 # ── 3. the installer still never touches the shared Ollama app setting ──────
 # Guarded in full by test-ollama-context-scope.ps1; asserted here too because a

@@ -280,16 +280,34 @@ Write-Host "[OK] Ollama detected" -ForegroundColor Green
 # These are USER-level environment variables because Ollama's Windows installer
 # runs as a normal user process (not a service), so HKCU is what it reads.
 # Writes are idempotent and only touch OLLAMA_* names.
-function Set-OllamaResidencyEnv {
+# Ollama is SHARED infrastructure: it serves VS Code / Copilot and anything else
+# the operator points at it. Pacgate therefore REPORTS the residency settings and
+# never writes them.
+#
+# WHY THE WRITES WERE REMOVED (2026-10-22)
+#   This function used to persist five values as User-scope environment variables
+#   and then restart the server so it would pick them up. Two things were wrong:
+#
+#   1. User scope is not local. Every Ollama server the operator starts inherits
+#      those variables, so "Pacgate's own models get 32768" was never true - the
+#      whole machine got 32768, including the server VS Code / Copilot uses.
+#   2. The restart was destructive. It killed the running server, which dropped
+#      live client sessions; the Copilot provider's ephemeral port never came
+#      back and the operator saw "Could not connect to local model provider".
+#
+#   The values are still computed, because they are what the operator needs when
+#   sizing a machine and what the docs quote. They are printed as a
+#   recommendation, not applied.
+function Get-OllamaResidencyReport {
     param([Parameter(Mandatory)] $Profile)
 
-    $desired = [ordered]@{
-        OLLAMA_MAX_LOADED_MODELS = [string]$Profile.MaxLoaded
-        OLLAMA_CONTEXT_LENGTH    = [string]$Profile.ContextLength
-        OLLAMA_NUM_PARALLEL      = [string]$Profile.NumParallel
+    $recommended = @(
+        @{ Name = 'OLLAMA_MAX_LOADED_MODELS'; Value = [string]$Profile.MaxLoaded }
+        @{ Name = 'OLLAMA_CONTEXT_LENGTH';    Value = [string]$Profile.ContextLength }
+        @{ Name = 'OLLAMA_NUM_PARALLEL';      Value = [string]$Profile.NumParallel }
         # 15m keeps the utility tag warm across a normal working gap without
         # pinning memory forever. The cloud main model costs 0 GB local.
-        OLLAMA_KEEP_ALIVE        = '15m'
+        @{ Name = 'OLLAMA_KEEP_ALIVE';        Value = '15m' }
 
         # Pacgate 2026-10-21: cap llama.cpp's PROMPT CACHE, which is HOST RAM and
         # grows independently of the model and of VRAM.
@@ -315,8 +333,11 @@ function Set-OllamaResidencyEnv {
         #   skipped, and 48.5% of prefill events got ZERO reuse. Capping the cache
         #   therefore costs little on the hit rate while returning gigabytes.
         #
-        # HOW IT REACHES llama-server: Ollama spawns it as a child process, so an
-        # inherited environment variable is enough - no flag is passed for this.
+        # HOW AN OPERATOR APPLIES IT: Ollama spawns llama-server as a child
+        # process, so the variable has to be in the environment of the server
+        # process. Pacgate does not set it - that would be machine-wide. To apply
+        # it, start a second `ollama serve` on its own port with the variable
+        # scoped to that process, and point Pacgate at that port.
         # VERIFIED end to end on this box: with LLAMA_ARG_CACHE_RAM=512 the runner's
         # own log switched from the 8192 default to
         #     cache state: 1 prompts, 20.457 MiB (limits: 512.000 MiB, 8192 tokens, ...)
@@ -325,21 +346,18 @@ function Set-OllamaResidencyEnv {
         #
         # Sizing: 512 MiB is still ~30x a short title/memory prompt, 1024 MiB covers
         # several 8k utility prompts - which is the actual traffic on these lanes.
-        LLAMA_ARG_CACHE_RAM      = [string]$Profile.CacheRamMiB
-    }
+        @{ Name = 'LLAMA_ARG_CACHE_RAM';      Value = [string]$Profile.CacheRamMiB }
+    )
 
-    $changed = @()
-    foreach ($k in $desired.Keys) {
-        $want = $desired[$k]
-        $have = [Environment]::GetEnvironmentVariable($k, 'User')
-        if ($have -ne $want) {
-            [Environment]::SetEnvironmentVariable($k, $want, 'User')
-            # Keep the current process in sync so a restart in this session sees it.
-            Set-Item -Path "Env:$k" -Value $want
-            $changed += "$k=$(if ($have) { $have } else { '<unset>' })->$want"
+    $rows = @()
+    foreach ($item in $recommended) {
+        $rows += [pscustomobject]@{
+            Name        = $item.Name
+            Recommended = $item.Value
+            Effective   = [Environment]::GetEnvironmentVariable($item.Name, 'User')
         }
     }
-    return $changed
+    return $rows
 }
 
 # The Ollama DESKTOP APP stores a machine-wide `context_length` in
@@ -407,11 +425,11 @@ except Exception as e:
 # Read (never write) the app's machine-wide context_length. Ollama is shared
 # infrastructure here, so this value is reported and respected, not overridden.
 $residency = Get-OllamaResidencyProfile
+$residencyRows = @()
 try {
-    $envChanged = Set-OllamaResidencyEnv -Profile $residency
+    $residencyRows = @(Get-OllamaResidencyReport -Profile $residency)
 } catch {
-    Write-Host "[WARN] Could not persist Ollama residency settings: $_" -ForegroundColor Yellow
-    $envChanged = @()
+    Write-Host "[WARN] Could not compute the Ollama residency recommendation: $_" -ForegroundColor Yellow
 }
 
 $appCtx = $null
@@ -421,11 +439,15 @@ try {
     $appCtx = [pscustomobject]@{ Path = $null; Value = $null; Status = 'unknown'; Detail = "$_" }
 }
 
-if ($envChanged.Count -gt 0) {
-    Write-Host "[OK] Ollama residency profile '$($residency.Tier)': $($envChanged -join '; ')" -ForegroundColor Green
-} else {
-    Write-Host "[OK] Ollama residency env for profile '$($residency.Tier)' already applied" -ForegroundColor Green
+Write-Host "[OK] Ollama residency profile '$($residency.Tier)' (recommendation only - not applied)" -ForegroundColor Green
+foreach ($row in $residencyRows) {
+    $have = if ($row.Effective) { $row.Effective } else { '<unset>' }
+    $mark = if ($row.Effective -eq $row.Recommended) { '=' } else { '->' }
+    Write-Host ("     {0,-26} {1} {2}   (recommended {3})" -f $row.Name, $have, $mark, $row.Recommended) -ForegroundColor DarkGray
 }
+Write-Host "     Ollama is shared with other tools, so Pacgate does not change these." -ForegroundColor DarkGray
+Write-Host "     To apply them, start a second 'ollama serve' on its own port with the" -ForegroundColor DarkGray
+Write-Host "     variables scoped to that process, and point Pacgate at that port." -ForegroundColor DarkGray
 
 switch ($appCtx.Status) {
     'read' {
@@ -433,8 +455,8 @@ switch ($appCtx.Status) {
             Write-Host "[OK] Ollama app context_length is already $($appCtx.Value)" -ForegroundColor Green
         } else {
             Write-Host "[NOTE] Ollama app context_length is $($appCtx.Value) (machine-wide, shared with other tools)." -ForegroundColor DarkGray
-            Write-Host "       Pacgate does not change it. Pacgate's own models get $($residency.ContextLength)" -ForegroundColor DarkGray
-            Write-Host "       from OLLAMA_CONTEXT_LENGTH, which is scoped to the Ollama process." -ForegroundColor DarkGray
+            Write-Host "       Pacgate does not change it. The tier recommendation is $($residency.ContextLength)," -ForegroundColor DarkGray
+            Write-Host "       but the app setting wins, so $($appCtx.Value) is what models actually load at." -ForegroundColor DarkGray
         }
     }
     'not-applicable' { Write-Host "[OK] No Ollama app database ($($appCtx.Detail))" -ForegroundColor DarkGray }
@@ -465,9 +487,10 @@ switch ($appCtx.Status) {
 #      narrower one, without the installer having decided in advance.
 #
 #   So the model roster is now exactly what the operator selects from the standard
-#   Ollama tags that `ollama-models.txt` pre-pulls. Context is bounded by
-#   OLLAMA_CONTEXT_LENGTH (set above, per hardware tier) rather than by a derived
-#   tag, which keeps ONE name per weight set and lets the scheduler keep it warm.
+#   Ollama tags that `ollama-models.txt` pre-pulls. Context is whatever the
+#   operator's own Ollama server is configured for - Pacgate reports the tier's
+#   recommendation and does not apply it, which keeps ONE name per weight set and
+#   lets the scheduler keep it warm.
 #
 #   CAVEAT, measured: the Ollama desktop app's db.sqlite `context_length` OVERRIDES
 #   OLLAMA_CONTEXT_LENGTH. On the HX370 box the tier says 32768 but `ollama ps`
@@ -532,48 +555,18 @@ if ($modelReport) {
     $effectiveCtx = if ($appCtx -and $appCtx.Status -eq 'read') { $appCtx.Value } else { $null }
     if ($effectiveCtx) {
         Write-Host "     Effective context is $effectiveCtx (from the Ollama app setting, which wins" -ForegroundColor DarkGray
-        Write-Host "     over OLLAMA_CONTEXT_LENGTH=$($residency.ContextLength)). Change it in the Ollama app if needed." -ForegroundColor DarkGray
+        Write-Host "     over any OLLAMA_CONTEXT_LENGTH). Change it in the Ollama app if needed." -ForegroundColor DarkGray
     } else {
-        Write-Host "     Context comes from OLLAMA_CONTEXT_LENGTH=$($residency.ContextLength) unless the Ollama" -ForegroundColor DarkGray
-        Write-Host "     desktop app has its own context_length set, which takes precedence." -ForegroundColor DarkGray
+        Write-Host "     Context is whatever your Ollama server is configured for. The tier" -ForegroundColor DarkGray
+        Write-Host "     recommendation is $($residency.ContextLength); Pacgate does not apply it." -ForegroundColor DarkGray
     }
 }
 
-# The env vars (MAX_LOADED_MODELS / NUM_PARALLEL / KEEP_ALIVE /
-# LLAMA_ARG_CACHE_RAM / CONTEXT_LENGTH) are read only at server start, so a
-# running server needs one restart to pick them up.
-if ($envChanged.Count -gt 0) {
-    $ollamaRunning = @(Get-Process -Name 'ollama app','ollama' -ErrorAction SilentlyContinue).Count -gt 0
-    if ($ollamaRunning) {
-        Write-Host "     Restarting Ollama so it picks up the new residency settings..." -ForegroundColor DarkGray
-        try {
-            Get-Process -Name 'ollama app','ollama' -ErrorAction SilentlyContinue |
-                ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-            Start-Sleep -Seconds 3
-            $appExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama app.exe'
-            if (Test-Path $appExe) {
-                Start-Process -FilePath $appExe | Out-Null
-            } else {
-                Start-Process -FilePath 'ollama' -ArgumentList 'app' -ErrorAction SilentlyContinue | Out-Null
-            }
-            $ready = $false
-            for ($i = 0; $i -lt 30; $i++) {
-                Start-Sleep -Seconds 1
-                try {
-                    Invoke-RestMethod -Uri 'http://localhost:11434/api/version' -TimeoutSec 2 | Out-Null
-                    $ready = $true; break
-                } catch { }
-            }
-            if ($ready) {
-                Write-Host "[OK] Ollama restarted with the residency settings applied" -ForegroundColor Green
-            } else {
-                Write-Host "[WARN] Ollama did not answer on 11434 within 30s - start it manually." -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "[WARN] Ollama restart failed ($_); restart it manually to apply." -ForegroundColor Yellow
-        }
-    }
-}
+# The residency values above are a RECOMMENDATION and are deliberately not
+# applied. Ollama is shared with VS Code / Copilot and anything else the operator
+# points at it, so Pacgate neither writes its environment nor restarts it. An
+# operator who wants the recommendation applied starts a second `ollama serve` on
+# its own port with the variables scoped to that process.
 
 # 3. Check .env
 if (-not (Test-Path .env)) {
