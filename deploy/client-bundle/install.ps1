@@ -1746,6 +1746,21 @@ if ($Update) {
     } else {
         Write-Host "[WARN] deer-flow-frontend is not running; skipped restart" -ForegroundColor Yellow
     }
+    # pacgate-mcp: deploy/pacgate-mcp/server.py is bind-mounted over the image's
+    # copy (compose.prod.yaml, the SANITIZE_TIMEOUT_S override). Python imports
+    # its modules at process start with no hot reload, so a repo update that
+    # changes server.py leaves the OLD module running. This is the same failure
+    # class as the two restarts above, and it was missing: the MCP memory-write
+    # fix (PacgateApi.post() had no `headers` kwarg, so every
+    # pacgate_write_memory raised TypeError) would have looked shipped on every
+    # updated machine while the running process still had the broken signature.
+    $mcpRunning = docker compose -f compose.prod.yaml ps -q pacgate-mcp
+    if ($mcpRunning) {
+        docker compose -f compose.prod.yaml restart pacgate-mcp
+        Write-Host "[OK] pacgate-mcp restarted (bind-mounted server.py now in effect)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] pacgate-mcp is not running; skipped restart" -ForegroundColor Yellow
+    }
 }
 
 # 7d. Report qm sandbox drift.

@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.2.1
+    image: ghcr.io/jzkk720/pacgate-api:0.2.2
     healthcheck:
       # No curl and no wget in this image (measured 2026-10-14), so the probe
       # uses bash's /dev/tcp. /health is the one route that needs no auth
@@ -126,7 +126,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.1
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.2
     healthcheck:
       # :8001 is the gateway nginx proxies to; /health verified 200.
       test:
@@ -285,7 +285,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.1
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.2
     healthcheck:
       # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
       # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
@@ -322,7 +322,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.2.1
+    image: ghcr.io/jzkk720/pacgate-mcp:0.2.2
     healthcheck:
       # A real MCP `initialize` handshake, not a TCP connect. The image has no
       # curl; it does have python3, so the probe speaks the protocol and
@@ -343,7 +343,18 @@ services:
       PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
       PACGATE_JWT_TOKEN: ${PACGATE_JWT_TOKEN}
       PACGATE_MCP_PORT: "8000"
-      PACGATE_MCP_TIMEOUT: "60"
+      PACGATE_MCP_TIMEOUT: "700"
+      # Default matter for pacgate_read_memory / pacgate_write_memory so the
+      # chat agent can address the deployment's scoped matter without knowing
+      # the UUID (mirrors the deer-flow service's PACGATE_MATTER_ID above).
+      PACGATE_MATTER_ID: ${PACGATE_MATTER_ID}
+    volumes:
+      # Fork patch (2026-10-09): SANITIZE_TIMEOUT_S=700 per-request override for
+      # sanitize endpoints (BERT NER runs minutes; stock 0.1.24 timeout kills
+      # the call and deer-flow retries for ~2min per tool). Bind-mounted until
+      # upstream ships it in a release image. Source lives in the repo at
+      # deploy/pacgate-mcp/server.py; see repo memory mcp-timeout-fix-2026-10-09.
+      - ../pacgate-mcp/server.py:/app/server.py:ro
     restart: unless-stopped
 
   # ocr-service: PaddleOCR extraction (plan 019). First-class from 0.1.16.
@@ -357,7 +368,7 @@ services:
   # the volume lacks - the dependency the bake exists to remove. See the longer
   # note in compose.prod.yaml.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.2.1
+    image: ghcr.io/jzkk720/ocr-service:0.2.2
     healthcheck:
       # /health verified 200. python3, not curl - the image has no curl.
       # start_period is long on purpose: this service downloads its model on

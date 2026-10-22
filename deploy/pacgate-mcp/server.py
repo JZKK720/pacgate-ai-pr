@@ -142,6 +142,7 @@ class PacgateApi:
         json: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
         files: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
         """Send a request; on 401 re-login once and retry exactly once.
@@ -151,19 +152,26 @@ class PacgateApi:
         and 401 again. Retrying is safe because pacgate-api rejects an expired
         token before the handler runs, so a 401 means nothing was executed.
 
+        `headers` are per-call extras (e.g. `If-Match` from the memory revision
+        guard) merged OVER the auth/Content-Type base. They are merged inside
+        `send()` for the same reason the auth header is: a retry must carry the
+        refreshed token, not a snapshot taken before the re-login.
+
         `timeout` overrides the client default for one call (used by the
         sanitize endpoints, whose NER pass legitimately runs for minutes).
         """
 
         def send() -> httpx.Response:
-            headers = self._headers()
+            merged = self._headers()
+            if headers:
+                merged.update(headers)
             if files is not None:
                 # Let httpx generate multipart/form-data WITH its boundary.
                 # Forcing application/json here would break every upload: the
                 # server would parse a multipart body as JSON. The previous
                 # post_multipart never set Content-Type for this reason.
-                headers.pop("Content-Type", None)
-            kwargs: dict[str, Any] = {"headers": headers}
+                merged.pop("Content-Type", None)
+            kwargs: dict[str, Any] = {"headers": merged}
             if params is not None:
                 kwargs["params"] = params
             if json is not None:
@@ -192,9 +200,10 @@ class PacgateApi:
         self,
         path: str,
         json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
-        return self._request("POST", path, json=json, timeout=timeout)
+        return self._request("POST", path, json=json, headers=headers, timeout=timeout)
 
     def delete(self, path: str) -> httpx.Response:
         return self._request("DELETE", path)
@@ -816,6 +825,11 @@ def pacgate_sanitize_document(
     sanitized text, the allow_auto_pass / require_human_review flags, and the
     ledger evidence (SHA-256 pre/post, rule versions). The mapping itself
     never leaves pacgate-api.
+
+    A clean verdict is NOT the same as a promotion. When policy refuses to
+    auto-pass (T4 always does), the document stays 'pending': it is not
+    downloadable and not retrievable, and `chunks_promoted` is 0. Read
+    `allow_auto_pass` before treating a `pass` verdict as usable.
     """
     client = get_client()
     resp = client.post(
