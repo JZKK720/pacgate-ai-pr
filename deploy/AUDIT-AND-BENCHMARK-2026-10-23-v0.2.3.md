@@ -261,3 +261,30 @@ dominates. That is a config property, not a hardware one.
   five-service release pin, so `test-stack-version-coherence.ps1` correctly does
   not assert them. Their currentness is asserted by `test-qm-currentness.ps1`
   instead.
+
+---
+
+## 7. A second defect found while verifying this audit
+
+`scripts/test-version-marker.ps1` failed once inside `run-all-checks.ps1` and
+passed 3/3 standalone. That asymmetry is the signature of a race, not a flake to
+re-run.
+
+The gate proved the nginx config PARSES (`nginx -t`) and then slept a flat 2
+seconds before asserting. `nginx -t` does not prove the worker has bound :80, so
+the assertions raced startup - long enough until it is not.
+
+Replaced with a readiness poll, matching the pattern the stub upstream in the same
+harness already uses. The probe targets `/version`, not `/`: this fixture has no
+UI root, so `/` answers 404 and `wget` exits non-zero even when nginx is perfectly
+up. That distinction is what the first attempt at the fix got wrong.
+
+Mutation-tested: pointing the probe at a dead port produces
+`nginx never answered on :80 inside the container`, exit 1 - so the poll can fail
+and is not a vacuous wait. Unmutated: 3/3 green.
+
+**Final suite after both fixes:**
+
+```
+ALL 48 GATES PASSED (14 live-stack gate(s) checked separately)
+```
