@@ -525,11 +525,15 @@ $liveStackGates = @(
     # containers; test-compose-healthchecks asserts healthcheck presence, not image
     # identity. So a stack can be arbitrarily mixed and all of them stay green.
     #
-    # It matters because `docker compose up -d` does NOT recreate a container whose
-    # image TAG is unchanged, and `compose pull` fetches images without touching
-    # running containers. Most services bind-mount their code, which hides the gap -
-    # but ocr-service has NO bind mounts, so it really does run the old app.py.
-    # Verified: the 0.2.1 container still carried the unguarded
+    # It matters because a PARTIAL recreate leaves the rest behind. `docker compose
+    # up -d` DOES recreate a container whose image TAG changed (proved with a
+    # throwaway project), so a full `install.ps1 -Update` moves every service - but
+    # recreating one service to verify a release leaves the others on the previous
+    # one, which is exactly what happened here: pacgate-api was recreated 21 minutes
+    # after the v0.2.3 tag while the other four still carried 0.2.1 images from the
+    # previous day. Most services bind-mount their code, which hides the gap - but
+    # ocr-service has NO bind mounts, so it really did run the old app.py. Verified:
+    # the 0.2.1 container still carried the unguarded
     # `box, (text, _conf) = line[0], line[1]`, so one malformed OCR line marked the
     # whole page incomplete; 0.2.2 skips the bad line and keeps the rest.
     #

@@ -152,20 +152,40 @@ That is D3.
 
 ## 4. Defects this plan will fix
 
-### D1 — HIGH — Four of five services run the previous release
+### D1 — HIGH — Four of five services were running the previous release
 
-`ocr-service`, `pacgate-mcp`, `deer-flow`, `deer-flow-frontend` are all on `0.2.1`
-images created 2026-10-22 08:00. `pacgate-api` was recreated 2026-10-23 01:32 on
+`ocr-service`, `pacgate-mcp`, `deer-flow`, `deer-flow-frontend` were all on `0.2.1`
+images created 2026-10-22 16:00. `pacgate-api` was recreated 2026-10-23 09:32 on
 `0.2.3`. Compose pins all five at `0.2.3`.
 
-Severity depends on the service:
+**Cause: a partial recreate, not `install.ps1`.** This matters and the first
+version of this plan got it wrong. Measured:
+
+- `v0.2.3` was tagged 2026-10-23 **09:10:45**.
+- `pacgate-api` was created **09:32:11** — 21 minutes *after* the tag.
+- The other four were created 2026-10-22 **16:00** — the 0.2.1 deploy.
+
+And `docker compose up -d` **does** recreate a container when its image tag
+changes. Proved with a throwaway project: `nginx:1.27-alpine` → `nginx:1.27`
+produced `Container cohprobe Recreated` and a new image id. The same tag with no
+pull produced `Container cohprobe Running` and the same id.
+
+So if `install.ps1 -Update` had run for 0.2.3, **all five** would be 0.2.3. Only
+one moved, which is the signature of a hand-run partial recreate — the 0.2.3
+verification on this box, which recreated `pacgate-api` alone.
+
+**This is not an installer defect.** It is a *detection* defect: the state existed
+for hours and the suite reported 47/47 green. That is D2, and D2 is the real
+finding.
+
+Severity by service:
 
 | Service | Bind-mounted code? | Consequence of running 0.2.1 |
 | --- | --- | --- |
-| `pacgate-mcp` | yes — `server.py` | **benign**; the 0.2.2 `headers` fix is live (verified in-container) |
+| `pacgate-mcp` | yes — `server.py` | **benign**; the 0.2.2 `headers` fix was live (verified in-container) |
 | `deer-flow-frontend` | yes — `next.config.js` | **benign** |
-| `deer-flow` | yes — 15 `patches/*.py` | **mostly benign**; image-baked code is 0.2.1 |
-| `ocr-service` | **no mounts at all** | **real** — runs 0.2.1 `app.py`, missing `_page_spans` |
+| `deer-flow` | yes — 15 `patches/*.py` | **mostly benign**; image-baked code was 0.2.1 |
+| `ocr-service` | **no mounts at all** | **real** — ran 0.2.1 `app.py`, missing `_page_spans` |
 
 The `ocr-service` case is the one that matters. Verified in the container: it still
 had the unguarded `box, (text, _conf) = line[0], line[1]`, so one malformed line
@@ -180,7 +200,8 @@ needed — the release was correct, the deployment was not.
 
 ### D2 — HIGH — No gate can see a mixed-version stack
 
-This is why D1 survived a 47/47 green suite.
+This is why D1 survived a 47/47 green suite, and it is the real finding of this
+plan. D1's cause was a partial recreate; D2 is why nobody noticed for hours.
 
 | Gate | What it checks | Why it misses D1 |
 | --- | --- | --- |
@@ -197,7 +218,7 @@ running container's `.Config.Image` equals the pin. Exit 2 when the stack is dow
 Register it in `run-all-checks.ps1` as a live-stack gate.
 
 This is the highest-value item in the plan: it is the gate that would have caught
-both machines' "green suite, broken stack" state.
+both machines' "green suite, broken stack" state, and it caught this box's.
 
 ### D3 — MEDIUM — Nothing stops a local model being set as MAIN
 

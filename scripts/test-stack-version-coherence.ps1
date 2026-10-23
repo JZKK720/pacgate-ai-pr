@@ -18,15 +18,21 @@
 # So a stack can be arbitrarily mixed and every one of them stays green. That is
 # the failure mode this gate closes: it compares ALL pinned services at once.
 #
-# WHY IT MATTERS BEYOND TIDINESS. `docker compose up -d` does NOT recreate a
-# container whose image TAG is unchanged, and `compose pull` fetches new images
-# without touching running containers. A machine that pulls 0.2.3 and then only
-# recreates the service someone was debugging keeps executing 0.2.1 everywhere
-# else. Most of those services bind-mount their code, which hides it - but
-# `ocr-service` has NO bind mounts at all, so it really does run the old
-# `app.py`. Verified on this box: the 0.2.1 container still carries the unguarded
-# `box, (text, _conf) = line[0], line[1]`, so one malformed OCR line marks the
-# whole page incomplete. 0.2.2 skips the bad line and keeps the rest.
+# WHY IT MATTERS BEYOND TIDINESS. `docker compose up -d` DOES recreate a container
+# when its image TAG changes - proved with a throwaway project: nginx:1.27-alpine
+# -> nginx:1.27 produced "Container cohprobe Recreated" and a new image id, while
+# the same tag with no pull produced "Running" and the same id. So a full
+# `install.ps1 -Update` does move every service.
+#
+# The gap is the PARTIAL recreate: someone recreates one service to verify a
+# release and leaves the rest on the previous one. That is exactly what happened
+# here - pacgate-api was recreated 21 minutes after the v0.2.3 tag while the other
+# four still carried 0.2.1 images from the previous day. Most services bind-mount
+# their code, which hides it - but `ocr-service` has NO bind mounts at all, so it
+# really does run the old `app.py`. Verified on this box: the 0.2.1 container still
+# carried the unguarded `box, (text, _conf) = line[0], line[1]`, so one malformed
+# OCR line marked the whole page incomplete. 0.2.2 skips the bad line and keeps
+# the rest.
 #
 # WHAT IS ASSERTED
 #   1. every service pinning a `ghcr.io/jzkk720/*:<semver>` image is RUNNING;
