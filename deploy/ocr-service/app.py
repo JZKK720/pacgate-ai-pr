@@ -47,6 +47,63 @@ def health():
     return {"status": "ok"}
 
 
+def _page_spans(page_no: int, result) -> tuple[list[dict], bool]:
+    """Turn one page's PaddleOCR result into spans, and say whether it was complete.
+
+    Returns `(spans, complete)`. `complete` is False for every shape that means
+    "this page yielded no text", so the caller can fail closed.
+
+    Extracted from the endpoint so the fail-closed decision is testable without
+    PaddleOCR installed: the four degenerate shapes below are the whole contract,
+    and they used to be reachable only by running a real OCR pass.
+
+    The four shapes:
+      1. `result` is empty/None            -> no OCR result
+      2. `result[0]` is empty/None        -> no text lines
+      3. every line is malformed          -> no spans
+      4. (rasterisation failure is handled by the caller, which gets img_path=None)
+
+    A blank page is indistinguishable here from a page whose read failed, so both
+    are reported incomplete. Reporting a false "complete" is not an option.
+    """
+    if not result:
+        logger.warning("page %s produced no OCR result; marking incomplete", page_no)
+        return [], False
+
+    page_lines = result[0] or []
+    if not page_lines:
+        logger.warning("page %s produced no text lines; marking incomplete", page_no)
+        return [], False
+
+    spans: list[dict] = []
+    for line in page_lines:
+        try:
+            box, (text, _conf) = line[0], line[1]
+            xs = [int(p[0]) for p in box]
+            ys = [int(p[1]) for p in box]
+        except (TypeError, ValueError, IndexError):
+            # A malformed line is not text we recovered. Skip it, and let the
+            # span count below decide whether the page as a whole was readable.
+            logger.warning("page %s had a malformed OCR line; skipping", page_no)
+            continue
+        spans.append(
+            {
+                "page": page_no,
+                "x": min(xs),
+                "y": min(ys),
+                "width": max(xs) - min(xs),
+                "height": max(ys) - min(ys),
+                "text": text,
+            }
+        )
+
+    if not spans:
+        logger.warning("page %s yielded no spans; marking incomplete", page_no)
+        return [], False
+
+    return spans, True
+
+
 @app.post("/extract")
 async def extract(
     file: UploadFile = File(...),
@@ -75,6 +132,7 @@ async def extract(
 
         for page_no, img_path in pages:
             if img_path is None:
+                # Rasterisation failed: the page was never read.
                 incomplete = True
                 continue
             try:
@@ -84,49 +142,11 @@ async def extract(
                 incomplete = True
                 continue
 
-            # FAIL CLOSED on a page that produced nothing.
-            #
-            # Two shapes mean "this page yielded no text": an empty/None `result`,
-            # and a `result[0]` that is empty or None. The previous code used
-            # `continue` for the first and iterated past the second, leaving
-            # `incomplete = False` - so a page whose content was never recovered
-            # was reported as a COMPLETE read. That is the fail-open this guards.
-            #
-            # A blank page is indistinguishable here from a page whose read
-            # failed, so both are reported incomplete. The caller decides whether
-            # to refuse; reporting a false "complete" is not an option.
-            if not result:
-                logger.warning("page %s produced no OCR result; marking incomplete", page_no)
+            page_spans, complete = _page_spans(page_no, result)
+            if not complete:
                 incomplete = True
-                continue
-
-            page_lines = result[0] or []
-            if not page_lines:
-                logger.warning("page %s produced no text lines; marking incomplete", page_no)
-                incomplete = True
-                continue
-
-            page_span_count = 0
-            for line in page_lines:
-                box, (text, _conf) = line[0], line[1]
-                xs = [int(p[0]) for p in box]
-                ys = [int(p[1]) for p in box]
-                spans.append(
-                    {
-                        "page": page_no,
-                        "x": min(xs),
-                        "y": min(ys),
-                        "width": max(xs) - min(xs),
-                        "height": max(ys) - min(ys),
-                        "text": text,
-                    }
-                )
-                all_text.append(text)
-                page_span_count += 1
-
-            if page_span_count == 0:
-                logger.warning("page %s yielded no spans; marking incomplete", page_no)
-                incomplete = True
+            spans.extend(page_spans)
+            all_text.extend(s["text"] for s in page_spans)
 
         return {
             "text": "\n".join(all_text),

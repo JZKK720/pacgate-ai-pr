@@ -31,6 +31,10 @@ pub struct KbSearchResult {
     pub score: f32,
     pub source_doc: String,
     pub page: Option<u32>,
+    /// The chunk's own classification. Callers must report this, not the
+    /// filter ceiling: a T1 chunk returned under `max_data_level=T3` is still
+    /// T1, and labelling it T3 misstates classification to the review panel.
+    pub data_level: DataLevel,
 }
 
 /// Optional filters for RAG search.
@@ -143,7 +147,7 @@ impl RagStore {
 
         // Build query with optional jurisdiction + source_level filters
         let (sql, jur_param, sl_param) = Self::build_filtered_sql(
-            "SELECT c.content, c.page, d.name as doc_name,
+            "SELECT c.content, c.page, c.data_level, d.name as doc_name,
                     (1 - (c.embedding <=> $3::vector))::float8 as score
              FROM kb_chunks c
              JOIN documents d ON c.document_id = d.id
@@ -177,6 +181,8 @@ impl RagStore {
                 score: row.get::<f64, _>("score") as f32,
                 source_doc: row.get("doc_name"),
                 page: row.get::<Option<i32>, _>("page").map(|p| p as u32),
+                data_level: DataLevel::from_code(&row.get::<String, _>("data_level"))
+                    .unwrap_or(DataLevel::T4SpecialSensitive),
             })
             .collect())
     }
@@ -191,7 +197,7 @@ impl RagStore {
         filter: &SearchFilter,
     ) -> Result<Vec<KbSearchResult>, RagError> {
         let (sql, jur_param, sl_param) = Self::build_filtered_sql(
-            "SELECT c.content, c.page, d.name as doc_name,
+            "SELECT c.content, c.page, c.data_level, d.name as doc_name,
                     ts_rank(c.content_tsv, plainto_tsquery('english', $3)) as score
              FROM kb_chunks c
              JOIN documents d ON c.document_id = d.id
@@ -225,6 +231,8 @@ impl RagStore {
                 score: row.get::<f32, _>("score"),
                 source_doc: row.get("doc_name"),
                 page: row.get::<Option<i32>, _>("page").map(|p| p as u32),
+                data_level: DataLevel::from_code(&row.get::<String, _>("data_level"))
+                    .unwrap_or(DataLevel::T4SpecialSensitive),
             })
             .collect())
     }

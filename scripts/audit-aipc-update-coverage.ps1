@@ -61,6 +61,13 @@ $checks = @(
     # experimental.proxyTimeout is what stops Next.js killing proxied gateway calls
     # longer than its 30s default - see deploy/DEFECT-frontend-proxy-timeout.md.
     [pscustomobject]@{ Component = 'frontend next.config.js';   Needs = 'container restart';                   Any = @('restart deer-flow-frontend') }
+    # Added 2026-10-22. deploy/pacgate-mcp/server.py is bind-mounted over the
+    # image's copy (the SANITIZE_TIMEOUT_S override) and Python imports modules
+    # at process start only. Without a restart a repo update leaves the OLD
+    # module running: the MCP memory-write fix would look shipped while the
+    # process still had the broken PacgateApi.post() signature. Same failure
+    # class as the two rows above, and it was missing.
+    [pscustomobject]@{ Component = 'pacgate-mcp server.py';     Needs = 'container restart';                   Any = @('restart pacgate-mcp') }
     [pscustomobject]@{ Component = 'extensions-config.json';    Needs = 're-render + compare';                 Any = @('RENDER-AND-COMPARE', '$dfExisting') }
     [pscustomobject]@{ Component = 'repo working tree';         Needs = 'fast-forward pull';                   Any = @('git pull --ff-only') }
     # Step 7f re-stages the RUNTIME qm config from the tracked source. This is

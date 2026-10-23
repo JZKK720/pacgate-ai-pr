@@ -217,13 +217,21 @@ pub async fn run_job(
     .await
     .map_err(|e| ApiError::internal(format!("ledger insert failed: {e}")))?;
 
-    // 6. Promote or block, atomically per document.
+    // 6. Promote, block, or hold, atomically per document.
     //
     // A Pass earns the 'sanitized' label by *replacing* the chunks with the
     // job's redacted rendering. Flipping the flag alone left the raw text in
     // `content`, which the RAG gate then served to chat - see
     // `reingest_sanitized_chunks`.
+    //
+    // A clean verdict is necessary but not sufficient: policy can still refuse
+    // to auto-pass (T4 always does). Promoting on `verdict != block` alone
+    // ignored `allow_auto_pass`, so a T4 document with zero findings was
+    // labelled 'sanitized' and cleared the download egress gate - the exact
+    // auto-pass the design forbids. Held documents stay 'pending' (fail-closed,
+    // not served, not downloadable) and keep their raw chunks untouched.
     let verdict_is_block = outcome.ledger.verdict().is_block();
+    let held_for_review = !verdict_is_block && !outcome.decision.allow_auto_pass;
     let promoted: u64 = if verdict_is_block {
         sqlx::query(MARK_BLOCKED_SQL)
             .bind(tenant_id.0)
@@ -233,6 +241,8 @@ pub async fn run_job(
             .await
             .map_err(|e| ApiError::internal(format!("block write failed: {e}")))?
             .rows_affected()
+    } else if held_for_review {
+        0
     } else {
         let ingestor = pacgate_rag::ChunkIngestor::new(state.db.clone(), state.embedding.clone());
         ingestor
@@ -248,6 +258,12 @@ pub async fn run_job(
             .await
             .map_err(|e| ApiError::internal(format!("document block failed: {e}")))?
             .rows_affected()
+    } else if held_for_review {
+        // Already 'pending' - the fail-closed state. No write is needed: the
+        // document is not served by the RAG gate and not downloadable, and a
+        // later human approval can promote from here. Writing 'pending' over
+        // 'pending' would be a no-op UPDATE.
+        0
     } else {
         sqlx::query(MARK_SANITIZED_DOCUMENT_SQL)
             .bind(document_id.0)
@@ -270,6 +286,13 @@ pub async fn run_job(
             "job_id": job_id.to_string(),
             "document_version": version,
             "verdict": if verdict_is_block { "block" } else { "pass" },
+            "disposition": if verdict_is_block {
+                "blocked"
+            } else if held_for_review {
+                "held_for_review"
+            } else {
+                "sanitized"
+            },
             "redaction_count": outcome.ledger.redaction_count,
             "data_level": data_level.code(),
         }),
@@ -516,6 +539,61 @@ mod gate_tests {
         // Block verdict -> documents + kb_chunks go to 'blocked', never 'sanitized'.
         assert!(MARK_BLOCKED_SQL.contains("SET sanitization_state = 'blocked'"));
         assert!(!MARK_BLOCKED_SQL.contains("'sanitized'"));
+    }
+
+    #[test]
+    fn a_held_document_stays_pending_and_never_promotes() {
+        // T4 (and any policy refusal to auto-pass) must not reach 'sanitized'.
+        // 'pending' is the fail-closed state: the RAG gate and the download
+        // egress gate both refuse it, and a later approval can promote from it.
+        // The hold branch must therefore write NOTHING - a 'pending' -> 'pending'
+        // UPDATE would be a no-op that only looks like enforcement.
+        let src = include_str!("sanitize.rs");
+        let promotion = src
+            .split("let verdict_is_block = outcome.ledger.verdict().is_block();")
+            .nth(1)
+            .expect("promotion block not found");
+        let promotion = &promotion[..promotion.find("// 7. Audit").expect("audit marker")];
+        let hold_at = promotion.rfind("held_for_review").expect("hold branch");
+        let sanitized_at = promotion
+            .find("sqlx::query(MARK_SANITIZED_DOCUMENT_SQL)")
+            .expect("sanitized branch");
+        assert!(hold_at < sanitized_at, "hold must precede promotion");
+        // Between the hold branch and the promotion call there must be no state
+        // write at all.
+        let hold_branch = &promotion[hold_at..sanitized_at];
+        assert!(
+            !hold_branch.contains("sqlx::query"),
+            "the hold branch must not write a state"
+        );
+    }
+
+    #[test]
+    fn promotion_requires_policy_consent_not_just_a_clean_verdict() {
+        // The regression this guards: promoting on `verdict != block` alone
+        // ignored allow_auto_pass, so a T4 document with zero findings was
+        // labelled 'sanitized' and cleared the download egress gate.
+        let src = include_str!("sanitize.rs");
+        let promotion = src
+            .split("let verdict_is_block = outcome.ledger.verdict().is_block();")
+            .nth(1)
+            .expect("promotion block not found");
+        let promotion = &promotion[..promotion.find("// 7. Audit").expect("audit marker")];
+        assert!(
+            promotion.contains("allow_auto_pass"),
+            "promotion must consult allow_auto_pass"
+        );
+        assert!(
+            promotion.contains("held_for_review"),
+            "promotion must have a hold branch"
+        );
+        // The hold branch must come before the sanitized branch, so a held
+        // document can never fall through to promotion.
+        let hold_at = promotion.find("held_for_review").expect("hold branch");
+        let sanitized_at = promotion
+            .find("MARK_SANITIZED_DOCUMENT_SQL")
+            .expect("sanitized branch");
+        assert!(hold_at < sanitized_at, "hold must precede promotion");
     }
 
     #[test]

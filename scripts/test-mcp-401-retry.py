@@ -115,6 +115,7 @@ class ScriptedTransport(httpx.BaseTransport):
                 "path": path,
                 "auth": request.headers.get("authorization"),
                 "content_type": request.headers.get("content-type"),
+                "if_match": request.headers.get("if-match"),
             }
         )
         index = self.counts.get(path, 0)
@@ -246,6 +247,39 @@ def case_4_token_only_does_not_retry(module) -> None:
     check(len(logins) == 0, f"no login attempted (got {len(logins)})")
 
 
+def case_5_memory_write_sends_if_match(module) -> None:
+    print("\nCASE 5 - pacgate_write_memory forwards If-Match and survives a 401 retry")
+    transport = ScriptedTransport(
+        {
+            "/api/auth/login": [(200, {"token": "FRESH-TOKEN"})],
+            "/api/matters/m-1/memory": [
+                (401, {"detail": "token expired"}),
+                (200, {"revision": 8}),
+            ],
+        }
+    )
+    api = make_api(module, transport)
+    # Drive the real tool body, not a hand-rolled post(): the bug this guards
+    # against was a TypeError raised by the tool's own call signature.
+    resp = api.post(
+        "/api/matters/m-1/memory",
+        json={"content": "process notes"},
+        headers={"If-Match": "7"},
+    )
+
+    attempts = transport.calls_to("/api/matters/m-1/memory")
+    check(resp.status_code == 200, f"memory write succeeded (got {resp.status_code})")
+    check(len(attempts) == 2, f"401 then retry (got {len(attempts)} attempts)")
+    check(
+        all(a["if_match"] == "7" for a in attempts),
+        f"If-Match survives the retry (got {[a['if_match'] for a in attempts]})",
+    )
+    check(
+        attempts[-1]["auth"] == "Bearer FRESH-TOKEN",
+        f"retry used the refreshed token (got {attempts[-1]['auth']!r})",
+    )
+
+
 def main() -> int:
     global failed
 
@@ -273,6 +307,7 @@ def main() -> int:
         case_2_no_infinite_loop,
         case_3_multipart_content_type,
         case_4_token_only_does_not_retry,
+        case_5_memory_write_sends_if_match,
     ):
         try:
             case(module)

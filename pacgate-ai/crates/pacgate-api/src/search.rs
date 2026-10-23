@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Query, State},
-    Json,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -162,6 +162,7 @@ pub async fn search(
 /// - T4: all, including special sensitive
 pub async fn kb_search(
     State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
     Query(params): Query<KbSearchQueryParams>,
 ) -> Result<Json<Vec<KbSearchResultResponse>>, ApiError> {
     if params.q.trim().is_empty() {
@@ -172,6 +173,11 @@ pub async fn kb_search(
         .matter_id
         .parse()
         .map_err(|e| ApiError::bad_request(format!("invalid matter_id: {e}")))?;
+
+    // Scope to the caller's tenant, like every other matter-scoped handler.
+    // Resolving `PACGATE_DEFAULT_TENANT` instead meant a token from tenant A
+    // searched tenant B's chunks whenever the deployment was not single-tenant.
+    let (tenant_id, _user_id) = crate::documents::claims_to_ids(&claims)?;
 
     // Build SearchFilter from query params
     let mut filter = pacgate_rag::SearchFilter::new();
@@ -202,17 +208,6 @@ pub async fn kb_search(
         }
     }
 
-    // Resolve the default tenant. PACGATE_DEFAULT_TENANT is a slug (e.g.
-    // "default-firm"), not a UUID — parsing it as a UUID yields the nil id and
-    // every RAG search returns nothing. Resolve slug → TenantId via the store.
-    let tenant_id = match state.tenant_store.get_by_slug(&state.config.default_tenant).await {
-        Ok(t) => t.id,
-        Err(_) => state.config.default_tenant
-            .parse::<uuid::Uuid>()
-            .map(pacgate_core::TenantId)
-            .unwrap_or(pacgate_core::TenantId(uuid::Uuid::nil())),
-    };
-
     let rag_store = state
         .rag
         .as_ref()
@@ -232,7 +227,9 @@ pub async fn kb_search(
             score: r.score,
             source_doc: r.source_doc.clone(),
             page: r.page,
-            data_level: max_dl.code().to_string(),
+            // The chunk's own level, not the filter ceiling. Echoing `max_dl`
+            // labelled a T1 chunk as T3 whenever the caller widened the filter.
+            data_level: r.data_level.code().to_string(),
         })
         .collect();
 
@@ -306,4 +303,72 @@ pub async fn search_health(
         .collect();
 
     Ok(Json(connectors))
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    /// The handler body, so the assertions below read the code that runs rather
+    /// than a restatement of it.
+    fn kb_search_source() -> &'static str {
+        let src = include_str!("search.rs");
+        let start = src
+            .find("pub async fn kb_search(")
+            .expect("kb_search must exist");
+        let rest = &src[start..];
+        let end = rest
+            .find("pub async fn list_connectors(")
+            .expect("list_connectors must follow kb_search");
+        &rest[..end]
+    }
+
+    #[test]
+    fn kb_search_scopes_to_the_callers_tenant() {
+        // The regression this guards: kb_search resolved the tenant from
+        // PACGATE_DEFAULT_TENANT instead of the JWT, so a token from tenant A
+        // searched tenant B's chunks in any multi-tenant deployment.
+        let body = kb_search_source();
+        assert!(
+            body.contains("Extension(claims): Extension<pacgate_auth::Claims>"),
+            "kb_search must take the caller's claims"
+        );
+        assert!(
+            body.contains("claims_to_ids(&claims)"),
+            "kb_search must derive the tenant from the JWT"
+        );
+        assert!(
+            !body.contains("default_tenant"),
+            "kb_search must not fall back to the configured default tenant"
+        );
+    }
+
+    #[test]
+    fn kb_search_reports_the_chunks_own_data_level() {
+        // The regression this guards: the response echoed `max_dl` (the filter
+        // ceiling), so a T1 chunk returned under max_data_level=T3 was labelled
+        // T3 - misstating classification to the review panel and to audit.
+        let body = kb_search_source();
+        assert!(
+            body.contains("r.data_level.code()"),
+            "the response must report the chunk's own level"
+        );
+        assert!(
+            !body.contains("data_level: max_dl.code()"),
+            "the response must not echo the filter ceiling as the level"
+        );
+    }
+
+    #[test]
+    fn the_tenant_is_resolved_before_the_search_runs() {
+        // A scope check that happens after the query has already run is not a
+        // scope check. Assert the order, not just the presence.
+        let body = kb_search_source();
+        let claims_at = body.find("claims_to_ids(&claims)").expect("claims");
+        let search_at = body.find(".search(&tenant_id").expect("search call");
+        assert!(
+            claims_at < search_at,
+            "the tenant must be resolved before the search executes"
+        );
+    }
 }
