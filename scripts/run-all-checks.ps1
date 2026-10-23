@@ -598,6 +598,28 @@ $measurements = @(
     # disabled, since deer-flow defaults `enabled` to false.
     'scripts/test-auxiliary-model-pins.ps1'
 
+    # Summarization must CONVERGE, not treadmill. Registered 2026-10-23, after a
+    # live AIPC run ("42 steps and no report") was traced to `keep` being set
+    # EQUAL to `trigger` in the shipped config.
+    #
+    # `keep` is the retention budget applied AFTER summarization: LangChain
+    # preserves a suffix of that size verbatim and replaces the rest with one
+    # summary message. With keep == trigger the preserved suffix alone fills the
+    # trigger, so the post-summarization state is still over it and the lane
+    # fires again on the very next model call. Measured on thread d46320fd: six
+    # summarization passes at steps 402/410/419/428/437/446, each a full extra
+    # LLM call on the SAME single Ollama runner slot as the user's chat, with the
+    # context never dropping below ~15k. 1,000,467 lead-agent input tokens over
+    # 66 calls, no closing message.
+    #
+    # The pin gate above checks WHICH model an auxiliary lane uses; this one
+    # checks whether the lane can terminate at all. Different failure, different
+    # assertion - a correctly pinned summarizer still treadmills.
+    #
+    # STATIC - reads the tracked configs only, no containers and no YAML module.
+    # Red-checked by restoring trigger: 12000 and by setting keep == trigger.
+    'scripts/test-summarization-treadmill.ps1'
+
     # Capacity fitness, registered 2026-10-17. `audit-model-tags.ps1` already gates
     # tag OBTAINABILITY (HTTP 404 at runtime); nothing gated whether a tag can
     # actually RUN on the smallest supported client GPU, and those are different

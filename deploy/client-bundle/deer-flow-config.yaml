@@ -359,10 +359,11 @@ title:
 # rather than a ctx change. Do not "fix" a future stall by lowering num_ctx:
 # the whole 8k -> 262k range costs only 7.7 -> 7.9 GB on gemma4, so context
 # width is not what constrains a 16 GB card. The weights are.
-# 12000 message-tokens engages after ~40 messages; keep=12000 preserves the
-# recent verbatim context. (The old note here claimed no model_name pin was
-# needed because "the summarizer runs on the default chat model (same runner
-# slot, no VRAM swap)" - that was wrong and is corrected at the pin below.)
+# The trigger/keep values below were re-derived on 2026-10-23 after the
+# "42 steps and no report" hang; see the block at `trigger:` for the measured
+# arithmetic. (The old note here claimed no model_name pin was needed because
+# "the summarizer runs on the default chat model (same runner slot, no VRAM
+# swap)" - that was wrong and is corrected at the pin below.)
 # Verified live
 # 2026-10-09: hook fired, summary executed, next model call input bounded
 # 32,770 (was 83k).
@@ -389,13 +390,131 @@ summarization:
   # model. The 8192 cap is kept (not the 2048 memory cap) because summary length
   # is less predictable than a short fact block.
   model_name: gemma4-12b-local
+  # Pacgate 2026-10-23: trigger 12000 -> 36000. This is the fix for the
+  # "42 steps and no report" hang. The old 12000 was BELOW the unremovable
+  # per-call floor, which turned this lane into a treadmill.
+  #
+  # WHY 12000 COULD NEVER WORK
+  #
+  # `_should_summarize` fires on EITHER of two conditions:
+  #   (a) the message-token counter >= trigger, or
+  #   (b) `_should_summarize_based_on_reported_tokens`: the LAST AIMessage's
+  #       `usage_metadata.total_tokens` >= trigger.
+  #
+  # (b) is the one that matters, and it is not the same number as (a). The
+  # provider reports the WHOLE request: system prompt + tool schemas + messages.
+  # Measured on this box:
+  #   system prompt (lead_agent SYSTEM_PROMPT_TEMPLATE)   3,220 tok
+  #   45 tool schemas (get_available_tools, subagent on) 11,508 tok
+  #   -> unremovable floor                               14,728 tok
+  # and the floor observed live across thread d46320fd was 10,018..13,889 tok.
+  # 14,728 is the authoritative figure - it is what the request actually
+  # carries, measured from the live tool set rather than inferred from a delta.
+  #
+  # Summarization can only remove MESSAGES. It cannot remove the system prompt
+  # or the tool schemas. So with trigger=12000 the reported total was over the
+  # trigger on EVERY call, including immediately after a summarization pass.
+  # The lane fired, replaced the history with a summary, and the very next call
+  # was still over 12000 - so it fired again. Forever.
+  #
+  # Measured on thread d46320fd ("42 steps and no report", 2026-10-23):
+  #   step 402 total=15097 cutoff=2  -> summarize
+  #   step 410 total=15196 cutoff=3  -> summarize
+  #   step 419 total=15315 cutoff=4  -> summarize
+  #   step 428 total=17007 cutoff=16 -> summarize
+  #   step 437 total=15353 cutoff=5  -> summarize
+  #   step 446 total=15425 cutoff=4  -> summarize   (still going)
+  # Six passes, each a full extra LLM call on the SAME single Ollama runner slot
+  # as the user's chat, and the message count never dropped below ~15k. The run
+  # burned 1,000,467 lead-agent input tokens over 66 calls and produced no
+  # closing message. The user saw "42 steps and no report".
+  #
+  # `keep` IS NOT THE LEVER. Replaying the real middleware against the live
+  # checkpoint at step 446, with the reported-token path active:
+  #   keep=12000 -> post-summarization 16,289 tok -> fires again
+  #   keep= 8000 -> post-summarization 11,392 tok -> fires again
+  #   keep= 6000 -> post-summarization 10,699 tok -> fires again
+  #   keep= 4000 -> post-summarization  5,093 tok -> fires again
+  # Every one of those is under the 12000 trigger on the COUNTER path, yet all
+  # four still fire, because reported = counter + floor and the floor alone
+  # exceeds 12000. Lowering `keep` only shrinks the preserved suffix; it cannot
+  # shrink the floor. The trigger has to clear the floor.
+  #
+  # Simulated 40 agent steps with the real middleware, reported = counter +
+  # floor, counting how many summarization passes fire (40 = treadmill):
+  #
+  #   trigger  keep | floor 10k  14.7k  18k  22k
+  #   -------  ---- | ---------  -----  ---  ---
+  #    12000   6000 |   40 TREAD  40 T   40T  40T
+  #    24000   6000 |    7        40T   40T  40T
+  #    28000   6000 |    5         6    40T  40T
+  #    32000   6000 |    4         5     6   40T
+  #    36000   6000 |    3         4     4    5
+  #
+  # 36000 is the first value that converges across the whole plausible floor
+  # range, including the 22k worst case. It is also the value the 2026-10-09
+  # note above already measured as the real per-call input after summarization
+  # ("next model call input bounded 32,770"), so it is not a new regime - it is
+  # the size the lane was always meant to bound.
+  #
+  # PROVEN END-TO-END, not just simulated. Thread bb71ff66 (the 9.5 MB
+  # Day_1_v3.pdf run) was still mid-flight when this config hot-reloaded at
+  # 10:37:30 UTC; it summarised once at step 62 and then ran to completion at
+  # 10:43:54 with a real report. Replaying its 147 real post-summarization
+  # states (steps 62..208) through the middleware:
+  #   trigger=12000 keep=12000 (shipped) -> would fire on 147 of 147
+  #   trigger=12000 keep= 6000 (keep-only) -> would fire on 147 of 147
+  #   trigger=36000 keep= 6000 (applied)   -> would fire on   0 of 147
+  # That is also the direct refutation of "just lower keep": it changes nothing.
+  #
+  # Context headroom: deer-flow sends no `num_ctx`, so Ollama loads gemma4 at
+  # 262144. A 36k trigger plus an 8k completion is ~44k, well inside that.
+  #
+  # Gated by scripts/test-summarization-treadmill.ps1 (S1/S2/S5).
   trigger:
     - type: tokens
-      value: 12000
+      value: 36000
+  # Pacgate 2026-10-23: `keep` stays 6000. It is NOT the fix - see the trigger
+  # block above - but it still has to be small enough that a summarization pass
+  # actually buys headroom under the trigger.
+  #
+  # `keep` is the retention budget applied AFTER summarization. LangChain's
+  # `_find_token_based_cutoff` binary-searches for the earliest index whose
+  # SUFFIX fits in `keep` tokens, preserves that suffix verbatim, and replaces
+  # everything before it with one summary message. At 6000 the preserved suffix
+  # plus the summary message (largest measured: 1146 tokens) lands around
+  # 7-11k, leaving ~25k of headroom under the 36000 trigger - so a pass buys
+  # roughly 8 agent steps before the next one is due, instead of firing on
+  # every single call.
+  #
+  # Do not raise this back toward the trigger. keep >= trigger makes the
+  # preserved suffix alone fill the budget, so the pass removes nothing and the
+  # lane fires again immediately. Measured: keep=16000 or 20000 against a 36000
+  # trigger treadmills (38 passes in 40 steps) because the preserved suffix
+  # alone lands at the trigger.
   keep:
     type: tokens
-    value: 12000
-  trim_tokens_to_summarize: 8000
+    value: 6000
+  # Pacgate 2026-10-23: 8000 -> 36000. This is a consequence of raising the
+  # trigger, not an independent tweak.
+  #
+  # `trim_tokens_to_summarize` caps what `_trim_messages_for_summary` hands to
+  # the summary model (`trim_messages(..., strategy="last", allow_partial=True)`).
+  # It is a CAP, not a target: when the span is already under it, the call is a
+  # no-op and nothing is truncated. Verified on a real 8,968-token span - trim
+  # of 8000, 16000 and 36000 all passed all 14 messages through unchanged.
+  #
+  # The span being replaced is `messages[:cutoff]`, which grows with the trigger:
+  # measured spans at trigger=36000 were 9,853 / 14,048 / 16,522 / 20,524 /
+  # 32,614 tokens. At trim=8000 the summarizer saw only the LAST 8000 tokens of
+  # a 32,614-token span - i.e. it dropped the oldest ~24k, which on a document
+  # task is the part the agent read first. The summary would then be built from
+  # the tail of the conversation and the agent would lose the document.
+  #
+  # 36000 == the trigger, so the summarizer always sees the whole span it is
+  # replacing. The summarizer is gemma4-12b-local (pinned above) and Ollama
+  # loads it at 262144 ctx, so a 36k prompt is well inside its window.
+  trim_tokens_to_summarize: 36000
 
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
