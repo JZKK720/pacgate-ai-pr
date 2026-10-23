@@ -68,7 +68,16 @@ $expected = @([regex]::Matches($src, '(?m)^@mcp\.tool\([^\r\n]*\r?\n(?:@[^\r\n]*
     ForEach-Object { $_.Groups['name'].Value } | Sort-Object -Unique)
 
 Check 'the server source declares tools' ($expected.Count -gt 0) "no @mcp.tool functions parsed from $ServerFile"
-if ($expected.Count -eq 0) { CannotCheck 'could not parse any tools from the server source' }
+# A source file that EXISTS but declares no tools is a real failure, not CANNOT
+# CHECK. Exiting 2 here would let a mutation - every decorator renamed, an import
+# that stops registering, a refactor that drops the decorators - be reported as
+# "cannot check", which the runner does not count as a failure. Mutation-tested:
+# renaming `@mcp.tool(` to `@mcp.tool_removed(` produced exit 2 before this fix.
+if ($expected.Count -eq 0) {
+    Write-Host ''
+    Write-Host "RESULT: $passed passed, $failed failed" -ForegroundColor Red
+    exit 1
+}
 Write-Host ("         source declares {0} tool(s)" -f $expected.Count) -ForegroundColor DarkGray
 
 # The container must be running. A stopped server has no surface to assert, and
@@ -97,9 +106,29 @@ def post(body, sid=None):
     return urllib.request.urlopen(req, timeout=30)
 
 def parse(raw):
-    """SSE frames split across multiple data: lines; take the last JSON payload."""
+    """Accept BOTH transports the MCP spec allows for streamable-http.
+
+    A server may answer with a plain `application/json` body or with an SSE stream
+    of `data:` frames, and it may choose per request. This gate originally parsed
+    SSE only, so against a server that answers JSON it found no payload, reported
+    "tools/list returned no tools array", and exited 2 (CANNOT CHECK) - which the
+    runner treats as "not a failure". Measured on this box: pacgate-mcp answers
+    `Content-Type: application/json`, so the gate could never have failed here no
+    matter what the tool surface did. A gate that cannot fail is not a gate.
+
+    JSON is tried first because it is the cheaper and more common case; SSE is the
+    fallback, taking the LAST complete frame (a stream may carry progress
+    notifications before the result).
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
     out = None
-    for line in raw.splitlines():
+    for line in text.splitlines():
         if line.startswith("data:"):
             chunk = line[5:].strip()
             if not chunk:
@@ -140,9 +169,22 @@ if ($exit -ne 0 -or -not ($raw -match 'TOOLS ')) {
     CannotCheck "the MCP handshake did not complete: $(($raw | Out-String).Trim() -replace '\s+', ' ' | ForEach-Object { $_.Substring(0, [Math]::Min(200, $_.Length)) })"
 }
 
+# PS 5.1's ConvertFrom-Json returns a JSON ARRAY as one Object[] object, so
+# `@($json | ConvertFrom-Json)` yields a single-element array whose only element is
+# the whole list. Every set comparison below then compares a string against an
+# Object[], which is why the first run of this gate reported "advertises 1 tool"
+# and "advertised but not in the source: System.Object[]". PS 7 flattens the same
+# expression, so this only reproduces under 5.1 - the shell the suite runs in.
+# Enumerating explicitly is what makes the count and the set correct on both.
+function ConvertFrom-JsonArray([string]$json) {
+    if ([string]::IsNullOrWhiteSpace($json)) { return @() }
+    $parsed = ConvertFrom-Json -InputObject $json
+    return @($parsed | ForEach-Object { $_ })
+}
+
 $actual = @()
 $m = [regex]::Match(($raw | Out-String), 'TOOLS (?<j>\[.*?\])')
-if ($m.Success) { $actual = @($m.Groups['j'].Value | ConvertFrom-Json) }
+if ($m.Success) { $actual = @(ConvertFrom-JsonArray $m.Groups['j'].Value) }
 
 Check 'the server completes the MCP handshake and lists tools' ($actual.Count -gt 0) 'tools/list returned an empty set - the server started but registered nothing'
 Write-Host ("         server advertises {0} tool(s)" -f $actual.Count) -ForegroundColor DarkGray
@@ -158,12 +200,12 @@ Check 'the server advertises nothing the source does not declare' ($extra.Count 
 # A tool that exists but cannot be called is not a working tool.
 $noDesc = @()
 $dm = [regex]::Match(($raw | Out-String), 'NO_DESC (?<j>\[.*?\])')
-if ($dm.Success) { $noDesc = @($dm.Groups['j'].Value | ConvertFrom-Json) }
+if ($dm.Success) { $noDesc = @(ConvertFrom-JsonArray $dm.Groups['j'].Value) }
 Check 'every advertised tool carries a description' ($noDesc.Count -eq 0) "no description: $($noDesc -join ', ') - the model cannot choose a tool it cannot understand"
 
 $noSchema = @()
 $sm = [regex]::Match(($raw | Out-String), 'NO_SCHEMA (?<j>\[.*?\])')
-if ($sm.Success) { $noSchema = @($sm.Groups['j'].Value | ConvertFrom-Json) }
+if ($sm.Success) { $noSchema = @(ConvertFrom-JsonArray $sm.Groups['j'].Value) }
 Check 'every advertised tool carries an input schema' ($noSchema.Count -eq 0) "no inputSchema: $($noSchema -join ', ') - a tool with no schema cannot be called"
 
 Write-Host ''
