@@ -329,6 +329,38 @@ $gates = @(    'scripts/test-install-render.ps1'
     # have passed the very binary that motivated it. Mutation-tested by staging a
     # 12 MB file.
     'scripts/check-tracked-file-size.ps1'
+
+    # Summarization must CONVERGE, not treadmill. Registered 2026-10-23, after a
+    # live AIPC run ("42 steps and no report") was traced to `trigger` being set
+    # BELOW the unremovable per-call token floor.
+    #
+    # LangChain's `_should_summarize` fires on either the message-token counter
+    # OR the provider-REPORTED `usage_metadata.total_tokens`. The reported number
+    # is the whole request: system prompt (3,220) + 45 tool schemas (11,508) +
+    # messages = a 14,728-token floor that summarization CANNOT remove, because
+    # it can only delete messages. With trigger=12000 the lane was over its
+    # trigger on every call, including immediately after a pass, so it re-fired
+    # forever. Measured on thread d46320fd: six passes at steps
+    # 402/410/419/428/437/446, each a full extra LLM call on the SAME single
+    # Ollama runner slot as the user's chat. 1,000,467 lead-agent input tokens
+    # over 66 calls, no closing message.
+    #
+    # `keep` was NOT the lever: replaying the real middleware at step 446,
+    # keep=12000/8000/6000/4000 all still fire, because reported = counter +
+    # floor and the floor alone exceeds 12000.
+    #
+    # test-auxiliary-model-pins.ps1 checks WHICH model an auxiliary lane uses;
+    # this one checks whether the lane can terminate at all. Different failure,
+    # different assertion - a correctly pinned summarizer still treadmills.
+    #
+    # STATIC - reads the tracked configs only, no containers and no YAML module
+    # (the AIPCs ship Windows PowerShell 5.1, which has no ConvertFrom-Yaml).
+    # Red-checked by restoring trigger: 12000 and by setting keep == trigger.
+    #
+    # It lives here rather than in $measurements because the measurements loop
+    # reports exit codes but never adds to $failed, so a red gate there cannot
+    # fail the suite. A config that treadmills must fail it.
+    'scripts/test-summarization-treadmill.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
@@ -597,28 +629,6 @@ $measurements = @(
     # model name; the summarization assertions correctly SKIP when that lane is
     # disabled, since deer-flow defaults `enabled` to false.
     'scripts/test-auxiliary-model-pins.ps1'
-
-    # Summarization must CONVERGE, not treadmill. Registered 2026-10-23, after a
-    # live AIPC run ("42 steps and no report") was traced to `keep` being set
-    # EQUAL to `trigger` in the shipped config.
-    #
-    # `keep` is the retention budget applied AFTER summarization: LangChain
-    # preserves a suffix of that size verbatim and replaces the rest with one
-    # summary message. With keep == trigger the preserved suffix alone fills the
-    # trigger, so the post-summarization state is still over it and the lane
-    # fires again on the very next model call. Measured on thread d46320fd: six
-    # summarization passes at steps 402/410/419/428/437/446, each a full extra
-    # LLM call on the SAME single Ollama runner slot as the user's chat, with the
-    # context never dropping below ~15k. 1,000,467 lead-agent input tokens over
-    # 66 calls, no closing message.
-    #
-    # The pin gate above checks WHICH model an auxiliary lane uses; this one
-    # checks whether the lane can terminate at all. Different failure, different
-    # assertion - a correctly pinned summarizer still treadmills.
-    #
-    # STATIC - reads the tracked configs only, no containers and no YAML module.
-    # Red-checked by restoring trigger: 12000 and by setting keep == trigger.
-    'scripts/test-summarization-treadmill.ps1'
 
     # Capacity fitness, registered 2026-10-17. `audit-model-tags.ps1` already gates
     # tag OBTAINABILITY (HTTP 404 at runtime); nothing gated whether a tag can
