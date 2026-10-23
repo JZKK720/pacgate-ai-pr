@@ -94,6 +94,7 @@ test.describe("Sanitizer review panel", () => {
             document_state: "sanitized",
             chunk_states: [],
             latest_job: "job-e2e",
+            held_for_review: false,
           }),
         }),
     );

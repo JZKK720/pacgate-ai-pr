@@ -39,6 +39,7 @@ describe("fetchSanitizeStatus", () => {
         document_state: "sanitized",
         chunk_states: ["sanitized"],
         latest_job: "abc-123",
+        held_for_review: false,
       }),
     );
     const status = await fetchSanitizeStatus("doc-1");
@@ -46,6 +47,7 @@ describe("fetchSanitizeStatus", () => {
       document_state: "sanitized",
       chunk_states: ["sanitized"],
       latest_job: "abc-123",
+      held_for_review: false,
     });
     // The path must target the pacgate proxy, not the deer-flow gateway.
     expect(mockedFetch.mock.calls[0]![0]).toContain(

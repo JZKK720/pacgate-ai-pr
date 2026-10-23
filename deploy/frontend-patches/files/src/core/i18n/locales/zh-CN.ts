@@ -246,6 +246,8 @@ export const zhCN: Translations = {
     redacted: "已脱敏 {count} 处标识符",
     mappingSealed: "占位符映射保存在 pacgate-api 中，不会外泄。",
     humanReviewFlag: "任何出站操作前需人工复核。",
+    heldForReview:
+      "已暂缓出站：脱敏校验已通过，但该密级不允许自动放行，需管理员或合伙人批准。",
     chunkStates: "分块状态",
     // state labels: "Pending" / "Sanitized" / "Blocked" / "Not applicable"
     states: {
@@ -253,6 +255,7 @@ export const zhCN: Translations = {
       sanitized: "已脱敏",
       blocked: "已拦截",
       never: "不适用",
+      heldForReview: "待批准",
     },
   },
 

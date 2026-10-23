@@ -37,6 +37,7 @@ const MARK_BLOCKED_DOCUMENT_SQL: &str = "\
 /// Audit actions (stable codes; the review panel and tests rely on them).
 const AUDIT_SANITIZE: &str = "document.sanitize";
 const AUDIT_RESTORE: &str = "document.restore";
+const AUDIT_APPROVE: &str = "document.approve";
 
 #[derive(Debug, Serialize)]
 pub struct JobOutcome {
@@ -111,6 +112,54 @@ pub async fn run_job(
     matter_id: &MatterId,
     document_id: &DocumentId,
     data_level: DataLevel,
+) -> Result<JobOutcome, ApiError> {
+    run_job_inner(
+        state,
+        tenant_id,
+        user_id,
+        matter_id,
+        document_id,
+        data_level,
+        None,
+    )
+    .await
+}
+
+/// Re-run a held job with the policy hold bypassed, because a human approved it.
+///
+/// `approved_job_id` is recorded in the audit row so the release names the
+/// evidence it was based on. Everything else is the ordinary job path: the same
+/// detectors, the same verify, the same delete-then-insert chunk rewrite. That
+/// is the point - approval must not be a second, weaker promotion path.
+async fn run_job_approved(
+    state: &AppState,
+    tenant_id: &TenantId,
+    user_id: &UserId,
+    matter_id: &MatterId,
+    document_id: &DocumentId,
+    data_level: DataLevel,
+    approved_job_id: &str,
+) -> Result<JobOutcome, ApiError> {
+    run_job_inner(
+        state,
+        tenant_id,
+        user_id,
+        matter_id,
+        document_id,
+        data_level,
+        Some(approved_job_id),
+    )
+    .await
+}
+
+async fn run_job_inner(
+    state: &AppState,
+    tenant_id: &TenantId,
+    user_id: &UserId,
+    matter_id: &MatterId,
+    document_id: &DocumentId,
+    data_level: DataLevel,
+    approved_job_id: Option<&str>,
 ) -> Result<JobOutcome, ApiError> {
     // 1. INGEST (cache-first; warm cache = zero OCR calls).
     let extracted =
@@ -231,7 +280,11 @@ pub async fn run_job(
     // auto-pass the design forbids. Held documents stay 'pending' (fail-closed,
     // not served, not downloadable) and keep their raw chunks untouched.
     let verdict_is_block = outcome.ledger.verdict().is_block();
-    let held_for_review = !verdict_is_block && !outcome.decision.allow_auto_pass;
+    // An approval bypasses the hold, but never a Block: a Block means the
+    // redaction could not be verified, and no human approval can make unverified
+    // redaction safe.
+    let held_for_review =
+        !verdict_is_block && !outcome.decision.allow_auto_pass && approved_job_id.is_none();
     let promoted: u64 = if verdict_is_block {
         sqlx::query(MARK_BLOCKED_SQL)
             .bind(tenant_id.0)
@@ -295,6 +348,7 @@ pub async fn run_job(
             },
             "redaction_count": outcome.ledger.redaction_count,
             "data_level": data_level.code(),
+            "approved_job_id": approved_job_id,
         }),
     )
     .await?;
@@ -355,6 +409,29 @@ fn role_may_restore(role: &str) -> bool {
     matches!(role, "admin" | "partner")
 }
 
+/// Approving a held document is the same authority as restoring redacted text:
+/// both release sensitive content to a human, so both are admin/partner only.
+fn role_may_approve(role: &str) -> bool {
+    role_may_restore(role)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApproveRequest {
+    /// The job whose clean verdict is being accepted. Required so the approval
+    /// names the evidence it is based on rather than approving "whatever ran
+    /// last" - a job that ran after the reviewer looked would otherwise be
+    /// silently blessed.
+    pub job_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApproveResponse {
+    pub document_id: String,
+    pub job_id: String,
+    pub chunks_promoted: u64,
+    pub document_state: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RestoreRequest {
     pub job_id: String,
@@ -365,6 +442,123 @@ pub struct RestoreRequest {
 pub struct RestoreResponse {
     pub restored: String,
     pub job_id: String,
+}
+
+/// Approve a held document: promote it from 'pending' to 'sanitized'.
+///
+/// This is the human half of the T4 contract. `run_job` refuses to auto-pass a
+/// document when policy says `allow_auto_pass == false`, which leaves it at
+/// 'pending' - not downloadable, not searchable. Without this endpoint that
+/// document had no path to release at all, so the hold was a dead end rather
+/// than a review gate.
+///
+/// The caller names the job it is approving. That is deliberate: approving
+/// "whatever ran last" would let a job that ran after the reviewer looked be
+/// silently blessed. The job must belong to this tenant, this matter, and this
+/// document, and its ledger verdict must be `pass` - a Block is never
+/// approvable, because a Block means the redaction could not be verified.
+///
+/// Approval then RE-RUNS the job with the hold bypassed rather than promoting
+/// the old result. That is not redundant: it re-derives the redacted text from
+/// the current extraction, so approval can never promote text that was never
+/// redacted, and it produces a fresh ledger row naming the approver.
+pub async fn approve_document_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
+    Path(id): Path<String>,
+    axum::Json(req): axum::Json<ApproveRequest>,
+) -> Result<axum::Json<ApproveResponse>, ApiError> {
+    let (tenant_id, user_id) = crate::documents::claims_to_ids(&claims)?;
+    if !role_may_approve(&claims.role) {
+        return Err(ApiError::unauthorized(
+            "approval requires the admin or partner role",
+        ));
+    }
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+    let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    let job_uuid = req
+        .job_id
+        .parse::<uuid::Uuid>()
+        .map_err(|e| ApiError::bad_request(format!("invalid job_id: {e}")))?;
+
+    // The ledger row is the evidence. It must exist for THIS document and THIS
+    // tenant, and it must say pass. A Block is never approvable.
+    let ledger = sqlx::query(
+        "SELECT matter_id, verdict, document_version FROM redaction_ledger_rows \
+         WHERE job_id = $1 AND document_id = $2 AND tenant_id = $3 LIMIT 1",
+    )
+    .bind(job_uuid)
+    .bind(document_id.0)
+    .bind(tenant_id.0)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .ok_or_else(|| {
+        ApiError::not_found("no ledger row for this job and document; refusing to guess")
+    })?;
+
+    let ledger_matter: uuid::Uuid = ledger.get("matter_id");
+    if ledger_matter != doc.matter_id.0 {
+        return Err(ApiError::unauthorized(
+            "job belongs to a different matter; approval is matter-scoped",
+        ));
+    }
+    let verdict: String = ledger.get("verdict");
+    if verdict != "pass" {
+        return Err(ApiError::conflict(
+            "a Block verdict cannot be approved; the redaction could not be verified",
+        ));
+    }
+
+    // Only a held document can be approved. 'sanitized' is already released and
+    // 'blocked' is a different decision; approving either would be a no-op that
+    // looks like an action.
+    let current: String =
+        sqlx::query("SELECT sanitization_state FROM documents WHERE id = $1 AND tenant_id = $2")
+            .bind(document_id.0)
+            .bind(tenant_id.0)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .get("sanitization_state");
+    if current != "pending" {
+        return Err(ApiError::conflict(format!(
+            "document is '{current}'; only a held ('pending') document can be approved"
+        )));
+    }
+
+    // The data level the approved job ran at, so the re-run is the same job.
+    let data_level_code: String =
+        sqlx::query("SELECT data_level FROM sanitizer_jobs WHERE id = $1 AND tenant_id = $2")
+            .bind(job_uuid)
+            .bind(tenant_id.0)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .get("data_level");
+    let data_level = DataLevel::from_code(&data_level_code)
+        .ok_or_else(|| ApiError::internal(format!("job has unknown data_level '{data_level_code}'")))?;
+
+    let outcome = run_job_approved(
+        &state,
+        &tenant_id,
+        &user_id,
+        &doc.matter_id,
+        &document_id,
+        data_level,
+        &req.job_id,
+    )
+    .await?;
+
+    Ok(axum::Json(ApproveResponse {
+        document_id: document_id.to_string(),
+        job_id: outcome.job_id,
+        chunks_promoted: outcome.chunks_promoted,
+        document_state: "sanitized".to_string(),
+    }))
 }
 
 /// Local-only restore, bound to the job's mapping version (design stage 6).
@@ -471,6 +665,16 @@ pub struct SanitizeStatusResponse {
     pub document_state: String,
     pub chunk_states: Vec<String>,
     pub latest_job: Option<String>,
+    /// True when a job ran, produced a clean verdict, and policy refused to
+    /// auto-pass it (T4 always does), so the document was deliberately left at
+    /// 'pending'.
+    ///
+    /// This is DERIVED, not stored. `pending` alone cannot distinguish "held for
+    /// review" from "never processed", and the review panel needs to tell them
+    /// apart. Deriving it from the ledger means there is no second source of
+    /// truth to drift: if the ledger says pass and the document is still
+    /// pending, it is held, by construction.
+    pub held_for_review: bool,
 }
 
 pub async fn sanitize_status_handler(
@@ -517,10 +721,27 @@ pub async fn sanitize_status_handler(
     .map_err(|e| ApiError::internal(e.to_string()))?
     .map(|r| r.get::<uuid::Uuid, _>("job_id").to_string());
 
+    // Held = a job ran and passed, but the document is still 'pending'. That
+    // combination can only mean policy refused to auto-pass it, because a
+    // passing job that was allowed to promote would have written 'sanitized'.
+    // Deriving it here keeps one source of truth: the ledger plus the state.
+    let held_for_review = doc_state == "pending"
+        && sqlx::query(
+            "SELECT 1 FROM redaction_ledger_rows \
+             WHERE document_id = $1 AND tenant_id = $2 AND verdict = 'pass' LIMIT 1",
+        )
+        .bind(document_id.0)
+        .bind(tenant_id.0)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .is_some();
+
     Ok(axum::Json(SanitizeStatusResponse {
         document_state: doc_state,
         chunk_states,
         latest_job,
+        held_for_review,
     }))
 }
 
@@ -600,6 +821,109 @@ mod gate_tests {
     fn the_audit_action_names_are_stable() {
         assert_eq!(AUDIT_SANITIZE, "document.sanitize");
         assert_eq!(AUDIT_RESTORE, "document.restore");
+        assert_eq!(AUDIT_APPROVE, "document.approve");
+    }
+
+    #[test]
+    fn approval_is_role_gated_like_restore() {
+        // Both release sensitive content to a human, so both need the same
+        // authority. A narrower gate on approval would be a way around restore.
+        for role in ["admin", "partner"] {
+            assert!(role_may_approve(role), "{role} must be able to approve");
+        }
+        for role in ["attorney", "user", "viewer", ""] {
+            assert!(!role_may_approve(role), "{role} must not approve");
+        }
+    }
+
+    #[test]
+    fn an_approval_bypasses_the_hold_but_never_a_block() {
+        // The hold exists because policy refused to auto-pass. An approval is
+        // the human override for exactly that. A Block is different: the
+        // redaction could not be verified, and no approval can make unverified
+        // redaction safe.
+        let src = include_str!("sanitize.rs");
+        let at = src
+            .find("let held_for_review =")
+            .expect("hold decision must exist");
+        let decision = &src[at..at + 260];
+        assert!(
+            decision.contains("!verdict_is_block"),
+            "a Block must never be held-then-approvable: {decision}"
+        );
+        assert!(
+            decision.contains("approved_job_id.is_none()"),
+            "an approval must bypass the hold: {decision}"
+        );
+    }
+
+    #[test]
+    fn approval_reuses_the_job_path_rather_than_a_second_promotion() {
+        // A separate promotion path would be a weaker path: it could skip the
+        // verify stage or the delete-then-insert rewrite. Approval must go
+        // through run_job_inner like every other promotion.
+        let src = include_str!("sanitize.rs");
+        let approve = src
+            .find("pub async fn approve_document_handler")
+            .expect("approve handler");
+        let body = &src[approve..];
+        let end = body.find("pub async fn restore_document_handler").expect("restore");
+        let body = &body[..end];
+        assert!(
+            body.contains("run_job_approved"),
+            "approval must reuse the job path"
+        );
+        assert!(
+            !body.contains("reingest_sanitized_chunks"),
+            "approval must not rewrite chunks itself; that is the job's job"
+        );
+        assert!(
+            !body.contains("MARK_SANITIZED_DOCUMENT_SQL"),
+            "approval must not flip the state itself"
+        );
+    }
+
+    #[test]
+    fn approval_refuses_a_block_and_a_non_pending_document() {
+        let src = include_str!("sanitize.rs");
+        let approve = src
+            .find("pub async fn approve_document_handler")
+            .expect("approve handler");
+        let body = &src[approve..];
+        let end = body.find("pub async fn restore_document_handler").expect("restore");
+        let body = &body[..end];
+        assert!(
+            body.contains("verdict != \"pass\""),
+            "a Block verdict must be refused"
+        );
+        assert!(
+            body.contains("current != \"pending\""),
+            "only a held document may be approved"
+        );
+        assert!(
+            body.contains("role_may_approve"),
+            "approval must be role-gated"
+        );
+    }
+
+    #[test]
+    fn held_state_is_derived_not_stored() {
+        // 'pending' cannot distinguish "held for review" from "never processed".
+        // Deriving it from the ledger keeps one source of truth: if a passing
+        // ledger row exists and the document is still pending, it is held.
+        let src = include_str!("sanitize.rs");
+        let at = src
+            .find("let held_for_review = doc_state == \"pending\"")
+            .expect("derived held state");
+        let body = &src[at..at + 400];
+        assert!(
+            body.contains("redaction_ledger_rows"),
+            "held state must be derived from the ledger: {body}"
+        );
+        assert!(
+            body.contains("verdict = 'pass'"),
+            "only a passing job can leave a document held: {body}"
+        );
     }
 
     #[test]

@@ -262,12 +262,15 @@ export const enUS: Translations = {
     redacted: "{count} identifier(s) redacted",
     mappingSealed: "The placeholder mapping stays sealed in pacgate-api.",
     humanReviewFlag: "Human review required before any egress.",
+    heldForReview:
+      "Held for review: the sanitizer passed, but policy does not allow this classification to auto-release. An admin or partner must approve it.",
     chunkStates: "Chunk states",
     states: {
       pending: "Pending",
       sanitized: "Sanitized",
       blocked: "Blocked",
       never: "Never",
+      heldForReview: "Held for review",
     },
   },
 
