@@ -138,8 +138,15 @@ try { $remote = (git ls-remote origin refs/heads/main 2>$null | ForEach-Object {
 # ignore the line.
 $behind = 0
 if ($remote) {
-    $counts = (git rev-list --left-right --count "HEAD...$remote" 2>$null)
-    if ($counts -match '^\s*(\d+)\s+(\d+)\s*$') { $behind = [int]$Matches[2] }
+    # Compare against the LOCAL remote-tracking ref, not the ls-remote SHA.
+    # `git pull --ff-only` fast-forwards to origin/main, so that ref is the
+    # authority; the ls-remote SHA may not exist in this clone yet (a fetch
+    # that has not run), and `rev-list HEAD...<unknown-sha>` exits 128 with
+    # "Invalid symmetric difference expression". That is what made this line
+    # fail under Windows PowerShell 5.1, where native stderr becomes a
+    # terminating error (see test-ps51-native-stderr.ps1).
+    $counts = (git rev-list --left-right --count 'HEAD...origin/main' 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $counts -match '^\s*(\d+)\s+(\d+)\s*$') { $behind = [int]$Matches[2] }
 }
 Check 'a pull would be a no-op (local is not behind origin/main)' ($remote -and $behind -eq 0) `
     ("local {0} vs origin {1}; behind by {2} commit(s)" -f $head.Substring(0, 7), $(if ($remote) { $remote.Substring(0, 7) } else { 'unreachable' }), $behind)

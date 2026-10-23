@@ -308,12 +308,16 @@ foreach ($composeFile in @('deploy/client-bundle/compose.prod.yaml', 'deploy/cli
         if ($line -match '^\s*-\s*(\.\.?/[^:]+):[^:]+') {
             $src = $Matches[1].Trim()
             $full = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $composeFile) $src))
-            $rel = [System.IO.Path]::GetRelativePath((Get-Location).Path, $full) -replace '\\', '/'
-            if ($rel -and -not $rel.StartsWith('..')) { $bindMounted += $rel }
+            # Normalise to a repo-relative path WITHOUT [System.IO.Path]::GetRelativePath:
+            # that method is .NET Core only and throws MethodNotFound under Windows
+            # PowerShell 5.1, which this repo still supports (see
+            # test-ps51-native-stderr.ps1). Compare absolute paths instead.
+            $bindMounted += $full
         }
     }
 }
 $bindMounted = @($bindMounted | Sort-Object -Unique)
+$repoRootFull = [System.IO.Path]::GetFullPath((Get-Location).Path)
 
 $changed = @(& git diff --name-only "$resolved..HEAD" 2>$null | Where-Object { $_ })
 $affecting = @()
@@ -326,7 +330,7 @@ foreach ($f in $changed) {
     if ($isInput) {
         foreach ($ip in $ignoredPrefixes) { if ($f.StartsWith($ip)) { $isInput = $false; break } }
     }
-    if ($isInput -and ($bindMounted -contains $f)) { $overridden += $f }
+    if ($isInput -and ($bindMounted -contains [System.IO.Path]::GetFullPath((Join-Path $repoRootFull $f)))) { $overridden += $f }
     elseif ($isInput) { $affecting += $f }
     else { $benign += $f }
 }
