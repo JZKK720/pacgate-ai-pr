@@ -13,6 +13,21 @@ pacgate-ai/**/target/
 # Docker
 *.log
 
+# Large binaries must never be committed.
+#
+# WHY: on 2026-10-23 an AIPC reported that a cherry-pick had staged a 42 MB docker
+# CLI binary. Nothing in this repo prevented that class, and a binary that size in
+# git history is permanent - it cannot be removed by a later commit, only by a
+# history rewrite. The patterns below cover the specific shapes that incident
+# produced; the size itself is enforced by scripts/check-tracked-file-size.ps1,
+# because .gitignore cannot express "any file over N MB".
+docker.exe
+docker-linux
+docker-*
+!docker-compose*.yml
+!docker-compose*.yaml
+!Dockerfile*
+
 # Temp files
 test-*.json
 warmup*.json
