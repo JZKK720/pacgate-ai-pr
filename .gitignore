@@ -23,7 +23,16 @@ pacgate-ai/**/target/
 # because .gitignore cannot express "any file over N MB".
 docker.exe
 docker-linux
-docker-*
+# NOT `docker-*`. That pattern also matches `docker-entrypoint.sh`,
+# `docker-build.ps1`, and `docker-compose.yaml` - real files this repo has or will
+# have - so it would silently ignore a legitimate source file and the loss would
+# only surface when someone noticed it missing from a clone. The incident produced
+# a bare CLI binary, so the rule names binary shapes only.
+docker-cli
+docker-cli-*
+docker-*-linux
+docker-*-amd64
+docker-*-arm64
 !docker-compose*.yml
 !docker-compose*.yaml
 !Dockerfile*
