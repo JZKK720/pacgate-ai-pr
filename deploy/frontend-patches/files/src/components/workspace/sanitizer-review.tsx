@@ -119,9 +119,19 @@ export function SanitizerReviewPanel({
               </span>
               <StateBadge
                 state={status.document_state}
-                label={t.sanitizer.states[status.document_state as keyof typeof t.sanitizer.states] ?? status.document_state}
+                label={
+                  status.held_for_review
+                    ? t.sanitizer.states.heldForReview
+                    : (t.sanitizer.states[status.document_state as keyof typeof t.sanitizer.states] ?? status.document_state)
+                }
               />
             </div>
+            {status.held_for_review && (
+              <div className="flex items-start gap-2 rounded-md bg-amber-500/10 p-2">
+                <ShieldAlertIcon className="size-4 shrink-0" />
+                <span>{t.sanitizer.heldForReview}</span>
+              </div>
+            )}
             {lastJob && (
               <div className="space-y-1">
                 {status.document_state !== "blocked" && (

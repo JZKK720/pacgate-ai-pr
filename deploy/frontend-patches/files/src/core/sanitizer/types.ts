@@ -3,6 +3,12 @@ export interface SanitizeStatusResponse {
   document_state: string;
   chunk_states: string[];
   latest_job: string | null;
+  /**
+   * True when a job ran, passed, and policy refused to auto-pass it (T4 always
+   * does), so the document was deliberately left at 'pending'. Derived
+   * server-side from the ledger, so it cannot drift from the state.
+   */
+  held_for_review: boolean;
 }
 
 /** One sanitize job as the panel shows it - evidence metadata only. */

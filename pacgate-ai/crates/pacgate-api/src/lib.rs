@@ -70,6 +70,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/documents/:id/restore",
             post(sanitize::restore_document_handler),
         )
+        // The human half of the T4 contract: release a document that policy
+        // refused to auto-pass. Admin/partner only, and never for a Block.
+        .route(
+            "/api/documents/:id/approve",
+            post(sanitize::approve_document_handler),
+        )
         .route(
             "/api/documents/:id/sanitize-status",
             get(sanitize::sanitize_status_handler),

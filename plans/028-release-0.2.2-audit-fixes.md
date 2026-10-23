@@ -171,14 +171,11 @@ keyword argument 'headers'`, so the revision guard was unreachable from MCP.
 ## 3. What this plan deliberately does NOT do
 
 - **No new `pending_review` state.** Held documents stay at `pending`, which is
-  fail-closed and needs no migration. The cost is that "held for review" is
-  indistinguishable from "never processed" in the document list. If the review
-  panel must *list* held documents, that is a separate plan with a migration and
-  an approval endpoint — neither exists today.
-- **No approval endpoint.** `restore_document_handler` restores redacted text
-  from the vault; it does not promote a document's sanitization state. A held
-  document currently has no path to release other than re-running the job at a
-  lower data level, which is a deliberate operator action, not an approval flow.
+  fail-closed and needs no migration. The ambiguity that used to come with that
+  ("held" vs "never processed") is now resolved by a **derived** `held_for_review`
+  flag on the status response — derived from the ledger, so there is no second
+  source of truth to drift. See plan 029 for the approval endpoint that releases
+  a held document.
 - **No OCR image rebuild for the `_page_spans` refactor alone.** It rides along
   with 0.2.2 because the image is rebuilt anyway. The refactor is behaviour-
   preserving except for one deliberate change: a malformed OCR line is now

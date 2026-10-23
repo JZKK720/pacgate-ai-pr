@@ -182,11 +182,13 @@ export interface Translations {
     mappingSealed: string;
     humanReviewFlag: string;
     chunkStates: string;
+    heldForReview: string;
     states: {
       pending: string;
       sanitized: string;
       blocked: string;
       never: string;
+      heldForReview: string;
     };
   };
 
