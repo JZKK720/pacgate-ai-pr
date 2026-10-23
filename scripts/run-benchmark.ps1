@@ -159,7 +159,8 @@ try {
     $null = Invoke-WebRequest -Uri "$NginxUrl/api/v1/auth/login/local" -Method Post `
         -Headers @{ Origin = $NginxUrl } `
         -ContentType 'application/x-www-form-urlencoded' `
-        -Body "username=$DfEmail&password=$DfPassword" -WebSession $dfs -UseBasicParsing -TimeoutSec 25
+        -Body "username=$([uri]::EscapeDataString($DfEmail))&password=$([uri]::EscapeDataString($DfPassword))" `
+        -WebSession $dfs -UseBasicParsing -TimeoutSec 25
     $csrf = ($dfs.Cookies.GetCookies($NginxUrl) | Where-Object { $_.Name -eq 'csrf_token' } | Select-Object -First 1).Value
     $H = @{ 'X-CSRF-Token' = $csrf }
     $t = (Invoke-WebRequest -Uri "$NginxUrl/api/threads" -Method Post -Body '{}' -ContentType 'application/json' `
