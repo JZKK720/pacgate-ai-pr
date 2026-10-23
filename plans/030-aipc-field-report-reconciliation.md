@@ -327,6 +327,70 @@ to fail. Without the mutation test that weakness would have shipped.
 
 ---
 
+## 7a. AIPC #2's branches ARE reachable, and two of their gate fixes are real
+
+The first version of this plan said their branches were "staged on fork, waiting
+for a maintainer". That was wrong in a way worth correcting: the fork is public
+and fetchable, and their branches are based on `d33553e` — **2 commits behind,
+not 150**. The 150-behind figure is `aipc2/main`, which is a different thing.
+
+```
+git ls-remote --heads https://github.com/pacgate-ai/pacgate-ai-pr.git
+  fix/gate-correctness              e30f7a58   base d33553e, +5
+  fix/runtime-mcp                   621048ad   base d33553e, +3
+  docs/audit-and-benchmark-records  4419dc15   base d33553e, +4
+```
+
+All five `fix/gate-correctness` commits cherry-pick **cleanly** onto `origin/main`.
+Two of them fix defects that are real here, and both were verified by reproducing
+the failure first:
+
+### 5425573 — a bind-mounted file is not a tag/artifact mismatch
+
+`test-release-provenance.ps1` treats any change under a build context as a
+provenance defect. But `compose.prod.yaml` bind-mounts `deploy/pacgate-mcp/server.py`
+over `/app/server.py`, so a local edit to it does **not** change what clients pull.
+
+Reproduced: with a one-line edit to `server.py` and no fix, the gate reports
+`FAIL 1 file(s) that CAN reach a built image changed` and exits 1. With their fix
+it reports `1 file(s) changed but are BIND-MOUNTED over the image by compose` and
+passes. Their fix derives the bind-mounted set from the compose files rather than
+hardcoding it, so a new patch mount is covered automatically.
+
+**This matters for this repo specifically**: the whole patch pipeline is
+bind-mounts, so the gate is permanently red on any machine carrying a local patch —
+which is how a gate stops being read.
+
+### 547a926 — a pull is a no-op when local is AHEAD, not only when equal
+
+`dry-run-update.ps1` asserted `HEAD == origin/main`. A dev box with a local commit
+is ahead, and `git pull --ff-only` there fast-forwards nothing and exits 0 — so a
+healthy tree reported FAIL.
+
+Reproduced: on a branch 1 commit ahead, the gate reports
+`[FAIL] local HEAD equals origin/main` and exits 1. With their fix it reports
+`[PASS] a pull would be a no-op (local is not behind origin/main)`.
+
+### What is NOT worth taking
+
+- **`fix/runtime-mcp` (621048a)** — fixes `deer-flow-mcp-client.py`, which does not
+  exist in `origin/main`. Verified: the upstream client at
+  `deerflow/mcp/client.py` already does `if config.headers: params["headers"] = ...`.
+  The bug is fork-local.
+- **`aipc1/v0.2.2-sync` (5ad74b0)** — a **1853-file** sync, not a patch. Their
+  docgen fix measured 3/5 here (§3.3), so it should not be adopted regardless.
+- **`docs/audit-and-benchmark-records`** — 1003 lines of benchmark reports from
+  0.1.25–0.1.31. Historical record, not a fix.
+
+### Recommendation
+
+Cherry-pick `5425573` and `547a926` (plus `1437301`, a docs correction, and
+`09d5968`, a remediate-script fix) as a separate commit. They are small, they fix
+real defects, and they were verified by reproducing the failure first — which is
+the standard this repo holds its own gates to.
+
+---
+
 ## 8. Evidence index
 
 Every number in this plan was produced on 2026-10-23 on the HX370 dev box:
