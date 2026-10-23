@@ -27,8 +27,11 @@ async function proxyRequest(request: NextRequest, pathname: string) {
   headers.delete("connection");
   headers.delete("content-length");
 
+  const backendUrl = buildBackendUrl(pathname);
+  backendUrl.search = request.nextUrl.search;
+
   const hasBody = !["GET", "HEAD"].includes(request.method);
-  const response = await fetch(buildBackendUrl(pathname), {
+  const response = await fetch(backendUrl, {
     method: request.method,
     headers,
     body: hasBody ? await request.arrayBuffer() : undefined,
