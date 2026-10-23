@@ -172,6 +172,41 @@ foreach ($pair in @(@('Main', $rustMain), @('Mid', $rustMid), @('Low', $rustLow)
         "the fallback is what applies if an override is missing, so a fallback outside the prepull list is a latent 404"
 }
 
+# ── A6: the Main tier must be CAPABLE of driving a document workflow ─────────
+#
+# A1-A5 assert that the roster is CONSISTENT. None of them asserts that the Main
+# model can actually do the job, and that gap is not academic - it is the defect
+# two AIPC machines reported independently on 2026-10-23.
+#
+# MEASURED 2026-10-23 on this box, gemma4:12b-it-qat, using the exact
+# `## Required tool` message build_step_message emits, 5 runs per configuration:
+#
+#   full tool list (10 tools, as tool_definitions() returns)  -> 0/5 called generate_docx
+#   only generate_docx offered                                -> 4/5
+#   full list + tool_choice:"required"                        -> 3/5
+#   no tools, format:json, parse the structure                -> 3/5
+#
+# So a 12B does not reliably choose generate_docx among ten tools, and NO
+# intervention tested makes it deterministic. The 0.2.1 commit 2248ac9 ("send the
+# step's declared tool to the model") was necessary but not sufficient: naming the
+# tool in prose does not overcome a small model choosing among ten.
+#
+# The failure is SILENT - the route returns HTTP 200 and the run reports success
+# while producing no document - which is why it needs a gate rather than a doc.
+#
+# This asserts the RESOLVED CONFIG, not a runtime probe. A probe costs minutes per
+# run and would make the suite unusable; the config assertion catches the same
+# mistake at the point it is made. A local (non-`:cloud`) Main tag is the
+# condition, because every local tag this repo ships is 12B-or-smaller and the
+# cloud tags are the ones measured to work.
+$mainIsLocal = ($prodMain -notmatch ':cloud$')
+Check "A6 Main tier '$prodMain' is a model that can drive a document workflow" (-not $mainIsLocal) `
+    ("Main is a LOCAL tag. Measured 2026-10-23: a 12B calls list_documents and stops, " +
+     "never reaching generate_docx (0/5 with the full tool list), and the route still " +
+     "returns HTTP 200 with no document - a silent empty result, not an error. " +
+     "Either set PACGATE_MODEL_MAIN to a ':cloud' tag, or accept that document " +
+     "workflows produce nothing on this machine. See deploy/client-bundle/.env.")
+
 # ── Installed-state report (informational: the dev box roster may legitimately
 #    differ from the client roster, so this never fails the gate) ─────────────
 $ollamaUp = $false

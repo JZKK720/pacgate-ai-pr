@@ -316,6 +316,19 @@ $gates = @(    'scripts/test-install-render.ps1'
     # planted credential scanned CLEAN, exit 0 on 5.1 and was found after the fix).
     # ASCII-only, so 5.1 can parse it.
     'scripts/detect-literal-credentials.ps1'
+    # TRACKED FILE SIZE, registered 2026-10-23. An AIPC reported that a cherry-pick
+    # had staged a 42 MB docker CLI binary; a human caught it, nothing in this repo
+    # did. A binary that size is PERMANENT in git history - a later commit cannot
+    # remove it, only a history rewrite can, and by then every clone carries it.
+    #
+    # `.gitignore` cannot express "any file over N MB" (it matches names, not
+    # sizes), so this is a script. The .gitignore rules added alongside it cover the
+    # specific shapes that incident produced; this covers the general case.
+    #
+    # It also asserts its own ceiling can FAIL, because a guard set to 1 GB would
+    # have passed the very binary that motivated it. Mutation-tested by staging a
+    # 12 MB file.
+    'scripts/check-tracked-file-size.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
@@ -499,6 +512,53 @@ $liveStackGates = @(
     # It sends a deliberately WRONG credential (creates no state) and exits 2 when
     # the stack is down, so a clean machine is not a false red.
     'scripts/test-origin-coherence.ps1'
+    # STACK VERSION COHERENCE, registered 2026-10-23 from the AIPC field reports.
+    #
+    # Two machines deployed 0.2.2, both reported "all gates passed", and both were
+    # running broken stacks. The same state was reproducible here: four of five
+    # services executing 0.2.1 images while pacgate-api had been recreated on 0.2.3,
+    # and this runner printed ALL 47 GATES PASSED.
+    #
+    # Nothing was lying - every existing version gate looks at ONE service.
+    # test-staleness-probe and test-version-marker-against-image both inspect
+    # pacgate-api only; test-release-provenance reads the REGISTRY, not running
+    # containers; test-compose-healthchecks asserts healthcheck presence, not image
+    # identity. So a stack can be arbitrarily mixed and all of them stay green.
+    #
+    # It matters because a PARTIAL recreate leaves the rest behind. `docker compose
+    # up -d` DOES recreate a container whose image TAG changed (proved with a
+    # throwaway project), so a full `install.ps1 -Update` moves every service - but
+    # recreating one service to verify a release leaves the others on the previous
+    # one, which is exactly what happened here: pacgate-api was recreated 21 minutes
+    # after the v0.2.3 tag while the other four still carried 0.2.1 images from the
+    # previous day. Most services bind-mount their code, which hides the gap - but
+    # ocr-service has NO bind mounts, so it really did run the old app.py. Verified:
+    # the 0.2.1 container still carried the unguarded
+    # `box, (text, _conf) = line[0], line[1]`, so one malformed OCR line marked the
+    # whole page incomplete; 0.2.2 skips the bad line and keeps the rest.
+    #
+    # It compares EVERY pinned release service at once, and exits 2 when the stack
+    # is down so a clean machine is not a false red.
+    'scripts/test-stack-version-coherence.ps1'
+    # THE MCP TOOL SURFACE, registered 2026-10-23 from the same field reports.
+    #
+    # One AIPC lost ALL of its MCP tools and the 47-gate suite stayed green. The
+    # trigger there was fork-local, but the gap it exposed is real here: nothing
+    # asserted that pacgate-mcp still ADVERTISES its tools.
+    #   test-mcp-401-retry.ps1 -> the retry path, SDK stubbed, no server
+    #   test-officecli-mcp.ps1 -> officecli's stdio surface, not pacgate's
+    #   smoke-full-stack.ps1   -> counts "3 MCP servers enabled"; counting a server
+    #                             is not testing its tools
+    #
+    # A tool that disappears - a decorator lost in a refactor, an import that
+    # silently fails, a server that starts but registers nothing - is invisible to
+    # all three and presents to a lawyer as "the assistant cannot do that any more".
+    #
+    # It asserts the SET of names, not the count: a count passes when one tool is
+    # swapped for another. The expected set is derived from server.py, so adding a
+    # tool needs no edit here while REMOVING one still fails - the source and the
+    # deployed surface cannot drift. Mutation-tested by renaming a decorator.
+    'scripts/test-mcp-tool-surface.ps1'
 )
 
 
