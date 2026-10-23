@@ -1,4 +1,4 @@
-# Verify the /version staleness marker end-to-end against real containers.
+﻿# Verify the /version staleness marker end-to-end against real containers.
 #
 # Why this exists: the marker is the one artifact whose whole job is to be
 # reachable when something else is wrong. "nginx -t passes" does not prove that
@@ -144,8 +144,24 @@ http.server.HTTPServer(("0.0.0.0", 8080), H).serve_forever()
     }
     if (-not $nginxUp) { throw "nginx config did not pass inside the container" }
 
-    # Give nginx a moment to bind.
-    Start-Sleep -Seconds 2
+    # Poll for nginx to actually ANSWER, rather than sleeping a fixed 2 s.
+    #
+    # `nginx -t` above only proves the config PARSES; it does not prove the
+    # worker has bound :80. A fixed sleep is a race: measured 2026-10-23, this
+    # gate failed once inside run-all-checks.ps1 and passed 3/3 standalone, and
+    # the only difference is how much else the machine was doing. The stub
+    # upstream above already polls for readiness; this is the same pattern, so
+    # both halves of the harness now fail for the same reason or not at all.
+    #
+    # Probes /version, not /: this fixture has no UI root, so / answers 404 and
+    # wget exits non-zero even when nginx is perfectly up.
+    $bound = $false
+    foreach ($i in 1..20) {
+        $probe = Invoke-Native { docker exec $nginxCtr wget -q -O /dev/null http://127.0.0.1/version }
+        if ($probe.Exit -eq 0) { $bound = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $bound) { throw "nginx never answered on :80 inside the container" }
 
     # --- the actual assertions -------------------------------------------
     # `wget -S` writes the response headers to stderr, so this call needs the
