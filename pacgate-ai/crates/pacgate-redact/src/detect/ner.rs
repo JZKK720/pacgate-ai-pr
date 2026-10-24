@@ -235,7 +235,22 @@ impl Detector for NerDetector {
         // not degrade to rules-only, it took the document down. verify() replayed
         // the same detector and hit the same wall, so no verdict could be Pass
         // either: the document simply could not be sanitized.
-        let core = window::plan_windows(text, MAX_TOKENS, window::estimated_tokens);
+        // Plan the CORE window small enough that core + overlap still fits the
+        // token budget.
+        //
+        // `expand_with_overlap` only moves `start` BACKWARDS; it never shrinks
+        // `end`. So the window that actually reaches the tokenizer is
+        // `max_units + OVERLAP_CHARS` wide, while `detect_window` refuses
+        // anything over `MAX_TOKENS + 2` tokens. Planning at the full
+        // `MAX_TOKENS` therefore guaranteed an overflow for any document whose
+        // windows landed at the budget.
+        //
+        // Measured 2026-10-24 on `百宸完整项目及事项档案提交目录与整理说明_v1.0`:
+        // window [829, 1339) = 510 chars -> 506 tokens against a 502 ceiling.
+        // The detector failed closed, and because `verify` replays the same
+        // detector, no verdict could be Pass either - the document could never
+        // be sanitized at all.
+        let core = window::plan_windows(text, MAX_TOKENS - OVERLAP_CHARS, window::estimated_tokens);
         let windows = window::expand_with_overlap(text, &core, OVERLAP_CHARS);
 
         let mut all: Vec<Match> = Vec::new();

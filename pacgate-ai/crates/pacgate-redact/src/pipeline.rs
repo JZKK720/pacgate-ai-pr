@@ -67,9 +67,15 @@ impl Sanitizer {
             candidates.extend(d.detect(text)?);
         }
 
-        // Suppress noise and public citations before deciding anything.
+        // Suppress noise, public citations, and public entities before deciding
+        // anything. `drop_public_entities` must run HERE as well as in the
+        // verifier: if the redactor removes a regulator's name but the verifier
+        // still counts it as residue, the document blocks on a span the
+        // redactor was right to leave alone. Both sides must agree on what is
+        // deliberate, which is the same rule `drop_public_citations` follows.
         let mut matches = self.noise.apply(text, candidates);
         matches = crate::detect::noise::drop_public_citations(text, matches);
+        matches = crate::detect::noise::drop_public_entities(text, matches);
 
         // DECIDE + REPLACE - the allocator lives on `self`, so it persists
         // across calls within this job.
@@ -115,7 +121,13 @@ impl Sanitizer {
                 })
                 .cloned()
                 .collect();
-            crate::detect::noise::drop_public_citations(&redaction.text, noise.apply(&redaction.text, kept))
+            crate::detect::noise::drop_public_entities(
+                &redaction.text,
+                crate::detect::noise::drop_public_citations(
+                    &redaction.text,
+                    noise.apply(&redaction.text, kept),
+                ),
+            )
         });
 
         // Build this job's mapping from the allocator's accumulated state, so

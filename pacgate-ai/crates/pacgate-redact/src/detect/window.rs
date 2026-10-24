@@ -241,6 +241,46 @@ mod tests {
     }
 
     #[test]
+    fn an_expanded_window_still_fits_the_token_budget() {
+        // Measured 2026-10-24 on `百宸完整项目及事项档案提交目录与整理说明_v1.0`:
+        // the document blocked with
+        //
+        //   ner-zh: detector failed (internal error: window [829, 1339)
+        //   produced 506 tokens, over the 500 limit - the planning bound was
+        //   wrong, refusing rather than truncating)
+        //
+        // The planning bound WAS wrong, but not where the message says.
+        // `plan_windows` budgets `max_units` for the CORE window, then
+        // `expand_with_overlap` adds `overlap` characters on top. So the window
+        // that actually reaches the tokenizer is `max_units + overlap` wide, and
+        // the guard in `detect_window` only allows `MAX_TOKENS + 2`.
+        //
+        // 500 + 64 = 564 characters, against a 502-token ceiling. Any document
+        // whose windows land near the budget fails closed and can never be
+        // sanitized - and because `verify` replays the same detector, no verdict
+        // can be Pass either.
+        //
+        // The fix is to plan the CORE window small enough that core + overlap
+        // fits. This test asserts the invariant directly: every expanded window
+        // must measure within the budget.
+        let text: String = "张伟是本案的委托代理人。".repeat(200); // 2400 chars
+        let max_units = 500;
+        let overlap = 64;
+        let core = plan_windows(&text, max_units - overlap, |s| s.chars().count());
+        let expanded = expand_with_overlap(&text, &core, overlap);
+        for w in &expanded {
+            let slice: String = text.chars().skip(w.start).take(w.end - w.start).collect();
+            let measured = slice.chars().count();
+            assert!(
+                measured <= max_units,
+                "expanded window [{}, {}) measures {measured} chars, over the {max_units} budget",
+                w.start,
+                w.end
+            );
+        }
+    }
+
+    #[test]
     fn merge_collapses_a_straddling_span_to_the_longest_one() {
         // The same person, seen partially by one window and fully by the next.
         let merged = merge_matches(vec![
