@@ -52,6 +52,20 @@ pub struct JobOutcome {
     pub allow_auto_pass: bool,
     pub require_human_review: bool,
     pub reason: String,
+    /// What survived redaction, when the verdict is `block`.
+    ///
+    /// Without this a reviewer got `verdict: "block"` and a generic sentence
+    /// ("has residue after redaction, so it is held for review") with no way to
+    /// see WHICH entity or WHICH text survived. Measured 2026-10-24: 5 of 13
+    /// firm documents blocked this way and the only way to clear one was to
+    /// reset the row in Postgres by hand.
+    ///
+    /// Empty on a pass, so a clean response is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residue: Vec<pacgate_redact::ledger::ResidueEntry>,
+    /// The verifier's own explanation of the verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verification_notes: Vec<String>,
     pub sanitized_text: String,
     pub ledger: serde_json::Value,
 }
@@ -365,6 +379,8 @@ async fn run_job_inner(
         allow_auto_pass: outcome.decision.allow_auto_pass,
         require_human_review: outcome.decision.require_human_review,
         reason: outcome.decision.reason,
+        residue: outcome.ledger.residue.clone(),
+        verification_notes: outcome.ledger.verification_notes.clone(),
         sanitized_text: outcome.text,
         ledger: ledger_json,
     })

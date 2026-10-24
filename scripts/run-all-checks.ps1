@@ -386,6 +386,28 @@ $gates = @(    'scripts/test-install-render.ps1'
     # STATIC - reads the tracked prompt patch only. Red-checked by reverting the
     # wording; 4 of 5 checks fail on the pre-fix file.
     'scripts/test-prompt-document-reading.ps1'
+
+    # An empty `kb_search` must say WHY it is empty. Registered 2026-10-24, after
+    # a lawyer asked for the firm's 互联网+/电商合规 material and got `[]` eighteen
+    # times across one thread.
+    #
+    # The tool was never broken - it returns hits on matters that have content.
+    # The matter being searched ("Firm Knowledge Base") had ZERO documents. But
+    # `[]` reads identically to "the firm holds no such authority" and to "the
+    # tool is broken", and a lawyer cannot tell which. In a legal product "no
+    # results" is a factual claim about the world; returning it when the truth is
+    # "nothing has been indexed" invites a wrong conclusion about the firm's own
+    # authority.
+    #
+    # The tool now returns a structured empty response with a machine-readable
+    # `empty_reason` of no_documents / nothing_sanitized / no_match, the counts
+    # behind it, and a next step. The non-empty path is unchanged, so existing
+    # consumers keep the array shape they already parse.
+    #
+    # STATIC - reads the tracked server.py only. Red-checked by restoring the
+    # plain `return json.dumps(results, ...)`; 4 of 5 checks fail on the pre-fix
+    # file.
+    'scripts/test-kb-search-empty-signal.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2

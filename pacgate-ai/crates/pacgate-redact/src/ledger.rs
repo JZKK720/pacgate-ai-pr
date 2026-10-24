@@ -28,6 +28,40 @@ pub struct RedactionLedger {
     /// re-interpret history (spec 6.3, 8.8, 9 acceptance).
     pub ruleset_version: String,
     pub model_version: Option<String>,
+    /// What survived redaction, when the verdict is `Block`.
+    ///
+    /// `Verification::residue` is documented as "Surfaced to the review panel,
+    /// never auto-cleared" - but until 2026-10-24 it was surfaced nowhere. The
+    /// ledger recorded `verdict: "block"` and dropped the evidence, so a
+    /// reviewer saw a refusal with no reason and the only way to clear it was
+    /// to reset the row in Postgres by hand.
+    ///
+    /// Measured on the Firm KB ingest: 5 of 13 documents blocked, 284 chunks
+    /// left unsearchable, and nothing in the record said which entity or which
+    /// surviving text caused it.
+    ///
+    /// Empty on a pass, so a clean ledger is byte-identical to before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residue: Vec<ResidueEntry>,
+    /// The verifier's own explanation of the verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verification_notes: Vec<String>,
+}
+
+/// One surviving match, as recorded in the ledger.
+///
+/// Deliberately carries the surviving TEXT. The ledger's header says it stores
+/// "digests only ... without retaining the pre-transformation content", and that
+/// rule exists so the ledger cannot become a second copy of the client data.
+/// A residue entry is the opposite case: it is text the redactor FAILED to
+/// remove, so it is already present in the output the reviewer is holding. Not
+/// recording it protects nothing and makes the block unactionable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResidueEntry {
+    pub entity: String,
+    pub text: String,
+    pub start: usize,
+    pub end: usize,
 }
 
 fn sha256_hex(input: &str) -> String {
@@ -63,6 +97,17 @@ impl RedactionLedger {
             verdict: verification.verdict,
             ruleset_version: env!("CARGO_PKG_VERSION").to_string(),
             model_version: None,
+            residue: verification
+                .residue
+                .iter()
+                .map(|m| ResidueEntry {
+                    entity: format!("{:?}", m.entity),
+                    text: m.text.clone(),
+                    start: m.start,
+                    end: m.end,
+                })
+                .collect(),
+            verification_notes: verification.notes.clone(),
         }
     }
 
@@ -198,3 +243,47 @@ mod tests {
         assert!(!l.ruleset_version.is_empty());
     }
 }
+    #[test]
+    fn a_block_ledger_records_why_it_blocked() {
+        // Measured 2026-10-24: five of thirteen firm documents came back
+        // `verdict: block` and the reviewer had NOTHING to act on. The ledger
+        // carried only `verdict: "block"`; the residue that caused it - which
+        // entity, which surviving text, at which offset - was computed by
+        // `verify_reduced` and then dropped on the floor.
+        //
+        // `Verification::residue` is documented as "Surfaced to the review
+        // panel, never auto-cleared". It was not surfaced anywhere. A block
+        // with no reason is indistinguishable from a bug, and the only way to
+        // clear it was to reset the row in Postgres by hand.
+        let v = Verification {
+            verdict: Verdict::Block,
+            residue: vec![crate::Match {
+                start: 10,
+                end: 28,
+                entity: crate::EntityType::CnResidentId,
+                text: "11010519491231002X".to_string(),
+                confidence: 0.99,
+                source: crate::MatchSource::Pattern,
+            }],
+            notes: vec!["tier-one: 1 surviving match(es)".to_string()],
+        };
+        let r = Redaction {
+            text: "残留 11010519491231002X".to_string(),
+            applied: Vec::new(),
+        };
+        let l = RedactionLedger::seal(JobId::new(), MappingVersion(1), "in", &r, &v);
+
+        let json = l.to_json().expect("serialise");
+        assert!(
+            json.contains("residue"),
+            "a block ledger must record the residue that caused it, got: {json}"
+        );
+        assert!(
+            json.contains("CnResidentId"),
+            "the residue must name the entity type, got: {json}"
+        );
+        assert!(
+            json.contains("surviving match"),
+            "the residue must carry the verifier's notes, got: {json}"
+        );
+    }

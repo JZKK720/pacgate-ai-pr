@@ -272,7 +272,95 @@ def pacgate_kb_search(
     resp = client.get("/api/kb/search", params=params)
     _handle_error(resp)
     results = resp.json()
-    return json.dumps(results, ensure_ascii=False, indent=2)
+
+    if results:
+        return json.dumps(results, ensure_ascii=False, indent=2)
+
+    # An empty result is a FACTUAL CLAIM, and a bare `[]` states the wrong one.
+    #
+    # Measured 2026-10-24: a lawyer asked for the firm's 互联网+/电商合规 material
+    # and got `[]` eighteen times. The matter being searched ("Firm Knowledge
+    # Base") had zero documents - nothing had ever been ingested. `[]` reads
+    # identically to "the firm holds no such authority" and to "the tool is
+    # broken", and a lawyer has no way to tell which.
+    #
+    # So distinguish the two empty cases and say what to do about each. The
+    # non-empty path above is untouched, so existing consumers keep the array
+    # shape they already parse.
+    indexed = _matter_index_state(client, matter_id)
+    if indexed["documents"] == 0:
+        reason = "no_documents"
+        message = (
+            f"Matter {matter_id} has no documents at all, so there is nothing to "
+            "search. This is NOT a statement that the firm lacks material on this "
+            "topic - the corpus is empty. Upload the source documents to this "
+            "matter, then run pacgate_sanitize_document on each one; only "
+            "sanitized chunks become searchable."
+        )
+    elif indexed["searchable"] == 0:
+        reason = "nothing_sanitized"
+        message = (
+            f"Matter {matter_id} has {indexed['documents']} document(s) but none "
+            "are searchable yet: "
+            f"{indexed['pending']} still pending sanitization. This is NOT a "
+            "statement that the firm lacks material on this topic. Run "
+            "pacgate_sanitize_document on the pending documents, then search "
+            "again."
+        )
+    else:
+        reason = "no_match"
+        message = (
+            f"Matter {matter_id} has {indexed['searchable']} searchable "
+            f"document(s), but none matched {query!r}. The corpus is populated, so "
+            "this is a genuine no-match: try broader or different keywords, or "
+            "check that the relevant document has been sanitized."
+        )
+
+    return json.dumps(
+        {
+            "results": [],
+            "empty_reason": reason,
+            "matter_id": matter_id,
+            "query": query,
+            "documents_in_matter": indexed["documents"],
+            "searchable_documents": indexed["searchable"],
+            "pending_sanitization": indexed["pending"],
+            "message": message,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _matter_index_state(client: "PacgateApi", matter_id: str) -> dict[str, int]:
+    """Count a matter's documents by searchability.
+
+    Search only returns chunks whose `sanitization_state` is 'sanitized' or
+    'never' (pacgate-rag/src/lib.rs:314), so a document that exists but is still
+    'pending' is invisible to `kb_search`. Without this count the tool cannot
+    tell "empty corpus" from "populated but unsanitized" from "genuine no-match".
+
+    Best-effort: if the workspace call fails, report zeros rather than turning a
+    search into an error. The caller still gets a usable message.
+    """
+    try:
+        resp = client.get(f"/api/matters/{matter_id}/workspace")
+        _handle_error(resp)
+        ws = resp.json()
+    except Exception:
+        return {"documents": 0, "searchable": 0, "pending": 0}
+
+    docs = ws.get("documents") or []
+    rag = ws.get("rag_documents") or []
+    searchable = sum(
+        1
+        for r in rag
+        if any(s in ("sanitized", "never") for s in (r.get("states") or []))
+    )
+    pending = sum(
+        1 for d in docs if (d.get("sanitization_state") or "") == "pending"
+    )
+    return {"documents": len(docs), "searchable": searchable, "pending": pending}
 
 
 @mcp.tool()
