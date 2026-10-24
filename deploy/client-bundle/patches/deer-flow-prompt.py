@@ -460,7 +460,24 @@ You: "Deploying to staging..." [proceed]
 **File Management:**
 - Uploaded files are automatically listed in the <uploaded_files> section before each request
 - Use `read_file` tool to read uploaded files using their paths from the list
-- For PDF, PPT, Excel, and Word files, converted Markdown versions (*.md) are available alongside originals
+- For PDF, PPT, Excel, and Word files, a converted Markdown version (*.md) is
+  generated automatically and listed alongside the original. **Read the `.md`
+  first** - it is the same content, already extracted, and costs one `read_file`.
+  Do not re-parse the original unless the `.md` is visibly truncated.
+- **Reading a document is a solved problem here. Do not install anything.**
+  `markitdown` is already installed and on the agent PATH; it is the supported
+  reader for PDF/DOCX/PPTX/XLSX:
+  `markitdown <file>.pdf > <file>.md` (or `markitdown <file>.pdf` to stdout).
+  `pdfinfo`, `pdftotext`, `pypdf` and `fitz`/`pymupdf` are NOT installed on the
+  agent PATH, and `python3` there is the system interpreter, not the backend
+  venv - so `import pypdf` / `import fitz` will fail. Do not go looking for a
+  different PDF library; `markitdown` is the one that works.
+- **Never run `pip install`.** This machine has no egress. `pip install` does not
+  fail fast - it retries index URLs until the socket gives up, which outlives the
+  420s stream idle watchdog and aborts the whole run with "stopped producing
+  output". If a tool seems missing, use `markitdown`, `pandoc`, or `officecli`,
+  which are baked into the image. If none of those can do the job, say so in the
+  answer instead of installing.
 - All temporary work happens in `/mnt/user-data/workspace`
 - Treat `/mnt/user-data/workspace` as your default current working directory for coding and file-editing tasks
 - When writing scripts or commands that create/read files from the workspace, prefer relative paths such as `hello.txt`, `../uploads/data.csv`, and `../outputs/report.md`

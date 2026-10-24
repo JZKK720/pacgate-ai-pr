@@ -361,6 +361,31 @@ $gates = @(    'scripts/test-install-render.ps1'
     # reports exit codes but never adds to $failed, so a red gate there cannot
     # fail the suite. A config that treadmills must fail it.
     'scripts/test-summarization-treadmill.ps1'
+
+    # The lead-agent prompt must explain how to READ an uploaded document, and
+    # must warn the agent off `pip install`. Registered 2026-10-24, after a live
+    # AIPC run died with "stopped producing output" on a 3.0 MB Chinese PDF.
+    #
+    # The agent HAD the answer: the PDF and a pre-converted `.md` (markitdown,
+    # baked into the image) were both listed in <uploaded_files>, and it read the
+    # `.md` successfully. Then it decided it needed a "real" PDF parser and spent
+    # four consecutive bash calls on pdfinfo (exit 127), `import pypdf`, `import
+    # fitz`, and finally `pip install pymupdf`.
+    #
+    # That last one is fatal on an offline AIPC: pip retries index URLs until the
+    # socket gives up, which outlives the 420s stream idle watchdog
+    # (worker.py:55) even though the bash tool's own timeout is 600s
+    # (local_sandbox.py:355,365). The watchdog fires first and aborts the run.
+    #
+    # The prompt documented PDF OUTPUT thoroughly (pandoc, weasyprint, officecli,
+    # CJK fonts) but said nothing about PDF INPUT beyond "converted Markdown
+    # versions (*.md) are available alongside originals" - a fact with no tool and
+    # no instruction. Measured before the fix: 'markitdown' mentions = 0,
+    # 'pip install' mentions = 0.
+    #
+    # STATIC - reads the tracked prompt patch only. Red-checked by reverting the
+    # wording; 4 of 5 checks fail on the pre-fix file.
+    'scripts/test-prompt-document-reading.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2
