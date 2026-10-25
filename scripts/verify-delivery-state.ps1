@@ -72,6 +72,12 @@ $missing = @()
 foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow-frontend-pacgate', 'ocr-service')) {
     $repo = "$ns/$img"
     $status = 'ERROR'
+    # ghcr.io intermittently drops the TLS connection mid-handshake
+    # (SSL: UNEXPECTED_EOF_WHILE_READING). Observed 2026-10-25 on a different
+    # image each run, so it is the registry and not one repo. A single blip is
+    # not a registry answer; retry before reporting ERROR, or this gate fails a
+    # release that is in fact fully published.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
         $tok = Invoke-RestMethod -Uri "https://ghcr.io/token?scope=repository:$repo`:pull&service=ghcr.io" -Method Get
         # -UseBasicParsing is REQUIRED. Without it Windows PowerShell 5.1
@@ -80,12 +86,16 @@ foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow
         # the default Windows shell while passing on PowerShell 7.
         $r = Invoke-WebRequest -Uri "https://ghcr.io/v2/$repo/manifests/$V" -Method Head -UseBasicParsing -Headers @{ Authorization = "Bearer $($tok.token)"; Accept = $accept }
         $status = "$($r.StatusCode)"
+        break
     }
     catch {
         # A transport failure (DNS, TLS, timeout) leaves Response null; keep the
         # ERROR marker so it is never confused with a real registry answer.
         $code = $_.Exception.Response.StatusCode.value__
-        if ($code) { $status = "$code" } else { $status = "ERROR" }
+        if ($code) { $status = "$code"; break }
+        $status = 'ERROR'
+        if ($attempt -lt 3) { Start-Sleep -Milliseconds (500 * $attempt) }
+    }
     }
     if ($status -eq '404') { $missing += $img }
     Line "${img}:$V" $status ($status -eq '200')
