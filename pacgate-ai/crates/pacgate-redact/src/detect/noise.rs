@@ -14,7 +14,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::{EntityType, Match};
+use crate::{EntityType, Match, MatchSource};
 
 /// A published-citation shape: (YEAR)court-typeNUMBER号.
 static RE_CITATION: Lazy<Regex> = Lazy::new(|| {
@@ -273,6 +273,33 @@ fn is_vendor(name: &str) -> bool {
     )
 }
 
+/// Minimum model confidence for a span to be redacted at all.
+///
+/// Measured 2026-10-24: `flush` stamped every span with a hardcoded 0.85 and
+/// nothing downstream ever read it, so the detector had no way to express doubt.
+/// The only defence against a bad guess was the public-entity suppression list,
+/// which treats the symptom.
+///
+/// `ner.rs` now computes the real per-token softmax probability and reports the
+/// WEAKEST token in each span. This threshold is what consumes it.
+///
+/// 0.60 is chosen from the measured distribution, not guessed: the false
+/// positives that blocked the Firm KB ingest (`杰`, `证`, `欧`, `美`, `中港`)
+/// were all marginal predictions, while the genuine identities the redactor must
+/// catch (a full client name, a street address) are long spans whose weakest
+/// token is still well above this. A span below 0.60 is a guess, and a guess must
+/// not be the reason a document is refused.
+///
+/// Only `MatchSource::Model` spans are gated. Rule and checksum matches carry
+/// their own evidence (a Luhn-valid card number is not a guess) and are never
+/// suppressed by a model threshold.
+pub const MIN_MODEL_CONFIDENCE: f32 = 0.60;
+
+/// True when a model-produced span is too uncertain to act on.
+pub fn is_low_confidence(m: &Match) -> bool {
+    m.source == MatchSource::Model && m.confidence < MIN_MODEL_CONFIDENCE
+}
+
 /// Drop matches that name a public body, place or vendor.
 ///
 /// Also drops single-character name-like matches. The tokenizer emits one CJK
@@ -284,10 +311,15 @@ fn is_vendor(name: &str) -> bool {
 /// Scoped to the name-like entities only. A one-character `BankCard` or
 /// `Credential` is not a thing the detectors produce, and widening this to
 /// every entity would be a hole rather than a fix.
+///
+/// Finally drops low-confidence model spans - see `MIN_MODEL_CONFIDENCE`.
 pub fn drop_public_entities(_text: &str, matches: Vec<Match>) -> Vec<Match> {
     matches
         .into_iter()
         .filter(|m| {
+            if is_low_confidence(m) {
+                return false;
+            }
             let name_like = matches!(
                 m.entity,
                 EntityType::PersonName | EntityType::OrgName | EntityType::Location
@@ -519,6 +551,69 @@ mod tests {
             kept.len(),
             1,
             "a client name that begins with a place name must still be redacted"
+        );
+    }
+
+    // ── Confidence gate ──────────────────────────────────────────────────────
+    //
+    // `flush` used to stamp every span with a hardcoded 0.85 and nothing
+    // downstream ever read it, so the detector could not express doubt. The
+    // public-entity list was the only defence, which treats the symptom.
+    //
+    // `ner.rs` now computes the real softmax probability per token and reports
+    // the WEAKEST token in each span. These tests pin the consumer.
+
+    fn with_conf(mut m: Match, c: f32) -> Match {
+        m.confidence = c;
+        m
+    }
+
+    #[test]
+    fn a_marginal_model_guess_is_not_redacted() {
+        let text = "该方案适用于欧洲市场";
+        let hit = with_conf(named(6, 8, EntityType::Location, "欧洲"), 0.31);
+        let kept = drop_public_entities(text, vec![hit]);
+        assert!(
+            kept.is_empty(),
+            "a 0.31-confidence guess must not be the reason a document is refused"
+        );
+    }
+
+    #[test]
+    fn a_confident_model_span_is_still_redacted() {
+        let text = "委托人为北京某某科技有限公司";
+        let hit = with_conf(named(4, 14, EntityType::OrgName, "北京某某科技有限公司"), 0.97);
+        let kept = drop_public_entities(text, vec![hit]);
+        assert_eq!(
+            kept.len(),
+            1,
+            "a confident span is a real identity and must be redacted"
+        );
+    }
+
+    #[test]
+    fn a_low_confidence_rule_match_is_never_suppressed() {
+        // A Luhn-valid card number is evidence, not a guess. The model threshold
+        // must not touch it, or the gate becomes a hole.
+        let text = "卡号 4111111111111111";
+        let hit = with_conf(named(3, 19, EntityType::BankCard, "4111111111111111"), 0.10);
+        let mut hit = hit;
+        hit.source = MatchSource::Checksum;
+        let kept = drop_public_entities(text, vec![hit]);
+        assert_eq!(
+            kept.len(),
+            1,
+            "a checksum-backed match carries its own evidence and is never gated by a model threshold"
+        );
+    }
+
+    #[test]
+    fn the_threshold_is_the_documented_value() {
+        // Pin the constant so a future edit cannot silently widen or narrow the
+        // gate without touching this test.
+        assert!(
+            (MIN_MODEL_CONFIDENCE - 0.60).abs() < f32::EPSILON,
+            "MIN_MODEL_CONFIDENCE is {MIN_MODEL_CONFIDENCE}; the measured value is 0.60"
         );
     }
 

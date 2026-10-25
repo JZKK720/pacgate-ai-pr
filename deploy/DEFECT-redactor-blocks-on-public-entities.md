@@ -99,6 +99,22 @@ let core = window::plan_windows(text, MAX_TOKENS - OVERLAP_CHARS, window::estima
 
 Plan the core small enough that core + overlap fits the token ceiling.
 
+### `detect/ner.rs` - real confidence, not a hardcoded 0.85
+
+`flush` used to stamp every span with a literal `0.85` and **nothing downstream
+ever read it**. The detector had no way to express doubt, so the only defence
+against a bad guess was the public-entity list - which treats the symptom.
+
+The detector now computes a softmax over the same logits (f32, row-max
+subtracted for stability) and reports the **minimum** token probability across
+each span. Minimum, not mean: a span is only as trustworthy as its weakest
+token, and averaging would hide a confident `B-ORG` followed by a marginal
+`I-ORG`.
+
+`MIN_MODEL_CONFIDENCE = 0.60` in `noise.rs` consumes it. Only
+`MatchSource::Model` spans are gated - a Luhn-valid card number is evidence, not
+a guess, and is never suppressed by a model threshold.
+
 ## Why this is a suppression list, not a redaction list
 
 The list can only ever **remove** a match, never add one. A private company name
@@ -121,10 +137,14 @@ suppress `北京市朝阳区建国路88号`, which is a real address.
 | chunks searchable | 76 | **361** |
 | blocked | 5 | **0** |
 
-- `cargo test -p pacgate-redact`: 165 passed, 0 failed.
-- `cargo test --workspace`: 41 suites, 0 failures.
-- Verified live: rebuilt `pacgate-server`, deployed into the running
-  `pacgate-api`, re-sanitized all 13 documents, all `verdict: pass`.
+- `cargo test -p pacgate-redact`: 169 passed, 0 failed.
+- `cargo test --workspace`: 42 suites, 0 failures.
+- Verified live: rebuilt `pacgate-api:0.2.3` from this commit, recreated it
+  through `compose.prod.yaml`, re-sanitized all 13 documents, all
+  `verdict: pass`.
+- Real PII still redacted, verified end-to-end with a probe document: a
+  checksum-valid ID, a mobile number, an email and a person name were all
+  replaced; the probe was then deleted.
 
 ## Residual risk
 
@@ -132,13 +152,22 @@ suppress `北京市朝阳区建国路88号`, which is a real address.
   jurisdiction not on the list will still block. The list is the right shape
   (it can only suppress, never redact) but it will need additions. The ledger
   now records the residue, so the next gap is visible instead of silent.
-- **The NER confidence is still hardcoded at 0.85** (`ner.rs:399`). The detector
-  takes `argmax` over the classifier head and never reads the model's actual
-  probability, so a marginal guess is indistinguishable from a certain one.
-  Suppressing known-public names treats the symptom; gating on real confidence
-  would treat the cause. That is the next fix, and it needs the logits plumbed
-  through `detect_window`.
-- **The deployed binary is not in the image.** `pacgate-api` runs
-  `ghcr.io/jzkk720/pacgate-api:0.2.3`; the fix was built locally and copied into
-  the running container. It needs a rebuild and republish, or the next
-  `docker compose up` reverts it.
+- **The NER confidence gate is now real, but the threshold is a judgement.**
+  `ner.rs` computes the per-token softmax probability and reports the WEAKEST
+  token in each span; `MIN_MODEL_CONFIDENCE = 0.60` consumes it. Only
+  `MatchSource::Model` spans are gated - a checksum-backed card number or a
+  pattern-matched email carries its own evidence and is never suppressed by a
+  model threshold. 0.60 was chosen from the measured distribution (the false
+  positives were all marginal; genuine identities are long spans whose weakest
+  token stays well above it), not from a labelled corpus. A future calibration
+  run against real firm documents should revisit it.
+- **The deployed image is now correct.** `pacgate-api:0.2.3` was rebuilt from
+  this commit and recreated through `compose.prod.yaml`, so the fix survives
+  `docker compose up`. The published GHCR tag still needs a CI run to match;
+  until then a `docker pull` would overwrite the local tag.
+- **A synthetic fixture ID is not redacted, and that is correct.** The OCR
+  sample's `110105199003074512` has an invalid check digit (expected `6`, got
+  `2`), so `validate_cn_resident_id` rejects it and the rule layer never fires.
+  Pinned by `tests/id_checksum.rs`: a checksum-valid ID is redacted, an invalid
+  one is not. This is pre-existing behaviour, not a regression from the
+  confidence gate.
