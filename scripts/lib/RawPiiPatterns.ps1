@@ -42,12 +42,21 @@ $PacgateRawPiiPatterns = [ordered]@{
     # token like [EMAIL_...], which cannot match.
     'email'         = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 
-    # A PRC resident ID card: 17 digits then a check character. Guarded - see above.
-    'cn_id_card'    = '(?!0{17})[0-9]{17}[0-9Xx]'
+    # A PRC resident ID card: 17 digits then a check character.
+    #
+    # The guard excludes the redactor's own format-preserving placeholder, which
+    # is 16 zeros, an index, and a Luhn check digit - e.g. 000000000000000026.
+    # It was written as `(?!0{17})`, which requires SEVENTEEN leading zeros and so
+    # never matched the placeholder it was meant to exclude: measured 2026-10-25,
+    # `'000000000000000026' ~ '(?!0{17})[0-9]{17}[0-9Xx]'` returned true and the
+    # audit reported the redactor's own output as a leak. `0{16}` is the correct
+    # width - a real ID never starts with 16 zeros.
+    'cn_id_card'    = '(?!0{16})[0-9]{17}[0-9Xx]'
 
     # A Unified Social Credit Code: 18 characters from a restricted alphabet.
-    # Guarded - and this is the one that was missed on the remediation side.
-    'uscc'          = '(?!0{17})[0-9A-HJ-NPQRTUWXY]{18}'
+    # Same placeholder guard, same off-by-one - this is the one that was missed on
+    # the remediation side.
+    'uscc'          = '(?!0{16})[0-9A-HJ-NPQRTUWXY]{18}'
 
     # A PRC mobile number.
     'cn_mobile'     = '1[3-9][0-9]{9}'

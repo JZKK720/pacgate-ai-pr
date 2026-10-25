@@ -90,12 +90,43 @@ if (-not $apiPassword -or $apiPassword -match '^change-me') {
 . (Join-Path $PSScriptRoot 'lib/RawPiiPatterns.ps1')
 $rawPredicate = Get-PacgateRawPiiPredicate -Column 'c.content'
 
+# A pattern match alone is not a leak. The product refuses to call a bare digit
+# run an identifier (spec 8.4), so a checksum-INVALID 18-digit run in a sanitized
+# chunk is the product working as designed. Selecting on the raw predicate alone
+# made this script offer to re-sanitize documents that are already clean - the
+# same drift the shared-patterns file was created to stop, one level up.
+#
+# Measured 2026-10-25: the raw predicate selected 2 documents, both fixtures whose
+# IDs fail ISO 7064 MOD 11-2. The audit reported "NO LEAK" while this reported
+# "2 affected" - two scripts disagreeing about the same rows.
+#
+# So the selection is narrowed to rows that carry a checksum-VALID resident ID.
+# That is the only class the product itself would have redacted.
 $findSql = @"
+CREATE OR REPLACE FUNCTION pg_temp.cn_id_valid(s text) RETURNS boolean AS `$`$
+DECLARE
+  w int[] := ARRAY[7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2];
+  c text := '10X98765432';
+  tot int := 0;
+  i int;
+BEGIN
+  IF length(s) <> 18 THEN RETURN false; END IF;
+  FOR i IN 1..17 LOOP
+    tot := tot + (substring(s from i for 1))::int * w[i];
+  END LOOP;
+  RETURN substring(c from (tot % 11) + 1 for 1) = upper(substring(s from 18 for 1));
+END;
+`$`$ LANGUAGE plpgsql IMMUTABLE;
+
 SELECT c.document_id::text
 FROM kb_chunks c
 JOIN documents d ON d.id = c.document_id
 WHERE c.sanitization_state = 'sanitized'
   AND ($rawPredicate)
+  AND EXISTS (
+    SELECT 1 FROM regexp_matches(c.content, '(?!0{16})[0-9]{17}[0-9Xx]', 'g') AS r
+    WHERE pg_temp.cn_id_valid(r[1])
+  )
 GROUP BY c.document_id
 ORDER BY c.document_id
 LIMIT $Limit;
