@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -54,7 +55,27 @@ DEFAULT_IMAGES = [
 
 
 def _get(url: str, token: str | None = None, accept: str | None = None):
-    """GET returning (status, parsed_json_or_None, raw_text)."""
+    """GET returning (status, parsed_json_or_None, raw_text).
+
+    Transport failures are retried. ghcr.io intermittently drops the TLS
+    connection mid-handshake (SSL: UNEXPECTED_EOF_WHILE_READING) - observed twice
+    in one release preflight, on a different image each time. A single blip is
+    not a registry answer, and letting it decide a release verdict is how this
+    script produced both a false blocker and a false pass.
+    """
+    last = (0, None, "transport error: not attempted")
+    for attempt in range(3):
+        result = _get_once(url, token, accept)
+        if result[0] != 0:
+            return result
+        last = result
+        if attempt < 2:
+            time.sleep(0.5 * (attempt + 1))
+    return last
+
+
+def _get_once(url: str, token: str | None = None, accept: str | None = None):
+    """One GET attempt. Status 0 means the registry did not answer."""
     req = urllib.request.Request(url, method="GET")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
