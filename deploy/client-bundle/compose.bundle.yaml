@@ -261,6 +261,11 @@ services:
       # (*/evals/fixtures/) from skill discovery - they are test data, not
       # user-facing skills (5 phantom skills, one with an empty allowed-tools).
       - ./patches/deer-flow-skill-storage.py:/app/backend/packages/harness/deerflow/skills/storage/skill_storage.py:ro
+      # Pacgate 2026-10-25: refuse to fall back to FileMemoryStorage when a
+      # storage class WAS configured. Upstream degrades silently on any
+      # exception, which would move matter memory off the pacgate-api
+      # sanitization gate while every health check still reports green.
+      - ./patches/deer-flow-memory-storage.py:/app/backend/packages/harness/deerflow/agents/memory/storage.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix. MCP server keys like "yuandian-law" produce tool names
       # "yuandian-law_yuandian_rh_ft_search" that models hallucinate as

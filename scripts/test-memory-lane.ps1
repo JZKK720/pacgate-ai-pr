@@ -231,6 +231,73 @@ else {
 }
 
 Write-Host ''
+# ---------------------------------------------------------------------------
+# The runtime half: the fallback must be CLOSED, not merely documented.
+#
+# Everything above asserts the configuration. That is necessary but not
+# sufficient, and this gate's own header says so: the fallback is invisible from
+# outside, so a config-only gate passes on a stack that has already degraded.
+#
+# Measured 2026-10-25: the fallback is reachable by a plain initialization-order
+# mistake - calling get_memory_storage() before get_app_config() reads the
+# module-level default MemoryConfig(), whose storage_class is FileMemoryStorage,
+# so the configured class is never even attempted. A green suite cannot see that.
+#
+# So assert the PATCH is mounted and that it actually refuses. Two checks:
+#   1. the mounted file carries the refusal (the patch reached the container)
+#   2. a broken configured class raises instead of substituting FileMemoryStorage
+# ---------------------------------------------------------------------------
+Write-Host 'RUNTIME: the silent fallback is closed' -ForegroundColor Cyan
+$running = @(docker ps --filter 'name=deer-flow' --format '{{.Names}}' 2>$null)
+if ($running.Count -eq 0) {
+    Write-Host '  exit 2 - deer-flow is not running; cannot check the runtime fallback' -ForegroundColor Yellow
+    $script:failures++
+}
+else {
+    $mounted = docker exec deer-flow sh -c 'grep -c "REFUSING to fall back" /app/backend/packages/harness/deerflow/agents/memory/storage.py' 2>&1
+    if ("$mounted".Trim() -match '^[1-9]') {
+        Pass 'the mounted memory storage carries the refusal patch'
+    }
+    else {
+        Fail 'the mounted memory storage is UNPATCHED - a configured-but-broken class would silently become FileMemoryStorage'
+    }
+
+    # Prove the refusal by breaking the class in-process. This is the only way to
+    # observe the fallback: it is a runtime branch, not a config value.
+    $probe = @'
+import sys
+sys.path.insert(0, "/app/backend/packages/harness")
+from deerflow.config import get_app_config
+get_app_config()
+import deerflow.agents.memory.storage as S
+import deerflow.config.memory_config as mc
+mc.get_memory_config().storage_class = "nonexistent.module.BrokenStorage"
+S._storage_instance = None
+try:
+    st = S.get_memory_storage()
+    print("FELL_BACK:" + type(st).__name__)
+except Exception:
+    print("REFUSED")
+'@
+    $probe | Set-Content -Path (Join-Path $env:TEMP 'memlane_probe.py') -Encoding utf8
+    docker cp (Join-Path $env:TEMP 'memlane_probe.py') deer-flow:/tmp/memlane_probe.py 2>&1 | Out-Null
+    $out = docker exec deer-flow /app/backend/.venv/bin/python /tmp/memlane_probe.py 2>&1
+    docker exec deer-flow sh -c 'rm -f /tmp/memlane_probe.py' 2>&1 | Out-Null
+    Remove-Item (Join-Path $env:TEMP 'memlane_probe.py') -ErrorAction SilentlyContinue
+
+    if ($out -match 'REFUSED') {
+        Pass 'a broken configured storage RAISES instead of degrading to FileMemoryStorage'
+    }
+    elseif ($out -match 'FELL_BACK:(\w+)') {
+        Fail "a broken configured storage silently became $($Matches[1]) - matter memory would leave the sanitization gate"
+    }
+    else {
+        Write-Host "  exit 2 - probe inconclusive: $(($out -split "`n")[-1])" -ForegroundColor Yellow
+        $script:failures++
+    }
+}
+
+Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "FAILED: $($script:failures) memory-lane check(s)" -ForegroundColor Red
     exit 1
