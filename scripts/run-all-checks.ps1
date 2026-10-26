@@ -329,6 +329,85 @@ $gates = @(    'scripts/test-install-render.ps1'
     # have passed the very binary that motivated it. Mutation-tested by staging a
     # 12 MB file.
     'scripts/check-tracked-file-size.ps1'
+
+    # Summarization must CONVERGE, not treadmill. Registered 2026-10-23, after a
+    # live AIPC run ("42 steps and no report") was traced to `trigger` being set
+    # BELOW the unremovable per-call token floor.
+    #
+    # LangChain's `_should_summarize` fires on either the message-token counter
+    # OR the provider-REPORTED `usage_metadata.total_tokens`. The reported number
+    # is the whole request: system prompt (3,220) + 45 tool schemas (11,508) +
+    # messages = a 14,728-token floor that summarization CANNOT remove, because
+    # it can only delete messages. With trigger=12000 the lane was over its
+    # trigger on every call, including immediately after a pass, so it re-fired
+    # forever. Measured on thread d46320fd: six passes at steps
+    # 402/410/419/428/437/446, each a full extra LLM call on the SAME single
+    # Ollama runner slot as the user's chat. 1,000,467 lead-agent input tokens
+    # over 66 calls, no closing message.
+    #
+    # `keep` was NOT the lever: replaying the real middleware at step 446,
+    # keep=12000/8000/6000/4000 all still fire, because reported = counter +
+    # floor and the floor alone exceeds 12000.
+    #
+    # test-auxiliary-model-pins.ps1 checks WHICH model an auxiliary lane uses;
+    # this one checks whether the lane can terminate at all. Different failure,
+    # different assertion - a correctly pinned summarizer still treadmills.
+    #
+    # STATIC - reads the tracked configs only, no containers and no YAML module
+    # (the AIPCs ship Windows PowerShell 5.1, which has no ConvertFrom-Yaml).
+    # Red-checked by restoring trigger: 12000 and by setting keep == trigger.
+    #
+    # It lives here rather than in $measurements because the measurements loop
+    # reports exit codes but never adds to $failed, so a red gate there cannot
+    # fail the suite. A config that treadmills must fail it.
+    'scripts/test-summarization-treadmill.ps1'
+
+    # The lead-agent prompt must explain how to READ an uploaded document, and
+    # must warn the agent off `pip install`. Registered 2026-10-24, after a live
+    # AIPC run died with "stopped producing output" on a 3.0 MB Chinese PDF.
+    #
+    # The agent HAD the answer: the PDF and a pre-converted `.md` (markitdown,
+    # baked into the image) were both listed in <uploaded_files>, and it read the
+    # `.md` successfully. Then it decided it needed a "real" PDF parser and spent
+    # four consecutive bash calls on pdfinfo (exit 127), `import pypdf`, `import
+    # fitz`, and finally `pip install pymupdf`.
+    #
+    # That last one is fatal on an offline AIPC: pip retries index URLs until the
+    # socket gives up, which outlives the 420s stream idle watchdog
+    # (worker.py:55) even though the bash tool's own timeout is 600s
+    # (local_sandbox.py:355,365). The watchdog fires first and aborts the run.
+    #
+    # The prompt documented PDF OUTPUT thoroughly (pandoc, weasyprint, officecli,
+    # CJK fonts) but said nothing about PDF INPUT beyond "converted Markdown
+    # versions (*.md) are available alongside originals" - a fact with no tool and
+    # no instruction. Measured before the fix: 'markitdown' mentions = 0,
+    # 'pip install' mentions = 0.
+    #
+    # STATIC - reads the tracked prompt patch only. Red-checked by reverting the
+    # wording; 4 of 5 checks fail on the pre-fix file.
+    'scripts/test-prompt-document-reading.ps1'
+
+    # An empty `kb_search` must say WHY it is empty. Registered 2026-10-24, after
+    # a lawyer asked for the firm's 互联网+/电商合规 material and got `[]` eighteen
+    # times across one thread.
+    #
+    # The tool was never broken - it returns hits on matters that have content.
+    # The matter being searched ("Firm Knowledge Base") had ZERO documents. But
+    # `[]` reads identically to "the firm holds no such authority" and to "the
+    # tool is broken", and a lawyer cannot tell which. In a legal product "no
+    # results" is a factual claim about the world; returning it when the truth is
+    # "nothing has been indexed" invites a wrong conclusion about the firm's own
+    # authority.
+    #
+    # The tool now returns a structured empty response with a machine-readable
+    # `empty_reason` of no_documents / nothing_sanitized / no_match, the counts
+    # behind it, and a next step. The non-empty path is unchanged, so existing
+    # consumers keep the array shape they already parse.
+    #
+    # STATIC - reads the tracked server.py only. Red-checked by restoring the
+    # plain `return json.dumps(results, ...)`; 4 of 5 checks fail on the pre-fix
+    # file.
+    'scripts/test-kb-search-empty-signal.ps1'
 )
 
 # A LIVE-STACK GATE: real assertions against the running system, but its exit 2

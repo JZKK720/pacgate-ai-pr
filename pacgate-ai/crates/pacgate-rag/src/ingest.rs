@@ -38,7 +38,7 @@ const INSERT_CHUNK_SQL: &str = "\
 const SELECT_CHUNK_META_SQL: &str = "\
     SELECT jurisdiction, source_level, data_level FROM kb_chunks \
     WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
-      AND sanitization_state IN ('pending', 'sanitized') \
+    AND sanitization_state IN ('pending', 'sanitized') \
     ORDER BY chunk_index LIMIT 1";
 
 /// Insert a chunk that is ALREADY redacted, so it is born `sanitized`.

@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -54,7 +55,27 @@ DEFAULT_IMAGES = [
 
 
 def _get(url: str, token: str | None = None, accept: str | None = None):
-    """GET returning (status, parsed_json_or_None, raw_text)."""
+    """GET returning (status, parsed_json_or_None, raw_text).
+
+    Transport failures are retried. ghcr.io intermittently drops the TLS
+    connection mid-handshake (SSL: UNEXPECTED_EOF_WHILE_READING) - observed twice
+    in one release preflight, on a different image each time. A single blip is
+    not a registry answer, and letting it decide a release verdict is how this
+    script produced both a false blocker and a false pass.
+    """
+    last = (0, None, "transport error: not attempted")
+    for attempt in range(3):
+        result = _get_once(url, token, accept)
+        if result[0] != 0:
+            return result
+        last = result
+        if attempt < 2:
+            time.sleep(0.5 * (attempt + 1))
+    return last
+
+
+def _get_once(url: str, token: str | None = None, accept: str | None = None):
+    """One GET attempt. Status 0 means the registry did not answer."""
     req = urllib.request.Request(url, method="GET")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
@@ -73,6 +94,15 @@ def _get(url: str, token: str | None = None, accept: str | None = None):
             return e.code, json.loads(raw), raw
         except json.JSONDecodeError:
             return e.code, None, raw
+    except (urllib.error.URLError, OSError) as e:
+        # A transport failure is NOT a registry answer. Letting it escape as a
+        # traceback is how this script produced a false release blocker: the
+        # caller reads only the LAST line, which was the traceback's
+        # "urllib.error.URLError: <urlopen error [SSL: UNEXPECTED_EOF...]>", and
+        # that matches neither 'NOT public' nor '404' - so preflight concluded
+        # "GHCR already has images" for a release that was not published at all.
+        # Status 0 means "no answer", which classify() reports as UNKNOWN.
+        return 0, None, f"transport error: {e}"
 
 
 def classify(repo: str, tag: str | None, digest: str | None) -> tuple[str, str]:
@@ -125,6 +155,7 @@ def main() -> int:
             targets.append((f"jzkk720/{img}", tag, None))
 
     failures = 0
+    unknown = 0
     for repo, t, d in targets:
         verdict, evidence = classify(repo, t, d)
         # PASS is EXACTLY "PUBLIC" - i.e. the requested reference resolved.
@@ -138,6 +169,8 @@ def main() -> int:
         # script got this right (404 -> "NOT public"); the rewrite broke it.
         # A reference that is absent is NOT a pass, whatever the repo's visibility.
         ok = verdict == "PUBLIC"
+        if verdict == "UNKNOWN":
+            unknown += 1
         mark = "OK  " if ok else "FAIL"
         print(f"{repo:44s} {mark} {verdict:18s} {evidence}")
         if not ok:
@@ -160,7 +193,15 @@ def main() -> int:
     if failures:
         print("NOTE: 'PRIVATE' means a token was DENIED. A bare 401/404 status from "
               "a manifest GET is NOT evidence of privacy - see this file's docstring.")
-    print("ALL PUBLIC" if failures == 0 else f"{failures} image(s) NOT public")
+    # A transport failure must NOT be summarised as "NOT public". That string is
+    # the caller's signal for "safe to tag", so reporting an unreadable registry
+    # that way turns a network blip into a false PASS - the mirror image of the
+    # false blocker this file already caused. UNKNOWN gets its own wording, and
+    # the caller treats it as UNVERIFIED.
+    if unknown:
+        print(f"{unknown} image(s) UNKNOWN - registry did not answer; publication state unverified")
+    else:
+        print("ALL PUBLIC" if failures == 0 else f"{failures} image(s) NOT public")
     return 1 if failures else 0
 
 

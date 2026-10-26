@@ -67,9 +67,15 @@ impl Sanitizer {
             candidates.extend(d.detect(text)?);
         }
 
-        // Suppress noise and public citations before deciding anything.
+        // Suppress noise, public citations, and public entities before deciding
+        // anything. `drop_public_entities` must run HERE as well as in the
+        // verifier: if the redactor removes a regulator's name but the verifier
+        // still counts it as residue, the document blocks on a span the
+        // redactor was right to leave alone. Both sides must agree on what is
+        // deliberate, which is the same rule `drop_public_citations` follows.
         let mut matches = self.noise.apply(text, candidates);
         matches = crate::detect::noise::drop_public_citations(text, matches);
+        matches = crate::detect::noise::drop_public_entities(text, matches);
 
         // DECIDE + REPLACE - the allocator lives on `self`, so it persists
         // across calls within this job.
@@ -96,12 +102,37 @@ impl Sanitizer {
         // and is not suppressible noise, so it still blocks. Fail-closed
         // paths (empty detector set, detector error) run BEFORE the
         // reduction and stay intact (see verify.rs).
-        let placeholder_spans: Vec<(usize, usize)> = redaction
-            .applied
-            .iter()
-            .filter(|a| a.entity.policy() != crate::entity::PlaceholderPolicy::Remove)
-            .map(|a| (a.start, a.end))
-            .collect();
+        //
+        // COORDINATES: `AppliedRedaction.start/end` are offsets in the INPUT
+        // text, but the replay searches the OUTPUT text. Using them directly
+        // only works when no earlier redaction changed the length - with one
+        // replacement the offsets coincide, which is why the original
+        // single-card test passed. As soon as a phone (whose placeholder is
+        // longer than the number) precedes a card, every later placeholder's
+        // input offset points somewhere else, the exclusion misses, and the
+        // placeholder is reported as residue. Measured on the live stack
+        // 2026-10-25: `e2e_audit` held for review with
+        // `residue=[BankCard "000000000000000026"]` - the redactor's own
+        // placeholder for `110101199003072316`. So the spans are rebuilt in
+        // OUTPUT coordinates by walking the same splice `redact` performed.
+        let placeholder_spans: Vec<(usize, usize)> = {
+            let mut spans = Vec::new();
+            let mut cursor_in = 0usize;
+            let mut cursor_out = 0usize;
+            for a in &redaction.applied {
+                // Text copied verbatim between the previous span and this one.
+                cursor_out += a.start.saturating_sub(cursor_in);
+                cursor_in = a.end;
+                if a.entity.policy() == crate::entity::PlaceholderPolicy::Remove {
+                    // Nothing is written, so the output does not advance.
+                    continue;
+                }
+                let len = a.placeholder.len();
+                spans.push((cursor_out, cursor_out + len));
+                cursor_out += len;
+            }
+            spans
+        };
         let noise = &self.noise;
         let verification = crate::verify::verify_reduced(&redaction.text, &self.detectors, |r| {
             let kept: Vec<crate::Match> = r
@@ -115,7 +146,13 @@ impl Sanitizer {
                 })
                 .cloned()
                 .collect();
-            crate::detect::noise::drop_public_citations(&redaction.text, noise.apply(&redaction.text, kept))
+            crate::detect::noise::drop_public_entities(
+                &redaction.text,
+                crate::detect::noise::drop_public_citations(
+                    &redaction.text,
+                    noise.apply(&redaction.text, kept),
+                ),
+            )
         });
 
         // Build this job's mapping from the allocator's accumulated state, so
@@ -271,6 +308,52 @@ mod tests {
         assert_eq!(out.ledger.verdict(), Verdict::Pass, "placeholder self-must not block");
         assert!(out.decision.allow_auto_pass);
         assert!(!out.decision.require_human_review);
+    }
+
+    /// The placeholder-span exclusion must survive a redaction that CHANGES
+    /// LENGTH before the placeholder.
+    ///
+    /// `AppliedRedaction.start/end` are offsets in the ORIGINAL text, but the
+    /// verify replay searches the OUTPUT text. When an earlier redaction
+    /// shortens or lengthens the text, every later placeholder's original
+    /// offset no longer points at it, the exclusion misses, and the
+    /// format-preserving placeholder re-fires its own detector as residue.
+    ///
+    /// Measured on the live stack 2026-10-25: `e2e_audit` held for review with
+    /// `residue=[BankCard "000000000000000026"]` - the redactor's own
+    /// placeholder for `110101199003072316`, shifted by the CN_MOBILE
+    /// placeholder written before it. The single-redaction test above passes
+    /// because with one replacement the offsets coincide.
+    #[test]
+    fn a_placeholder_is_not_residue_when_an_earlier_redaction_shifts_it() {
+        // Phone first (its placeholder is longer than the original), then a
+        // Luhn-valid card. The card's placeholder lands at a different offset
+        // in the output than the card did in the input.
+        let text = "联系电话 13800138000 卡号 4111111111111111 已核";
+        let mut s = Sanitizer::new(tier_one_detectors(), MappingVersion::CURRENT);
+        let out = s.sanitize(text, DataLevel::T3ProjectSpecific).unwrap();
+
+        assert!(
+            !out.text.contains("4111111111111111"),
+            "the card must be redacted; got {:?}",
+            out.text
+        );
+        assert!(
+            !out.text.contains("13800138000"),
+            "the phone must be redacted; got {:?}",
+            out.text
+        );
+        assert!(
+            out.ledger.residue.is_empty(),
+            "a shifted placeholder is not residue; got {:?}",
+            out.ledger.residue
+        );
+        assert_eq!(
+            out.ledger.verdict(),
+            Verdict::Pass,
+            "a shifted placeholder must not block; residue={:?}",
+            out.ledger.residue
+        );
     }
 
     #[test]

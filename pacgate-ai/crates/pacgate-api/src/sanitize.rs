@@ -25,6 +25,29 @@ const MARK_BLOCKED_SQL: &str = "\
     WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
       AND sanitization_state = 'pending'";
 
+/// Reopen a blocked document so a re-sanitize can actually re-examine it.
+///
+/// A Block is a deliberate refusal, and the rewrite path is forbidden from
+/// touching blocked rows on purpose (see `ingest.rs`: "a deliberate refusal
+/// must not be silently overwritten"). That invariant is right, but it left
+/// NO recovery path: measured 2026-10-25, `e2e_audit` re-sanitized to
+/// `verdict=pass, residue=none` and stayed `blocked` with
+/// `chunks_promoted=0`, because every transition matched zero rows. The only
+/// way out was manual SQL.
+///
+/// So the reopen is explicit and separate rather than a widened guard: it runs
+/// ONLY when the caller asked to re-sanitize a document that is currently
+/// blocked, it is audited, and the verdict that follows decides the final
+/// state. A document that blocks again simply returns to 'blocked'.
+const REOPEN_BLOCKED_DOCUMENT_SQL: &str = "\
+    UPDATE documents SET sanitization_state = 'pending' \
+    WHERE id = $1 AND tenant_id = $2 AND sanitization_state = 'blocked'";
+
+const REOPEN_BLOCKED_CHUNKS_SQL: &str = "\
+    UPDATE kb_chunks SET sanitization_state = 'pending' \
+    WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
+      AND sanitization_state = 'blocked'";
+
 /// Document-level rollup mirrors the chunk states (design 5.1).
 const MARK_SANITIZED_DOCUMENT_SQL: &str = "\
     UPDATE documents SET sanitization_state = 'sanitized' \
@@ -36,6 +59,7 @@ const MARK_BLOCKED_DOCUMENT_SQL: &str = "\
 
 /// Audit actions (stable codes; the review panel and tests rely on them).
 const AUDIT_SANITIZE: &str = "document.sanitize";
+const AUDIT_REOPEN: &str = "document.reopen";
 const AUDIT_RESTORE: &str = "document.restore";
 const AUDIT_APPROVE: &str = "document.approve";
 
@@ -52,6 +76,20 @@ pub struct JobOutcome {
     pub allow_auto_pass: bool,
     pub require_human_review: bool,
     pub reason: String,
+    /// What survived redaction, when the verdict is `block`.
+    ///
+    /// Without this a reviewer got `verdict: "block"` and a generic sentence
+    /// ("has residue after redaction, so it is held for review") with no way to
+    /// see WHICH entity or WHICH text survived. Measured 2026-10-24: 5 of 13
+    /// firm documents blocked this way and the only way to clear one was to
+    /// reset the row in Postgres by hand.
+    ///
+    /// Empty on a pass, so a clean response is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residue: Vec<pacgate_redact::ledger::ResidueEntry>,
+    /// The verifier's own explanation of the verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verification_notes: Vec<String>,
     pub sanitized_text: String,
     pub ledger: serde_json::Value,
 }
@@ -365,6 +403,8 @@ async fn run_job_inner(
         allow_auto_pass: outcome.decision.allow_auto_pass,
         require_human_review: outcome.decision.require_human_review,
         reason: outcome.decision.reason,
+        residue: outcome.ledger.residue.clone(),
+        verification_notes: outcome.ledger.verification_notes.clone(),
         sanitized_text: outcome.text,
         ledger: ledger_json,
     })
@@ -394,9 +434,63 @@ pub async fn sanitize_document_handler(
         .ok_or_else(|| ApiError::bad_request("data_level must be T1|T2|T3|T4"))?;
 
     let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    // A blocked document is a deliberate refusal, and the rewrite path is
+    // forbidden from touching blocked rows (see ingest.rs). Without an explicit
+    // reopen, re-sanitizing one is a silent no-op: measured 2026-10-25,
+    // `e2e_audit` returned `verdict=pass, residue=none` and stayed `blocked`
+    // with `chunks_promoted=0`. Reopening here - only for a document that is
+    // actually blocked, only because the caller asked to re-sanitize it - is
+    // what makes the re-run a real recovery path. The verdict that follows
+    // decides the final state, so a document that blocks again returns to
+    // 'blocked'.
+    let reopened = reopen_if_blocked(&state, &tenant_id, &doc.matter_id, &document_id).await?;
+    if reopened {
+        // Best-effort, like the other audit writes in this module: a failed
+        // audit row must not abort a sanitize the operator asked for.
+        let _ = audit_row(
+            &state,
+            &tenant_id,
+            Some(&user_id),
+            &doc.matter_id,
+            &document_id,
+            AUDIT_REOPEN,
+            serde_json::json!({ "reason": "re-sanitize requested for a blocked document" }),
+        )
+        .await;
+    }
+
     let outcome =
         run_job(&state, &tenant_id, &user_id, &doc.matter_id, &document_id, data_level).await?;
     Ok(axum::Json(outcome))
+}
+
+/// Move a blocked document and its chunks back to 'pending' so a re-sanitize
+/// can re-examine them. Returns whether anything was reopened.
+async fn reopen_if_blocked(
+    state: &AppState,
+    tenant_id: &TenantId,
+    matter_id: &MatterId,
+    document_id: &DocumentId,
+) -> Result<bool, ApiError> {
+    let doc_rows = sqlx::query(REOPEN_BLOCKED_DOCUMENT_SQL)
+        .bind(document_id.0)
+        .bind(tenant_id.0)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("reopen document failed: {e}")))?
+        .rows_affected();
+    if doc_rows == 0 {
+        return Ok(false);
+    }
+    sqlx::query(REOPEN_BLOCKED_CHUNKS_SQL)
+        .bind(tenant_id.0)
+        .bind(matter_id.0)
+        .bind(document_id.0)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("reopen chunks failed: {e}")))?;
+    Ok(true)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -760,6 +854,59 @@ mod gate_tests {
         // Block verdict -> documents + kb_chunks go to 'blocked', never 'sanitized'.
         assert!(MARK_BLOCKED_SQL.contains("SET sanitization_state = 'blocked'"));
         assert!(!MARK_BLOCKED_SQL.contains("'sanitized'"));
+    }
+
+    #[test]
+    fn a_blocked_document_can_be_reopened_but_only_explicitly() {
+        // A Block is a deliberate refusal, and the rewrite path is forbidden
+        // from touching blocked rows (ingest.rs asserts that). That invariant
+        // left NO recovery path: measured 2026-10-25, `e2e_audit` re-sanitized
+        // to `verdict=pass, residue=none` and stayed `blocked` with
+        // `chunks_promoted=0`, because every transition matched zero rows.
+        //
+        // The reopen is therefore a separate, explicit statement - not a
+        // widened guard on the promotion path.
+        assert!(
+            REOPEN_BLOCKED_DOCUMENT_SQL.contains("sanitization_state = 'blocked'"),
+            "the reopen must only ever match a blocked document"
+        );
+        assert!(
+            REOPEN_BLOCKED_DOCUMENT_SQL.contains("SET sanitization_state = 'pending'"),
+            "the reopen must return the document to the fail-closed state"
+        );
+        assert!(
+            !REOPEN_BLOCKED_DOCUMENT_SQL.contains("'sanitized'"),
+            "a reopen must never promote; only a clean verdict may do that"
+        );
+        // The promotion path itself must stay pending-only, so a reopen is the
+        // ONLY way out of 'blocked'.
+        assert!(
+            MARK_SANITIZED_DOCUMENT_SQL.contains("sanitization_state = 'pending'"),
+            "promotion must stay pending-only"
+        );
+        assert!(
+            !MARK_SANITIZED_DOCUMENT_SQL.contains("'blocked'"),
+            "promotion must not reach a blocked document directly"
+        );
+    }
+
+    #[test]
+    fn the_reopen_runs_before_the_job_and_is_audited() {
+        let src = include_str!("sanitize.rs");
+        let handler = src
+            .split("pub async fn sanitize_document_handler")
+            .nth(1)
+            .expect("handler must exist");
+        let reopen_at = handler.find("reopen_if_blocked").expect("reopen call");
+        let job_at = handler.find("run_job(").expect("job call");
+        assert!(
+            reopen_at < job_at,
+            "the reopen must precede the job, or the rewrite still sees 'blocked'"
+        );
+        assert!(
+            handler.contains("AUDIT_REOPEN"),
+            "a reopen changes a compliance state and must be audited"
+        );
     }
 
     #[test]

@@ -90,9 +90,21 @@ if ($lt) {
 }
 
 # 6. the images must not already exist
+#
+# A network failure is NOT evidence the images exist. The previous form tested
+# only for 'NOT public|404' and treated EVERYTHING else as "already has images",
+# so a transient SSL EOF (the traceback's last line) blocked a release that was
+# in fact unpublished. Same defect the tag check above was already fixed for.
+# Now: an unreadable answer is reported as UNVERIFIED and stops the release
+# without claiming the images exist.
 $ghcr = python scripts/check-ghcr-anon.py $version 2>&1 | Select-Object -Last 1
-if ($ghcr -match 'NOT public|404') { Ok "GHCR $version not published yet ($($ghcr.Trim()))" }
-else { Bad "GHCR $version already has images: $ghcr" }
+if ($ghcr -match 'NOT public|404') {
+    Ok "GHCR $version not published yet ($($ghcr.Trim()))"
+} elseif ($ghcr -match 'UNKNOWN|transport error|no token') {
+    Bad "GHCR $version publication state UNVERIFIED (network): $($ghcr.Trim())"
+} else {
+    Bad "GHCR $version already has images: $ghcr"
+}
 
 # 7. the workflow must still trigger on THIS release's tag pattern
 # Derived from $version, not hardcoded: the previous form checked "v0.1.*" while

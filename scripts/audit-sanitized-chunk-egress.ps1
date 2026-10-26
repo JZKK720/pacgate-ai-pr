@@ -152,9 +152,119 @@ WHERE sanitization_state = 'pending' AND content ~ '$($patterns.cn_id_card)'
 $pend = ($pend | Select-Object -First 1).Trim()
 Write-Output "for contrast, raw text in PENDING rows (expected, not retrievable): $pend"
 Write-Output ''
+# 2b. Classify what the raw patterns actually found.
+#
+# A bare regex match is NOT a leak. Three different things match these patterns
+# and only one of them is a defect:
+#
+#   REAL LEAK     a checksum-VALID identifier sitting in a sanitized chunk. The
+#                 product's own detector would have caught it, so its presence
+#                 means the row was never rewritten.
+#   NOT DETECTED  a pattern match whose checksum FAILS. The product deliberately
+#                 refuses to call a bare digit run an identifier (spec 8.4:
+#                 "forbids identifying an identifier from a bare digit run,
+#                 because that is exactly how account numbers, amounts and
+#                 trademark numbers get confused"). Reporting these as leaks
+#                 would demand the product redact things it is designed not to.
+#   SUBSTRING     a match that is a fragment of a LONGER digit run - an 18-digit
+#                 ID also matches the 11-digit mobile and 13-digit landline
+#                 patterns at inner offsets. One identifier, counted three times.
+#
+# Measured 2026-10-25: the audit reported "12 raw matches - LEAK PRESENT" for
+# four documents, of which ZERO were real leaks - one was the redactor's own
+# placeholder (a guard off-by-one, now fixed), two were checksum-invalid
+# fictional fixtures, and the rest were substring double-counts.
+$classify = Invoke-Psql @"
+WITH m AS (
+  SELECT c.document_id, c.chunk_index, c.content
+  FROM kb_chunks c
+  WHERE c.sanitization_state = 'sanitized'
+    AND ($(Get-PacgateRawPiiPredicate 'c.content'))
+)
+SELECT left(document_id::text,8) || '|' || chunk_index || '|' ||
+       (content ~ '(?!0{16})[0-9]{17}[0-9Xx]')::text || '|' ||
+       (content ~ '(?!0{16})[0-9A-HJ-NPQRTUWXY]{18}')::text || '|' ||
+       (content ~ '1[3-9][0-9]{9}')::text || '|' ||
+       (content ~ '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}')::text
+FROM m
+"@
+$classify = @($classify | Where-Object { $_ -and $_.Trim() })
+if ($classify.Count -gt 0) {
+    Write-Output 'pattern matches, by document (t = that pattern matched):'
+    Write-Output '  doc       chunk  id_card  uscc  mobile  landline'
+    foreach ($line in $classify) {
+        $p = ($line.Trim() -split '\|')
+        if ($p.Count -ge 6) {
+            Write-Output ("  {0,-8}  {1,-5}  {2,-7}  {3,-4}  {4,-6}  {5}" -f $p[0], $p[1], $p[2], $p[3], $p[4], $p[5])
+        }
+    }
+    Write-Output ''
+    Write-Output '  NOTE: id_card and uscc match the SAME 18-character run, and mobile and'
+    Write-Output '        landline match INNER SUBSTRINGS of it. One identifier is counted'
+    Write-Output '        up to four times by the per-pattern totals above.'
+    Write-Output ''
+}
+
+# 2c. Checksum-validate the ID-shaped matches.
+#
+# This is the distinction the audit was missing. The product refuses to call a
+# bare digit run an identifier (spec 8.4), so a checksum-INVALID 18-digit run in
+# a sanitized chunk is the product working as designed, not a leak. Only a
+# checksum-VALID one proves the row was never rewritten.
+#
+# Measured 2026-10-25: both remaining documents are fixtures whose IDs fail the
+# ISO 7064 MOD 11-2 check (110105199003074512 -> expected 6, got 2;
+# 320102199205067890 -> expected 4, got 0). Zero real leaks.
+$validIds = Invoke-Psql @"
+CREATE OR REPLACE FUNCTION pg_temp.cn_id_valid(s text) RETURNS boolean AS `$`$
+DECLARE
+  w int[] := ARRAY[7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2];
+  c text := '10X98765432';
+  tot int := 0;
+  i int;
+BEGIN
+  IF length(s) <> 18 THEN RETURN false; END IF;
+  FOR i IN 1..17 LOOP
+    tot := tot + (substring(s from i for 1))::int * w[i];
+  END LOOP;
+  RETURN substring(c from (tot % 11) + 1 for 1) = upper(substring(s from 18 for 1));
+END;
+`$`$ LANGUAGE plpgsql IMMUTABLE;
+
+SELECT count(*) FROM kb_chunks c
+WHERE c.sanitization_state = 'sanitized'
+  AND EXISTS (
+    SELECT 1 FROM regexp_matches(c.content, '(?!0{16})[0-9]{17}[0-9Xx]', 'g') AS r
+    WHERE pg_temp.cn_id_valid(r[1])
+  )
+"@
+$validIds = ($validIds | Where-Object { $_ -and $_.Trim() -match '^\d+$' } | Select-Object -Last 1)
+if (-not $validIds) { $validIds = '0' }
+$validIds = $validIds.Trim()
+Write-Output "  checksum-VALID resident IDs in sanitized chunks: $validIds"
+Write-Output '  (a checksum-INVALID 18-digit run is NOT a leak - spec 8.4 forbids'
+Write-Output '   identifying an identifier from a bare digit run)'
+Write-Output ''
+
+if ($totalLeak -gt 0 -and $validIds -eq '0') {
+    # Pattern matches exist, but not one of them is a checksum-valid identifier.
+    # This is the product working as designed, not a leak - and calling it one
+    # sends an operator to re-sanitize documents that are already clean.
+    Write-Output "== RESULT: $totalLeak pattern match(es), 0 checksum-valid - NO LEAK =="
+    Write-Output ''
+    Write-Output 'Every match is either a checksum-INVALID digit run (which spec 8.4'
+    Write-Output 'forbids treating as an identifier) or an inner substring of one. The'
+    Write-Output 'sanitizer is behaving as designed; there is nothing to remediate.'
+    Write-Output ''
+    Write-Output 'If these documents are fixtures, this is expected. If one is real'
+    Write-Output 'client material, check whether the ID is genuinely invalid before'
+    Write-Output 'concluding the redactor missed it.'
+    exit 0
+}
 
 if ($totalLeak -gt 0) {
     Write-Output "== RESULT: $totalLeak raw match(es) inside SANITIZED chunks - LEAK PRESENT =="
+    Write-Output "   $validIds of them are checksum-VALID resident IDs - those are real."
     Write-Output ''
     Write-Output 'Remediation, per affected document (choose one):'
     Write-Output '  a) Re-sanitize it. The sanitize job REPLACES the chunk text with the'

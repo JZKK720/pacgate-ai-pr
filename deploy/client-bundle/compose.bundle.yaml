@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.2.3
+    image: ghcr.io/jzkk720/pacgate-api:0.2.6
     healthcheck:
       # No curl and no wget in this image (measured 2026-10-14), so the probe
       # uses bash's /dev/tcp. /health is the one route that needs no auth
@@ -126,7 +126,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.3
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.6
     healthcheck:
       # :8001 is the gateway nginx proxies to; /health verified 200.
       test:
@@ -261,6 +261,11 @@ services:
       # (*/evals/fixtures/) from skill discovery - they are test data, not
       # user-facing skills (5 phantom skills, one with an empty allowed-tools).
       - ./patches/deer-flow-skill-storage.py:/app/backend/packages/harness/deerflow/skills/storage/skill_storage.py:ro
+      # Pacgate 2026-10-25: refuse to fall back to FileMemoryStorage when a
+      # storage class WAS configured. Upstream degrades silently on any
+      # exception, which would move matter memory off the pacgate-api
+      # sanitization gate while every health check still reports green.
+      - ./patches/deer-flow-memory-storage.py:/app/backend/packages/harness/deerflow/agents/memory/storage.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix. MCP server keys like "yuandian-law" produce tool names
       # "yuandian-law_yuandian_rh_ft_search" that models hallucinate as
@@ -295,7 +300,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.3
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6
     healthcheck:
       # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
       # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
@@ -332,7 +337,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.2.3
+    image: ghcr.io/jzkk720/pacgate-mcp:0.2.6
     healthcheck:
       # A real MCP `initialize` handshake, not a TCP connect. The image has no
       # curl; it does have python3, so the probe speaks the protocol and
@@ -378,7 +383,7 @@ services:
   # the volume lacks - the dependency the bake exists to remove. See the longer
   # note in compose.prod.yaml.
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.2.3
+    image: ghcr.io/jzkk720/ocr-service:0.2.6
     healthcheck:
       # /health verified 200. python3, not curl - the image has no curl.
       # start_period is long on purpose: this service downloads its model on

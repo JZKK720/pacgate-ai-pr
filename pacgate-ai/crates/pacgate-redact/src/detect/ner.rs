@@ -235,7 +235,22 @@ impl Detector for NerDetector {
         // not degrade to rules-only, it took the document down. verify() replayed
         // the same detector and hit the same wall, so no verdict could be Pass
         // either: the document simply could not be sanitized.
-        let core = window::plan_windows(text, MAX_TOKENS, window::estimated_tokens);
+        // Plan the CORE window small enough that core + overlap still fits the
+        // token budget.
+        //
+        // `expand_with_overlap` only moves `start` BACKWARDS; it never shrinks
+        // `end`. So the window that actually reaches the tokenizer is
+        // `max_units + OVERLAP_CHARS` wide, while `detect_window` refuses
+        // anything over `MAX_TOKENS + 2` tokens. Planning at the full
+        // `MAX_TOKENS` therefore guaranteed an overflow for any document whose
+        // windows landed at the budget.
+        //
+        // Measured 2026-10-24 on `百宸完整项目及事项档案提交目录与整理说明_v1.0`:
+        // window [829, 1339) = 510 chars -> 506 tokens against a 502 ceiling.
+        // The detector failed closed, and because `verify` replays the same
+        // detector, no verdict could be Pass either - the document could never
+        // be sanitized at all.
+        let core = window::plan_windows(text, MAX_TOKENS - OVERLAP_CHARS, window::estimated_tokens);
         let windows = window::expand_with_overlap(text, &core, OVERLAP_CHARS);
 
         let mut all: Vec<Match> = Vec::new();
@@ -340,6 +355,54 @@ impl NerDetector {
             .to_vec1::<u32>()
             .map_err(|e| RedactError::Internal(format!("preds to_vec failed: {e}")))?;
 
+        // Per-token probability of the CHOSEN label, so a marginal guess is
+        // distinguishable from a certain one.
+        //
+        // Measured 2026-10-24: `flush` stamped every span with a hardcoded 0.85
+        // and nothing downstream ever read it. The detector therefore had no way
+        // to express doubt, and the only defence against a bad guess was the
+        // public-entity suppression list - which treats the symptom. A softmax
+        // over the same logits costs one pass and gives the real number.
+        //
+        // Softmax is computed in f32 after subtracting the row max, which is the
+        // standard stabilisation: exp() of a raw logit overflows f32 quickly and
+        // the model's logits are not normalised.
+        let probs = logits
+            .to_dtype(candle_core::DType::F32)
+            .map_err(|e| RedactError::Internal(format!("logits to f32 failed: {e}")))?;
+        let row_max = probs
+            .max_keepdim(candle_core::D::Minus1)
+            .map_err(|e| RedactError::Internal(format!("logits max failed: {e}")))?;
+        let shifted = probs
+            .broadcast_sub(&row_max)
+            .map_err(|e| RedactError::Internal(format!("logits shift failed: {e}")))?;
+        let exps = shifted
+            .exp()
+            .map_err(|e| RedactError::Internal(format!("logits exp failed: {e}")))?;
+        let denom = exps
+            .sum_keepdim(candle_core::D::Minus1)
+            .map_err(|e| RedactError::Internal(format!("logits sum failed: {e}")))?;
+        let softmax = exps
+            .broadcast_div(&denom)
+            .map_err(|e| RedactError::Internal(format!("logits div failed: {e}")))?;
+        // Gather the probability of each token's argmax label.
+        let seq_len = preds.len();
+        let flat_softmax = softmax
+            .reshape((seq_len, 9))
+            .map_err(|e| RedactError::Internal(format!("softmax reshape failed: {e}")))?;
+        let mut token_conf: Vec<f32> = Vec::with_capacity(seq_len);
+        for (i, &p) in preds.iter().enumerate() {
+            let row = flat_softmax
+                .get(i)
+                .map_err(|e| RedactError::Internal(format!("softmax row failed: {e}")))?;
+            let v = row
+                .get(p as usize)
+                .map_err(|e| RedactError::Internal(format!("softmax pick failed: {e}")))?
+                .to_scalar::<f32>()
+                .map_err(|e| RedactError::Internal(format!("softmax scalar failed: {e}")))?;
+            token_conf.push(v);
+        }
+
         // BIO decode: tokens (skip specials), byte offsets from the encoding.
         let offsets = encoding.get_offsets();
         // The tokenizer reports CHAR offsets (verified via NER_DEBUG: CJK text
@@ -376,19 +439,25 @@ impl NerDetector {
             .collect();
         let tokens: Vec<String> = encoding.get_tokens().to_vec();
         let mut matches: Vec<Match> = Vec::new();
-        let mut cur: Option<(EntityType, usize)> = None; // (entity, start byte)
+        // (entity, start byte, weakest token confidence in the span)
+        let mut cur: Option<(EntityType, usize, f32)> = None;
         // Flush closes the open entity at `end` (byte offset).
         //
         // Slices the WHOLE `text` with the absolute offsets above, so a span is
         // reported in original-text coordinates. Do not change this to slice the
         // window.
+        //
+        // `confidence` is the MINIMUM token probability across the span, not the
+        // mean. A span is only as trustworthy as its weakest token: a confident
+        // `B-ORG` followed by a marginal `I-ORG` is a marginal span, and averaging
+        // would hide that.
         fn flush(
-            cur: &mut Option<(EntityType, usize)>,
+            cur: &mut Option<(EntityType, usize, f32)>,
             end: usize,
             text: &str,
             out: &mut Vec<Match>,
         ) {
-            if let Some((entity, start)) = cur.take() {
+            if let Some((entity, start, confidence)) = cur.take() {
                 let sliced = safe_slice(text, start, end);
                 if !sliced.trim().is_empty() {
                     out.push(Match {
@@ -396,7 +465,7 @@ impl NerDetector {
                         end,
                         entity,
                         text: sliced,
-                        confidence: 0.85,
+                        confidence,
                         source: MatchSource::Model,
                     });
                 }
@@ -405,6 +474,7 @@ impl NerDetector {
         // Track the open entity's running end offset. cur holds (entity, start).
         let mut open_end: usize = 0;
         for (i, &pred) in preds.iter().enumerate() {
+            let conf = token_conf.get(i).copied().unwrap_or(0.0);
             let Some(mapped) = self.labels.slots.get(pred as usize).copied().flatten() else {
                 // O prediction: the open entity ends where this token begins.
                 flush(&mut cur, offsets[i].0, text, &mut matches);
@@ -421,11 +491,12 @@ impl NerDetector {
                 // New entity: flush whatever was open, start fresh.
                 (true, _) => {
                     flush(&mut cur, open_end, text, &mut matches);
-                    cur = Some((entity, offsets[i].0));
+                    cur = Some((entity, offsets[i].0, conf));
                 }
                 // Continuation: extend when the type matches, flush on mismatch.
-                (false, Some((e, start))) if e == entity => {
-                    let _ = start; // extended via open_end below
+                // The span's confidence is the weakest token in it.
+                (false, Some((e, start, weakest))) if e == entity => {
+                    cur = Some((e, start, weakest.min(conf)));
                 }
                 (false, _) => {
                     flush(&mut cur, offsets[i].0, text, &mut matches);
