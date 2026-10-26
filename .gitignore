@@ -244,3 +244,11 @@ sync-fork-after.png
 # A zero-byte file PowerShell creates from an unexpanded ${input...} in a command.
 # Committed by accident twice; this makes the third time impossible.
 /${input*
+
+# Pre-upgrade safety snapshots (deer-flow SQLite data + .env). Machine-local,
+# can be hundreds of MB, and carries live credentials - never tracked.
+/_local-backup-*/
+
+# Gate-suite and upgrade transcripts written during a session.
+/checks-*.log
+/upgrade-*.log
