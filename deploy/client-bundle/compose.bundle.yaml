@@ -266,6 +266,15 @@ services:
       # exception, which would move matter memory off the pacgate-api
       # sanitization gate while every health check still reports green.
       - ./patches/deer-flow-memory-storage.py:/app/backend/packages/harness/deerflow/agents/memory/storage.py:ro
+      # Pacgate 2026-10-26: bound the memory lane's input and stabilize its
+      # prompt prefix. The template put the volatile `{current_memory}` block
+      # ahead of the conversation, so the prefix changed on every update and
+      # llama.cpp could never reuse it - measured 68.7 s cold on three
+      # consecutive updates vs 0.5 s when the prefix was held constant. The
+      # conversation block is now first (append-only, therefore stable) and the
+      # memory block last, and the conversation is capped at 16k chars / 40
+      # messages so it stops evicting the chat lane's cache entry.
+      - ./patches/deer-flow-memory-prompt.py:/app/backend/packages/harness/deerflow/agents/memory/prompt.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix. MCP server keys like "yuandian-law" produce tool names
       # "yuandian-law_yuandian_rh_ft_search" that models hallucinate as

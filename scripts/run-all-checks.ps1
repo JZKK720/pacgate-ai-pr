@@ -207,6 +207,14 @@ $gates = @(    'scripts/test-install-render.ps1'
     # prose in a schema the adapter never emits. The trip-wire is a missing
     # PACGATE_MATTER_ID, and .env.example shipped it blank. Self-contained.
     'scripts/test-memory-lane.ps1'
+    # Asserts the memory lane's prompt is PREFIX-STABLE and BOUNDED. The
+    # template put the volatile {current_memory} block ahead of the
+    # conversation, so the prefix changed on every update and llama.cpp could
+    # never reuse it - measured 68.7 s cold on three consecutive updates vs
+    # 1.3 s once the conversation block was moved first. The conversation is
+    # also capped so the memory prompt stops reaching chat size and evicting
+    # the chat lane's cache entry. Self-contained (reads files; no docker).
+    'scripts/test-memory-prompt-stability.ps1'
     # Proves the gate above can REJECT. It went in as a blind gate twice in this
     # subsystem already, so the mutation harness is registered alongside it
     # rather than trusted to a manual run. Breaks each assertion in turn,
