@@ -226,6 +226,13 @@ sync-fork-after.png
 /_*.sh
 /_*.md
 
+# Local access sheets and credential handover pages. These are generated per
+# machine and contain LIVE secrets (deer-flow admin password, OpenViking root
+# key, pacgate-api password). This repo is public, so the whole directory is
+# ignored rather than relying on a filename pattern - a sheet can be named
+# anything and still must never be tracked.
+/local-credentials/
+
 # VS Code task scratch (tasks.json + probe scripts written during a session;
 # they carry machine-absolute paths and are not part of the build contract)
 /.vscode/

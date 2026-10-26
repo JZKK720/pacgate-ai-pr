@@ -123,6 +123,18 @@ def append_node(node: Tag | NavigableString, story: list, styles, base_path: Pat
         story.append(build_table(node, styles))
         story.append(Spacer(1, 6))
         return
+    if node.name == "dl":
+        # Definition lists carry the key-value blocks on access and reference
+        # sheets. Without this branch the whole block is silently dropped,
+        # because <dl> is not in the container set below and its <dt>/<dd>
+        # children are never visited.
+        for child in node.find_all(["dt", "dd"], recursive=False):
+            if child.name == "dt":
+                add_label(story, plain_text(child), styles, "PgLabel")
+            else:
+                add_paragraph(story, flatten_children(child), styles["PgBody"])
+        story.append(Spacer(1, 6))
+        return
     if node.name == "img":
         add_image(story, node, base_path)
         return
@@ -142,9 +154,24 @@ def append_node(node: Tag | NavigableString, story: list, styles, base_path: Pat
         add_label(story, plain_text(node), styles, "PgEyebrow" if "eyebrow" in classes else "PgLabel")
         return
 
+    if node.name == "span" and "status" in classes:
+        # Verification badges ("Verified 200") sit next to a heading and carry
+        # the only evidence marker on the page, so keep them in the PDF.
+        add_label(story, plain_text(node), styles, "PgLabel")
+        return
+
     if node.name == "div" and "chips" in classes:
         for chip in node.find_all(class_="chip", recursive=False):
             add_paragraph(story, html.escape(plain_text(chip)), styles["PgListChip"])
+        story.append(Spacer(1, 4))
+        return
+
+    if node.name == "div" and classes & {"realm-note", "section-note", "callout", "warning-callout"}:
+        # These callouts hold bare text directly inside the div, not in a <p>.
+        # The generic container branch below only recurses into element
+        # children, so without this the note body is dropped from the PDF and
+        # the page silently loses its cautions.
+        add_paragraph(story, flatten_children(node), styles["PgSmallNote"])
         story.append(Spacer(1, 4))
         return
 
