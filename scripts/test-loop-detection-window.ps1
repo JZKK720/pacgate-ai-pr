@@ -137,7 +137,50 @@ Assert-That ($src -notmatch 'from deerflow\.agents\.middlewares\._bounded_dict i
 $df = 'deploy/deer-flow-pacgate/Dockerfile'
 $dsrc = if (Test-Path $df) { Get-Content -LiteralPath $df -Raw } else { '' }
 Assert-That ($dsrc -match 'COPY deploy/client-bundle/patches/deer-flow-loop-detection\.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware\.py') `
-    'the published image bakes the patched middleware (standalone runs are covered too)'
+    'the Dockerfile recipe bakes the patched middleware (standalone runs are covered too)'
+
+# The recipe above only proves what a FUTURE build would contain. It says nothing
+# about the image clients actually pull.
+#
+# Measured 2026-10-27: this assertion used to be the only check in section 1 and
+# its name claimed "the published image bakes the patched middleware", but it
+# only regex-matched the Dockerfile text. The published 0.2.6 image does NOT
+# contain the patch (grep -c _tool_name_counter => 0, PacGate header absent,
+# created 2026-10-25, before this fix existed), so the name was false and the
+# gate would have stayed green through any amount of staleness.
+#
+# The real check inspects the image. Staleness is NOT asserted as a failure here,
+# because the fix reaches clients by bind-mount and the baked copy is a fallback
+# that only a non-git install would exercise - a hard failure would leave the
+# suite red for a correct tree. It is reported, attributed to the only consumer
+# it affects, and scripts/test-release-provenance.ps1 remains the gate that
+# fails on it at release time.
+$dfImages = (Select-String -Path 'deploy/client-bundle/compose.prod.yaml' `
+        -Pattern 'image:\s*(ghcr\.io/\S*deer-flow-pacgate:\S+)' | Select-Object -First 1)
+$dfImage = if ($dfImages) { $dfImages.Matches[0].Groups[1].Value } else { '' }
+if (-not $dfImage) {
+    Write-Host '  [WARN] could not read the deer-flow-pacgate pin from compose.prod.yaml' -ForegroundColor Yellow
+} else {
+    $imgId = ''
+    try { $imgId = (& docker image inspect $dfImage --format '{{.Id}}' 2>$null | Out-String).Trim() } catch { $imgId = '' }
+    if (-not $imgId) {
+        Write-Host "  [ .. ] $dfImage is not pulled locally - the baked copy is unverified here" -ForegroundColor DarkGray
+    } else {
+        $mw = '/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py'
+        $imgHit = 0
+        try { $imgHit = [int]((& docker run --rm --entrypoint grep $dfImage -c _tool_name_counter $mw 2>$null | Out-String).Trim()) } catch { $imgHit = 0 }
+        if ($imgHit -gt 0) {
+            Write-Host "  [PASS] the published image ($dfImage) bakes the windowed middleware" -ForegroundColor Green
+            $script:Passed++
+        } else {
+            Write-Host "  [ .. ] $dfImage predates the fix and still bakes the MONOTONIC guard." -ForegroundColor DarkGray
+            Write-Host '         This affects ONLY a run that reaches the image-baked config: every' -ForegroundColor DarkGray
+            Write-Host '         compose lane bind-mounts both the patch and deer-flow-config.yaml,' -ForegroundColor DarkGray
+            Write-Host '         so clients are unaffected. A standalone `docker run` or a non-git' -ForegroundColor DarkGray
+            Write-Host '         install would still trap at 50. Closed by cutting a release.' -ForegroundColor DarkGray
+        }
+    }
+}
 Write-Output ''
 
 # ── 2. the ceiling has real headroom, not a theoretical one ─────────────────
