@@ -651,6 +651,35 @@ if ($Update -and -not $SkipRepoPull) {
                     Write-Host "    ... and $($dirty.Count - 10) more" -ForegroundColor DarkYellow
                 }
                 Write-Host "  Resolve them (commit, or restore) and re-run to pick up repo updates." -ForegroundColor Yellow
+
+                # Say what this actually costs. A skipped repo refresh does NOT stop
+                # the rest of -Update: `compose pull` still runs and step 7c still
+                # restarts deer-flow, so the install finishes green and reports
+                # success while the bind-mounted code is still the OLD code. There
+                # is no error to notice - the machine simply keeps behaving like the
+                # previous release. Measured 2026-10-27 on a clone with one edited
+                # tracked file: the update reported success and the loop-guard patch
+                # was never applied.
+                $behindRef = $null
+                try {
+                    Invoke-WithNativeStderr { git fetch --quiet origin 2>$null }
+                    if ($LASTEXITCODE -eq 0) {
+                        $remoteHead = (git rev-parse "origin/$((git rev-parse --abbrev-ref HEAD).Trim())" 2>$null | Out-String).Trim()
+                        $localHead = (git rev-parse HEAD).Trim()
+                        if ($remoteHead -and $remoteHead -ne $localHead) { $behindRef = $remoteHead.Substring(0, 7) }
+                    }
+                }
+                catch { }
+                $cur = ((git rev-parse HEAD 2>$null | Out-String).Trim())
+                if ($cur) { $cur = $cur.Substring(0, 7) }
+                Write-Host ""
+                Write-Host "  CONSEQUENCE - this machine is running the OLD repo code, not the new release:" -ForegroundColor Yellow
+                Write-Host "    - bind-mounted patches and configs (deer-flow patches/*.py, deer-flow-config.yaml)" -ForegroundColor Yellow
+                Write-Host "      stay at their current contents, so any fix that ships by bind-mount is NOT applied" -ForegroundColor Yellow
+                Write-Host "    - the images below still update, so image-tag fixes DO apply" -ForegroundColor Yellow
+                if ($cur) { Write-Host "    - repo is at $cur$(if ($behindRef) { ", and origin has $behindRef" })" -ForegroundColor Yellow }
+                Write-Host "  Fix: git stash (or commit) the listed files, then re-run .\install.ps1 -Update." -ForegroundColor Yellow
+                Write-Host "" -ForegroundColor Yellow
             }
             else {
                 $before = (git rev-parse HEAD).Trim()
@@ -1760,6 +1789,53 @@ if ($Update) {
         Write-Host "[OK] pacgate-mcp restarted (bind-mounted server.py now in effect)" -ForegroundColor Green
     } else {
         Write-Host "[WARN] pacgate-mcp is not running; skipped restart" -ForegroundColor Yellow
+    }
+
+    # 7c-bis. PROVE the restarted deer-flow actually loaded the bind-mounted code.
+    #
+    # Step 7c restarts deer-flow so mounted code takes effect, but a restart
+    # proves only that the process started - not that the file it imported is the
+    # one in the repo. Two real ways that diverges, both silent:
+    #   - the repo pull was SKIPPED (dirty tracked file), so the mount still
+    #     resolves to the OLD file and we restart onto old code;
+    #   - the mount did not land (renamed upstream path, typo), so the container
+    #     runs its baked copy.
+    # In both cases the install finishes green and the machine behaves like the
+    # previous release. Measured 2026-10-27: a clone with one edited tracked file
+    # reported a successful update while the loop-guard patch was never applied.
+    #
+    # This asserts from INSIDE the container, because that is the only view that
+    # matters. It checks a marker that exists ONLY in the windowed patch
+    # (_tool_name_counter), so it fails on the old monotonic middleware.
+    # Advisory, never fatal: an operator's own edit is not an install failure, and
+    # blocking an update on it would be the wrong trade - the point is that it can
+    # no longer be INVISIBLE.
+    $dfRunning = docker compose -f compose.prod.yaml ps -q deer-flow
+    if ($dfRunning) {
+        $probe = @'
+import sys
+sys.path.insert(0, "/app/backend/packages/harness")
+p = "/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py"
+try:
+    src = open(p, encoding="utf-8").read()
+except Exception as e:
+    print("LOOPGUARD=UNREADABLE %s" % e); raise SystemExit(0)
+print("LOOPGUARD=WINDOWED" if "_tool_name_counter" in src else "LOOPGUARD=MONOTONIC")
+'@
+        $lg = ($probe | docker exec -i deer-flow /app/backend/.venv/bin/python 2>&1 | Out-String)
+        if ($lg -match 'LOOPGUARD=WINDOWED') {
+            Write-Host "[OK] deer-flow loaded the windowed loop guard from the repo patch" -ForegroundColor Green
+        }
+        elseif ($lg -match 'LOOPGUARD=MONOTONIC') {
+            Write-Host "[WARN] deer-flow is running the OLD (monotonic) loop guard." -ForegroundColor Yellow
+            Write-Host "  The bind-mounted patch in the container is not the repo's version," -ForegroundColor Yellow
+            Write-Host "  so the 50-bash force-stop is STILL active on this machine." -ForegroundColor Yellow
+            Write-Host "  Usual cause: the repo pull was skipped (see the warning above)." -ForegroundColor Yellow
+            Write-Host "  Fix: resolve the dirty files, then re-run .\install.ps1 -Update." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "[WARN] could not verify the loop guard inside deer-flow (it may still be starting)." -ForegroundColor Yellow
+        }
     }
 }
 
