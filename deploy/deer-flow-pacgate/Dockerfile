@@ -44,7 +44,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # forgets the mount - still has the fix. The client compose lanes ALSO mount it,
 # which is intentional: the mount is what lets the fix ship without an image
 # rebuild, and both point at the same file, so they cannot diverge. REMOVE BOTH at
-# the 2.1.0 rebase, where the fix is upstream-native.
+# the 2.1.0 rebase - but NOT because v2.1.0 carries these commits (measured
+# 2026-10-27: it does not; it keys its counters per run instead). Remove it because
+# v2.1.0 has an equivalent-or-stronger fix of its own. The loop_detection CONFIG
+# block is KEPT at the rebase - its keys are unchanged at v2.1.0.
 COPY deploy/client-bundle/patches/deer-flow-loop-detection.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
 
 RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown

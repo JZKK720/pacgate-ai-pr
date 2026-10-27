@@ -51,8 +51,41 @@ $patchesDir = Join-Path $repoRoot 'deploy/client-bundle/patches'
 if (-not $ClonePath) { $ClonePath = Join-Path $repoRoot 'deploy/deer-flow-src' }
 
 if (-not (Test-Path $patchesDir)) { throw "patches dir not found: $patchesDir" }
+
+# A MISSING CLONE IS CANNOT CHECK (exit 2), NOT A FAILURE.
+#
+# This used to `throw`, which was right when the script was run by hand and wrong
+# the moment it could be part of the suite: `deploy/deer-flow-src` is a gitignored
+# working checkout of bytedance/deer-flow, so a clean clone or a CI runner does not
+# have it, and throwing there would fail the whole run for a missing prerequisite
+# rather than a defect. Every other gate in this repo uses the same convention -
+# exit 2 = CANNOT CHECK, reported as SKIP and excluded from the pass/fail count.
+#
+# The audit is genuinely valuable when the clone IS present: it is the ONLY gate
+# that compares our patch stack against upstream, and the 2.1.0 rebase cannot be
+# planned safely without it. So it stays a real gate, it just stops pretending a
+# missing prerequisite is a red result.
 if (-not (Test-Path (Join-Path $ClonePath '.git'))) {
-    throw "deer-flow clone not found at $ClonePath (expected a git checkout)"
+    Write-Host '[SKIP] CANNOT CHECK: no deer-flow checkout to audit against.' -ForegroundColor Yellow
+    Write-Host "       Expected a git checkout at $ClonePath (gitignored, not in the repo)." -ForegroundColor Yellow
+    Write-Host '       Create one with:' -ForegroundColor Yellow
+    Write-Host "         git clone https://github.com/bytedance/deer-flow.git `"$ClonePath`"" -ForegroundColor DarkGray
+    Write-Host '       Or point at an existing one: -ClonePath <path>' -ForegroundColor Yellow
+    Write-Host 'RESULT: 0 passed, 0 failed (CANNOT CHECK - no deer-flow clone)' -ForegroundColor Yellow
+    exit 2
+}
+
+# A clone that exists but cannot resolve the refs is also CANNOT CHECK - that is a
+# fetch/shallow problem, not evidence about our patches. Resolved here so a bad ref
+# can never masquerade as "every path missing" (the 2026-09-21 trap noted above).
+foreach ($r in @($BaseRef, $TargetRef)) {
+    $sha = & git -C $ClonePath rev-parse --verify --quiet "${r}^{commit}" 2>$null
+    if ([string]::IsNullOrWhiteSpace(($sha | Out-String).Trim())) {
+        Write-Host "[SKIP] CANNOT CHECK: ref '$r' does not resolve in $ClonePath." -ForegroundColor Yellow
+        Write-Host "       Fetch it first: git -C `"$ClonePath`" fetch --tags origin" -ForegroundColor Yellow
+        Write-Host 'RESULT: 0 passed, 0 failed (CANNOT CHECK - ref not fetched)' -ForegroundColor Yellow
+        exit 2
+    }
 }
 
 # Resolve <ref>:<path> to an object id, or $null. Content-based, not exit-code

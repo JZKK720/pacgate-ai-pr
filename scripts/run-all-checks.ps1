@@ -8,7 +8,10 @@
 #                must NOT be read as a failure of the code. See below.
 #   MEASUREMENTS exit code IS the answer. audit-aipc-update-coverage.ps1 exits 1
 #                while plan 014 has open work, by design - that is it correctly
-#                reporting "gaps remain", not a broken script.
+#                reporting "gaps remain", not a broken script. A measurement may
+#                also exit 2 (CANNOT CHECK) when its own prerequisite is absent -
+#                audit-deer-flow-patches.ps1 needs a gitignored deer-flow checkout -
+#                and 2 is reported as SKIP, never as "open work remains".
 #
 # The first version put the measurement in the gate list, so this runner reported
 # "1 of 9 SUITES FAILED" on a tree where nothing was broken. A runner that is red
@@ -658,6 +661,15 @@ $liveStackGates = @(
 
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
+
+    # Can Docker actually pull and install anything right now? Runs the probe a
+    # build would need and, on failure, names the CAUSE (dead system proxy vs a
+    # genuine outage) instead of leaving an SSL EOF to be interpreted. Added after
+    # a full wrapper-image rebuild failed at `pip install` with
+    # SSLEOFError against pypi.org from INSIDE the daemon while the host reached
+    # pypi fine. Exit 2 when the daemon is down; exit 1 when egress is genuinely
+    # broken, which is real work to fix rather than a code defect.
+    'scripts/preflight-docker-egress.ps1'
     # Runtime counterpart of test-workflow-compose-wiring.ps1: asserts the API
     # actually SERVES the firm's library (222 workflows / 46 categories) rather
     # than the 10 built-ins. A measurement, not a gate, because it needs the
@@ -670,6 +682,16 @@ $measurements = @(
     # delete it, and no commit can turn this green. See
     # deploy/DEFECT-sanitized-content-not-served.md.
     'scripts/audit-sanitized-chunk-egress.ps1'
+
+    # Is our deer-flow patch stack still coherent against upstream? The ONLY gate
+    # that compares the patches to the revisions they patch, and the rebase at
+    # 2.1.0 cannot be planned safely without it. It lives under MEASUREMENTS rather
+    # than GATES because it needs a gitignored working checkout of bytedance/deer-flow
+    # at deploy/deer-flow-src, which a clean clone does not have - it now exits 2
+    # (CANNOT CHECK) in that case instead of throwing, which is what makes it safe
+    # to register at all. When the checkout IS present it is a real check: exit 0
+    # requires every patched upstream path to still exist at the target revision.
+    'scripts/audit-deer-flow-patches.ps1'
 
     # Auxiliary model lanes must be pinned BY NAME. Registered 2026-10-17, after
     # `title.model_name` was found unset in BOTH shipped configs - which sent title
@@ -840,6 +862,16 @@ foreach ($s in $measurements) {
     $out = & $psLauncher -NoProfile -ExecutionPolicy Bypass -File $s 2>&1
     $code = $LASTEXITCODE
     $gaps = (($out | Where-Object { $_ -match 'covered by -Update|still needing a human' }) -join ' ; ')
+    if ($code -eq 2) {
+        # CANNOT CHECK. Reported as SKIP, never as "open work remains": a missing
+        # prerequisite (no deer-flow checkout, stack down, no credentials) is not
+        # evidence that the work is unfinished, and labelling it that way would
+        # quietly turn every measurement into a permanent yellow.
+        $why = (($out | Where-Object { $_ -match 'CANNOT CHECK' } | Select-Object -Last 1) -join ' ')
+        if (-not $why) { $why = 'CANNOT CHECK' }
+        Write-Host ("  {0,-46} {1}" -f (Split-Path $s -Leaf), $why) -ForegroundColor Yellow
+        continue
+    }
     $label = if ($code -eq 0) { 'complete' } else { 'open work remains' }
     $c = if ($code -eq 0) { 'Green' } else { 'Yellow' }
     $clean = ($gaps -replace '\s+', ' ').Trim()

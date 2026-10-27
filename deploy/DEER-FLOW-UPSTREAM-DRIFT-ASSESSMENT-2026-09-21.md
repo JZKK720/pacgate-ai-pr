@@ -62,10 +62,14 @@ minor bump:
 > **Added 2026-10-27 (after this assessment was written):**
 > `./patches/deer-flow-loop-detection.py` ->
 > `/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py`.
-> It backports `e492bb1c` (#4072) and `4746a257` (#4295), which are already
-> upstream at `v2.1.0-rc0` — so unlike the seven modules below, this one is
-> **deleted at the rebase, not re-derived**. The "seven modules" figures in this
-> document are unchanged by it.
+> It backports `e492bb1c` (#4072) and `4746a257` (#4295). **Corrected
+> 2026-10-27 against the real v2.1.0 source:** neither commit is in v2.1.0 (it
+> was tagged 2026-09-24; #4072 landed in July but v2.1.0 carries a different,
+> per-run fix instead — `_RunScopeKey = (thread_id, run_id)`). The conclusion
+> stands — it is **deleted at the rebase, not re-derived** — but for the correct
+> reason, and the `loop_detection` **config** block must be KEPT: its keys are
+> unchanged at v2.1.0. See `plans/023-deer-flow-2.1-upgrade.md`. The "seven
+> modules" figures in this document are unchanged by it.
 
 Each mounted file is a snapshot of the `v2.0.0` module plus our changes. They are
 not patches against a moving target; they are whole-file replacements. Upstream

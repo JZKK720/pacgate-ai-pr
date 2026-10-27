@@ -278,8 +278,12 @@ services:
       # e492bb1c (#4072, windowed deque + Counter) plus 4746a257 (#4295, counter
       # cleanup on evict/reset) backported onto the pinned v2.0.0 file.
       # Layer 1 (identical-call hash, 3/5) is unchanged - real loops still stop.
-      # REMOVE THIS MOUNT when the base image is rebased past #4072
-      # (plans/023-deer-flow-2.1-upgrade.md): the fix becomes upstream-native.
+      # REMOVE THIS MOUNT at the 2.1.0 rebase (plans/023-deer-flow-2.1-upgrade.md).
+      # NOT because v2.1.0 carries these two commits - it does not (measured
+      # 2026-10-27) - but because it keys its counters on (thread_id, run_id), so a
+      # per-RUN scope replaces the window. The loop_detection CONFIG block stays:
+      # its keys are unchanged at v2.1.0 and a per-run counter is what the bash
+      # override was sized for.
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which

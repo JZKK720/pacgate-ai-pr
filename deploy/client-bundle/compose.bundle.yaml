@@ -211,7 +211,8 @@ services:
       # document run was force-stopped mid-work ("[FORCED STOP] Tool bash called
       # 50 times"). Backports upstream e492bb1c (#4072 windowed deque + Counter)
       # plus 4746a257 (#4295 evict/reset cleanup). See compose.prod.yaml for the
-      # measured evidence and the removal condition.
+      # measured evidence and the removal condition - which is NOT "v2.1.0 has
+      # these commits" (it does not; it scopes per run instead).
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's

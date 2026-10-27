@@ -76,7 +76,18 @@ patch was built on:
 | `deer-flow-worker.py` | +59/-0 | Run-worker behaviour additions | keep; largest upstream churn in the set (2,906 lines) |
 | `deer-flow-agent.py` | +80/-3 | Lead-agent factory additions | keep; 1,013 lines upstream churn |
 | `deer-flow-artifacts.py` | +64/-38 | Artifact route additions | keep; the 38 deletions need inspection at rebase |
-| `deer-flow-loop-detection.py` | +105/-19 | **Upstream fix backport.** Layer 2 of the loop guard kept a monotonic same-tool counter (`_tool_freq[thread_id][name] += 1`) cleared only by `reset()`, which the gateway never calls, so every `bash` call for a thread's whole life summed against one ceiling of 50. A productive document run (92 calls / 71 bash / 55 distinct commands, thread `6cc8dfae`) was force-stopped mid-work on 2026-10-27. Backports `e492bb1c` (#4072 windowed deque + Counter) and `4746a257` (#4295 evict/reset cleanup) onto the pinned v2.0.0 file. | **DELETE AT THE 2.1.0 REBASE** — both commits are already upstream at `v2.1.0-rc0`. Remove the mount; do not carry the snapshot forward |
+| `deer-flow-loop-detection.py` | +105/-19 | **Upstream fix backport.** Layer 2 of the loop guard kept a monotonic same-tool counter (`_tool_freq[thread_id][name] += 1`) cleared only by `reset()`, which the gateway never calls, so every `bash` call for a thread's whole life summed against one ceiling of 50. A productive document run (92 calls / 71 bash / 55 distinct commands, thread `6cc8dfae`) was force-stopped mid-work on 2026-10-27. Backports `e492bb1c` (#4072 windowed deque + Counter) and `4746a257` (#4295 evict/reset cleanup) onto the pinned v2.0.0 file. | **DELETE AT THE 2.1.0 REBASE, but NOT because of #4072.** v2.1.0 does **not** contain `e492bb1c` (measured 2026-10-27: it postdates the 2026-09-24 tag). It ships an equivalent-or-stronger fix of its own: `type _RunScopeKey = tuple[str, str | None]` keys `_tool_name_history` / `_tool_name_counter` on **(thread_id, run_id)**, so the counts are per **run** - no sliding window needed. Monotonic-counter occurrences at v2.1.0: **0**. Remove the mount **and the file**; do not carry the snapshot forward |
+
+> **Config survives the rebase - do NOT delete this block.** Measured against the
+> real v2.1.0 source on 2026-10-27: `ToolFreqOverride`, `tool_freq_warn`,
+> `tool_freq_hard_limit` and `tool_freq_overrides` all exist unchanged in
+> `deerflow/config/loop_detection_config.py`. Our `bash: {warn: 100, hard_limit: 150}`
+> override becomes *more* correct at 2.1.0, because a per-run counter is exactly
+> the shape the measurement found: the worst single run packs 74 bash calls, and
+> a thread's lifetime total was never the thing being measured. `window_size`
+> remains a valid key but is inert for Layer 2 at 2.1.0 (the run scope replaces
+> the window), so keep it only for Layer 1.
+
 
 > Layer 2 sizing is a config concern, not part of this patch:
 > `loop_detection.tool_freq_hard_limit` in `deer-flow-config.yaml` is set to 75
