@@ -76,6 +76,29 @@ patch was built on:
 | `deer-flow-worker.py` | +59/-0 | Run-worker behaviour additions | keep; largest upstream churn in the set (2,906 lines) |
 | `deer-flow-agent.py` | +80/-3 | Lead-agent factory additions | keep; 1,013 lines upstream churn |
 | `deer-flow-artifacts.py` | +64/-38 | Artifact route additions | keep; the 38 deletions need inspection at rebase |
+| `deer-flow-loop-detection.py` | +105/-19 | **Upstream fix backport.** Layer 2 of the loop guard kept a monotonic same-tool counter (`_tool_freq[thread_id][name] += 1`) cleared only by `reset()`, which the gateway never calls, so every `bash` call for a thread's whole life summed against one ceiling of 50. A productive document run (92 calls / 71 bash / 55 distinct commands, thread `6cc8dfae`) was force-stopped mid-work on 2026-10-27. Backports `e492bb1c` (#4072 windowed deque + Counter) and `4746a257` (#4295 evict/reset cleanup) onto the pinned v2.0.0 file. | **DELETE AT THE 2.1.0 REBASE** — both commits are already upstream at `v2.1.0-rc0`. Remove the mount; do not carry the snapshot forward |
+
+> Layer 2 sizing is a config concern, not part of this patch:
+> `loop_detection.tool_freq_hard_limit` in `deer-flow-config.yaml` is set to 75
+> globally with a `bash` override of 100/150, because the middleware auto-sizes
+> its window to `max(window_size, hard_limit, overrides)` — at the shipped ceiling
+> of 50 the window is also 50, and the worst measured run already packs 48 bash
+> calls into 50 (2 calls of headroom). `scripts/test-loop-detection-window.ps1`
+> gates both halves.
+>
+> **A/B proof (2026-10-27).** Replaying the 92 tool-call batches of the thread
+> that was force-stopped, through the two implementations side by side:
+>
+> | middleware | result |
+> | --- | --- |
+> | published 0.2.6, shipped defaults | **FORCED STOP at batch 66/92** — `Tool bash called 50 times` |
+> | this patch + this config | completes all 92 batches, no stop |
+>
+> Live confirmation on an isolated copy of the stack: a real agent turn issued
+> 56 bash calls in one message and finished clean, with zero `FORCED STOP`
+> messages in the final state. The same replay still stops a genuine loop at
+> Layer 1 (identical call sets, 5) and a runaway `read_file` swarm at the global
+> ceiling (75). |
 | `langchain-mcp-tools.py` | 579-line file | MCP tool adapter — doubled server-name prefix + tool binding | rebase against the vendored package INSIDE the target image |
 
 ### 1.3 Memory adapter contract — DECIDED (2026-09-22)

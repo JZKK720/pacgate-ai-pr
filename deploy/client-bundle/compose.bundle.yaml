@@ -204,6 +204,15 @@ services:
       # so a 40K-token prompt does not choke the local GPU; small surfaces stay
       # on the local default.
       - ./patches/deer-flow-agent.py:/app/backend/packages/harness/deerflow/agents/lead_agent/agent.py:ro
+      # Pacgate 2026-10-27: window the per-tool frequency loop guard. The v2.0.0
+      # Layer 2 kept a MONOTONIC same-tool counter (keyed by thread_id, cleared
+      # only by reset(), which the gateway never calls), so every bash call for a
+      # thread's whole life counted against one ceiling of 50 and a productive
+      # document run was force-stopped mid-work ("[FORCED STOP] Tool bash called
+      # 50 times"). Backports upstream e492bb1c (#4072 windowed deque + Counter)
+      # plus 4746a257 (#4295 evict/reset cleanup). See compose.prod.yaml for the
+      # measured evidence and the removal condition.
+      - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's
       # /v1 endpoint ignores - background calls then generate to EOS and hog

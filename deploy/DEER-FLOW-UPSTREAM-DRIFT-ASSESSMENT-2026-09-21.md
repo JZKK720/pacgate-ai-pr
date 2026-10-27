@@ -59,6 +59,14 @@ minor bump:
 ./patches/langchain-mcp-tools.py    -> /app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py
 ```
 
+> **Added 2026-10-27 (after this assessment was written):**
+> `./patches/deer-flow-loop-detection.py` ->
+> `/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py`.
+> It backports `e492bb1c` (#4072) and `4746a257` (#4295), which are already
+> upstream at `v2.1.0-rc0` — so unlike the seven modules below, this one is
+> **deleted at the rebase, not re-derived**. The "seven modules" figures in this
+> document are unchanged by it.
+
 Each mounted file is a snapshot of the `v2.0.0` module plus our changes. They are
 not patches against a moving target; they are whole-file replacements. Upstream
 churn in exactly these seven files, measured `v2.0.0..v2.1.0-rc0` (the real bump

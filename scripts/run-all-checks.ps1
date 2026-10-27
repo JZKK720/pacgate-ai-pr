@@ -99,6 +99,13 @@ $gates = @(    'scripts/test-install-render.ps1'
     # proves the code and the mount; the runtime test proves it actually runs.
     'scripts/test-tool-search-deferral.ps1'
     'scripts/test-deferred-tool-runtime.ps1'
+    # The per-tool loop guard counted bash calls MONOTONICALLY per thread at
+    # v2.0.0, so a productive document run was force-stopped mid-work at 50
+    # (measured: 92 calls / 71 bash / 55 distinct commands, thread 6cc8dfae,
+    # 2026-10-27). The backport makes the counter windowed; the config ceiling
+    # gives it headroom. Both halves are asserted here, plus live replay against
+    # the mounted module so a silent un-mount fails loudly.
+    'scripts/test-loop-detection-window.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot

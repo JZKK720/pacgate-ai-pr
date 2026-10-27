@@ -68,6 +68,7 @@ function Resolve-GitPath {
 # ── patch -> upstream path map (from the bind-mount targets in compose.prod.yaml)
 $patchMap = [ordered]@{
     'deer-flow-agent.py'       = 'backend/packages/harness/deerflow/agents/lead_agent/agent.py'
+    'deer-flow-loop-detection.py' = 'backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py'
     'deer-flow-artifacts.py'   = 'backend/app/gateway/routers/artifacts.py'
     'deer-flow-prompt.py'      = 'backend/packages/harness/deerflow/agents/lead_agent/prompt.py'
     'deer-flow-sync.py'        = 'backend/packages/harness/deerflow/tools/sync.py'

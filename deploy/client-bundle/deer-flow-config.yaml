@@ -559,6 +559,46 @@ tools:
 uploads:
   auto_convert_documents: true
 
+# Pacgate 2026-10-27: size the per-tool loop guard so it can tell productive work
+# from a loop.
+#
+# Background: at the pinned v2.0.0 base, Layer 2 kept a MONOTONIC same-tool
+# counter that nothing reset, so every bash call for a thread's whole life summed
+# against one ceiling of 50. Thread 6cc8dfae was force-stopped mid-work with
+# "[FORCED STOP] Tool bash called 50 times" on a run that made 92 calls, 71 of
+# them bash and 55 of them DISTINCT commands - document assembly, not a loop.
+# patches/deer-flow-loop-detection.py backports the upstream windowed fix
+# (e492bb1c #4072 + 4746a257 #4295) so counts decay instead of accumulating.
+#
+# WINDOWING ALONE IS STILL NOT ENOUGH HERE. The middleware auto-sizes its window
+# to max(window_size, hard_limit, every override hard_limit), so a ceiling of 50
+# means a window of 50 - and the bash-heaviest run measured on this box already
+# packs 48 bash calls into 50 (run 56b857ac: 61 bash of 68 calls). Two calls of
+# headroom is a tripwire, not a guard.
+#
+# Measured same-tool density in a 150-call window, worst across the 33 recorded
+# runs on this box:
+#     bash        74 of 150     <- the tool that needs the room
+#     write_file  22 of 150
+#     read_file   10 of 150
+# So only bash gets raised. The global ceiling stays at the upstream default of
+# 50, which keeps the "many different files" read/write protection intact: 50
+# read_file calls inside 150 call slots still trips, and real usage peaks at 10.
+# This is exactly the case tool_freq_overrides exists for - the schema docstring
+# names "high-frequency tools like bash" - so it survives rebases as config, not
+# as patched code.
+#
+# Layer 1 (identical tool-call hash, warn 3 / hard-stop 5) is untouched and is
+# what actually catches a true repeat loop; measured across the same 33 runs, no
+# run ever repeated an identical call set more than 3 times in any window.
+loop_detection:
+  tool_freq_warn: 50
+  tool_freq_hard_limit: 75
+  tool_freq_overrides:
+    bash:
+      warn: 100
+      hard_limit: 150
+
 # Pacgate: DEFER MCP tool loading to cut system-prompt size dramatically.
 # When tool_search is enabled, MCP tool schemas are NOT bound directly into the
 # model's context. Instead they are listed by NAME in <available-deferred-tools>
