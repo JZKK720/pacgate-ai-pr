@@ -48,6 +48,28 @@ function Assert-That {
     else { Write-Host "  [FAIL] $Name" -ForegroundColor Red; $script:Failed++ }
 }
 
+# Capture a native command's stdout while tolerating stderr under 5.1.
+#
+# WHY THIS EXISTS (found 2026-10-27). This file sets
+# $ErrorActionPreference = 'Stop', and on Windows PowerShell 5.1 a native
+# command that writes to stderr raises NativeCommandError as a TERMINATING
+# error the moment stderr is redirected. `2>$null` does not help - it is the
+# redirection itself that triggers the conversion.
+#
+# Measured: `powershell -File scripts/test-loop-detection-window.ps1` died at
+# the live-container step on LangChain's PendingDeprecationWarning, exited 1,
+# and never evaluated the five live assertions - the whole reason this gate
+# exists. Under pwsh 7 the same file reported 33 passed. `run-all-checks.ps1`
+# prefers pwsh but falls back to powershell.exe, which is the normal case on a
+# client machine, so this would have been a false failure there.
+function Invoke-NativeCapture {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { return (& $Script | Out-String).Trim() }
+    finally { $ErrorActionPreference = $previous }
+}
+
 $config  = 'deploy/client-bundle/deer-flow-config.yaml'
 $patch   = 'deploy/client-bundle/patches/deer-flow-loop-detection.py'
 $compose = 'deploy/client-bundle/compose.prod.yaml'
@@ -241,7 +263,10 @@ print("TIGHT_TRIP=%s" % play(tight))
 same = [("bash", {"command": "python3 build.py"}) for _ in range(8)]
 print("REPEAT_TRIP=%s" % play(same))
 '@
-    $out = $py | & docker exec -i deer-flow /app/backend/.venv/bin/python 2>&1
+    # Invoke-NativeCapture, not a bare redirect: this file sets
+    # $ErrorActionPreference = 'Stop', and 5.1 turns any native stderr write into
+    # a terminating NativeCommandError once stderr is redirected. See the helper.
+    $out = Invoke-NativeCapture { $py | & docker exec -i deer-flow /app/backend/.venv/bin/python }
     $text = ($out | Out-String)
     $window = if ($text -match 'WINDOW=(\d+)') { [int]$Matches[1] } else { 0 }
     $liveHard = if ($text -match 'HARD=(\d+)') { [int]$Matches[1] } else { 0 }

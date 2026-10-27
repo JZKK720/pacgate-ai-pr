@@ -60,8 +60,22 @@ if ($Targets.Count -eq 0) {
 # Never let a native command's stderr terminate the run: on PowerShell 7 a native
 # process writing to stderr raises under 'Stop'. Same trap already guarded in
 # scripts/assert-no-staged-secrets.ps1.
+#
+# Run captures through a helper rather than a bare `2>&1` at each call site. It
+# sets 'Continue' for the duration of the call, which is what makes the redirect
+# safe on Windows PowerShell 5.1 too - there a native stderr write becomes a
+# NativeCommandError the moment stderr is redirected, even to $null, and this
+# file is listed in scripts/test-ps51-native-stderr.ps1 so that stays true.
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
+
+function Invoke-NativeCapture {
+    param([Parameter(Mandatory = $true)][scriptblock]$Script)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { return (& $Script 2>&1 | Out-String).Trim() }
+    finally { $ErrorActionPreference = $previous }
+}
 
 $fail = 0
 function Ok($m) { Write-Host "  [ok]   $m" -ForegroundColor Green }
@@ -72,7 +86,7 @@ Write-Host '=== PRE-FLIGHT: docker build egress ===' -ForegroundColor Cyan
 
 # ── 1. Is the daemon up? ─────────────────────────────────────────────────────
 # Without this every probe below fails for the same uninformative reason.
-docker info --format '{{.ServerVersion}}' 2>&1 | Out-Null
+docker info --format '{{.ServerVersion}}' | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host '  [SKIP] CANNOT CHECK: the Docker daemon is not reachable.' -ForegroundColor Yellow
     Note 'Start Docker Desktop, then re-run this preflight.'
@@ -144,11 +158,11 @@ $img = 'python:3.12-slim'
 # Prefer an image already on this machine so the preflight never needs the very
 # network it is testing. Fall back to the python image only if none is present.
 foreach ($cand in @('ghcr.io/jzkk720/deer-flow-pacgate:0.2.6', $img)) {
-    docker image inspect $cand 2>&1 | Out-Null
+    docker image inspect $cand | Out-Null
     if ($LASTEXITCODE -eq 0) { $img = $cand; break }
 }
 
-$out = $probe | docker run --rm -i --entrypoint python3 $img - $Targets 2>&1
+$out = Invoke-NativeCapture { $probe | docker run --rm -i --entrypoint python3 $img - $Targets }
 $dockerFailed = @()
 foreach ($line in @($out)) {
     $l = "$line".Trim()

@@ -75,6 +75,17 @@ $repoScripts = @(
 # fails for a reason unrelated to the system it inspects is worse than no gate.
 $liveStackScripts = @(
     'scripts/test-lane-connectivity.ps1'
+    # Added 2026-10-27 with the loop-guard work. test-loop-detection-window.ps1
+    # shipped with a bare `docker exec ... 2>&1` under
+    # $ErrorActionPreference = 'Stop' and was not on this list, so nothing
+    # caught it: the gate passed on this dev box only because the suite prefers
+    # pwsh 7, while a client AIPC with just 5.1 would have hit the
+    # NativeCommandError and reported a false failure. preflight-docker-egress.ps1
+    # redirects under 'Continue', which is safe, but it is listed so a future
+    # edit that raises its ErrorActionPreference cannot reintroduce the defect
+    # unnoticed.
+    'scripts/test-loop-detection-window.ps1'
+    'scripts/preflight-docker-egress.ps1'
 )
 
 $pass = 0
