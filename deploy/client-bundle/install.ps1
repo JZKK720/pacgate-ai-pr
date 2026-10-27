@@ -661,17 +661,23 @@ if ($Update -and -not $SkipRepoPull) {
                 # tracked file: the update reported success and the loop-guard patch
                 # was never applied.
                 $behindRef = $null
-                try {
+                # Same shape the update path above uses: resolve the branch first,
+                # then compare, and never nest a native call inside a string -
+                # `"origin/$(git ...)"` re-parses per invocation and silently yields
+                # "origin/" when the branch is detached.
+                $dirtyBranch = (Invoke-WithNativeStderr { git rev-parse --abbrev-ref HEAD 2>$null } | Out-String).Trim()
+                if ($dirtyBranch -and $dirtyBranch -ne 'HEAD') {
                     Invoke-WithNativeStderr { git fetch --quiet origin 2>$null }
                     if ($LASTEXITCODE -eq 0) {
-                        $remoteHead = (git rev-parse "origin/$((git rev-parse --abbrev-ref HEAD).Trim())" 2>$null | Out-String).Trim()
-                        $localHead = (git rev-parse HEAD).Trim()
-                        if ($remoteHead -and $remoteHead -ne $localHead) { $behindRef = $remoteHead.Substring(0, 7) }
+                        $remoteHead = (Invoke-WithNativeStderr { git rev-parse "origin/$dirtyBranch" 2>$null } | Out-String).Trim()
+                        $localHead = (Invoke-WithNativeStderr { git rev-parse HEAD 2>$null } | Out-String).Trim()
+                        if ($remoteHead -and $localHead -and $remoteHead -ne $localHead) {
+                            $behindRef = $remoteHead.Substring(0, 7)
+                        }
                     }
                 }
-                catch { }
-                $cur = ((git rev-parse HEAD 2>$null | Out-String).Trim())
-                if ($cur) { $cur = $cur.Substring(0, 7) }
+                $cur = (Invoke-WithNativeStderr { git rev-parse HEAD 2>$null } | Out-String).Trim()
+                if ($cur -and $cur.Length -ge 7) { $cur = $cur.Substring(0, 7) } else { $cur = $null }
                 Write-Host ""
                 Write-Host "  CONSEQUENCE - this machine is running the OLD repo code, not the new release:" -ForegroundColor Yellow
                 Write-Host "    - bind-mounted patches and configs (deer-flow patches/*.py, deer-flow-config.yaml)" -ForegroundColor Yellow
@@ -1822,7 +1828,13 @@ except Exception as e:
     print("LOOPGUARD=UNREADABLE %s" % e); raise SystemExit(0)
 print("LOOPGUARD=WINDOWED" if "_tool_name_counter" in src else "LOOPGUARD=MONOTONIC")
 '@
-        $lg = ($probe | docker exec -i deer-flow /app/backend/.venv/bin/python 2>&1 | Out-String)
+        # Convention in this file (and enforced by scripts/test-ps51-native-stderr.ps1):
+        # no executable `2>&1` anywhere - under PS 5.1 a native process writing to
+        # stderr raises while it is being redirected, and the pipeline dies. The
+        # helper flips ErrorActionPreference, and the redirect is `2>$null` so the
+        # probe's stderr cannot kill the update. Success is judged by the marker we
+        # asked for, not by exit code, so a missing marker falls through to WARN.
+        $lg = (Invoke-WithNativeStderr { $probe | docker exec -i deer-flow /app/backend/.venv/bin/python 2>$null } | Out-String)
         if ($lg -match 'LOOPGUARD=WINDOWED') {
             Write-Host "[OK] deer-flow loaded the windowed loop guard from the repo patch" -ForegroundColor Green
         }
