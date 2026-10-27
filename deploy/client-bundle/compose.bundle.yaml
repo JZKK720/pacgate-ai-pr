@@ -204,6 +204,16 @@ services:
       # so a 40K-token prompt does not choke the local GPU; small surfaces stay
       # on the local default.
       - ./patches/deer-flow-agent.py:/app/backend/packages/harness/deerflow/agents/lead_agent/agent.py:ro
+      # Pacgate 2026-10-27: window the per-tool frequency loop guard. The v2.0.0
+      # Layer 2 kept a MONOTONIC same-tool counter (keyed by thread_id, cleared
+      # only by reset(), which the gateway never calls), so every bash call for a
+      # thread's whole life counted against one ceiling of 50 and a productive
+      # document run was force-stopped mid-work ("[FORCED STOP] Tool bash called
+      # 50 times"). Backports upstream e492bb1c (#4072 windowed deque + Counter)
+      # plus 4746a257 (#4295 evict/reset cleanup). See compose.prod.yaml for the
+      # measured evidence and the removal condition - which is NOT "v2.1.0 has
+      # these commits" (it does not; it scopes per run instead).
+      - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's
       # /v1 endpoint ignores - background calls then generate to EOS and hog
@@ -266,6 +276,15 @@ services:
       # exception, which would move matter memory off the pacgate-api
       # sanitization gate while every health check still reports green.
       - ./patches/deer-flow-memory-storage.py:/app/backend/packages/harness/deerflow/agents/memory/storage.py:ro
+      # Pacgate 2026-10-26: bound the memory lane's input and stabilize its
+      # prompt prefix. The template put the volatile `{current_memory}` block
+      # ahead of the conversation, so the prefix changed on every update and
+      # llama.cpp could never reuse it - measured 68.7 s cold on three
+      # consecutive updates vs 0.5 s when the prefix was held constant. The
+      # conversation block is now first (append-only, therefore stable) and the
+      # memory block last, and the conversation is capped at 16k chars / 40
+      # messages so it stops evicting the chat lane's cache entry.
+      - ./patches/deer-flow-memory-prompt.py:/app/backend/packages/harness/deerflow/agents/memory/prompt.py:ro
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix. MCP server keys like "yuandian-law" produce tool names
       # "yuandian-law_yuandian_rh_ft_search" that models hallucinate as

@@ -20,7 +20,13 @@ param(
 
     # Explicit list of versions to replace. Normally leave this empty and let
     # the script discover them from the pin files.
-    [string[]]$From
+    [string[]]$From,
+
+    # The date the release is cut with, written into both README release
+    # headings. Defaults to today. Set it explicitly when the bump is prepared
+    # ahead of the cut, so the heading states the tag date rather than the
+    # preparation date.
+    [string]$ReleaseDate
 )
 
 $ErrorActionPreference = 'Stop'
@@ -205,7 +211,66 @@ try {
     # would silently report edits if any pattern matched.
     [void]$discovered.Remove($To)
 
-    if ($discovered.Count -eq 0) {
+    # ── Release-heading DATE ─────────────────────────────────────────────────
+    #
+    # WHY THE DATE IS OWNED HERE: the pin patterns above replace only the text of
+    # their `v` capture, so they can move a version but never a date. The date
+    # therefore moved only when someone remembered to type it, and nobody did:
+    # FOUR consecutive tags shipped with 2026-10-11 in the heading while the tags
+    # themselves read 2026-10-23 (v0.2.3) and 2026-10-25 (v0.2.4 / v0.2.5 /
+    # v0.2.6). Measured from the tag objects, not inferred.
+    #
+    # A README heading is the first line a client reads, and "which release is
+    # this tree" plus "when was it cut" are the same claim. A wrong date is a
+    # quiet falsehood in the front matter of a commercial document, which is
+    # worse than a missing one.
+    #
+    # SOURCE OF TRUTH IS THE RELEASE DATE, NOT `Get-Date`. Using today's date
+    # would have been wrong too: a bump prepared on the 26th and tagged on the
+    # 27th would claim the 26th. The date written is the one the release is cut
+    # with, which is this run's date, and the tag must agree - `-ReleaseDate`
+    # exists so a bump prepared ahead of the cut can name it explicitly, and the
+    # post-write verification below re-reads the file to prove it landed.
+    #
+    # SCOPED TO THE HEADING LINE. Prose dates in this repo are historical facts -
+    # benchmark reports, incident notes, "verified 2026-10-27" comments. Rewriting
+    # those would be the opposite of honest, so the pattern anchors on `##` at the
+    # start of a line and nothing else.
+    #
+    # STRUCTURAL, NOT LITERAL, for the PS 5.1 decoding reason documented at the pin
+    # patterns: a literal Chinese full-width paren becomes mojibake under an ANSI
+    # code page, and the pattern then silently matches nothing.
+    if (-not $ReleaseDate) { $ReleaseDate = (Get-Date).ToString('yyyy-MM-dd') }
+    if ($ReleaseDate -notmatch '^\d{4}-\d{2}-\d{2}$') {
+        throw "ReleaseDate must look like 2026-10-27 (got '$ReleaseDate')"
+    }
+
+    $headingPatterns = @{
+        'README.md'    = '(?m)^(##[^\r\n]*?\()\d{4}-\d{2}-\d{2}(\))'
+        'README-ZH.md' = "(?m)^(##[^\r\n]*?\uff08)\d{4}\u5e74\d{1,2}\u6708\d{1,2}\u65e5(\uff09)"
+    }
+    # Same capture shape in both languages, so one replacement covers both: keep
+    # the prefix and closing paren, swap only the date between them.
+    $zhDate = '{0}{1}{2}{3}{4}' -f [int]$ReleaseDate.Substring(0, 4), [char]0x5E74, [int]$ReleaseDate.Substring(5, 2), [char]0x6708, "$([int]$ReleaseDate.Substring(8, 2))$([char]0x65E5)"
+
+    $dateTargets = @()
+    foreach ($rel in $headingPatterns.Keys) {
+        $path = Join-Path $repoRoot $rel
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+        $m = [regex]::Match($text, $headingPatterns[$rel])
+        if (-not $m.Success) {
+            throw ("No dated release heading found in $rel. The heading must read " +
+                   "'## Release: vX.Y.Z (YYYY-MM-DD)' (README.md) or '## 版本：vX.Y.Z（YYYY年M月D日）' (README-ZH.md). " +
+                   "Refusing to bump a tree whose release front matter cannot be identified.")
+        }
+        $want = if ($rel -eq 'README.md') { $ReleaseDate } else { $zhDate }
+        if ($m.Value -notlike "*$want*") { $dateTargets += $rel }
+    }
+
+    # A stale date is real work even when the version already reads $To, so the
+    # no-op guard below must not swallow it.
+    if ($discovered.Count -eq 0 -and $dateTargets.Count -eq 0) {
         throw ("Found no version pins to replace. Every pin already reads $To, " +
                "or the pin patterns no longer match the files. Refusing to run " +
                "and report a no-op as success.")
@@ -215,6 +280,30 @@ try {
 
     $totalEdits = 0
     $report = @()
+
+    # Write the heading dates. Runs before the pin loop so the report reads in the
+    # order a reader scans: front matter, then pins.
+    foreach ($rel in $dateTargets) {
+        $path = Join-Path $repoRoot $rel
+        $text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+        $script:replacement = if ($rel -eq 'README.md') { $ReleaseDate } else { $zhDate }
+        # The scriptblock runs inside [regex]::Replace, whose scope does not carry
+        # this function's locals, so bind through script scope rather than relying
+        # on closure capture.
+        $newText = [regex]::Replace(
+            $text,
+            $headingPatterns[$rel],
+            { param($m) "$($m.Groups[1].Value)$script:replacement$($m.Groups[2].Value)" }
+        )
+        if ($newText -ne $text) {
+            if (-not $Preview) {
+                $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText($path, $newText, $utf8NoBom)
+            }
+            $report += ("  {0,-52} release heading date -> {1}" -f $rel, $script:replacement)
+            $totalEdits++
+        }
+    }
 
     foreach ($rel in $targets.Keys) {
         $path = Join-Path $repoRoot $rel
@@ -252,7 +341,15 @@ try {
         }
     }
 
-    Write-Output "Bump $($fromVersions -join ' / ')  ->  $To"
+    # Name the version axis only when it actually moved. A date-only repair would
+    # otherwise print "Bump   ->  0.2.6" with an empty arrow, which reads as a
+    # broken bump rather than the front-matter fix it is.
+    if ($fromVersions.Count -gt 0) {
+        Write-Output "Bump $($fromVersions -join ' / ')  ->  $To   (release date $ReleaseDate)"
+    }
+    else {
+        Write-Output "Version pins already at $To - repairing release front matter only (date $ReleaseDate)"
+    }
     Write-Output ''
     $report | ForEach-Object { Write-Output $_ }
     Write-Output ''
@@ -270,6 +367,20 @@ try {
     Write-Output ''
     Write-Output 'Verifying...'
     $stale = @()
+
+    # 0. Both release headings must now carry the date this run wrote. The date is
+    #    part of the front matter, so leaving it out of the verification is how it
+    #    stayed wrong for four consecutive tags.
+    foreach ($rel in $headingPatterns.Keys) {
+        $hp = Join-Path $repoRoot $rel
+        if (-not (Test-Path -LiteralPath $hp)) { continue }
+        $ht = [System.IO.File]::ReadAllText($hp, [System.Text.Encoding]::UTF8)
+        $hm = [regex]::Match($ht, $headingPatterns[$rel])
+        $wantDate = if ($rel -eq 'README.md') { $ReleaseDate } else { $zhDate }
+        if (-not $hm.Success -or $hm.Value -notlike "*$wantDate*") {
+            $stale += "$rel release heading does not read $wantDate"
+        }
+    }
 
     # 1. Cargo.toml - the workspace version line only.
     $toml = Get-Content (Join-Path $repoRoot 'pacgate-ai/Cargo.toml') -Raw

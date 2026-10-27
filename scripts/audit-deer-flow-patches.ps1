@@ -1,6 +1,6 @@
 # Audit the deer-flow patch stack against upstream.
 #
-# The pacgate deer-flow wrapper bind-mounts eight whole-file Python patches over
+# The pacgate deer-flow wrapper bind-mounts whole-file Python patches over
 # upstream modules. That keeps the integration non-invasive, but it means an
 # upstream bump is a rebase, not a version edit. This script makes the rebase
 # measurable:
@@ -51,8 +51,110 @@ $patchesDir = Join-Path $repoRoot 'deploy/client-bundle/patches'
 if (-not $ClonePath) { $ClonePath = Join-Path $repoRoot 'deploy/deer-flow-src' }
 
 if (-not (Test-Path $patchesDir)) { throw "patches dir not found: $patchesDir" }
+
+# ── patch -> upstream path map (from the bind-mount targets in compose.prod.yaml)
+#
+# This is the set plans/023-deer-flow-2.1-upgrade.md plans to rebase, and the
+# 718 / 7,829 / "eight paths" figures in that plan are measured over exactly this
+# set. Adding an entry here changes what the audit measures, so re-measure the
+# plan when you do. The completeness check below reports any mounted patch that
+# is outside this set, so the gap is visible rather than silent.
+$patchMap = [ordered]@{
+    'deer-flow-agent.py'       = 'backend/packages/harness/deerflow/agents/lead_agent/agent.py'
+    'deer-flow-loop-detection.py' = 'backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py'
+    'deer-flow-artifacts.py'   = 'backend/app/gateway/routers/artifacts.py'
+    'deer-flow-prompt.py'      = 'backend/packages/harness/deerflow/agents/lead_agent/prompt.py'
+    'deer-flow-sync.py'        = 'backend/packages/harness/deerflow/tools/sync.py'
+    'deer-flow-thread-runs.py' = 'backend/app/gateway/routers/thread_runs.py'
+    'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
+    'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
+}
+
+# langchain-mcp-tools.py overrides a VENDORED package inside the image venv, not
+# upstream source, so it has no path in this repo and cannot be rebased here.
+$vendoredPatch = 'langchain-mcp-tools.py'
+
+# ── completeness: report mounted patches that are NOT in the rebase map ──────
+#
+# WHY THIS EXISTS (found 2026-10-27). The map is hand-maintained, and a patch
+# added to compose without a map entry is invisible to this audit: the audit
+# reports "all paths present" while the new mount is never checked. That is the
+# exact failure this script exists to prevent, one level up - the audit cannot
+# warn about a path it was never told about.
+#
+# Measured when this check was added: 23 patches are bind-mounted by
+# compose.prod.yaml and 8 are mapped. The gap included
+# deer-flow-memory-prompt.py, added the day before in the same release train as
+# the loop-detection patch that WAS mapped. So the omission is not hypothetical.
+#
+# WHY THIS REPORTS RATHER THAN FAILS. The map is not "every mount" - it is the
+# set plans/023-deer-flow-2.1-upgrade.md plans to rebase, and the 718 / 7,829 /
+# "eight paths" figures in that plan are measured over exactly this set. Failing
+# here would force the map to grow, which would silently change those published
+# numbers without re-measuring them. So the gap is made VISIBLE and the decision
+# to widen the rebase scope stays with the plan, where it belongs.
+#
+# Scope note: patches over the vendored venv package and over our own
+# /app/adapters tree can never be rebased here, so they are excluded by design
+# and listed as explicit exemptions rather than counted as gaps.
+$notUpstream = @(
+    'langchain-mcp-tools.py'          # vendored venv package, not upstream source
+    'pacgate-adapter-client.py'       # our own adapter tree (/app/adapters)
+    'pacgate-adapter-storage.py'      # our own adapter tree (/app/adapters)
+)
+
+$composeProd = Join-Path $repoRoot 'deploy/client-bundle/compose.prod.yaml'
+if (Test-Path $composeProd) {
+    $mounted = @()
+    foreach ($line in (Get-Content -LiteralPath $composeProd)) {
+        if ($line -match '^\s+- \./patches/([A-Za-z0-9._-]+\.py):') { $mounted += $Matches[1] }
+    }
+    $mounted = @($mounted | Where-Object { $notUpstream -notcontains $_ } | Sort-Object -Unique)
+    $unmapped = @($mounted | Where-Object { -not $patchMap.Contains($_) })
+    Write-Host ("  rebase map covers {0} of {1} mounted upstream patch(es)" -f ($mounted.Count - $unmapped.Count), $mounted.Count) -ForegroundColor DarkGray
+    if ($unmapped.Count -gt 0) {
+        Write-Host ("  [NOTE] {0} mounted patch(es) are outside the 2.1.0 rebase plan:" -f $unmapped.Count) -ForegroundColor Yellow
+        foreach ($u in $unmapped) { Write-Host "         $u" -ForegroundColor Yellow }
+        Write-Host '         A rebase can move or rename these paths and this audit will not' -ForegroundColor Yellow
+        Write-Host '         notice. Widen $patchMap (and re-measure plans/023) if they should' -ForegroundColor Yellow
+        Write-Host '         be part of the rebase.' -ForegroundColor Yellow
+    }
+}
+
+# A MISSING CLONE IS CANNOT CHECK (exit 2), NOT A FAILURE.
+#
+# This used to `throw`, which was right when the script was run by hand and wrong
+# the moment it could be part of the suite: `deploy/deer-flow-src` is a gitignored
+# working checkout of bytedance/deer-flow, so a clean clone or a CI runner does not
+# have it, and throwing there would fail the whole run for a missing prerequisite
+# rather than a defect. Every other gate in this repo uses the same convention -
+# exit 2 = CANNOT CHECK, reported as SKIP and excluded from the pass/fail count.
+#
+# The audit is genuinely valuable when the clone IS present: it is the ONLY gate
+# that compares our patch stack against upstream, and the 2.1.0 rebase cannot be
+# planned safely without it. So it stays a real gate, it just stops pretending a
+# missing prerequisite is a red result.
 if (-not (Test-Path (Join-Path $ClonePath '.git'))) {
-    throw "deer-flow clone not found at $ClonePath (expected a git checkout)"
+    Write-Host '[SKIP] CANNOT CHECK: no deer-flow checkout to audit against.' -ForegroundColor Yellow
+    Write-Host "       Expected a git checkout at $ClonePath (gitignored, not in the repo)." -ForegroundColor Yellow
+    Write-Host '       Create one with:' -ForegroundColor Yellow
+    Write-Host "         git clone https://github.com/bytedance/deer-flow.git `"$ClonePath`"" -ForegroundColor DarkGray
+    Write-Host '       Or point at an existing one: -ClonePath <path>' -ForegroundColor Yellow
+    Write-Host 'RESULT: 0 passed, 0 failed (CANNOT CHECK - no deer-flow clone)' -ForegroundColor Yellow
+    exit 2
+}
+
+# A clone that exists but cannot resolve the refs is also CANNOT CHECK - that is a
+# fetch/shallow problem, not evidence about our patches. Resolved here so a bad ref
+# can never masquerade as "every path missing" (the 2026-09-21 trap noted above).
+foreach ($r in @($BaseRef, $TargetRef)) {
+    $sha = & git -C $ClonePath rev-parse --verify --quiet "${r}^{commit}" 2>$null
+    if ([string]::IsNullOrWhiteSpace(($sha | Out-String).Trim())) {
+        Write-Host "[SKIP] CANNOT CHECK: ref '$r' does not resolve in $ClonePath." -ForegroundColor Yellow
+        Write-Host "       Fetch it first: git -C `"$ClonePath`" fetch --tags origin" -ForegroundColor Yellow
+        Write-Host 'RESULT: 0 passed, 0 failed (CANNOT CHECK - ref not fetched)' -ForegroundColor Yellow
+        exit 2
+    }
 }
 
 # Resolve <ref>:<path> to an object id, or $null. Content-based, not exit-code
@@ -66,19 +168,7 @@ function Resolve-GitPath {
 }
 
 # ── patch -> upstream path map (from the bind-mount targets in compose.prod.yaml)
-$patchMap = [ordered]@{
-    'deer-flow-agent.py'       = 'backend/packages/harness/deerflow/agents/lead_agent/agent.py'
-    'deer-flow-artifacts.py'   = 'backend/app/gateway/routers/artifacts.py'
-    'deer-flow-prompt.py'      = 'backend/packages/harness/deerflow/agents/lead_agent/prompt.py'
-    'deer-flow-sync.py'        = 'backend/packages/harness/deerflow/tools/sync.py'
-    'deer-flow-thread-runs.py' = 'backend/app/gateway/routers/thread_runs.py'
-    'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
-    'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
-}
-
-# langchain-mcp-tools.py overrides a VENDORED package inside the image venv, not
-# upstream source, so it has no path in this repo and cannot be rebased here.
-$vendoredPatch = 'langchain-mcp-tools.py'
+# (defined near the top, before the completeness check)
 
 Write-Host '=== deer-flow patch stack audit ===' -ForegroundColor White
 Write-Host "  clone      : $ClonePath"

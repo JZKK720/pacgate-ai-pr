@@ -33,6 +33,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # absolute path is blocked by the sandbox path-validation allowlist. Symlinking
 # it into /usr/local/bin (on PATH + in the allowlist) lets the agent run
 # `markitdown <file>` directly for PDF/DOCX/PPTX/XLSX -> MD on demand.
+# Pacgate 2026-10-27: bake the windowed loop-detection middleware into the image.
+# At the pinned v2.0.0 base, Layer 2 kept a MONOTONIC same-tool counter cleared
+# only by reset() (which the gateway never calls), so a productive document run
+# was force-stopped mid-work at 50 bash calls ("[FORCED STOP] Tool bash called 50
+# times", thread 6cc8dfae, 92 calls / 71 bash / 55 distinct commands). The file
+# backports upstream e492bb1c (#4072) + 4746a257 (#4295).
+#
+# BAKED rather than only bind-mounted so the standalone image - and any lane that
+# forgets the mount - still has the fix. The client compose lanes ALSO mount it,
+# which is intentional: the mount is what lets the fix ship without an image
+# rebuild, and both point at the same file, so they cannot diverge. REMOVE BOTH at
+# the 2.1.0 rebase - but NOT because v2.1.0 carries these commits (measured
+# 2026-10-27: it does not; it keys its counters per run instead). Remove it because
+# v2.1.0 has an equivalent-or-stronger fix of its own. The loop_detection CONFIG
+# block is KEPT at the rebase - its keys are unchanged at v2.1.0.
+COPY deploy/client-bundle/patches/deer-flow-loop-detection.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
+
 RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
 
 # Pacgate: bake OfficeCLI so the agent can create/read/modify real Office
