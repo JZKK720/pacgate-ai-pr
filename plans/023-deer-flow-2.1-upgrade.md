@@ -25,7 +25,7 @@ integration overrides upstream code in two ways:
 
 | Mechanism | Scale | Rebase shape |
 | --- | --- | --- |
-| Backend: 7 whole-file bind-mounts over upstream modules | **438 lines of our delta** vs **7,153 lines of upstream churn** in those files | 3-way merge per file |
+| Backend: 8 whole-file bind-mounts over upstream modules | **718 lines of our delta** vs **7,829 lines of upstream churn** in those files (re-measured 2026-10-27 at v2.1.0 GA, including the loop-detection patch) | 3-way merge per file, **17 conflict regions** — see §2.5 |
 | Backend: 1 bind-mount over a vendored package in the image venv | 579-line file | rebase inside the image |
 | Frontend: 17 files copied over cloned source | locale file alone would delete 1,127 upstream lines | re-derive each overlay |
 
@@ -45,8 +45,10 @@ reverts upstream code.
   rebase-break signal; a bind-mount onto a missing path means our code is
   silently absent at runtime)
 
-Current output against `v2.1.0-rc0`: all seven paths exist, 438 lines of our
-delta, 7,153 lines of upstream churn. Exit 0.
+Current output against `v2.1.0` (re-run 2026-10-27 at GA): all eight paths exist,
+718 lines of our delta, 7,829 lines of upstream churn. Exit 0. See §2.5 for the
+conflict-region measurement and the memory-adapter blocker that the exit-0 audit
+does NOT detect (it checks path existence and encoding, not API compatibility).
 
   NOTE (2026-09-22): this was 386 until commit `48f5a3b` added the delete-symlink
   guard (+52). The number is not a fixed property of the stack - it MOVES with any
@@ -63,9 +65,10 @@ seven paths missing while claiming the upgrade would break the runtime.
 Encoding is checked too. An earlier version read the base blob through a
 PowerShell string, which mis-decoded the UTF-8 em-dashes in these files and
 inflated the totals to 527 lines. With the blob redirected to a file and
-`[Console]::OutputEncoding` pinned, the same measurement gives **438 lines**, and
-the two methods now agree. A mis-decode here would have overstated the rebase by
-roughly 30%.
+`[Console]::OutputEncoding` pinned, the same measurement gave **438 lines** at
+the time of that check (seven patches then; **718** now that loop-detection is
+in the set - re-measured 2026-10-27), and the two methods agree. A mis-decode
+here would have overstated the rebase by roughly 30%.
 
 ### 1.2 Record each patch's INTENT — DONE (below)
 
