@@ -2,9 +2,14 @@
 
 **Status:** TRIGGER FIRED - `v2.1.0` GA released (`f6e747be`, verified on
 2026-10-07). §1.5 audit executed at the GA tag: **exit 0** - every bind-mount
-path still exists, 575-line delta vs 7,153 upstream churn, encodings OK
-(replace this line's predecessor when execution completes). The §2 rebase
-execution is the remaining work item, unchanged.
+path still exists, 718-line delta vs 7,829 upstream churn (re-measured
+2026-10-27 from the tag objects), encodings 8/8 OK. The §2 rebase execution is
+still the remaining work item, **but §2.5 now records a blocker that changes its
+size**: the memory adapter does not satisfy the 2.1.0 contract (no `search()`,
+`storage_class` superseded by `manager_class`) and `worker.py` needs a
+rewrite-scale merge. Recommendation on 2026-10-27: **stay on v2.0.0 for the next
+release** and revisit only on a concrete trigger (2.0.x CVE, a client defect only
+2.1.0 fixes, or upstream 2.0.x EOL).
 **Trigger:** the non-rc `v2.1.0` tag appears on `bytedance/deer-flow`, or
 `ghcr.io/bytedance/deer-flow-backend:v2.1.0` resolves to a new digest. Verified
 absent as of 2026-09-21 (only `v2.1.0-rc0` exists), so the trigger is unambiguous.
@@ -20,7 +25,7 @@ integration overrides upstream code in two ways:
 
 | Mechanism | Scale | Rebase shape |
 | --- | --- | --- |
-| Backend: 7 whole-file bind-mounts over upstream modules | **438 lines of our delta** vs **7,153 lines of upstream churn** in those files | 3-way merge per file |
+| Backend: 8 whole-file bind-mounts over upstream modules | **718 lines of our delta** vs **7,829 lines of upstream churn** in those files (re-measured 2026-10-27 at v2.1.0 GA, including the loop-detection patch) | 3-way merge per file, **17 conflict regions** — see §2.5 |
 | Backend: 1 bind-mount over a vendored package in the image venv | 579-line file | rebase inside the image |
 | Frontend: 17 files copied over cloned source | locale file alone would delete 1,127 upstream lines | re-derive each overlay |
 
@@ -40,8 +45,10 @@ reverts upstream code.
   rebase-break signal; a bind-mount onto a missing path means our code is
   silently absent at runtime)
 
-Current output against `v2.1.0-rc0`: all seven paths exist, 438 lines of our
-delta, 7,153 lines of upstream churn. Exit 0.
+Current output against `v2.1.0` (re-run 2026-10-27 at GA): all eight paths exist,
+718 lines of our delta, 7,829 lines of upstream churn. Exit 0. See §2.5 for the
+conflict-region measurement and the memory-adapter blocker that the exit-0 audit
+does NOT detect (it checks path existence and encoding, not API compatibility).
 
   NOTE (2026-09-22): this was 386 until commit `48f5a3b` added the delete-symlink
   guard (+52). The number is not a fixed property of the stack - it MOVES with any
@@ -58,9 +65,10 @@ seven paths missing while claiming the upgrade would break the runtime.
 Encoding is checked too. An earlier version read the base blob through a
 PowerShell string, which mis-decoded the UTF-8 em-dashes in these files and
 inflated the totals to 527 lines. With the blob redirected to a file and
-`[Console]::OutputEncoding` pinned, the same measurement gives **438 lines**, and
-the two methods now agree. A mis-decode here would have overstated the rebase by
-roughly 30%.
+`[Console]::OutputEncoding` pinned, the same measurement gave **438 lines** at
+the time of that check (seven patches then; **718** now that loop-detection is
+in the set - re-measured 2026-10-27), and the two methods agree. A mis-decode
+here would have overstated the rebase by roughly 30%.
 
 ### 1.2 Record each patch's INTENT — DONE (below)
 
@@ -76,6 +84,40 @@ patch was built on:
 | `deer-flow-worker.py` | +59/-0 | Run-worker behaviour additions | keep; largest upstream churn in the set (2,906 lines) |
 | `deer-flow-agent.py` | +80/-3 | Lead-agent factory additions | keep; 1,013 lines upstream churn |
 | `deer-flow-artifacts.py` | +64/-38 | Artifact route additions | keep; the 38 deletions need inspection at rebase |
+| `deer-flow-loop-detection.py` | +105/-19 | **Upstream fix backport.** Layer 2 of the loop guard kept a monotonic same-tool counter (`_tool_freq[thread_id][name] += 1`) cleared only by `reset()`, which the gateway never calls, so every `bash` call for a thread's whole life summed against one ceiling of 50. A productive document run (92 calls / 71 bash / 55 distinct commands, thread `6cc8dfae`) was force-stopped mid-work on 2026-10-27. Backports `e492bb1c` (#4072 windowed deque + Counter) and `4746a257` (#4295 evict/reset cleanup) onto the pinned v2.0.0 file. | **DELETE AT THE 2.1.0 REBASE, but NOT because of #4072.** v2.1.0 does **not** contain `e492bb1c` (measured 2026-10-27: it postdates the 2026-09-24 tag). It ships an equivalent-or-stronger fix of its own: `type _RunScopeKey = tuple[str, str | None]` keys `_tool_name_history` / `_tool_name_counter` on **(thread_id, run_id)**, so the counts are per **run** - no sliding window needed. Monotonic-counter occurrences at v2.1.0: **0**. Remove the mount **and the file**; do not carry the snapshot forward |
+
+> **Config survives the rebase - do NOT delete this block.** Measured against the
+> real v2.1.0 source on 2026-10-27: `ToolFreqOverride`, `tool_freq_warn`,
+> `tool_freq_hard_limit` and `tool_freq_overrides` all exist unchanged in
+> `deerflow/config/loop_detection_config.py`. Our `bash: {warn: 100, hard_limit: 150}`
+> override becomes *more* correct at 2.1.0, because a per-run counter is exactly
+> the shape the measurement found: the worst single run packs 74 bash calls, and
+> a thread's lifetime total was never the thing being measured. `window_size`
+> remains a valid key but is inert for Layer 2 at 2.1.0 (the run scope replaces
+> the window), so keep it only for Layer 1.
+
+
+> Layer 2 sizing is a config concern, not part of this patch:
+> `loop_detection.tool_freq_hard_limit` in `deer-flow-config.yaml` is set to 75
+> globally with a `bash` override of 100/150, because the middleware auto-sizes
+> its window to `max(window_size, hard_limit, overrides)` — at the shipped ceiling
+> of 50 the window is also 50, and the worst measured run already packs 48 bash
+> calls into 50 (2 calls of headroom). `scripts/test-loop-detection-window.ps1`
+> gates both halves.
+>
+> **A/B proof (2026-10-27).** Replaying the 92 tool-call batches of the thread
+> that was force-stopped, through the two implementations side by side:
+>
+> | middleware | result |
+> | --- | --- |
+> | published 0.2.6, shipped defaults | **FORCED STOP at batch 66/92** — `Tool bash called 50 times` |
+> | this patch + this config | completes all 92 batches, no stop |
+>
+> Live confirmation on an isolated copy of the stack: a real agent turn issued
+> 56 bash calls in one message and finished clean, with zero `FORCED STOP`
+> messages in the final state. The same replay still stops a genuine loop at
+> Layer 1 (identical call sets, 5) and a runaway `read_file` swarm at the global
+> ceiling (75). |
 | `langchain-mcp-tools.py` | 579-line file | MCP tool adapter — doubled server-name prefix + tool binding | rebase against the vendored package INSIDE the target image |
 
 ### 1.3 Memory adapter contract — DECIDED (2026-09-22)
@@ -311,11 +353,73 @@ versions rather than hardcoding them and refuses to finish if the pins moved but
    configs, so it hides failures a clean AIPC would hit.
 6. Full e2e suite.
 
+### 2.5 MEASURED 2026-10-27 — the real cost of the rebase, and the one blocker
+
+Measured against the actual `v2.0.0` and `v2.1.0` source with a byte-exact 3-way
+merge (LF-normalised from the git index, per §2.1). These numbers replace the
+estimate that used to be here.
+
+**Rebase cost per patch (conflict regions, after LF normalisation):**
+
+| Patch | Conflict regions | Largest block |
+| --- | --- | --- |
+| `deer-flow-artifacts.py` | 5 | 9,577 chars |
+| `deer-flow-uploads.py` | 4 | 4,996 |
+| `deer-flow-worker.py` | 4 | **28,024** |
+| `deer-flow-prompt.py` | 2 | 1,943 |
+| `deer-flow-agent.py` | 1 | 1,644 |
+| `deer-flow-thread-runs.py` | 1 | 5,364 |
+| `deer-flow-sync.py` | 0 | — clean |
+| `deer-flow-loop-detection.py` | 10 | **delete instead** |
+
+**17 conflict regions** across the seven patches we keep. `worker.py` is the
+real work: 694 → 3,062 lines upstream, with a 28 KB and a 14 KB conflict block —
+that is a rewrite, not a merge, and the runtime/worker is the core of run
+execution.
+
+**What does NOT break (verified at `v2.1.0`):** every import our `worker.py`
+patch relies on still resolves — `runtime/serialization.py`,
+`runtime/stream_bridge/` (now also has `redis.py`),
+`runtime/user_context.py`, `tracing/`, `config/app_config.py`. The gateway
+entrypoint `app.gateway.app` and the `/api/threads/{id}/runs/wait` route both
+survive. The base image `ghcr.io/bytedance/deer-flow-backend:v2.1.0` is
+**publicly pullable** (anonymous-token manifest 200), digest
+`sha256:68426f84f06f…`. Python floor is unchanged at `>=3.12`.
+
+**THE BLOCKER — our memory adapter does not satisfy the v2.1.0 contract.**
+
+`memory.storage_class` is legacy at 2.1.0. The new shape is
+`memory.manager_class` + `memory.backend_config`, and per the 2.1.0 release notes
+"a backend without `search()` fails fast in `tool` mode". Measured on our
+adapter (`pacgate-adapters/python/pacgate_deerflow_adapter/storage.py`): its
+methods are `__init__`, `load`, `reload`, `save`, `write_artifact`,
+`read_artifact`, `list_artifacts`. **There is no `search()`.**
+`backend_config` is also passed to `__init__(backend_config=...)` by the new
+factory, which our constructor (`**kwargs`) would silently swallow.
+
+So the rebase is NOT only the 17 merge conflicts: the memory lane needs a real
+adapter change (implement `search()`, accept `backend_config`, migrate the class
+to the new path) before the stack can serve memory on 2.1.0. This is the item
+that makes the upgrade a project rather than a patch-rebase, and it was not
+identified before 2026-10-27.
+
+Two smaller 2.1.0 defaults that would silently change client behaviour:
+`database.checkpoint_delta_snapshot_frequency` moved and its default went
+1000 → 10 (set it explicitly), and Docker now binds loopback by default
+(`BIND_HOST` unset here, so we would need it set to keep the current
+externally-reachable behaviour on an AIPC).
+
 ## 3. Out of scope
 
-- **Adopting `v2.1.0-rc0` now.** The RC is still receiving ~17 commits/day (48 of
-  67 post-RC commits are `fix`) with open P1 items; a client-deployed legal system
-  trades a known state for a moving one.
+- **Adopting `v2.1.0` (or the RC) now.** For the RC the reason was "still
+  receiving ~17 commits/day with open P1 items". For the GA the reason is
+  different and stronger, measured 2026-10-27 — see §2.5: the memory adapter does
+  not satisfy the new contract (no `search()`, `storage_class` superseded by
+  `manager_class`), `worker.py` needs a rewrite-scale merge (28,024-char
+  conflict), and nothing in 2.1.0 is a client-facing defect we are currently
+  exposed to. A client-deployed legal system should not trade a known state for a
+  project unless the project buys something. **Trigger to revisit: a 2.0.x CVE, a
+  client-reported defect only 2.1.0 fixes, or an upstream 2.0.x EOL.**
 - **Forking deer-flow.** The wrapper architecture is deliberate; the upgrade cost
   is real but bounded, and forking trades it for an unbounded merge debt.
 

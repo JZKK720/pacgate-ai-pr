@@ -169,6 +169,23 @@ uploads:
 tool_search:
   enabled: true
 
+# Pacgate 2026-10-27: per-tool loop guard sizing. The windowed fix lives in the
+# image (see the COPY in deploy/deer-flow-pacgate/Dockerfile) - the CEILING lives
+# here. At the upstream default of 50, the window is also 50 (the middleware
+# auto-sizes it to the largest hard limit), and the bash-heaviest run measured on
+# the AIPC box packs 48 bash calls into 50. Only bash is raised, because that is
+# the tool that legitimately repeats in document assembly (measured worst: bash
+# 74-in-150, write_file 22, read_file 10). The global ceiling stays tight so a
+# runaway across many distinct files still trips. Must stay in step with
+# deploy/client-bundle/deer-flow-config.yaml.
+loop_detection:
+  tool_freq_warn: 50
+  tool_freq_hard_limit: 75
+  tool_freq_overrides:
+    bash:
+      warn: 100
+      hard_limit: 150
+
 memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
   # Pacgate 2026-10-07: pin background memory updates to a capped model. The

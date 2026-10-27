@@ -254,7 +254,13 @@ if ($running.Count -eq 0) {
     $script:failures++
 }
 else {
-    $mounted = docker exec deer-flow sh -c 'grep -c "REFUSING to fall back" /app/backend/packages/harness/deerflow/agents/memory/storage.py' 2>&1
+    # NOTE: do NOT wrap this in `sh -c '...'`. From a PowerShell script the
+    # inner double quotes survive into the container's shell, which then
+    # searches for the literal string `"REFUSING` (with a quote) and returns 0
+    # on a correctly patched file - a false negative that fails the suite on
+    # every machine. Passing the pattern as a direct argv element avoids the
+    # second shell entirely.
+    $mounted = docker exec deer-flow grep -c 'REFUSING to fall back' /app/backend/packages/harness/deerflow/agents/memory/storage.py 2>&1
     if ("$mounted".Trim() -match '^[1-9]') {
         Pass 'the mounted memory storage carries the refusal patch'
     }
@@ -281,7 +287,18 @@ except Exception:
 '@
     $probe | Set-Content -Path (Join-Path $env:TEMP 'memlane_probe.py') -Encoding utf8
     docker cp (Join-Path $env:TEMP 'memlane_probe.py') deer-flow:/tmp/memlane_probe.py 2>&1 | Out-Null
-    $out = docker exec deer-flow /app/backend/.venv/bin/python /tmp/memlane_probe.py 2>&1
+    # The probe imports langgraph, which emits a deprecation warning on stderr.
+    # Under $ErrorActionPreference='Stop' PowerShell 5.1 promotes native stderr
+    # to a TERMINATING error, so the gate died before it could read the verdict
+    # it had just produced. Scope the preference down for this one call.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = docker exec deer-flow /app/backend/.venv/bin/python /tmp/memlane_probe.py 2>&1
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
     docker exec deer-flow sh -c 'rm -f /tmp/memlane_probe.py' 2>&1 | Out-Null
     Remove-Item (Join-Path $env:TEMP 'memlane_probe.py') -ErrorAction SilentlyContinue
 
