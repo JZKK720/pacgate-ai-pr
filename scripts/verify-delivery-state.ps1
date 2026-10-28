@@ -19,6 +19,86 @@ function Line($label, $value, $good) {
     if (-not $good) { $script:ok = $false }
 }
 
+# ── GHCR manifest probe, with an honest TLS-revocation fallback ─────────────
+#
+# WHY THIS EXISTS (measured 2026-10-28 on the admin dev box)
+#
+# Invoke-WebRequest failed for ALL FIVE images with a transport error, which this
+# gate reported as ERROR - indistinguishable from "the release was never
+# published". It was neither: ghcr.io was healthy the whole time.
+#
+#   curl --ssl-no-revoke  https://ghcr.io/token?...            -> 200
+#   curl (revocation ON)  https://ghcr.io/token?...            -> schannel:
+#        CRYPT_E_REVOCATION_OFFLINE (0x80092013)
+#   docker manifest inspect ghcr.io/.../pacgate-api:0.2.6      -> valid index
+#
+# So TCP was open and TLS succeeded, but the handshake's revocation phase could
+# not complete. Cause on that host: OCSP times out
+# (http://ocsp.digicert.com -> timeout) while the CRLs answer 200, so a
+# hard-fail-on-unavailable-revocation policy cannot be satisfied. That is a HOST
+# condition, and it made a release look undeployed.
+#
+# The fallback is deliberately NOT silent. It never relaxes anything by default:
+# it retries with revocation disabled ONLY after the strict attempt fails with a
+# revocation/TLS error, and it says so in the output on every run. A reader can
+# always tell whether a status came from a fully verified handshake.
+#
+# What it must NOT do is report a green 200 when the registry actually refused.
+# The curl path therefore reads the real HTTP status; a 401/404 still surfaces as
+# 401/404, not as a pass.
+
+# True when an exception is a transport/TLS failure rather than an HTTP response.
+function Test-TlsRevocationFailure($err) {
+    $msg = "$err"
+    return ($msg -match 'CRYPT_E_REVOCATION_OFFLINE' -or
+            $msg -match 'InitializeSecurityContext'      -or
+            $msg -match 'revocation'                      -or
+            $msg -match 'UNEXPECTED_EOF_WHILE_READING'   -or
+            $msg -match 'SSL')
+}
+
+# curl exits 0 and prints the code; on a transport failure it exits non-zero.
+function Get-ManifestStatusViaCurl($repo, $version, $accept) {
+    $uri = "https://ghcr.io/v2/$repo/manifests/$version"
+    $tokRaw = & curl.exe -sS --ssl-no-revoke --max-time 25 `
+        "https://ghcr.io/token?scope=repository:$repo`:pull&service=ghcr.io" 2>&1
+    $tok = $null
+    try { $tok = ($tokRaw | Out-String | ConvertFrom-Json).token } catch { }
+    if (-not $tok) { return $null }
+
+    $out = & curl.exe -sS --ssl-no-revoke --max-time 25 -o NUL -w '%{http_code}' `
+        -H "Authorization: Bearer $tok" -H "Accept: $accept" $uri 2>&1
+    $code = (@($out) | Where-Object { "$_" -match '^\d{3}$' } | Select-Object -Last 1)
+    if ($code) { return "$code" }
+    return $null
+}
+
+function Get-ManifestStatus($repo, $version, $accept) {
+    $uri = "https://ghcr.io/v2/$repo/manifests/$version"
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $tok = Invoke-RestMethod -Uri "https://ghcr.io/token?scope=repository:$repo`:pull&service=ghcr.io" -Method Get
+            $r = Invoke-WebRequest -Uri $uri -Method Head -UseBasicParsing `
+                -Headers @{ Authorization = "Bearer $($tok.token)"; Accept = $accept }
+            return @{ Status = "$($r.StatusCode)"; Via = 'strict' }
+        }
+        catch {
+            $code = $_.Exception.Response.StatusCode.value__
+            if ($code) { return @{ Status = "$code"; Via = 'strict' } }
+            if (Test-TlsRevocationFailure $_.Exception) {
+                # Strict handshake cannot complete revocation. Retry without it,
+                # and label the result so this is never mistaken for a verified read.
+                $fb = Get-ManifestStatusViaCurl $repo $version $accept
+                if ($fb) { return @{ Status = $fb; Via = 'no-revoke' } }
+                return @{ Status = 'ERROR'; Via = 'no-revoke-failed' }
+            }
+            if ($attempt -lt 3) { Start-Sleep -Milliseconds (500 * $attempt) }
+        }
+    }
+    return @{ Status = 'ERROR'; Via = 'strict' }
+}
+
+
 # The version under test, read from the crate manifest.
 $cargo = Get-Content pacgate-ai/Cargo.toml -Raw
 $cv = ([regex]::Match($cargo, '(?m)^version\s*=\s*"(?<v>\d+\.\d+\.\d+)"')).Groups['v'].Value
@@ -69,37 +149,26 @@ $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distr
 # reason. If the local half is already wrong it still fails normally, because then
 # there is a real delivery defect to report.
 $missing = @()
+$tlsRelaxed = @()
 foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow-frontend-pacgate', 'ocr-service')) {
     $repo = "$ns/$img"
-    $status = 'ERROR'
-    # ghcr.io intermittently drops the TLS connection mid-handshake
-    # (SSL: UNEXPECTED_EOF_WHILE_READING). Observed 2026-10-25 on a different
-    # image each run, so it is the registry and not one repo. A single blip is
-    # not a registry answer; retry before reporting ERROR, or this gate fails a
-    # release that is in fact fully published.
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-    try {
-        $tok = Invoke-RestMethod -Uri "https://ghcr.io/token?scope=repository:$repo`:pull&service=ghcr.io" -Method Get
-        # -UseBasicParsing is REQUIRED. Without it Windows PowerShell 5.1
-        # dispatches to the IE-based parser, which has no document to build for a
-        # HEAD response and throws NullReferenceException - so this gate failed on
-        # the default Windows shell while passing on PowerShell 7.
-        $r = Invoke-WebRequest -Uri "https://ghcr.io/v2/$repo/manifests/$V" -Method Head -UseBasicParsing -Headers @{ Authorization = "Bearer $($tok.token)"; Accept = $accept }
-        $status = "$($r.StatusCode)"
-        break
-    }
-    catch {
-        # A transport failure (DNS, TLS, timeout) leaves Response null; keep the
-        # ERROR marker so it is never confused with a real registry answer.
-        $code = $_.Exception.Response.StatusCode.value__
-        if ($code) { $status = "$code"; break }
-        $status = 'ERROR'
-        if ($attempt -lt 3) { Start-Sleep -Milliseconds (500 * $attempt) }
-    }
-    }
+    $probe = Get-ManifestStatus $repo $V $accept
+    $status = $probe.Status
+    if ($probe.Via -eq 'no-revoke') { $tlsRelaxed += $img }
     if ($status -eq '404') { $missing += $img }
     Line "${img}:$V" $status ($status -eq '200')
 }
+
+# Make the relaxation visible. A status obtained without a completed revocation
+# check is still a real registry answer, but the reader must be able to tell.
+if ($tlsRelaxed.Count -gt 0) {
+    Write-Output ''
+    Write-Host ("  NOTE: {0} probe(s) used --ssl-no-revoke - this host cannot complete" -f $tlsRelaxed.Count) -ForegroundColor Yellow
+    Write-Host "        TLS revocation (OCSP unreachable), so the strict handshake fails for" -ForegroundColor Yellow
+    Write-Host "        EVERY host, not just ghcr.io. Statuses above are real registry answers." -ForegroundColor Yellow
+    Write-Host ("        affected: {0}" -f ($tlsRelaxed -join ', ')) -ForegroundColor DarkGray
+}
+
 
 Write-Output ''
 if ($ok) {
