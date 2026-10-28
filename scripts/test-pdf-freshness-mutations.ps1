@@ -60,17 +60,45 @@ Write-Host '=== pdf-freshness gate: mutation tests ===' -ForegroundColor Cyan
 # ── Mutation 1: make a source NEWER than its render. ────────────────────────
 # This is the failure that actually happened: the .md was edited weeks after the
 # PDF was rendered, and nothing noticed.
+#
+# The edit must be a REAL one - mtime alone is not evidence of an edit, and the
+# gate now requires both a newer mtime and a content difference (see the mtime
+# comment in test-pdf-freshness.ps1: a bump-then-revert leaves the clock moved but
+# the bytes identical, which produced a false "uncommitted edit" on 2026-10-28).
+# A mutation that only touches the timestamp therefore tests the false positive,
+# not the defect, so this appends a line and restores the original bytes after.
 $src = 'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md'
 $pdf = 'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.pdf'
 $srcAbs = AbsPath $src
 $srcOriginalTime = (Get-Item $srcAbs).LastWriteTime
+$srcOriginalBytes = [System.IO.File]::ReadAllBytes($srcAbs)
+$append = [System.Text.Encoding]::UTF8.GetBytes("`n<!-- freshness mutation: simulated uncommitted edit -->`n")
+$combined = New-Object byte[] ($srcOriginalBytes.Length + $append.Length)
+[Array]::Copy($srcOriginalBytes, 0, $combined, 0, $srcOriginalBytes.Length)
+[Array]::Copy($append, 0, $combined, $srcOriginalBytes.Length, $append.Length)
+[System.IO.File]::WriteAllBytes($srcAbs, $combined)
 (Get-Item $srcAbs).LastWriteTime = (Get-Date).AddMinutes(5)
 $out = Invoke-Gate
 $code = $LASTEXITCODE
+[System.IO.File]::WriteAllBytes($srcAbs, $srcOriginalBytes)
 (Get-Item $srcAbs).LastWriteTime = $srcOriginalTime
-if ($code -eq 1) { Pass 'a source newer than its render -> rejected' }
-elseif ($code -eq 0) { Fail 'a source newer than its render -> ACCEPTED. The gate cannot detect the exact failure it exists for.'; Write-Host $out }
-else { Fail "a source newer than its render -> exit $code (expected 1)" }
+if ($code -eq 1) { Pass 'a real uncommitted source edit newer than its render -> rejected' }
+elseif ($code -eq 0) { Fail 'a real uncommitted source edit newer than its render -> ACCEPTED. The gate cannot detect the exact failure it exists for.'; Write-Host $out }
+else { Fail "a real uncommitted source edit -> exit $code (expected 1)" }
+
+# ── Mutation 1b: mtime moved but content IDENTICAL must be accepted. ────────
+# The false positive this gate used to emit: a version bump applied and reverted
+# restores the bytes but not the clock, so mtime alone says "edited" when nothing
+# changed. Asserting the negative here keeps the content check from being removed
+# as "redundant" later.
+$srcBytesBefore = [System.IO.File]::ReadAllBytes($srcAbs)
+(Get-Item $srcAbs).LastWriteTime = (Get-Date).AddMinutes(5)
+$out2 = Invoke-Gate
+$code2 = $LASTEXITCODE
+[System.IO.File]::WriteAllBytes($srcAbs, $srcBytesBefore)
+(Get-Item $srcAbs).LastWriteTime = $srcOriginalTime
+if ($code2 -eq 0) { Pass 'mtime newer but content identical -> accepted (no false positive)' }
+else { Fail "a newer mtime with identical content was rejected (exit $code2) - the gate is crying wolf about an edit that did not happen"; Write-Host $out2 }
 
 # ── Mutation 2: regress the delivery copy so it drifts from its original. ────
 # Truncate one byte. The pair is byte-identical at HEAD, so by the gate's own
