@@ -215,9 +215,8 @@ def resolve_agent_factory(assistant_id: str | None):
 # ``step`` counter (the authoritative super-step index), segmented per run by
 # the ``source: input`` marker that begins each run on a thread:
 #   - the deepest SUCCESSFUL run reached 694 super-steps for 77 LLM calls;
-#   - the seven runs that hit 1000 were all read-only analysis loops that
-#     produced zero artifacts and burned 3M+ tokens each before failing after
-#     ~16 minutes with a bare GraphRecursionError;
+#   - the seven runs that hit 1000 burned 3M+ tokens each before failing after
+#     12-19 minutes with a bare GraphRecursionError;
 #   - super-steps per LLM call reaches 5.45 in the deepest successful run, so a
 #     legitimate run at the observed LLM ceiling (a 138-call success) can need
 #     roughly 694 * 5.45 ~= 3780 super-steps.
@@ -225,9 +224,18 @@ def resolve_agent_factory(assistant_id: str | None):
 # used 500 on the assumption that 1000 super-steps ~= 100 LLM calls, which the
 # ``step`` data disproves and would have aborted a run that in fact succeeded.
 #
-# The cap is a LIMIT, not a target: a run that stops at the ceiling is already
-# thrashing. Env-tunable so a genuinely deeper workload can be raised without
-# editing the image, matching DEERFLOW_STREAM_IDLE_TIMEOUT_S.
+# WHAT THIS DOES AND DOES NOT DO - be honest about it:
+#   It stops a caller from requesting an unbounded budget. It does NOT prevent the
+#   recursion error, because the runs that hit the wall were doing legitimate work,
+#   not repeating themselves (259 bash calls, 259 distinct commands). No threshold
+#   can separate them: measured per-run bash density, successes are at least as
+#   dense as the kills at every window from 60 to 150 calls. The remedy for the
+#   error itself is convergence discipline in prompts/deer-flow-prompt.py, and the
+#   run that does hit this ceiling still loses its work - see the
+#   /mnt/user-data/outputs note in the config, which is not a host bind mount.
+#
+# The cap is a LIMIT, not a target. Env-tunable so a genuinely deeper workload can
+# be raised without editing the image, matching DEERFLOW_STREAM_IDLE_TIMEOUT_S.
 _PACGATE_MAX_RECURSION_LIMIT = int(os.environ.get("DEERFLOW_MAX_RECURSION_LIMIT", "4000") or 4000)
 
 def build_run_config(

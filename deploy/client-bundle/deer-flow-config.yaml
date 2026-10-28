@@ -588,6 +588,36 @@ uploads:
 # names "high-frequency tools like bash" - so it survives rebases as config, not
 # as patched code.
 #
+# KNOWN LIMIT, measured 2026-10-28 - read before "fixing" these numbers.
+#
+#   bash.hard_limit: 150 is effectively UNREACHABLE, and deliberately so.
+#   _tool_freq_window = max(20, 75, 150) = 150 CALLS, while a single tool in
+#   these runs peaks at 84-86% of all calls (117 bash of 137 total). Firing needs
+#   150 of the last 150 calls to be bash, which does not happen. So this override
+#   is a non-triggering backstop, not a working guard.
+#
+#   It cannot be tightened either. Per-run peak bash-in-window, attributed per run
+#   from langgraph's own checkpoint `step` segments (47 successes, 7 recursion
+#   kills):
+#       window  success max   kill min   separable?
+#         60        57           43         no
+#         84        63           58         no
+#        100        72           68         no
+#        120        74           74         no
+#        150        74           74         no
+#   Successes are at least as bash-dense as the failures at EVERY window, because
+#   the killing runs were doing legitimate diverse work: 259 bash calls, 259
+#   DISTINCT commands, 67 distinct write_file paths. Tightening this threshold
+#   would kill successful runs and still not prevent the recursion error.
+#
+#   What actually happens in the killing runs is a verify-fix-verify loop on PDF
+#   layout: uniquely named scripts (p18art.py, dashlen.py, dashw2.py,
+#   final_pages2.py, fontscan.py) each re-measuring the same document. Every name
+#   differs, so Layer 1's exact-hash - the layer that genuinely works - correctly
+#   declines to fire. The remedy is convergence discipline in the prompt, which is
+#   the "Finishing a deliverable instead of iterating on it" block in
+#   patches/deer-flow-prompt.py, not a threshold change here.
+#
 # Layer 1 (identical tool-call hash, warn 3 / hard-stop 5) is untouched and is
 # what actually catches a true repeat loop; measured across the same 33 runs, no
 # run ever repeated an identical call set more than 3 times in any window.
