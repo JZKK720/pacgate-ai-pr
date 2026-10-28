@@ -107,6 +107,7 @@ $patchMap = [ordered]@{
     'deer-flow-sync.py'        = 'backend/packages/harness/deerflow/tools/sync.py'
     'deer-flow-thread-runs.py' = 'backend/app/gateway/routers/thread_runs.py'
     'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
+    'deer-flow-run-recursion-cap.py' = 'backend/app/gateway/services.py'
     'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
 }
 

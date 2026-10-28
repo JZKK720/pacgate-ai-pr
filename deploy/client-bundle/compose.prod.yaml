@@ -285,6 +285,18 @@ services:
       # its keys are unchanged at v2.1.0 and a per-run counter is what the bash
       # override was sized for.
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
+      # Pacgate 2026-10-28: clamp the lead-agent recursion budget.
+      #
+      # The chat UI sends recursion_limit: 1000 on every run, and
+      # build_run_config() overwrote its own 100 default with whatever the client
+      # sent. LangGraph counts each graph super-step against that number, so a
+      # thrashing run consumed all 1000 and died after ~16 minutes with a bare
+      # GraphRecursionError - 12 of 16 failed runs on this box were this error, at
+      # BOTH 100 and 1000. The patch clamps client values to a ceiling (default
+      # 500, override with DEERFLOW_MAX_RECURSION_LIMIT) while still honouring a
+      # lower request. The most expensive SUCCESSFUL run on this box used 138 LLM
+      # calls, so 500 leaves roughly 3.5x headroom over proven need.
+      - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which
       # Ollama's /v1 endpoint ignores - background calls (memory updater) then

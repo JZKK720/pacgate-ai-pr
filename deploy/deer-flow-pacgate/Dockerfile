@@ -50,6 +50,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # block is KEPT at the rebase - its keys are unchanged at v2.1.0.
 COPY deploy/client-bundle/patches/deer-flow-loop-detection.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
 
+# Pacgate 2026-10-28: clamp the lead-agent recursion budget. The chat UI sends
+# recursion_limit: 1000 per run and build_run_config() let that overwrite its own
+# 100 default, so a thrashing run spent all 1000 supersteps (~16 min, 3M+ tokens)
+# before failing with a bare GraphRecursionError. Mounted in both compose lanes
+# too; the ceiling is DEERFLOW_MAX_RECURSION_LIMIT (default 500).
+COPY deploy/client-bundle/patches/deer-flow-run-recursion-cap.py /app/backend/app/gateway/services.py
+
 RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
 
 # Pacgate: bake OfficeCLI so the agent can create/read/modify real Office

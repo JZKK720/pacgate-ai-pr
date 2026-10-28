@@ -109,6 +109,12 @@ $gates = @(    'scripts/test-install-render.ps1'
     # gives it headroom. Both halves are asserted here, plus live replay against
     # the mounted module so a silent un-mount fails loudly.
     'scripts/test-loop-detection-window.ps1'
+    # The chat UI sends recursion_limit: 1000 per run and build_run_config()
+    # overwrote its own 100 default with it. LangGraph counts super-steps against
+    # that number, so a thrashing run spent all 1000 over ~16 minutes and 3M+
+    # tokens before failing. The cap is the fix; this gate asserts a client cannot
+    # raise it, using the module mounted into the RUNNING container.
+    'scripts/test-run-recursion-cap.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot

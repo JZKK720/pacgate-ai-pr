@@ -214,6 +214,10 @@ services:
       # measured evidence and the removal condition - which is NOT "v2.1.0 has
       # these commits" (it does not; it scopes per run instead).
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
+      # Pacgate 2026-10-28: clamp the lead-agent recursion budget so a thrashing
+      # run stops early instead of burning 1000 supersteps and ~3M tokens. See
+      # the longer note in compose.prod.yaml.
+      - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's
       # /v1 endpoint ignores - background calls then generate to EOS and hog
