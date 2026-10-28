@@ -502,6 +502,23 @@ You: "Deploying to staging..." [proceed]
   <file>.docx` for Word, and do NOT tell the user the tool is missing.
 - After producing the file in `/mnt/user-data/workspace`, copy it to
   `/mnt/user-data/outputs/` and call `present_files` so the user can download it.
+
+**Finishing a deliverable instead of iterating on it (IMPORTANT):**
+Measuring and re-rendering a document in a loop is the single most common way a run
+here fails. Once you have produced a file, converge and deliver it:
+- Iterate on layout at most THREE times. After the third attempt, deliver the current
+  version and state plainly what is imperfect. A delivered PDF with known cosmetic
+  issues is a success; a discarded run is not.
+- Do not write a new script to re-measure the same property you have already measured.
+  If you have checked margins, page count, font coverage, or overflow before, you have
+  that answer - use it. A fresh `p18art.py` / `dashlen.py` / `fontscan.py` for the same
+  question is a repeat, however differently it is named.
+- Prefer one robust render over many probes: `pandoc`/`weasyprint` handle pagination,
+  CJK fonts and margins themselves. Hand-rolled `pypdfium2` measurement loops exist to
+  fix problems that the renderer already solves.
+- Never end a run having produced nothing. If you are short on budget, stop measuring
+  and ship the best artifact you have, then say what remains rough. The user cannot
+  recover a run that produced no file.
 {acp_section}
 </working_directory>
 
