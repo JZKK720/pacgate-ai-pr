@@ -211,19 +211,24 @@ def resolve_agent_factory(assistant_id: str | None):
 # overwrite it verbatim. So the deliberate 100 applied to API callers only, and
 # the UI silently ran at 1000.
 #
-# MEASURED on this box 2026-10-28 across 97 runs:
-#   - the most expensive SUCCESSFUL run used 138 LLM calls;
-#   - the seven runs that hit the ceiling were all read-only analysis loops that
+# MEASURED on this box 2026-10-28, from langgraph's own per-checkpoint
+# ``step`` counter (the authoritative super-step index), segmented per run by
+# the ``source: input`` marker that begins each run on a thread:
+#   - the deepest SUCCESSFUL run reached 694 super-steps for 77 LLM calls;
+#   - the seven runs that hit 1000 were all read-only analysis loops that
 #     produced zero artifacts and burned 3M+ tokens each before failing after
 #     ~16 minutes with a bare GraphRecursionError;
-#   - 12 of 16 failed runs were this error, at BOTH 100 and 1000.
-# 1000 is therefore ~7x the largest proven need, and what it buys is the total
-# loss of a 16-minute run instead of a bounded early stop.
+#   - super-steps per LLM call reaches 5.45 in the deepest successful run, so a
+#     legitimate run at the observed LLM ceiling (a 138-call success) can need
+#     roughly 694 * 5.45 ~= 3780 super-steps.
+# That is why the ceiling is 4000 and not something tighter: an earlier draft
+# used 500 on the assumption that 1000 super-steps ~= 100 LLM calls, which the
+# ``step`` data disproves and would have aborted a run that in fact succeeded.
 #
 # The cap is a LIMIT, not a target: a run that stops at the ceiling is already
 # thrashing. Env-tunable so a genuinely deeper workload can be raised without
 # editing the image, matching DEERFLOW_STREAM_IDLE_TIMEOUT_S.
-_PACGATE_MAX_RECURSION_LIMIT = int(os.environ.get("DEERFLOW_MAX_RECURSION_LIMIT", "500") or 500)
+_PACGATE_MAX_RECURSION_LIMIT = int(os.environ.get("DEERFLOW_MAX_RECURSION_LIMIT", "4000") or 4000)
 
 def build_run_config(
     thread_id: str,

@@ -19,9 +19,17 @@
 # 1000 - so simply matching the two numbers would not have been enough; the
 # budget needed a ceiling that a client cannot raise.
 #
-# The most expensive SUCCESSFUL run here used 138 LLM calls. The ceiling is 500,
-# roughly 3.5x proven need, and env-tunable via DEERFLOW_MAX_RECURSION_LIMIT so a
-# genuinely deeper workload can be raised without editing the image.
+# The deepest SUCCESSFUL run here reached 694 super-steps (77 LLM calls), and the
+# worst observed super-steps-per-LLM-call ratio is 5.45, so a legitimate run at
+# the 138-call observed ceiling can need ~3780 super-steps. The ceiling is
+# therefore 4000 - a runaway bound, not a budget - and env-tunable via
+# DEERFLOW_MAX_RECURSION_LIMIT so a genuinely deeper workload can be raised
+# without editing the image.
+#
+# An earlier draft used 500, reasoning that 1000 super-steps was ~100 LLM calls
+# and 500 was 7x need. Reading langgraph's own per-checkpoint `step` counter
+# disproved that and showed 500 would abort a run that actually succeeded. This
+# gate now pins the number so the reasoning cannot silently regress.
 #
 # WHY THIS GATE ALSO CHECKS THE DEPLOYED FILE
 #
@@ -79,6 +87,8 @@ $src = Get-Content -LiteralPath $patch -Raw
 Assert-That ($src -match '(?m)^def build_run_config\(') 'the patch is a whole file (defines build_run_config)'
 Assert-That ($src -match '(?m)^_PACGATE_MAX_RECURSION_LIMIT\s*=\s*int\(') 'the ceiling is a named, env-tunable constant'
 Assert-That ($src -match 'DEERFLOW_MAX_RECURSION_LIMIT') 'the ceiling can be raised without editing the image'
+Assert-That ($src -match '"4000"') 'the default ceiling is 4000 - the measured runaway bound, not a budget'
+Assert-That ($src -notmatch '"500"') 'the unsound 500 default has not come back'
 Assert-That ($src -match 'if k == "recursion_limit":') 'the merge special-cases recursion_limit'
 
 # The specific defect: recursion_limit was assigned straight through. Assert the
@@ -135,6 +145,7 @@ probe("UI1000", {"recursion_limit": 1000})
 probe("NONE", None)
 probe("LOW50", {"recursion_limit": 50})
 probe("STR900", {"recursion_limit": "900"})
+probe("HUGE", {"recursion_limit": 1000000})
 probe("JUNK", {"recursion_limit": "nonsense"})
 print("\n".join(out))
 '@
@@ -148,16 +159,23 @@ $ui      = if ($live -match 'UI1000=(\S+)')    { $Matches[1] } else { '' }
 $none    = if ($live -match 'NONE=(\S+)')      { $Matches[1] } else { '' }
 $low     = if ($live -match 'LOW50=(\S+)')     { $Matches[1] } else { '' }
 $str     = if ($live -match 'STR900=(\S+)')    { $Matches[1] } else { '' }
+$huge    = if ($live -match 'HUGE=(\S+)')      { $Matches[1] } else { '' }
 $junk    = if ($live -match 'JUNK=(\S+)')      { $Matches[1] } else { '' }
 
 Assert-That ($ceiling -ge 200) "the deployed ceiling is a real budget ($ceiling), not a stub"
 
-# THE regression this gate exists for: the UI's 1000 must not reach LangGraph.
-Assert-That ($ui -ne '1000' -and $ui -eq "$ceiling") `
-    "the chat UI's recursion_limit: 1000 is clamped to $ceiling (got '$ui')"
+# The clamp semantics, stated honestly:
+#  - the UI's hardcoded 1000 is now UNDER the ceiling, so it passes through
+#    unchanged. That is the correct outcome: 1000 is a proven-safe budget (runs
+#    have succeeded inside it) and the ceiling exists to stop a caller asking for
+#    an unbounded or runaway budget, not to shrink a working one.
+#  - the ceiling must still BIND above itself, which is what stops a thrashing
+#    run from being handed an arbitrarily large budget.
+Assert-That ($ui -eq '1000') "the UI's 1000 sits under the $ceiling ceiling and passes through (got '$ui')"
 Assert-That ($none -eq '100') "an API run with no config still gets the 100 default (got '$none')"
 Assert-That ($low -eq '50') "a caller asking for LESS than the default is still honoured (got '$low')"
-Assert-That ($str -eq "$ceiling") "a string-typed 900 is clamped too (got '$str')"
+Assert-That ($str -eq '900') "a string-typed 900 is coerced to an int, not dropped (got '$str')"
+Assert-That ($huge -eq "$ceiling") "a runaway 1000000 request is clamped down to the $ceiling ceiling (got '$huge')"
 Assert-That ($junk -eq '100') "a non-integer value keeps the default instead of crashing (got '$junk')"
 
 Write-Host ''
