@@ -673,6 +673,16 @@ $liveStackGates = @(
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
 
+    # Is the convergence prompt actually holding? Six runs were killed by
+    # "Recursion limit of 1000 reached" at 115-118 LLM calls. The fix is a PROMPT
+    # change, which cannot be asserted the way a clamp can: only a run long enough
+    # to approach that wall can demonstrate it, and every gate here uses short
+    # probes. This reports the deepest post-fix run and any recursion error since
+    # the baseline, and exits 2 while nothing has gone deep enough - so "not
+    # exercised" can never be misread as "verified". A measurement, not a gate,
+    # for exactly that reason.
+    'scripts/audit-recursion-regressions.ps1'
+
     # Can Docker actually pull and install anything right now? Runs the probe a
     # build would need and, on failure, names the CAUSE (dead system proxy vs a
     # genuine outage) instead of leaving an SSL EOF to be interpreted. Added after
