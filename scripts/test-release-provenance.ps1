@@ -258,7 +258,18 @@ $contextPrefixes = @(
     'pacgate-adapters/python/pacgate_deerflow_adapter/',
     'deploy/deer-flow-pacgate/config.yaml',
     'deploy/deer-flow-src/frontend/',
-    'deploy/frontend-patches/files/'   # CI copies these INTO the frontend context
+    'deploy/frontend-patches/files/',  # CI copies these INTO the frontend context
+    # ADDED 2026-10-28. deploy/deer-flow-pacgate/Dockerfile COPYs these two
+    # straight into the image (L51 and L58), so they DO reach a built layer. They
+    # were missing here, which made this gate report BENIGN on the most
+    # image-affecting files in the tree - the exact under-report the comment
+    # below calls the dangerous direction. Consequence measured today: the
+    # recursion-cap patch landed in this list as benign, so a release cut could
+    # have shipped an image whose gateway silently lacked the cap while this gate
+    # stayed green. Derived from the Dockerfile, not guessed: re-check L51/L58 if
+    # the bake moves.
+    'deploy/client-bundle/patches/deer-flow-loop-detection.py',
+    'deploy/client-bundle/patches/deer-flow-run-recursion-cap.py'
 )
 
 # A Dockerfile is itself a build input even though it is not a COPY source.
@@ -300,6 +311,37 @@ foreach ($f in $changed) {
 }
 
 Info "checked $($changed.Count) file(s) changed between $($builtRev) and HEAD"
+
+# Self-check (added 2026-10-28). The prefix list above is maintained by hand, so a
+# new COPY source in a Dockerfile can silently land in $benign and the gate reports
+# PASS while the image really does change. That happened today: the recursion-cap
+# patch was classified benign even though the deer-flow Dockerfile COPYs it.
+# Re-derive the deer-flow COPY sources from the Dockerfile itself and fail if one
+# is missing from the hand-written list, so the list cannot drift unnoticed.
+$deerFlowDf = 'deploy/deer-flow-pacgate/Dockerfile'
+if (Test-Path $deerFlowDf) {
+    $copySources = @(Get-Content -LiteralPath $deerFlowDf |
+        Where-Object { $_ -match '^\s*COPY\s' -and $_ -notmatch '--from=' } |
+        ForEach-Object { ($_ -replace '^\s*COPY\s+(?:--\S+\s+)*', '').Trim() -split '\s+' | Select-Object -First 1 } |
+        Where-Object { $_ -and $_ -notmatch '^\.?/?$' })
+    $unlisted = @()
+    foreach ($src in $copySources) {
+        $norm = $src.TrimStart('./').TrimEnd('/')
+        if (-not $norm) { continue }
+        $matched = $false
+        foreach ($p in $contextPrefixes) {
+            if ($norm.StartsWith($p.TrimEnd('/')) -or $p.StartsWith($norm + '/') -or $norm -eq $p.TrimEnd('/')) { $matched = $true; break }
+        }
+        if (-not $matched) { $unlisted += $src }
+    }
+    if ($unlisted.Count -gt 0) {
+        Fail "the deer-flow Dockerfile COPYs $($unlisted.Count) source(s) this gate does not track, so it cannot tell whether they changed:"
+        $unlisted | ForEach-Object { Info "  $_" }
+        Info 'add each one to $contextPrefixes above, or move it out of the image build'
+    } else {
+        Pass "every deer-flow Dockerfile COPY source is tracked as an image input"
+    }
+}
 
 if ($affecting.Count -gt 0) {
     Fail "$($affecting.Count) file(s) that CAN reach a built image changed after the published revision was built:"
