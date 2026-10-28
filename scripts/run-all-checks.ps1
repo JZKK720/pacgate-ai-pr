@@ -115,6 +115,11 @@ $gates = @(    'scripts/test-install-render.ps1'
     # tokens before failing. The cap is the fix; this gate asserts a client cannot
     # raise it, using the module mounted into the RUNNING container.
     'scripts/test-run-recursion-cap.ps1'
+    # A run killed at the recursion ceiling is RECOVERABLE only because thread
+    # outputs land on the /data bind mount and stay downloadable. Nothing asserted
+    # that until now, and the property is easy to lose: a mount change or a
+    # listing-endpoint regression silently turns a bounded failure into lost work.
+    'scripts/test-chat-artifact-durability.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot

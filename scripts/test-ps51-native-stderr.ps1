@@ -86,6 +86,10 @@ $liveStackScripts = @(
     # unnoticed.
     'scripts/test-loop-detection-window.ps1'
     'scripts/preflight-docker-egress.ps1'
+    # Added 2026-10-28. test-chat-artifact-durability.ps1 shells out to docker
+    # inspect/exec and needs the same stderr discipline; listing it here keeps a
+    # future edit from reintroducing a bare redirect that only 5.1 punishes.
+    'scripts/test-chat-artifact-durability.ps1'
 )
 
 $pass = 0

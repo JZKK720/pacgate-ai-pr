@@ -230,9 +230,15 @@ def resolve_agent_factory(assistant_id: str | None):
 #   not repeating themselves (259 bash calls, 259 distinct commands). No threshold
 #   can separate them: measured per-run bash density, successes are at least as
 #   dense as the kills at every window from 60 to 150 calls. The remedy for the
-#   error itself is convergence discipline in prompts/deer-flow-prompt.py, and the
-#   run that does hit this ceiling still loses its work - see the
-#   /mnt/user-data/outputs note in the config, which is not a host bind mount.
+#   error itself is convergence discipline in prompts/deer-flow-prompt.py.
+#
+# Work already written DOES survive a kill, which is why this is a recoverable
+# failure rather than a lost one. Artifacts land per-thread under
+# /data/deer-flow/users/<user>/threads/<thread>/user-data/outputs on the /data
+# bind mount, so they outlive the run and the container. Verified on thread
+# 93a11bec after both of its recursion kills: GET /api/threads/{id}/outputs
+# listed the files and the PDF downloaded intact (HTTP 200, 1,846,347 bytes).
+# A user therefore re-prompts on the same thread and keeps the prior work.
 #
 # The cap is a LIMIT, not a target. Env-tunable so a genuinely deeper workload can
 # be raised without editing the image, matching DEERFLOW_STREAM_IDLE_TIMEOUT_S.
