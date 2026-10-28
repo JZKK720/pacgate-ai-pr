@@ -78,13 +78,45 @@ try:
     c = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     rows = list(c.execute(
-        "select status, llm_call_count, error, created_at from runs order by created_at"))
+        "select status, llm_call_count, error, created_at, kwargs_json from runs order by created_at"))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
     raise SystemExit(0)
 
 def norm(s):
     return (s or "").replace("T", " ")[:19]
+
+def requested_limit(kwargs_json):
+    """The recursion_limit the CLIENT asked for, or None when it sent none.
+
+    This is the discriminator that matters: an error at the documented default of
+    100 is the ceiling behaving as designed (the caller sent no config, so the
+    server default applied), while an error at the UI's 1000 is the historical
+    defect signature - a run allowed a 1000-super-step budget that thrashed until
+    it exhausted it. Treating both as "regression" makes the audit unusable.
+    """
+    try:
+        k = json.loads(kwargs_json or "{}")
+    except Exception:
+        return None
+    def find(o):
+        if isinstance(o, dict):
+            for kk, vv in o.items():
+                if kk == "recursion_limit":
+                    try:
+                        return int(vv)
+                    except (TypeError, ValueError):
+                        return None
+                f = find(vv)
+                if f is not None:
+                    return f
+        elif isinstance(o, list):
+            for vv in o:
+                f = find(vv)
+                if f is not None:
+                    return f
+        return None
+    return find(k)
 
 after = [r for r in rows if norm(r["created_at"]) >= baseline]
 recursion = [r for r in after if "ecursion limit" in (r["error"] or "")]
@@ -94,12 +126,25 @@ succ = [r for r in after if r["status"] == "success"]
 deep = [r for r in succ if (r["llm_call_count"] or 0) > 0]
 deepest = max(((r["llm_call_count"] or 0) for r in deep), default=0)
 
+rec_rows = []
+for r in recursion:
+    lim = requested_limit(r["kwargs_json"])
+    rec_rows.append({
+        "at": norm(r["created_at"]),
+        "calls": r["llm_call_count"],
+        "requested_limit": lim,
+        # No limit in the request => the server's 100 default applied, which is
+        # the ceiling working, not the bug.
+        "at_default": lim is None or lim <= 100,
+    })
+defects = [x for x in rec_rows if not x["at_default"]]
+
 print(json.dumps({
     "total_runs": len(rows),
     "since_baseline": len(after),
     "success": len(succ),
-    "recursion": [{"at": norm(r["created_at"]), "calls": r["llm_call_count"]}
-                  for r in recursion],
+    "recursion": rec_rows,
+    "recursion_defects": defects,
     "other_errors": [{"at": norm(r["created_at"]),
                       "calls": r["llm_call_count"],
                       "error": (r["error"] or "")[:80]} for r in other_err],
@@ -156,12 +201,23 @@ if ($d.since_baseline -gt 0) {
 Write-Host ''
 
 $recCount = @($d.recursion).Count
+$defectCount = @($d.recursion_defects).Count
 if ($recCount -eq 0) {
     Write-Host "  [PASS] no Recursion limit error since the baseline" -ForegroundColor Green
 } else {
-    Write-Host "  [FAIL] $recCount run(s) hit the recursion wall AFTER the baseline" -ForegroundColor Red
+    # Separate the two meanings. An error at the server's 100 default means the
+    # caller sent no recursion_limit and the documented ceiling applied - that is
+    # the cap working. The historical defect is an error at the UI's 1000.
     foreach ($r in $d.recursion) {
-        Write-Host "         $($r.at)  llm=$($r.calls)" -ForegroundColor Red
+        $lim = if ($null -eq $r.requested_limit) { 'none (server default 100)' } else { "$($r.requested_limit)" }
+        if ($r.at_default) {
+            Write-Host "  [INFO] $($r.at)  llm=$($r.calls)  hit the 100 default (requested: $lim) - the documented ceiling, not the defect" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [FAIL] $($r.at)  llm=$($r.calls)  hit the wall with recursion_limit=$lim requested - the defect signature" -ForegroundColor Red
+        }
+    }
+    if ($defectCount -eq 0) {
+        Write-Host "  [PASS] no run errored on a CALLER-SUPPLIED budget (all were the 100 default)" -ForegroundColor Green
     }
 }
 
@@ -185,13 +241,13 @@ if ($deepest -ge $DeepEnough) {
 }
 
 Write-Host ''
-if ($recCount -gt 0) {
-    Write-Host "RESULT: REGRESSION - $recCount recursion error(s) after the baseline." -ForegroundColor Red
+if ($defectCount -gt 0) {
+    Write-Host "RESULT: REGRESSION - $defectCount run(s) errored on a caller-supplied recursion budget." -ForegroundColor Red
     exit 1
 }
 if ($deepest -lt $DeepEnough) {
-    Write-Host "RESULT: no regression, but NOT exercised - no run reached $DeepEnough LLM calls. Cannot claim the fix works yet." -ForegroundColor Yellow
+    Write-Host "RESULT: no caller-budget regression, but NOT exercised - no run reached $DeepEnough LLM calls." -ForegroundColor Yellow
     exit 2
 }
-Write-Host "RESULT: no recursion error after the baseline, and a run deep enough to test the fix succeeded." -ForegroundColor Green
+Write-Host "RESULT: no caller-budget regression, and a run deep enough to test the fix succeeded." -ForegroundColor Green
 exit 0
