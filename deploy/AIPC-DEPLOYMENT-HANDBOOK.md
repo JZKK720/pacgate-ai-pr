@@ -30,11 +30,17 @@ AIPC #2 must pull the **updated** code (see Stage 1) so it gets these fixes.
    **entire** MCP tool load (deer-flow uses `asyncio.gather`), so **no** MCP tools appeared.
    **Fix:** use `OPENVIKING_ROOT_API_KEY` (template now uses `${OPENVIKING_ROOT_API_KEY}`).
 
-3. **`docker compose up -d --force-recreate deer-flow` wipes deer-flow's local DB.**
-   The SQLite DB, admin user, threads, and `.jwt_secret` live at `/app/backend/.deer-flow/`
-   **inside the container** (not mounted). Recreating the container loses them → the frontend
-   gets 401 and the `/setup` page appears. **Use `docker compose restart deer-flow`** for
-   config changes; only recreate if you accept losing the local DB (then re-run `/setup`).
+3. **Prefer `docker compose restart deer-flow` over `--force-recreate` for config changes.**
+   `.deer-flow` (SQLite DB, admin user, threads, `.jwt_secret`) is now **bind-mounted** at
+   `./data/deer-flow:/app/backend/.deer-flow` in BOTH `compose.prod.yaml` and
+   `compose.bundle.yaml`, so a recreate no longer loses it. Measured 2026-10-28: a
+   `--force-recreate deer-flow` on the dev box left the DB, the `10/21` `.jwt_secret` and
+   the user threads intact.
+   **This was previously documented as destructive and that reason is now stale.** The
+   guidance still stands for a different reason: a recreate also re-runs `/setup`-adjacent
+   startup work and interrupts in-flight runs, and `patches/*.py` plus `deer-flow-config.yaml`
+   are read at process start, so `restart` is enough to apply them. Recreate only when the
+   compose file itself changed (new mounts, env, or image).
 
 4. **QM sign-in needs an email transport, not Outlook SMTP.** The old SMTP path
    (`smtp.office365.com` + app password) is broken — Microsoft retired Basic Auth / app

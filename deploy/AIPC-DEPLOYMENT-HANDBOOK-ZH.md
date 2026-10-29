@@ -30,11 +30,16 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
    MCP 工具出现。**修复：** 使用 `OPENVIKING_ROOT_API_KEY`（模板现已使用
    `${OPENVIKING_ROOT_API_KEY}`）。
 
-3. **`docker compose up -d --force-recreate deer-flow` 会清空 deer-flow 的本地数据库。**
-   SQLite 数据库、管理员用户、线程和 `.jwt_secret` 位于 `/app/backend/.deer-flow/`
-   **容器内部**（未挂载）。重建容器会丢失它们 → 前端返回 401 并出现 `/setup` 页面。
-   **配置变更请使用 `docker compose restart deer-flow`**；只有在你接受丢失本地
-   数据库时才重建（然后重新运行 `/setup`）。
+3. **配置变更优先使用 `docker compose restart deer-flow`，而不是 `--force-recreate`。**
+   `.deer-flow`（SQLite 数据库、管理员用户、线程、`.jwt_secret`）现已**绑定挂载**到
+   `./data/deer-flow:/app/backend/.deer-flow`，`compose.prod.yaml` 与
+   `compose.bundle.yaml` 两个 lane 都是如此，因此重建容器不再丢失这些数据。
+   实测 2026-10-28：在开发机上对 deer-flow 执行 `--force-recreate`，数据库、
+   `10/21` 的 `.jwt_secret` 与用户线程均完好保留。
+   **本条目此前写作"重建会丢失数据库"，该理由已过时。** 这条建议本身仍然成立，
+   但理由不同：重建会重新执行启动流程并中断正在运行的 run；而 `patches/*.py` 与
+   `deer-flow-config.yaml` 只在进程启动时读取，`restart` 已足以生效。仅在 compose
+   文件本身变化时（新增挂载、环境变量或镜像）才需要重建。
 
 4. **QM 登录需要邮件传输，而不是 Outlook SMTP。** 旧的 SMTP 路径
    （`smtp.office365.com` + 应用密码）已失效——微软已于 2025 年 9 月停用
