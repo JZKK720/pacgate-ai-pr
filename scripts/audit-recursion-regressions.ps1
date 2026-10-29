@@ -102,8 +102,23 @@ def count_run_artifacts(thread_id, created_at):
     """
     import os, time
     hits = []
-    base = "/data/deer-flow/users"
-    if not os.path.isdir(base):
+    # HOST paths, not container paths, and NOT relative to the db file's own depth.
+    # db = deploy/client-bundle/data/deer-flow/data/deerflow.db, so users/ is
+    # TWO levels up from the db dir - not one. Two earlier guesses were both wrong
+    # and both failed silently:
+    #   "/data/deer-flow/users"            -> container-only path, never on the host
+    #   <db_dir>/deer-flow/users           -> doubled "data" segment, does not exist
+    # Walk up until a "users" dir is found, so the layout can move without this
+    # probe silently reporting "nothing delivered" when files are present.
+    base = None
+    probe = os.path.dirname(os.path.abspath(db))
+    for _ in range(4):
+        cand = os.path.join(probe, "users")
+        if os.path.isdir(cand):
+            base = cand
+            break
+        probe = os.path.dirname(probe)
+    if base is None:
         return hits
     for uid in os.listdir(base):
         d = os.path.join(base, uid, "threads", thread_id, "user-data", "outputs")
