@@ -383,11 +383,43 @@ qwen3.5:9b
 
 ## Part 3: Deploy to client AI PC
 
-### 3.1 Ship the bundle
+> **AIPC 1 and AIPC 2 are git clones, not zip installs.** See
+> `AIPC-DEPLOYMENT-HANDBOOK.md` Stage 1, `plans/027-hx370-64gb-install-verify.md`
+> note 1, and `README-client.md` step 3. Use section 3.2a for those machines. The
+> zip path in 3.2b exists only for a host that cannot clone.
 
-Zip `deploy/client-bundle/` and transfer to the client AI PC (USB drive, secure file transfer, or direct access).
+### 3.1 (zip lane) Ship the bundle
 
-### 3.2 On the client AI PC
+Package with `pwsh -File scripts/package-bundle.ps1`, then transfer the zip to the
+client AI PC (USB drive, secure file transfer, or direct access).
+
+Do **not** use `Compress-Archive deploy/client-bundle/*`: on Windows a leading dot
+does not hide a file, so that glob ships `.env`, `.deer-flow-credentials`,
+`qm-pacgate/.env` (about 15 signing secrets), `openviking/ov.conf`,
+`openviking/workspace/`, and `data/` (2.39 GB of run DB and matter documents).
+
+### 3.2a On the client AI PC — git clone (AIPC 1 / 2, the normal path)
+
+```powershell
+# 1. Install Docker Desktop, then Ollama (https://ollama.com)
+
+# 2. Clone
+cd C:\
+git clone https://github.com/JZKK720/pacgate-ai-pr.git
+cd pacgate-ai-pr\deploy\client-bundle
+
+# 3. Configure
+copy .env.example .env
+notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENANT_ID
+
+# 4. Run installer
+.\install.ps1
+```
+
+Updating an existing install: `cd C:\pacgate-ai-pr\deploy\client-bundle` then
+`.\install.ps1 -Update`. Do not run `git pull` separately or edit image pins by hand.
+
+### 3.2b On the client AI PC — zip (only if git is unavailable)
 
 ```powershell
 # 1. Install Docker Desktop (if not already)
@@ -436,14 +468,18 @@ When Cubecloud ships a new version:
 
 ```powershell
 # On client AI PC:
-cd C:\pacgate
+cd C:\pacgate-ai-pr\deploy\client-bundle
 .\install.ps1 -Update
 
 # This:
-# 1. Pulls new images from GHCR (pinned in compose.prod.yaml)
-# 2. Restarts containers with new images
-# 3. ./data/tenants/ is preserved (volume mount, not in image)
-# 4. Postgres data is preserved (named volume)
+# 1. Fast-forwards the repo (so the pins in compose.prod.yaml move together)
+# 2. Pulls new images from GHCR
+# 3. Restarts deer-flow + frontend so bind-mounted patches/*.py take effect
+# 4. ./data/tenants/ is preserved (bind mount, not in image)
+# 5. Postgres data is preserved (named volume)
+
+# Do NOT run `git pull` separately and do NOT edit image pins by hand.
+# (zip-lane machines have no git: run `cd C:\pacgate` then `.\install.ps1 -Update`)
 ```
 
 ### Bumping versions (Cubecloud side)

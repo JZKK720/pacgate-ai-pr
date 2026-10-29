@@ -222,9 +222,73 @@ if (-not $expectedNs) {
 }
 
 Write-Host ''
+Write-Host '=== 7. docs agree on HOW the AIPC installs ===' -ForegroundColor Cyan
+#
+# WHY THIS CHECK EXISTS (2026-10-29)
+#
+# Two client-facing docs described DIFFERENT installs for the SAME machines:
+#
+#   AIPC-DEPLOYMENT-HANDBOOK.md : git clone -> C:\pacgate-ai-pr\deploy\client-bundle
+#   SETUP-AND-OPERATIONS.md     : Expand-Archive -> C:\pacgate
+#
+# Both said "for Cubecloud engineers, on-site at Pacgate-law", both were edited the
+# same week, and neither was wrong on its own - so a reader believed whichever they
+# opened last. That is exactly what happened here: an update instruction was written
+# against C:\pacgate and would have failed on AIPC 1 and 2, which are clones
+# (confirmed by handbook Stage 1, plans/027 note 1, and README-client.md step 3).
+#
+# A stale version number is caught by checks 1-6. A wrong INSTALL SHAPE was not,
+# because shape is not a version string. This closes that gap: the deploy step for
+# the AIPC must name the clone path, and any zip instruction must be marked as the
+# no-git fallback rather than left to read as the primary path.
+$clonePath = 'C:\pacgate-ai-pr\deploy\client-bundle'
+# A doc can describe the clone either way: absolutely (C:\pacgate-ai-pr\...), or
+# relatively after a `git clone` (`cd pacgate-ai-pr\deploy\client-bundle`). README.md
+# and README-ZH.md use the relative form, and demanding the absolute path flagged
+# them wrongly - the same over-reach that makes a check get deleted rather than fixed.
+$cloneRelative = 'deploy[\\/]client-bundle'
+$zipMarker = '(?i)(no git|without git|no-git|cannot clone|git is unavailable|if git|无法 git|无法克隆|not the path for AIPC|仅用于无法)'
+
+foreach ($doc in $Docs) {
+    if (-not (Test-Path $doc)) { continue }
+    $lines = @(Get-Content $doc)
+
+    $namesClone = $false
+    $bareZip = @()
+    # SECTION STATE, not a proximity radius: the "only if git is unavailable"
+    # heading sits ~10 lines above its zip block, so a 6-line window missed it.
+    #
+    # FENCE AWARENESS is also required. Inside a ```powershell block every comment
+    # (`# 1. Install Docker Desktop`) matches '^#{1,6}\s', so a naive heading scan
+    # reset the exemption on the line above the zip and the check still cried wolf
+    # on a correctly-labelled fallback. Track the fence and only honour headings
+    # outside it.
+    $inFence = $false
+    $sectionExempt = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $t = $lines[$i]
+        if ($t -match '^\s*```') { $inFence = -not $inFence; continue }
+        if (-not $inFence -and $t -match '^#{1,6}\s') { $sectionExempt = ($t -match $zipMarker) }
+        if ($t -match [regex]::Escape($clonePath) -or $t -match $cloneRelative) { $namesClone = $true }
+
+        if ($t -match 'Expand-Archive.*-DestinationPath\s+C:\\pacgate\s*$') {
+            if (-not $sectionExempt) { $bareZip += ($i + 1) }
+        }
+    }
+
+    if (-not $namesClone) {
+        Fail "$doc never names the client-bundle path ($clonePath or deploy\client-bundle) - the AIPC deploy step must clone, not unzip (AIPC 1/2 are git clones)"
+    } elseif ($bareZip.Count -gt 0) {
+        Fail "$doc L$($bareZip -join ', '): a zip install into C:\pacgate is presented as the primary path. Mark it as the no-git fallback or remove it."
+    } else {
+        Pass "$doc deploy path is consistent (clone path named; no unqualified zip install)"
+    }
+}
+
+Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "RESULT: $($script:failures) stale/missing reference(s)." -ForegroundColor Red
     exit 1
 }
-Write-Host 'RESULT: pin surfaces agree, docs are current, and every referenced tag resolves.' -ForegroundColor Green
+Write-Host 'RESULT: pin surfaces agree, docs are current, every referenced tag resolves, and both AIPC docs agree on the install shape.' -ForegroundColor Green
 exit 0

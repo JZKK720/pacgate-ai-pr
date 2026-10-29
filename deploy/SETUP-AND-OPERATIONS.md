@@ -155,12 +155,19 @@ ollama pull nomic-embed-text:latest
 ollama list   # verify
 ```
 
-### 3.3 Deploy the client bundle
+### 3.3 Deploy the stack
+
+**This is a git clone, not a zip.** AIPC 1 and AIPC 2 are clones — see
+`AIPC-DEPLOYMENT-HANDBOOK.md` Stage 1, `plans/027-hx370-64gb-install-verify.md`
+note 1 ("installed in place... same commit, same pins"), and `README-client.md`
+step 3. This section used to say `Expand-Archive ... -DestinationPath C:\pacgate`
+and `cd C:\pacgate`, which contradicted all three and sent operators to a path
+that does not exist on those machines.
 
 ```powershell
-# Copy zip to C:\pacgate
-Expand-Archive pacgate-client-bundle-v0.1.0.zip -DestinationPath C:\pacgate
-cd C:\pacgate
+cd C:\
+git clone https://github.com/JZKK720/pacgate-ai-pr.git
+cd pacgate-ai-pr\deploy\client-bundle
 
 # Configure
 copy .env.example .env
@@ -169,6 +176,46 @@ notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENAN
 # Run installer
 .\install.ps1
 ```
+
+Verify:
+```powershell
+docker compose -f compose.prod.yaml ps    # all services running
+curl http://localhost:8089/health    # ok
+```
+
+#### Updating an existing install
+
+```powershell
+cd C:\pacgate-ai-pr\deploy\client-bundle
+.\install.ps1 -Update
+```
+
+`-Update` fast-forwards the repo, re-renders the MCP config, pulls the new GHCR
+images, brings the stack up, reloads nginx, and **restarts** deer-flow and the
+frontend so bind-mounted `patches/*.py` and `next.config.js` take effect. It
+refuses rather than guessing when the machine has local work: uncommitted tracked
+changes leave the repo untouched and are listed.
+
+Do **not** run `git pull` separately, and do **not** edit image pins by hand.
+
+#### The zip path (only for a machine with no git)
+
+`pwsh -File scripts/package-bundle.ps1` produces a bundle for a host that cannot
+clone. It is **not** the path for AIPC 1 or 2.
+
+```powershell
+Expand-Archive pacgate-client-bundle-v<version>.zip -DestinationPath C:\pacgate
+cd C:\pacgate
+copy .env.example .env ; notepad .env
+.\install.ps1
+```
+
+Never package with `Compress-Archive deploy/client-bundle/*`: on Windows a leading
+dot does not hide a file, so that glob ships `.env`, `.deer-flow-credentials`,
+`qm-pacgate/.env` (about 15 signing secrets), `openviking/ov.conf`,
+`openviking/workspace/`, and `data/` (2.39 GB of run DB and matter documents).
+The script is an allowlist that refuses to write the zip if any of them reach
+staging. Its output is 84 files / 1.47 MB.
 
 Verify:
 ```powershell
@@ -198,17 +245,16 @@ Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -B
 $body = @{email="qm-bridge@pacgate.local"; password="<generate-strong-password>"} | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 
-# 2. Copy qm-pacgate to the client machine
-Copy-Item -Path qm-pacgate -Destination C:\pacgate\qm-pacgate -Recurse
-
-# 3. Run the bootstrap script
-cd C:\pacgate
+# 2. Stage qm-pacgate (copies from deploy/qm-pacgate, skipping .env/node_modules)
+cd C:\pacgate-ai-pr\deploy\client-bundle
 .\setup-qm.ps1
-# This generates signing secrets, creates .env, prompts for admin email
-# and bridge credentials, runs qm check + sandbox build
 
-# 4. Start qm
-cd C:\pacgate\qm-pacgate
+# setup-qm.ps1 generates signing secrets, creates qm-pacgate\.env, prompts for
+# admin email and bridge credentials, then runs qm check + sandbox build.
+# You do NOT copy the directory by hand - it does the staging itself.
+
+# 3. Start qm
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
 npm exec qm -- up
 
 # 5. Verify
@@ -290,16 +336,16 @@ Walk through `deploy/USER-MANUAL.md`:
 
 ### 6.1 Switching models (deer-flow)
 
-1. Edit `C:\pacgate\deer-flow-config.yaml`
+1. Edit `C:\pacgate-ai-pr\deploy\client-bundle\deer-flow-config.yaml`
 2. Reorder the `models` list (first entry = default)
 3. Restart: `docker compose -f compose.prod.yaml restart deer-flow`
 4. Verify: open `http://localhost:8089/research/` and send a test message
 
 ### 6.2 Switching models (qm)
 
-1. Edit `C:\pacgate\qm-pacgate\qm.config.jsonc`
+1. Edit `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\qm.config.jsonc`
 2. Change `MODEL_NAME` to the desired Ollama model
-3. Restart: `cd C:\pacgate\qm-pacgate && npm exec qm -- down && npm exec qm -- up`
+3. Restart: `cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate && npm exec qm -- down && npm exec qm -- up`
 4. Verify: open `http://localhost:8182` and send a test message
 
 ### 6.3 Adding a new attorney user
@@ -324,10 +370,10 @@ Assign a SOUL persona via the pacgate-api admin endpoint if needed.
 
 | What | How | Frequency |
 |------|-----|-----------|
-| Matter data | Copy `C:\pacgate\data\tenants\` | Weekly |
+| Matter data | Copy `C:\pacgate-ai-pr\deploy\client-bundle\data\tenants\` | Weekly |
 | Database | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` | Weekly |
-| qm state | Backup `C:\pacgate\qm-pacgate\.env` (contains signing keys) | Once (on install) |
-| .env | Backup `C:\pacgate\.env` securely | Once (on install) |
+| qm state | Backup `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\.env` (contains signing keys) | Once (on install) |
+| .env | Backup `C:\pacgate-ai-pr\deploy\client-bundle\.env` securely | Once (on install) |
 
 ## 7. Troubleshooting
 
@@ -365,7 +411,7 @@ ollama ps    # should show GPU in output
 ### qm won't start
 
 ```powershell
-cd C:\pacgate\qm-pacgate
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
 npm exec qm -- check    # validate config
 # Check .env has all required secrets (no blank values)
 # Check signing secrets are 64-char hex strings
