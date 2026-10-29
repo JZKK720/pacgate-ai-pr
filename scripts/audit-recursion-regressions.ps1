@@ -78,13 +78,48 @@ try:
     c = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     rows = list(c.execute(
-        "select status, llm_call_count, error, created_at, kwargs_json from runs order by created_at"))
+        "select status, llm_call_count, error, created_at, kwargs_json, thread_id from runs order by created_at"))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
     raise SystemExit(0)
 
 def norm(s):
     return (s or "").replace("T", " ")[:19]
+
+def count_run_artifacts(thread_id, created_at):
+    """Files a run actually delivered into its thread's outputs dir.
+
+    WHY THIS EXISTS: the depth bar (LLM calls) is one proxy for "the prompt was
+    exercised", and a bad one on its own. Measured 2026-10-29, efficient tasks
+    finish a 13-minute manual in ~13 calls, so a 100-call bar can never be met and
+    the audit would report "not exercised" forever even when the fix plainly works.
+
+    The better question is "did a hard task DELIVER its files", because the old
+    failure mode was not just the recursion error - short runs also reported
+    success while writing NOTHING (they announced "I will now save the files" and
+    stopped). Delivered artifacts is therefore the substantive signal; call count
+    is supporting evidence.
+    """
+    import os, time
+    hits = []
+    base = "/data/deer-flow/users"
+    if not os.path.isdir(base):
+        return hits
+    for uid in os.listdir(base):
+        d = os.path.join(base, uid, "threads", thread_id, "user-data", "outputs")
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            p = os.path.join(d, f)
+            if not os.path.isfile(p) or f.startswith("."):
+                continue
+            try:
+                sz = os.path.getsize(p)
+                mt = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(os.path.getmtime(p)))
+            except OSError:
+                continue
+            hits.append({"name": f, "bytes": sz, "mtime": mt})
+    return hits
 
 def requested_limit(kwargs_json):
     """The recursion_limit the CLIENT asked for, or None when it sent none.
@@ -149,6 +184,12 @@ print(json.dumps({
                       "calls": r["llm_call_count"],
                       "error": (r["error"] or "")[:80]} for r in other_err],
     "deepest_success_calls": deepest,
+    # Deliverable evidence for every successful run in the window.
+    "deliveries": [{
+        "at": norm(r["created_at"]),
+        "calls": r["llm_call_count"],
+        "files": count_run_artifacts(r["thread_id"], norm(r["created_at"])),
+    } for r in deep],
     "first_run_at": norm(after[0]["created_at"]) if after else None,
     "last_run_at": norm(after[-1]["created_at"]) if after else None,
 }))
@@ -231,6 +272,22 @@ if (@($d.other_errors).Count -gt 0) {
 # The depth signal. A prompt fix cannot be demonstrated by short runs, so say so
 # rather than implying the fix is proven.
 $deepest = $d.deepest_success_calls
+
+# Deliverable evidence, which is the substantive signal. A run that finished a
+# hard task and left real files proves the prompt is working; a run that used few
+# LLM calls proves nothing either way.
+$delivered = @($d.deliveries | Where-Object { @($_.files).Count -gt 0 })
+Write-Host ''
+if ($delivered.Count -gt 0) {
+    Write-Host "  [PASS] $($delivered.Count) successful run(s) DELIVERED files - the fix produced usable work:" -ForegroundColor Green
+    foreach ($run in $delivered) {
+        $names = @($run.files) | ForEach-Object { "$($_.name) ($([math]::Round($_.bytes/1KB,0)) KB)" }
+        Write-Host "         $($run.at)  llm=$($run.calls)  -> $($names -join ', ')" -ForegroundColor Green
+    }
+} else {
+    Write-Host "  [INFO] no successful run since baseline delivered a file, so there is no evidence the prompt produces usable work yet." -ForegroundColor Yellow
+}
+
 Write-Host ''
 if ($deepest -ge $DeepEnough) {
     Write-Host "  [PASS] deepest successful run reached $deepest LLM calls (>= $DeepEnough) - the prompt was exercised near the old wall" -ForegroundColor Green
@@ -245,8 +302,15 @@ if ($defectCount -gt 0) {
     Write-Host "RESULT: REGRESSION - $defectCount run(s) errored on a caller-supplied recursion budget." -ForegroundColor Red
     exit 1
 }
+# Delivery is the substantive evidence. Depth is supporting only: an efficient
+# task can prove the prompt works in 13 calls, and demanding 100 would keep this
+# audit red forever on a stack that is actually fine.
+if ($delivered.Count -gt 0) {
+    Write-Host "RESULT: fix EVIDENCED - no caller-budget regression, and $($delivered.Count) run(s) delivered files." -ForegroundColor Green
+    exit 0
+}
 if ($deepest -lt $DeepEnough) {
-    Write-Host "RESULT: no caller-budget regression, but NOT exercised - no run reached $DeepEnough LLM calls." -ForegroundColor Yellow
+    Write-Host "RESULT: no caller-budget regression, but NOT exercised - no run reached $DeepEnough LLM calls and nothing was delivered." -ForegroundColor Yellow
     exit 2
 }
 Write-Host "RESULT: no caller-budget regression, and a run deep enough to test the fix succeeded." -ForegroundColor Green

@@ -285,6 +285,7 @@ services:
       # its keys are unchanged at v2.1.0 and a per-run counter is what the bash
       # override was sized for.
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
+      - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
       # Pacgate 2026-10-28: clamp the lead-agent recursion budget.
       #
       # The chat UI sends recursion_limit: 1000 on every run, and
