@@ -111,9 +111,16 @@ client-bundle/
     └── README.md              ← 20 个执业领域 + 10 个 SOUL 角色参考
 ```
 
-打包：`Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip`
+打包：`pwsh -File scripts/package-bundle.ps1`
 
-另外，请单独复制 `deploy/qm-pacgate/` - 它要和客户端安装包一起放到客户机器上。
+**请勿使用 `Compress-Archive deploy/client-bundle/*`。** 实测 2026-10-29，该命令会把
+活跃密钥与客户数据一并打进压缩包：`.env`、`.deer-flow-credentials`、
+`qm-pacgate/.env`（约 15 个签名密钥）、`openviking/ov.conf`、
+`openviking/workspace/`，以及 `data/`（2.39 GB 的运行数据库与案件文档）。Windows 上
+以点开头的文件并不会被隐藏，因此 `*` 会全部匹配。该脚本改用白名单，逐一断言所列路径
+存在，一旦禁止路径进入暂存目录就拒绝生成压缩包，并按 `setup-qm.ps1` 的做法从受版本控制
+的源目录 `deploy/qm-pacgate` 取 qm 部署。产物为 84 个文件 / 1.47 MB，且只附带
+`.env.example`。
 
 ### 2.3 准备 qm 部署
 

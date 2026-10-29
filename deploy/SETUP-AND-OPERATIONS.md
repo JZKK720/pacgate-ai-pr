@@ -113,10 +113,17 @@ client-bundle/
     └── README.md              ← 20 practice-area + 10 SOUL personas reference
 ```
 
-Zip it: `Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip`
+Package it: `pwsh -File scripts/package-bundle.ps1`
 
-Also copy `deploy/qm-pacgate/` separately — it goes on the client machine
-next to the client bundle.
+**Do NOT use `Compress-Archive deploy/client-bundle/*`.** Measured 2026-10-29, that
+sweeps in live secrets and client data: `.env`, `.deer-flow-credentials`,
+`qm-pacgate/.env` (about 15 signing secrets), `openviking/ov.conf`,
+`openviking/workspace/`, and `data/` (2.39 GB of run DB and matter documents). On
+Windows a leading dot does not hide a file, so `*` matches all of them. The script
+uses an allowlist, asserts every named path exists, refuses to write the zip if a
+forbidden path reaches staging, and takes the qm deployment from its tracked source
+(`deploy/qm-pacgate`) the way `setup-qm.ps1` does. Its output is 84 files /
+1.47 MB and ships `.env.example` only.
 
 ### 2.3 Prepare the qm deployment
 
