@@ -140,8 +140,19 @@ function Write-OperatorEnv {
 }
 
 function New-TemplateJson {
+    # The server entries go INSIDE the mcpServers object as key/value properties.
+    #
+    # This helper previously wrapped each entry in its own brace pair -
+    # `{ "mcpServers": { { "openviking": ... }, { "firecrawl": ... } } }` - which is
+    # not valid JSON. Python and json both reject it ("Invalid property identifier
+    # character: {"). The old installer never parsed the template, so it wrote the
+    # malformed text through and this test passed; once the render started MERGING
+    # (which requires parsing), the fixture could no longer be used at all.
+    #
+    # A test fixture that is not valid JSON cannot verify the behaviour it claims
+    # to, so it is corrected here rather than special-cased in the installer.
     param([string[]]$Servers)
-    $entries = foreach ($s in $Servers) { "    { `"$s`": { `"url`": `"http://$s`" } }" }
+    $entries = foreach ($s in $Servers) { "    `"$s`": { `"url`": `"http://$s`" }" }
     "{`n  `"mcpServers`": {`n" + ($entries -join ",`n") + "`n  }`n}`n"
 }
 

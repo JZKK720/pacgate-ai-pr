@@ -1049,7 +1049,23 @@ if (Test-Path $dfTemplate) {
             # is: the template may ADD or UPDATE a server, never remove one. A
             # removal is only ever an explicit operator action.
             $dfRaw  = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
-            $dfTpl  = $dfRaw | ConvertFrom-Json
+            $dfTpl  = $null
+            try { $dfTpl = $dfRaw | ConvertFrom-Json } catch { $dfTpl = $null }
+
+            if ($null -eq $dfTpl) {
+                # A template we cannot parse cannot be merged, and a merge is the only
+                # safe write. Prefer the previously working config over a broken
+                # template: an unparseable template is a repo bug, not a reason to
+                # overwrite a live connector set with something deer-flow cannot load.
+                Write-Host "[WARN] $dfTemplate is not valid JSON; not rendering $dfRendered from it." -ForegroundColor Yellow
+                if (Test-Path $dfRendered) {
+                    Write-Host "       Keeping the existing $dfRendered unchanged." -ForegroundColor Yellow
+                } else {
+                    Write-Host "       ERROR: $dfRendered does not exist and the template cannot be used." -ForegroundColor Red
+                    Write-Host "       Fix $dfTemplate, then re-run install.ps1." -ForegroundColor Yellow
+                    exit 1
+                }
+            }
 
             $dfExisting = if (Test-Path $dfRendered) {
                 [System.IO.File]::ReadAllText((Join-Path $PWD $dfRendered))
@@ -1057,7 +1073,10 @@ if (Test-Path $dfTemplate) {
 
             $existingServers = @{}
             $mergeOk = $false
-            if ($null -eq $dfExisting) {
+            if ($null -eq $dfTpl) {
+                # Warned above. Nothing is written.
+                $mergeOk = $false
+            } elseif ($null -eq $dfExisting) {
                 # First run: nothing to preserve, the template IS the config.
                 $mergeOk = $true
             } else {
@@ -1085,21 +1104,26 @@ if (Test-Path $dfTemplate) {
                 }
 
                 # Deterministic order matters twice: ConvertTo-Json preserves
-                # hashtable iteration order, which is NOT stable across processes -
-                # so without the sort the rendered text differs on every run, the
-                # "already current" comparison never matches, and the installer backs
-                # up and rewrites the file forever. test-install-render.ps1 case 2
-                # (idempotency) is what catches this.
+                # hashtable iteration order, which is NOT stable across processes - so
+                # without sorting the rendered text differs on every run and the
+                # "already current" comparison never matches.
+                #
+                # Sorting per-SET is not enough. A server is "gained" on the run that
+                # introduces it and "both" on every later run, so its position would
+                # move from last to sorted - the file changes once more and writes a
+                # second, spurious backup. Verified by STEP 4 of
+                # test-update-end-to-end.ps1 ("no redundant backup on a no-op run").
+                # The merged map is therefore ordered by the union of keys, so a
+                # server's position depends only on its name.
                 $kept   = @($existingServers.Keys | Where-Object { -not $templateServers.ContainsKey($_) } | Sort-Object)
                 $gained = @($templateServers.Keys | Where-Object { -not $existingServers.ContainsKey($_) } | Sort-Object)
-                $both   = @($templateServers.Keys | Where-Object { $existingServers.ContainsKey($_) } | Sort-Object)
 
-                # Template entries are authoritative for the servers the template
-                # knows; everything else is preserved verbatim.
                 $mergedServers = [ordered]@{}
-                foreach ($k in $both)   { $mergedServers[$k] = $templateServers[$k] }
-                foreach ($k in $kept)   { $mergedServers[$k] = $existingServers[$k] }
-                foreach ($k in $gained) { $mergedServers[$k] = $templateServers[$k] }
+                $allKeys = @(($templateServers.Keys + $existingServers.Keys) | Sort-Object -Unique)
+                foreach ($k in $allKeys) {
+                    if ($templateServers.ContainsKey($k)) { $mergedServers[$k] = $templateServers[$k] }
+                    else { $mergedServers[$k] = $existingServers[$k] }
+                }
 
                 $dfTpl.mcpServers = [pscustomobject]$mergedServers
                 $df = $dfTpl | ConvertTo-Json -Depth 32
