@@ -27,6 +27,16 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 $hooks = 'deploy/frontend-patches/files/src/core/threads/hooks.ts'
 $box   = 'deploy/frontend-patches/files/src/components/workspace/input-box.tsx'
+
+# Derive the frontend image tag from the compose pin rather than hardcoding it, so a
+# release bump cannot leave this gate looking at the previous image and reporting a
+# stale-chunk failure against an image that is merely old.
+$frontendImage = $null
+$prodCompose = 'deploy/client-bundle/compose.prod.yaml'
+if (Test-Path $prodCompose) {
+    $m = [regex]::Match((Get-Content $prodCompose -Raw), 'ghcr\.io/jzkk720/deer-flow-frontend-pacgate:([0-9][^\s"'']*)')
+    if ($m.Success) { $frontendImage = "ghcr.io/jzkk720/deer-flow-frontend-pacgate:$($m.Groups[1].Value)" }
+}
 $script:passed = 0
 $script:failed = 0
 function Check($n, $ok, $d) {
@@ -72,6 +82,31 @@ Check 'T3 an unset mode resolves to flash' ($b -match 'return mode \?\? "flash"'
 # the negation back.
 Check 'T4 hooks.ts records why the negation was wrong' ($h -match 'UNSET mode must not enable thinking')
 Check 'T4 input-box.tsx records why the pro default was removed' ($b -match 'do NOT default an unset mode')
+
+# ── T5 (live, advisory) ──────────────────────────────────────────────────────
+# The whole point of this fix is that it ships in a BUILT image, and the source
+# assertion above cannot tell you whether that happened. A compiled chunk still
+# containing the negation pattern means the image predates the fix - which is
+# exactly the state the 0.2.7 frontend was measured in.
+$imagePresent = $false
+if ($frontendImage) {
+    try {
+        docker image inspect $frontendImage 2>$null | Out-Null
+        $imagePresent = ($LASTEXITCODE -eq 0)
+    } catch { $imagePresent = $false }
+
+    if (-not $imagePresent) {
+        Write-Host "  [skip] CANNOT CHECK: $frontendImage is not present locally." -ForegroundColor Yellow
+    } else {
+        # `!=` and `!==` both appear in minified output; match the shape, not the source.
+        $chunk = docker run --rm --entrypoint sh $frontendImage -c `
+            'grep -rho "mode![=!]==\?\"flash\"" /app/frontend/.next/server/chunks 2>/dev/null | head -1' 2>$null
+        $negation = ($chunk | Out-String).Trim()
+        Check 'T5 the built frontend image no longer compiles the mode negation' `
+              (-not $negation) `
+              "found '$negation' in the compiled chunks - the image predates this fix, so a container restart cannot apply it"
+    }
+}
 
 Write-Host ''
 $colour = if ($script:failed -gt 0) { 'Red' } else { 'Green' }
