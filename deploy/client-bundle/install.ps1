@@ -1034,11 +1034,88 @@ if (Test-Path $dfTemplate) {
             # tool load (deer-flow uses asyncio.gather). See handbook finding #2.
             # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
             # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
-            $df = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
+            # Pacgate 2026-10-30: MERGE, do not overwrite.
+            #
+            # WHY: the render used to write the template's server set verbatim over
+            # whatever was on disk. Measured on a fixture (template = 3 servers,
+            # rendered = 6): the operator's `yuandian-law` and `pkulaw-law-search`
+            # were removed and the run NAMED ONLY `firecrawl`, because the change
+            # report compared against a hardcoded $knownServers list. A live machine
+            # carrying 30 legal-database connectors would lose 27 of them, and the
+            # message would name three at most.
+            #
+            # The rendered file is gitignored, so no reviewer can see this loss in a
+            # diff - the machine simply stops answering legal queries. The rule now
+            # is: the template may ADD or UPDATE a server, never remove one. A
+            # removal is only ever an explicit operator action.
+            $dfRaw  = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
+            $dfTpl  = $dfRaw | ConvertFrom-Json
 
             $dfExisting = if (Test-Path $dfRendered) {
                 [System.IO.File]::ReadAllText((Join-Path $PWD $dfRendered))
             } else { $null }
+
+            $existingServers = @{}
+            $mergeOk = $false
+            if ($null -eq $dfExisting) {
+                # First run: nothing to preserve, the template IS the config.
+                $mergeOk = $true
+            } else {
+                try {
+                    $old = $dfExisting | ConvertFrom-Json
+                    if ($old.mcpServers) {
+                        foreach ($p in $old.mcpServers.PSObject.Properties) { $existingServers[$p.Name] = $p.Value }
+                    }
+                    $mergeOk = $true
+                } catch {
+                    # Unparseable existing config: do not clobber it on the strength
+                    # of a guess. Keep it, warn, and let the operator decide.
+                    Write-Host "[WARN] $dfRendered is not valid JSON; leaving it untouched." -ForegroundColor Yellow
+                    Write-Host "       Fix or delete it, then re-run. A config that cannot be" -ForegroundColor Yellow
+                    Write-Host "       parsed cannot be merged, and overwriting it would discard" -ForegroundColor Yellow
+                    Write-Host "       every connector on this machine." -ForegroundColor Yellow
+                }
+            }
+
+            $df = $dfRaw
+            if ($mergeOk) {
+                $templateServers = @{}
+                if ($dfTpl.mcpServers) {
+                    foreach ($p in $dfTpl.mcpServers.PSObject.Properties) { $templateServers[$p.Name] = $p.Value }
+                }
+
+                # Deterministic order matters twice: ConvertTo-Json preserves
+                # hashtable iteration order, which is NOT stable across processes -
+                # so without the sort the rendered text differs on every run, the
+                # "already current" comparison never matches, and the installer backs
+                # up and rewrites the file forever. test-install-render.ps1 case 2
+                # (idempotency) is what catches this.
+                $kept   = @($existingServers.Keys | Where-Object { -not $templateServers.ContainsKey($_) } | Sort-Object)
+                $gained = @($templateServers.Keys | Where-Object { -not $existingServers.ContainsKey($_) } | Sort-Object)
+                $both   = @($templateServers.Keys | Where-Object { $existingServers.ContainsKey($_) } | Sort-Object)
+
+                # Template entries are authoritative for the servers the template
+                # knows; everything else is preserved verbatim.
+                $mergedServers = [ordered]@{}
+                foreach ($k in $both)   { $mergedServers[$k] = $templateServers[$k] }
+                foreach ($k in $kept)   { $mergedServers[$k] = $existingServers[$k] }
+                foreach ($k in $gained) { $mergedServers[$k] = $templateServers[$k] }
+
+                $dfTpl.mcpServers = [pscustomobject]$mergedServers
+                $df = $dfTpl | ConvertTo-Json -Depth 32
+
+                if ($kept.Count -gt 0) {
+                    Write-Host "[OK] Preserved $($kept.Count) connector(s) not in the template: $($kept -join ', ')" -ForegroundColor Green
+                    Write-Host "     The template ADDS and UPDATES only. To remove one of these," -ForegroundColor DarkGray
+                    Write-Host "     delete its entry from $dfRendered by hand." -ForegroundColor DarkGray
+                }
+                if ($gained.Count -gt 0) {
+                    # "gained" is the phrase test-install-render.ps1 asserts on, and it
+                    # is what an operator scanning a long install log recognises. Keep
+                    # it even though the line now sits beside the Preserved report.
+                    Write-Host "     MCP servers gained: $($gained -join ', ')" -ForegroundColor Yellow
+                }
+            }
 
             # Compare with line endings normalised, so a CRLF/LF difference alone
             # does not look like a change and churn backups on every run.
@@ -1050,6 +1127,8 @@ if (Test-Path $dfTemplate) {
 
             if ($dfUnchanged) {
                 Write-Host "[OK] $dfRendered already current" -ForegroundColor Green
+            } elseif (-not $mergeOk) {
+                # Warned above; writing here would destroy the connector set.
             } else {
                 if ($null -ne $dfExisting) {
                     $dfStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -1068,25 +1147,6 @@ if (Test-Path $dfTemplate) {
                     [System.Text.UTF8Encoding]::new($false)
                 )
                 Write-Host "[OK] Rendered $dfRendered from template" -ForegroundColor Green
-
-                # Name what changed. This is the whole point: the previous silent
-                # behaviour is what let pacgate-mcp go missing unnoticed.
-                $knownServers = @('openviking', 'pacgate', 'firecrawl')
-                $gained = @()
-                $lost = @()
-                foreach ($srv in $knownServers) {
-                    $needle = '"' + $srv + '"'
-                    $inOld = ($null -ne $dfExisting) -and ($dfExisting -match $needle)
-                    $inNew = ($df -match $needle)
-                    if ($inNew -and -not $inOld) { $gained += $srv }
-                    if ($inOld -and -not $inNew) { $lost += $srv }
-                }
-                if ($gained.Count -gt 0) {
-                    Write-Host "     MCP servers gained: $($gained -join ', ')" -ForegroundColor Yellow
-                }
-                if ($lost.Count -gt 0) {
-                    Write-Host "     MCP servers REMOVED: $($lost -join ', ') - check the template" -ForegroundColor Red
-                }
             }
         }
     }

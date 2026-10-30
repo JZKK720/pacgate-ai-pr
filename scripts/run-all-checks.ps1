@@ -80,6 +80,13 @@ if (-not $SkipOcrPull -and $script:OcrImage) {
 # unversioned tag could not prove which image a gate ran against.
 
 $gates = @(    'scripts/test-install-render.ps1'
+    # CONNECTOR RENDER SAFETY, registered 2026-10-30. `test-install-render` proves
+    # the render is idempotent and reports changes; it does not prove the render
+    # cannot DELETE a connector the template does not know about. Measured: a
+    # 6-server config lost 2 servers to a 3-server template, and the report named
+    # neither because it compared against a hardcoded three-name list. Red-checked
+    # against the original installer: 11 of 15 assertions fail.
+    'scripts/test-connector-template-safety.ps1'
     'scripts/test-install-repo-pull.ps1'
     'scripts/test-update-end-to-end.ps1'
     # install.ps1 -Update executes the OLD body after refreshing the repo, because
