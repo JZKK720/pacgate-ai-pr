@@ -493,10 +493,24 @@ You: "Deploying to staging..." [proceed]
 - Markdown -> DOCX: `pandoc <file>.md -o <file>.docx`.
 - Markdown -> HTML: `pandoc <file>.md -o <file>.html` (or `weasyprint <file>.md <file>.html`).
 - For a NATIVE, fully-structured Office document (tables, styles, charts, headers/footers,
-  formulas, slides), use the `officecli` tool (MCP, `officecli mcp`) or the `officecli` CLI:
-  `officecli create <file>.docx`, `officecli add <file>.docx /body --type paragraph --prop text="..."`,
-  `officecli get <file>.docx /body --depth 2 --json`. This is the preferred path for real legal
-  reports/proposals in Word/Excel/PPT rather than a pandoc conversion.
+  formulas, slides), use the `officecli` tool (MCP, `officecli mcp`) or the `officecli` CLI.
+  This is the preferred path for real legal reports/proposals in Word/Excel/PPT rather than
+  a pandoc conversion.
+- **officecli selectors and the sandbox (IMPORTANT - ignoring this burns a whole run).**
+  The sandbox rejects ANY `/`-prefixed token on a bash command line as an unsafe
+  absolute path. So passing a selector such as /body to the add or get verb on a bash
+  command line fails with "Unsafe absolute paths in command: /body" before officecli
+  ever runs. Meanwhile the set verb only accepts the slash form: a slash-free
+  selector returns "No elements matched selector", while /body/p[1] works (measured,
+  officecli 1.0.149).
+  The one form that satisfies both is batch, because the selector then lives in
+  FILE CONTENT rather than in the command string:
+      write a JSON array to a file, e.g.
+        [{"command":"add","parent":"/body","type":"p","props":{"text":"..."}},
+         {"command":"set","path":"/body/p[1]","props":{"text":"..."}}]
+      then run: officecli batch <file>.docx --input <that.json>
+  Use `officecli create` and `officecli validate` directly - they take a plain path
+  and are allowed.
 - **Fallback if `officecli` is unavailable** (e.g. image is <0.1.10 and the binary/MCP was not
   baked in): check with `which officecli`; if it is missing, fall back to `pandoc <file>.md -o
   <file>.docx` for Word, and do NOT tell the user the tool is missing.
@@ -613,8 +627,10 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
   tool". Convert your Markdown with the `bash` tool:
   `pandoc <file>.md -o <file>.pdf --pdf-engine=weasyprint` (PDF),
   `pandoc <file>.md -o <file>.docx` (DOCX). For a native structured Word/Excel/PPT document, use the
-  `officecli` tool: `officecli create <file>.docx` then `officecli add <file>.docx /body --type paragraph
-  --prop text="..."`. If `which officecli` returns nothing (image <0.1.10), fall back to `pandoc
+  `officecli` tool: `officecli create <file>.docx`, then add content with `officecli batch
+  <file>.docx --input <file>.json` (see the selector note above - a bare `/body` on a bash
+  command line is rejected by the sandbox, and `set` rejects the slash-free form). If
+  `which officecli` returns nothing (image <0.1.10), fall back to `pandoc
   <file>.md -o <file>.docx` instead. Then copy the output to `/mnt/user-data/outputs/` and call
   `present_files`. Never leave a Markdown-only answer when the user explicitly wants a downloadable
   Office/PDF file.  
