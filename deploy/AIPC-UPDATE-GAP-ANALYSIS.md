@@ -238,3 +238,54 @@ leak credentials or fork a corpus that has its own repo.
   `sandbox/tools.py:validate_local_tool_path`, which does not exist in the pinned image
   (the real function is `validate_local_file_path`). The behaviour it describes is
   correct; the citation is wrong.
+## 0.2.8 release verification (2026-10-30)
+
+Tag `v0.2.8` = `b970466`. Workflow run 41058079927 on `v0.2.8` completed; all five
+images are published and anonymously pullable (token `200` per package, which is the
+check that matters - clients run `docker login` for nothing).
+
+| Check | Result |
+|---|---|
+| `credential-guard` job (blocks the build) | success |
+| all 5 images built and pushed | success |
+| anonymous pull token, each package | 200 |
+| stack up on `:0.2.8`, every service healthy | yes |
+| `test-stack-version-coherence` | 14 passed |
+| `test-baked-patch-parity` | 13 passed, **0 warnings** (drift resolved) |
+| `test-thinking-default` incl. T5 (built image) | 12 passed |
+| `test-mcp-argument-paths` | 21 passed |
+| `test-document-generation-e2e` (live run) | 19 passed, 0 failed |
+
+The frontend fix is now in the compiled bundle, which is the only way it could ship:
+`thinking_enabled:"thinking"===d.mode||"pro"===d.mode||"ultra"===d.mode`. The 0.2.7
+image carried `thinking_enabled:"flash"!==d.mode`. The backend's baked recursion
+default also moved from the stale `100` to `_PACGATE_MAX_RECURSION_LIMIT`.
+
+### GHCR preflight fails behind a dead local proxy, and that is not a repo defect
+
+Both `preflight-release-tag.ps1` and `verify-delivery-state.ps1` reported every GHCR
+tag as `UNVERIFIED` / `ERROR` while the packages were in fact public and pullable.
+The cause was the environment, not the code:
+
+```text
+HTTP_PROXY=http://127.0.0.1:7892
+HTTPS_PROXY=http://127.0.0.1:7892     <- nothing listening on 7892
+```
+
+`docker manifest inspect ghcr.io/...:0.2.7` reported `proxyconnect tcp: dial tcp
+127.0.0.1:7892: connectex: No connection could be made`, and `curl` to
+`https://ghcr.io/v2/` returned `http=000 exit=7`. With the proxy cleared, the same
+commands return the 0.2.7 manifest (and `manifest unknown` for 0.2.8 before the
+release), which is the correct pair of answers.
+
+So when either script says GHCR is `UNVERIFIED`, check the proxy before believing the
+registry is unreachable:
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 7892 -InformationLevel Quiet   # False = dead proxy
+$env:HTTP_PROXY = ''; $env:HTTPS_PROXY = ''; $env:NO_PROXY = '*'
+.\scripts\preflight-release-tag.ps1
+```
+
+The scripts are right to refuse to guess: an unreadable answer is not evidence the
+images exist. The mistake would be reading `UNVERIFIED` as "the registry is down".
