@@ -375,6 +375,50 @@ Assign a SOUL persona via the pacgate-api admin endpoint if needed.
 | qm state | Backup `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\.env` (contains signing keys) | Once (on install) |
 | .env | Backup `C:\pacgate-ai-pr\deploy\client-bundle\.env` securely | Once (on install) |
 
+### 6.6 Bounding the deer-flow thread store
+
+`client-bundle\data\deer-flow\` is the deer-flow bind mount (`./data:/data`) and
+it grows with every research session. It is gitignored, so nothing in the repo
+watches it and no gate goes red when it fills a disk.
+
+Two things grow and they are **not** interchangeable:
+
+| What | Growth | What it is |
+|------|--------|-----------|
+| `users/<user>/threads/<id>/` | per thread, 1 MB - 500 MB+ | agent workspace: uploads, generated documents, scratch files, and any `.venv` the agent builds for itself |
+| `checkpoints.db-wal` | per run, unbounded until checkpointed | un-checkpointed SQLite pages |
+
+Measured on the dev box 2026-10-30: 2.4 GB total, of which one 2026-10-21 thread
+held a 517 MB self-created `.venv`, and the WAL was 470 MB.
+
+```powershell
+# report only - never deletes anything
+.\scripts\clean-thread-workspaces.ps1
+
+# see what a rule would remove, without removing it
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -WhatIf
+
+# remove threads last active more than 30 days ago, keeping the newest 5
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -Delete
+
+# reclaim the WAL without deleting any thread (safe during a quiet window)
+.\scripts\clean-thread-workspaces.ps1 -CheckpointWal
+```
+
+**Do not delete these directories by hand.** A thread is three records that must
+stay in agreement: the directory, its rows in `checkpoints.db`, and its entry in
+the `store` table that backs `/threads/search`. Removing only the directory leaves
+a thread that still appears in the UI and returns 404 for every file. The script
+deletes through `DELETE /api/threads/{id}`, which removes all three together.
+
+**Never delete `checkpoints.db-wal` as a file.** It holds committed pages not yet
+folded into the main DB. Use `-CheckpointWal` (`PRAGMA wal_checkpoint(TRUNCATE)`),
+which verified at 470 MB -> 0 MB with `integrity_check = ok` and all 5,955
+checkpoint rows intact.
+
+Matter data, documents and the knowledge base live in Postgres - nothing in this
+section touches them. This is run history only.
+
 ## 7. Troubleshooting
 
 ### Containers won't start

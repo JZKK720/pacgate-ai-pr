@@ -362,6 +362,47 @@ Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -B
 | qm 状态 | 备份 `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\.env`（包含签名密钥） | 安装时一次 |
 | `.env` | 安全备份 `C:\pacgate-ai-pr\deploy\client-bundle\.env` | 安装时一次 |
 
+### 6.6 控制 deer-flow 会话存储的增长
+
+`client-bundle\data\deer-flow\` 是 deer-flow 的绑定挂载（`./data:/data`），
+每次研究会话都会让它增长。该目录被 gitignore，仓库里没有任何检查在监控它，
+磁盘写满时也不会有门禁报红。
+
+有两类内容会增长，且**不能混为一谈**：
+
+| 内容 | 增长方式 | 性质 |
+|------|----------|------|
+| `users/<user>/threads/<id>/` | 每个会话，1 MB 至 500 MB+ | 代理工作区：上传件、生成的文书、临时文件，以及代理自建的 `.venv` |
+| `checkpoints.db-wal` | 每次运行，未做检查点前无上限 | 尚未合并回主库的 SQLite 页 |
+
+2026-10-30 在本机实测：合计 2.4 GB，其中 2026-10-21 的一个会话里有一个
+517 MB 的代理自建 `.venv`，WAL 为 470 MB。
+
+```powershell
+# 仅报告 —— 不删除任何内容
+.\scripts\clean-thread-workspaces.ps1
+
+# 预览某条规则会删除什么，但不实际删除
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -WhatIf
+
+# 删除最后活动时间超过 30 天的会话，保留最近 5 个
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -Delete
+
+# 仅回收 WAL，不删除任何会话（请在空闲时段执行）
+.\scripts\clean-thread-workspaces.ps1 -CheckpointWal
+```
+
+**不要手工删除这些目录。** 一个会话由三处记录组成，必须保持一致：目录本身、
+`checkpoints.db` 中的行，以及支撑 `/threads/search` 的 `store` 表中的条目。
+只删目录会留下一个仍然出现在界面上、但下载任何文件都返回 404 的会话。脚本
+通过 `DELETE /api/threads/{id}` 删除，三处一并清除。
+
+**绝不要把 `checkpoints.db-wal` 当作普通文件删除。** 它包含尚未合并回主库的
+已提交页。请使用 `-CheckpointWal`（`PRAGMA wal_checkpoint(TRUNCATE)`），实测
+由 470 MB 降至 0 MB，`integrity_check = ok`，5,955 条检查点记录完整无损。
+
+事项数据、文书和知识库都在 Postgres 中，本节不涉及它们，这里只处理运行历史。
+
 ## 7. 故障排查
 
 ### 容器起不来

@@ -147,17 +147,50 @@ To see it: ask the assistant **"Show me this matter's workspace."** To retrieve 
 
 ### Research skills available
 
-The research workspace comes with specialized legal skills:
+The research workspace ships three Chinese-law playbooks:
 
 | Skill | What it does |
 |---|---|
-| Deep Research | Multi-step research with source gathering and cross-checking |
-| Systematic Literature Review | Structured review of legal literature and precedent |
-| Academic Paper Review | Analyze and summarize legal academic papers |
-| Consulting Analysis | Business/legal consulting frameworks |
-| GitHub Deep Research | Analyze a codebase or technical repository |
+| `cn-contract-review` | Reviews a commercial contract from a specified party's position, and runs the firm's workflow template when one matches the contract type |
+| `cn-nda-review` | Reviews a confidentiality agreement clause by clause, flags unbalanced terms, and proposes redlines |
+| `matter-scoping` | Binds the conversation to the right matter before any document, search, memory or workflow call |
 
-The AI automatically selects the right skill based on your request. You don't need to choose manually.
+The AI selects the right skill from your request; you do not need to choose
+manually. You can also invoke one explicitly by typing `/` followed by its name.
+
+> **Correction (2026-10-30).** Earlier versions of this manual listed five skills
+> (Deep Research, Systematic Literature Review, Academic Paper Review, Consulting
+> Analysis, GitHub Deep Research). Those were never installed - the agent in fact
+> loaded **zero** skills. The list above is the actual shipped corpus, verified
+> against the running stack.
+
+### The assistant can improve its own skills
+
+The research workspace agent can write and patch its own skills. When it solves
+something non-trivial - or when you correct its approach and the correction
+works - it can save that as a skill so the next similar task starts from the
+better method. To do this deliberately, say something like **"save how you did
+that as a skill"** or **"update the NDA skill to also check residual-knowledge
+clauses."**
+
+Things to know:
+
+- **Skills are drafts, not firm policy.** Every write is scanned automatically
+  for injected instructions and unsafe code, but nothing checks the *legal*
+  correctness of a skill. Treat a self-authored skill the way you would treat a
+  junior's checklist: useful, and not yet the firm's position. Your responsible
+  lawyer still signs off on the output.
+- **Skills are shared across the deployment**, not per-matter. A skill learned
+  while working on one client's matter applies to everyone. Do not let
+  client-specific facts (names, figures, clause wording lifted from a
+  counterparty's paper) end up in a skill. The seed skills are deliberately
+  generic for this reason.
+- **Skills persist** across restarts and updates. They live in the deployment's
+  data volume alongside your threads and settings.
+- **The three seeded skills are read-only.** The agent cannot edit them. What it
+  *can* do is save an improved copy under the same name, and a saved copy takes
+  precedence over the seed - that is the intended way to customise. Deleting the
+  saved copy restores the original seed, so a bad edit is always recoverable.
 
 ---
 
