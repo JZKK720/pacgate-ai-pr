@@ -120,6 +120,58 @@ for c in blocked:
           'if officecli ever fixes set(), this line tells you to delete the workaround note'
 }
 
+# ── P6 ───────────────────────────────────────────────────────────────────────
+# The template is passed through str.format(), so EVERY literal brace must be
+# doubled. This is the check that would have caught a real outage: a JSON example
+# added with single braces made str.format() read `{"command":` as a format field,
+# and apply_prompt_template() then died with KeyError: '"command"' on EVERY run -
+# while every other assertion in this gate passed. The agent was completely dead
+# and the prompt gate was green.
+#
+# Asserting the field SET (not just "parses") is what makes this work: a stray brace
+# produces a bogus field name, and any field outside the known set is a defect.
+$py = Get-Command python -ErrorAction SilentlyContinue
+if (-not $py) {
+    Write-Host '  [skip] CANNOT CHECK: python is not on PATH for the template check.' -ForegroundColor Yellow
+} else {
+    $probeDir = Join-Path $env:TEMP ("prompt-braces-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+    $probeFile = Join-Path $probeDir 'braces.py'
+    @'
+import ast, string, sys
+
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+tpl = None
+for node in ast.parse(src).body:
+    if isinstance(node, ast.Assign) and any(
+        getattr(t, "id", None) == "SYSTEM_PROMPT_TEMPLATE" for t in node.targets
+    ):
+        tpl = ast.literal_eval(node.value)
+
+if tpl is None:
+    print("NO_TEMPLATE")
+    raise SystemExit(0)
+
+# The fields apply_prompt_template() actually supplies. Anything else is a brace
+# that was never escaped.
+expected = {
+    "acp_section", "agent_name", "deferred_tools_section", "self_update_section",
+    "skills_section", "soul", "subagent_reminder", "subagent_section",
+    "subagent_thinking",
+}
+found = {f for _, f, _, _ in string.Formatter().parse(tpl) if f is not None}
+print("FOUND", sorted(found))
+print("UNEXPECTED", sorted(found - expected))
+'@ | Out-File -FilePath $probeFile -Encoding utf8
+    $out = & python $probeFile (Resolve-Path $prompt) 2>&1
+    Remove-Item $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+    $unexpected = (($out | Select-String 'UNEXPECTED').Line -replace '^UNEXPECTED ', '').Trim()
+    Check 'P6 the prompt template has no unescaped brace (str.format field)' `
+          ($unexpected -eq '[]') `
+          "unexpected format field(s): $unexpected - each one makes EVERY run die with KeyError"
+}
+
 Write-Host ''
 $colour = if ($script:failed -gt 0) { 'Red' } else { 'Green' }
 Write-Host "RESULT: $($script:passed) passed, $($script:failed) failed" -ForegroundColor $colour

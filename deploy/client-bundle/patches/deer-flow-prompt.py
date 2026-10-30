@@ -506,11 +506,15 @@ You: "Deploying to staging..." [proceed]
   The one form that satisfies both is batch, because the selector then lives in
   FILE CONTENT rather than in the command string:
       write a JSON array to a file, e.g.
-        [{"command":"add","parent":"/body","type":"p","props":{"text":"..."}},
-         {"command":"set","path":"/body/p[1]","props":{"text":"..."}}]
+        [[{{"command":"add","parent":"/body","type":"p","props":{{"text":"..."}}}},
+         {{"command":"set","path":"/body/p[1]","props":{{"text":"..."}}}}]]
       then run: officecli batch <file>.docx --input <that.json>
   Use `officecli create` and `officecli validate` directly - they take a plain path
   and are allowed.
+  NOTE: the doubled braces above are doubled ON PURPOSE. This text lives inside
+  SYSTEM_PROMPT_TEMPLATE, which is passed through str.format(), so a single brace is
+  a format field and a JSON literal containing one makes EVERY run die with
+  `KeyError: '"command"'`. Two braces render as one.
 - **Fallback if `officecli` is unavailable** (e.g. image is <0.1.10 and the binary/MCP was not
   baked in): check with `which officecli`; if it is missing, fall back to `pandoc <file>.md -o
   <file>.docx` for Word, and do NOT tell the user the tool is missing.
