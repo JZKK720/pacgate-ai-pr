@@ -54,7 +54,20 @@ COPY deploy/client-bundle/patches/deer-flow-loop-detection.py /app/backend/packa
 # recursion_limit: 1000 per run and build_run_config() let that overwrite its own
 # 100 default, so a thrashing run spent all 1000 supersteps (~16 min, 3M+ tokens)
 # before failing with a bare GraphRecursionError. Mounted in both compose lanes
-# too; the ceiling is DEERFLOW_MAX_RECURSION_LIMIT (default 500).
+# too; the ceiling is DEERFLOW_MAX_RECURSION_LIMIT (default 4000 as of 0.2.8 -
+# it was 500, which measured below three successful runs' super-step counts).
+#
+# NOTE (2026-10-30): this COPY used to claim the bake and the mount "cannot
+# diverge" because they point at the same file. That is only true if the file never
+# changes between builds. Measured on the 0.2.7 image: its baked copy still reads
+# `{"recursion_limit": 100}` while the tracked source now defaults to the ceiling.
+# The running stack is correct because the mount wins; the image is stale. Any run
+# WITHOUT the mount - a bare `docker run`, a debug shell, a lane that forgets the
+# mount - would silently reintroduce the 100 floor.
+#
+# scripts/test-baked-patch-parity.ps1 now asserts that a baked patch always has a
+# shadowing mount in both lanes (so a stale bake can only be masked, never live)
+# and reports the drift so the rebuild is a known task rather than a surprise.
 COPY deploy/client-bundle/patches/deer-flow-run-recursion-cap.py /app/backend/app/gateway/services.py
 
 RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown

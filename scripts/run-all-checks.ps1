@@ -704,6 +704,14 @@ $liveStackGates = @(
     # closure, so the rewrite has no thread context. Static checks plus a live
     # mount assertion and a real import of the tool surface.
     'scripts/test-mcp-argument-paths.ps1'
+    # BAKED PATCH PARITY, registered 2026-10-30. Two patches are both COPYed into
+    # the deer-flow image and bind-mounted over the same destination. The Dockerfile
+    # claimed they "cannot diverge" because they point at the same file - false as
+    # soon as the source changes without a rebuild. Measured: the 0.2.7 image's baked
+    # copy still defaults the recursion budget to 100. The mount masks it today, so
+    # the gate does not fail on drift; it fails when a baked patch has NO mount
+    # (which would make the stale bake live) and warns when the bake is stale.
+    'scripts/test-baked-patch-parity.ps1'
 )
 
 
