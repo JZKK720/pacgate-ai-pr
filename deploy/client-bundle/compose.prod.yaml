@@ -294,9 +294,12 @@ services:
       # thrashing run consumed all 1000 and died after ~16 minutes with a bare
       # GraphRecursionError - 12 of 16 failed runs on this box were this error, at
       # BOTH 100 and 1000. The patch clamps client values to a ceiling (default
-      # 500, override with DEERFLOW_MAX_RECURSION_LIMIT) while still honouring a
-      # lower request. The most expensive SUCCESSFUL run on this box used 138 LLM
-      # calls, so 500 leaves roughly 3.5x headroom over proven need.
+      # 4000, override with DEERFLOW_MAX_RECURSION_LIMIT) while still honouring a
+      # lower request. 4000 is the measured runaway bound, not a comfort budget:
+      # the deepest successful non-looping runs on this stack reached 5767, 3154
+      # and 1589 super-steps, and super-steps per LLM call reaches 5.45. A caller
+      # that sends no config now gets this ceiling as its default instead of a
+      # hardcoded 100, which was ~10 model calls.
       - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which

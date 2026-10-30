@@ -172,11 +172,20 @@ Assert-That ($ceiling -ge 200) "the deployed ceiling is a real budget ($ceiling)
 #  - the ceiling must still BIND above itself, which is what stops a thrashing
 #    run from being handed an arbitrarily large budget.
 Assert-That ($ui -eq '1000') "the UI's 1000 sits under the $ceiling ceiling and passes through (got '$ui')"
-Assert-That ($none -eq '100') "an API run with no config still gets the 100 default (got '$none')"
+# Pacgate 2026-10-30: this assertion used to PIN the defect. The comment above it
+# called 100 "the documented server default" and treated a run that died at 100
+# as correct behaviour. It is not: 100 super-steps is ~10 model calls, because
+# nine middleware after_model/before_model hooks are each their own graph node.
+# Measured deepest non-looping workloads on this stack: 5767, 3154 and 1589
+# super-steps - a 100 default is below all three, and the old 500 ceiling was
+# below all three as well. The default must therefore be the CEILING, so a caller
+# that sends no config gets the same budget as one that sends the UI's 1000.
+Assert-That ($none -eq '4000') "an API run with no config gets the ceiling, not a 100 floor (got '$none')"
 Assert-That ($low -eq '50') "a caller asking for LESS than the default is still honoured (got '$low')"
 Assert-That ($str -eq '900') "a string-typed 900 is coerced to an int, not dropped (got '$str')"
 Assert-That ($huge -eq "$ceiling") "a runaway 1000000 request is clamped down to the $ceiling ceiling (got '$huge')"
-Assert-That ($junk -eq '100') "a non-integer value keeps the default instead of crashing (got '$junk')"
+$ceilingDefault = '4000'
+Assert-That ($junk -eq $ceilingDefault) "a non-integer value keeps the default (the ceiling) instead of crashing (got '$junk')"
 
 Write-Host ''
 $colour = if ($script:Failed -gt 0) { 'Red' } else { 'Green' }

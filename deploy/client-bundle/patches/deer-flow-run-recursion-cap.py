@@ -273,7 +273,27 @@ def build_run_config(
     # subagent inside ONE lead tools-node step, and subagents enforce their own
     # limit via `subagents.max_turns`. Do not conflate this 100 with the
     # general-purpose subagent's max_turns.
-    config: dict[str, Any] = {"recursion_limit": 100}
+    # Pacgate 2026-10-30: the DEFAULT is the CEILING, not 100.
+    #
+    # A caller that sends no config (the API and IM paths both do this) used to
+    # inherit a 100-step budget. LangGraph charges ~9.8 super-steps per model call
+    # in this graph because nine middleware hooks are each their own node, so 100
+    # steps is roughly ten model calls - not a budget, a tripwire.
+    #
+    # The ceiling is what protects against a runaway caller; making the floor a
+    # second, much smaller ceiling protected nothing and broke real work. A real
+    # loop is still stopped by LoopDetectionMiddleware layers 1/2 and the idle and
+    # stall detectors, none of which consult this number.
+    #
+    # KNOWN REMAINING FLOORS (2026-10-30, measured live on 0.2.7):
+    #   app/channels/manager.py:51   DEFAULT_RUN_CONFIG = {"recursion_limit": 100}
+    #   deerflow/client.py:218       recursion_limit=overrides.get("recursion_limit", 100)
+    # Neither routes through build_run_config, so neither sees this default. The IM
+    # channel path merges DEFAULT_RUN_CONFIG and hands it to the gateway, which DOES
+    # go through build_run_config and is therefore clamped - but a caller of
+    # deerflow.client directly is not. Patching both is a separate change with its
+    # own blast radius; recorded here so the gap is not mistaken for coverage.
+    config: dict[str, Any] = {"recursion_limit": _PACGATE_MAX_RECURSION_LIMIT}
     if request_config:
         # LangGraph >= 0.6.0 introduced ``context`` as the preferred way to
         # pass thread-level data and rejects requests that include both
