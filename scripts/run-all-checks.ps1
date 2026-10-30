@@ -667,6 +667,15 @@ $liveStackGates = @(
     # tool needs no edit here while REMOVING one still fails - the source and the
     # deployed surface cannot drift. Mutation-tested by renaming a decorator.
     'scripts/test-mcp-tool-surface.ps1'
+    # MCP ARGUMENT path translation, registered 2026-10-30. `test-mcp-tool-surface`
+    # proves the tools are ADVERTISED; this proves they can accept a path. The
+    # measured failure was officecli returning "Could not find a part of the path"
+    # for /mnt/user-data/outputs/x.docx, because MCP arguments were the one input
+    # the sandbox never translated. The subtler half is that a naive patch no-ops:
+    # without InjectedToolArg the injected ToolRuntime never reaches the tool
+    # closure, so the rewrite has no thread context. Static checks plus a live
+    # mount assertion and a real import of the tool surface.
+    'scripts/test-mcp-argument-paths.ps1'
 )
 
 

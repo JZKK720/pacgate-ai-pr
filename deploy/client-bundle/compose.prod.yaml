@@ -395,6 +395,14 @@ services:
       # into. If a seeded skill needs a durable change, the agent copies its
       # content into `custom/` via `skill_manage` - it does not mutate the seed.
       - ./deer-flow-skills:/app/backend/.deer-flow/skills/public:ro
+      # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated.
+      # `officecli_officecli({"command":"create /mnt/user-data/outputs/x.docx"})`
+      # failed with "Could not find a part of the path" because /mnt/user-data is
+      # a VIRTUAL path, not a mount. The bash command string and read_file's path
+      # were rewritten; MCP arguments were not. The same patch also restores
+      # `runtime` injection, without which the rewrite has no thread context, and
+      # fixes server attribution for hyphenated server keys.
+      - ./patches/deer-flow-mcp-args.py:/app/backend/packages/harness/deerflow/mcp/tools.py:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).

@@ -311,6 +311,13 @@ services:
       # rationale). Read-only; the agent writes its own skills to custom/ via the
       # scanned `skill_manage` path, never by editing a seed.
       - ./deer-flow-skills:/app/backend/.deer-flow/skills/public:ro
+      # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated
+      # (see compose.prod.yaml for the measured failure and the two-layer cause).
+      # Kept in lockstep with compose.prod.yaml - A5 of
+      # test-workflow-compose-wiring.ps1 fails on patch-mount drift, and
+      # install.ps1 uses this file, so a bundle-only mount would leave the
+      # deployment path unfixed.
+      - ./patches/deer-flow-mcp-args.py:/app/backend/packages/harness/deerflow/mcp/tools.py:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).
