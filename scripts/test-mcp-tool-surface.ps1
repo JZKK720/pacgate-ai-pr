@@ -140,9 +140,26 @@ if ($exit -ne 0 -or -not ($raw -match 'TOOLS ')) {
     CannotCheck "the MCP handshake did not complete: $(($raw | Out-String).Trim() -replace '\s+', ' ' | ForEach-Object { $_.Substring(0, [Math]::Min(200, $_.Length)) })"
 }
 
+# Parse a JSON array portably. Windows PowerShell 5.1's ConvertFrom-Json does NOT
+# unroll a JSON array into a pipeline - it returns the array as ONE object, so
+# `@($json | ConvertFrom-Json)` yields a single-element collection containing the
+# array. Measured on 5.1.26100: '["a","b","c"]' -> count=1, while pwsh 7.6 -> 3.
+#
+# This mattered: the gate FAILED on PS 5.1 while the stack was perfectly healthy
+# (the single "advertised tool" was the nested Object[] itself, hence the
+# `System.Object[]` leaking into every message). A client AIPC may only have 5.1,
+# and a gate that is red on a correct stack is exactly the failure mode this suite
+# warns about. ForEach-Object unrolls the collection under BOTH shells.
+function ConvertFrom-JsonArray {
+    param([string]$Json)
+    $parsed = $Json | ConvertFrom-Json
+    if ($null -eq $parsed) { return @() }
+    return @($parsed | ForEach-Object { $_ })
+}
+
 $actual = @()
 $m = [regex]::Match(($raw | Out-String), 'TOOLS (?<j>\[.*?\])')
-if ($m.Success) { $actual = @($m.Groups['j'].Value | ConvertFrom-Json) }
+if ($m.Success) { $actual = @(ConvertFrom-JsonArray $m.Groups['j'].Value) }
 
 Check 'the server completes the MCP handshake and lists tools' ($actual.Count -gt 0) 'tools/list returned an empty set - the server started but registered nothing'
 Write-Host ("         server advertises {0} tool(s)" -f $actual.Count) -ForegroundColor DarkGray
@@ -158,12 +175,12 @@ Check 'the server advertises nothing the source does not declare' ($extra.Count 
 # A tool that exists but cannot be called is not a working tool.
 $noDesc = @()
 $dm = [regex]::Match(($raw | Out-String), 'NO_DESC (?<j>\[.*?\])')
-if ($dm.Success) { $noDesc = @($dm.Groups['j'].Value | ConvertFrom-Json) }
+if ($dm.Success) { $noDesc = @(ConvertFrom-JsonArray $dm.Groups['j'].Value) }
 Check 'every advertised tool carries a description' ($noDesc.Count -eq 0) "no description: $($noDesc -join ', ') - the model cannot choose a tool it cannot understand"
 
 $noSchema = @()
 $sm = [regex]::Match(($raw | Out-String), 'NO_SCHEMA (?<j>\[.*?\])')
-if ($sm.Success) { $noSchema = @($sm.Groups['j'].Value | ConvertFrom-Json) }
+if ($sm.Success) { $noSchema = @(ConvertFrom-JsonArray $sm.Groups['j'].Value) }
 Check 'every advertised tool carries an input schema' ($noSchema.Count -eq 0) "no inputSchema: $($noSchema -join ', ') - a tool with no schema cannot be called"
 
 Write-Host ''

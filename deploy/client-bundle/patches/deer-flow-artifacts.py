@@ -222,7 +222,31 @@ async def get_artifact(thread_id: str, path: str, request: Request, download: bo
     if mime_type in ACTIVE_CONTENT_MIME_TYPES:
         return FileResponse(path=actual_path, filename=actual_path.name, media_type=mime_type, headers=_build_attachment_headers(actual_path.name))
     if mime_type and mime_type.startswith("text/"):
-        return PlainTextResponse(content=actual_path.read_text(encoding="utf-8"), media_type=mime_type)
+        # Same hazard as the content-sniff branch below: a declared text/* type is
+        # not proof of UTF-8. A CJK .csv or .txt saved as GBK raises
+        # UnicodeDecodeError here and returns HTTP 500 instead of the file. Decode
+        # when possible, fall back to the raw bytes otherwise - identical behaviour
+        # on success, a usable download instead of a 500 on failure.
+        content = actual_path.read_bytes()
+        try:
+            return PlainTextResponse(content=content.decode("utf-8"), media_type=mime_type)
+        except UnicodeDecodeError:
+            return Response(content=content, media_type=mime_type or "application/octet-stream", headers={"Content-Disposition": _build_content_disposition("inline", actual_path.name)})
     if is_text_file_by_content(actual_path):
-        return PlainTextResponse(content=actual_path.read_text(encoding="utf-8"), media_type=mime_type)
+        # `is_text_file_by_content` only rejects NUL bytes, and a PDF header is
+        # printable ASCII (`%PDF-1.7` ...) with no NUL in its first 8 KiB, so a
+        # binary PDF is classified as text here and `read_text()` then raises
+        # UnicodeDecodeError at the first high byte -> HTTP 500. Measured
+        # 2026-10-30: GET .../artifacts/mnt/user-data/outputs/<name>.pdf died with
+        # "byte 0xa1 in position 11", i.e. immediately after the header.
+        #
+        # The skill-archive branch above already had the right shape (try decode,
+        # fall back to raw bytes); this path did not. Falling back is strictly
+        # better than a 500: the browser still gets the real bytes and can open
+        # the PDF, and the artifact stays downloadable.
+        content = actual_path.read_bytes()
+        try:
+            return PlainTextResponse(content=content.decode("utf-8"), media_type=mime_type)
+        except UnicodeDecodeError:
+            return Response(content=content, media_type=mime_type or "application/octet-stream", headers={"Content-Disposition": _build_content_disposition("inline", actual_path.name)})
     return Response(content=actual_path.read_bytes(), media_type=mime_type, headers={"Content-Disposition": _build_content_disposition("inline", actual_path.name)})
