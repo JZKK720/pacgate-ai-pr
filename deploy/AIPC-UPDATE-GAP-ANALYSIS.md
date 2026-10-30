@@ -167,3 +167,74 @@ them is the six items in §5.
 
 - `scripts/audit-aipc-update-coverage.ps1` — read-only; classifies every bind
   mount by whether it reaches a running machine unattended.
+
+---
+
+## AIPC1 handoff (2026-10-30) - what was adopted, and what deliberately was not
+
+The handoff arrived as a delta inventory plus nine verdict records. Each item was
+re-verified against this tree and the live 0.2.7 container before any change. Four of
+the nine did not survive that check, and adopting them would have shipped patches for
+behaviour that is already correct.
+
+| ID | Verdict | Outcome here |
+|---|---|---|
+| V-01 | MCP arguments never path-translated | **Adopted.** `deer-flow-mcp-args.py` + `test-mcp-argument-paths.ps1`. The handoff's root cause was right and was re-proved: without `InjectedToolArg`, `runtime` arrives as `None`, so a rewrite would silently no-op. |
+| V-01b | - | **Found, not in the handoff.** The mounted adapter renames hyphens to underscores in the tool prefix, while `get_mcp_tools()` compared against the raw server key. Every hyphenated server lost session pooling and the result path conversion. Fixed in the same patch. |
+| V-02 | `read_file` on a binary says use `pandoc` | **Rejected - already fixed upstream.** The live container returns the pandas/openpyxl hint. `git log -S pandoc` over `sandbox/tools.py` finds nothing; upstream fixed it in `6a4a30fa`. |
+| V-03 | Recursion default was a hardcoded 100 | **Adopted.** The default now equals the ceiling. The existing gate asserted the 100 default as correct, so that assertion was flipped first and red-checked. Two independent floors (`channels/manager.py:51`, `client.py:218`) are recorded as known remaining gaps, not silently declared fixed. |
+| V-04 | `officecli set` rejects the selector `get` accepts | **Adopted as a prompt fix, not a code fix.** officecli is an upstream binary and was not patched. The prompt no longer teaches a command the sandbox rejects, and documents `batch --input`. |
+| V-05 | 14 skills declared tools that resolve to nothing | **Rejected - not applicable.** Upstream ships 3 seeded skills and all three deliberately declare no `allowed-tools`, with the measured reason in their headers. `test-skill-evolution.ps1` E5 already enforces this. |
+| V-06 | `audit-model-tags.ps1` false positives | **Adopted.** Scoped to the `models:` block and registered in the gate list, which it never was - it was described in comments there but never invoked, which is why it reported clean while the Rust tier roster 404'd. |
+| V-07 | The connector template wipes 27 connectors | **Adopted, and worse than reported.** The change report compared against a hardcoded three-name list, so removals beyond `firecrawl` were not even named. Measured on a fixture: 6 servers in, 3 out, 1 named. The render now merges and never removes. |
+| V-08 | `thinking_enabled` defaults ON | **Adopted in source.** Build-time only: the frontend image ships compiled output and has no source mount, so this lands on the next image build. |
+| V-09 | A local 0.2.8 was invented | **Nothing to do.** Confirmed: no `0.2.8` string exists in the tracked tree. Recorded so it is not repeated. |
+| Part 3 | 5 of 6 playbook references are dangling | **Not applicable.** Upstream has no `playbooks/` and none of the three seeded skills references one. The dangling references live in AIPC1's 60-skill corpus, which lives in a different repo and must not be ported. |
+| Part 4 | `OPERATOR.md` is tracked and public | **Corrected.** `git ls-files` returns nothing, `git check-ignore` matches, and both historical blobs carry `[REDACTED - see password manager]` with no live value. Credential status is owned by `plans/013-credential-rotation.md`. |
+
+### Firecrawl: why it is NOT in the template, and what to do per machine
+
+AIPC1 asked whether each machine needs its own Firecrawl key registered before the
+connector ships. Two measured facts decide the shape:
+
+1. **`firecrawl` is not in the template at all.** `deer-flow-extensions-config.template.json`
+   carries exactly three servers (`openviking`, `pacgate`, `officecli`). `firecrawl`
+   appeared only in the installer's hardcoded `$knownServers` list - which is why the
+   old render named it and nothing else. Adding it now means writing a NEW connector
+   entry, and the invocation form (`command`/`args`) is not recorded anywhere in this
+   repo, because AIPC1's live config is gitignored. It is therefore not invented here.
+2. **A failing MCP server takes every MCP tool with it.** The pinned 0.2.7 image has no
+   per-server isolation: `get_mcp_tools()` awaits one `client.get_tools()` for all
+   servers and its `except` handler logs and `return []`. So one `firecrawl` entry with
+   an empty key does not degrade web search - it silently removes `pacgate`,
+   `officecli` and every legal-database connector too.
+
+Because of (2), the per-machine registration must be an **opt-in switch**, not an
+enabled-by-default entry: ship the connector with `"enabled": false` and a
+`${FIRECRAWL_API_KEY}` placeholder, and let the operator flip `enabled` to `true` on a
+machine only after the key is in `.env`. The key store already exists - `setup-qm.ps1`
+reads `FIRECRAWL_API_KEY` from the bundle's gitignored `.env`, which is the documented
+single source - so no new secret mechanism is needed.
+
+**Open action:** obtain AIPC1's exact firecrawl `command`/`args` and add the disabled
+entry plus a gate assertion that every enabled server resolves to a non-empty key.
+Until then, no machine should add an enabled firecrawl entry by hand: one wrong entry
+is a total MCP outage, not a partial one.
+
+### Deliberately not ported
+
+The 60 skills and the `playbooks/` corpus live in `pacgate-ai/deer-flow` on branch
+`pacgate-layer`, not here. The live `deer-flow-extensions-config.json` holds 27
+legal-database credentials and is gitignored for that reason. Porting either would
+leak credentials or fork a corpus that has its own repo.
+
+### Open, not fixed by this change
+
+- `app/channels/manager.py:51` and `deerflow/client.py:218` each hardcode
+  `recursion_limit: 100` independently of `build_run_config`. The IM path routes
+  through the gateway and is therefore clamped; a direct `deerflow.client` caller is not.
+- The frontend thinking fix is inert until the next frontend image build.
+- `compose.prod.yaml`'s seed-skills comment cites
+  `sandbox/tools.py:validate_local_tool_path`, which does not exist in the pinned image
+  (the real function is `validate_local_file_path`). The behaviour it describes is
+  correct; the citation is wrong.
