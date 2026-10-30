@@ -290,6 +290,13 @@ $gates = @(    'scripts/test-install-render.ps1'
     # safe in the gate list. Negative-tested against both the stale tag and a
     # main.rs that bypasses the overrides.
     'scripts/test-model-roster-consistency.ps1'
+    # MODEL TAG AUDIT, registered 2026-10-30. This ran green for months while the
+    # Rust tier roster 404'd, because nothing invoked it - it was described in
+    # comments here but never added to the list. Its matcher also scanned the whole
+    # YAML, so a `subagents:` model name was collected as a local tag and
+    # :latest-normalized into a false miss. Scoped to the `models:` block and
+    # registered here. Negative-tested: a bogus subagents: model no longer appears.
+    'scripts/audit-model-tags.ps1'
     # Baked-weights integrity. 0.1.28 bakes the PP-OCRv4 det/rec/cls weights into
     # the ocr-service image, but both compose files went on mounting a
     # `paddleocr-models` volume over /root/.paddleocr - and a mount point SHADOWS
