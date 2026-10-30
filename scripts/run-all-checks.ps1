@@ -297,6 +297,14 @@ $gates = @(    'scripts/test-install-render.ps1'
     # safe in the gate list. Negative-tested against both the stale tag and a
     # main.rs that bypasses the overrides.
     'scripts/test-model-roster-consistency.ps1'
+    # THINKING DEFAULT, registered 2026-10-30. `thinking_enabled: mode !== "flash"`
+    # is true for an unset mode, and the mode default is read from local storage on
+    # mount - so a fresh profile ran every first turn with thinking on. The config's
+    # when_thinking_disabled suppression only fires when thinking is OFF, so it never
+    # fired and 12 replies spent the whole 8192-token budget on reasoning, returning
+    # an empty message. Static: reads the frontend patch source, which the next image
+    # build compiles in. Red-checked by restoring the negation (4 assertions fail).
+    'scripts/test-thinking-default.ps1'
     # MODEL TAG AUDIT, registered 2026-10-30. This ran green for months while the
     # Rust tier roster 404'd, because nothing invoked it - it was described in
     # comments here but never added to the list. Its matcher also scanned the whole
@@ -429,6 +437,12 @@ $gates = @(    'scripts/test-install-render.ps1'
     # STATIC - reads the tracked prompt patch only. Red-checked by reverting the
     # wording; 4 of 5 checks fail on the pre-fix file.
     'scripts/test-prompt-document-reading.ps1'
+    # OFFICECLI SELECTOR CONTRACT, registered 2026-10-30. officecli's set verb only
+    # accepts /body/p[1], while the sandbox rejects any /-prefixed token on a bash
+    # command line - so the prompt's own add/get instructions were unrunnable. The
+    # prompt now teaches officecli batch --input, which puts the selector in a file.
+    # Static, plus a live probe of the real validator.
+    'scripts/test-prompt-officecli-selectors.ps1'
 
     # An empty `kb_search` must say WHY it is empty. Registered 2026-10-24, after
     # a lawyer asked for the firm's 互联网+/电商合规 material and got `[]` eighteen

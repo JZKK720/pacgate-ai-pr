@@ -971,7 +971,25 @@ export function useThreadStream({
             context: {
               ...extraContext,
               ...context,
-              thinking_enabled: context.mode !== "flash",
+              // Pacgate 2026-10-30: an UNSET mode must not enable thinking.
+              //
+              // It did. `context.mode !== "flash"` is true for undefined, and the
+              // mode default lives in local storage - so every first-turn run from a
+              // fresh profile ran with thinking on. deer-flow-config.yaml carries
+              // `when_thinking_disabled: {reasoning_effort: none}` for every
+              // thinking-capable model, but the factory applies it only when
+              // thinking_enabled is false, so the suppression never fired and the
+              // reply budget was shared with the invisible reasoning channel.
+              //
+              // Measured: 12 `deepseek-v4.1-flash` replies ended with
+              // finish_reason=length after 8192/8192 tokens spent entirely on
+              // reasoning, producing an empty assistant message. That is conditional
+              // on prompt size, not universal - a short prompt answered fine either
+              // way - so this is a real budget defect, not a hang.
+              thinking_enabled:
+                context.mode === "thinking" ||
+                context.mode === "pro" ||
+                context.mode === "ultra",
               is_plan_mode: context.mode === "pro" || context.mode === "ultra",
               subagent_enabled: context.mode === "ultra",
               reasoning_effort:
