@@ -825,6 +825,28 @@ $gates += 'scripts/test-aipc-capacity-fit-strict.ps1'
 # stripping another's frontmatter each make it exit 1.
 $gates += 'scripts/test-skills-and-templates.ps1'
 
+# SKILL EVOLUTION, registered 2026-10-30.
+#
+# Self-evolving legal skills were entirely config-gated and nothing asserted the
+# gate: on 0.2.7 the live container loaded ZERO skills, `skill_manage` was not
+# bound, and the skills root defaulted to a path that is neither in the image nor
+# on a volume. Turning it on is two keys and one path, and a future edit could
+# silently revert any of them.
+#
+# The subtle half is the one worth a gate. `allowed_tools` is a UNION across
+# loaded skills, and once ANY skill declares it, skills that omit it contribute
+# nothing (measured: one declaring ["bash"] collapses 45 tools to 1). A
+# self-evolving agent can author exactly that, so this checks the union cannot
+# amputate the surface, not just that the flag is on.
+#
+# E1 skill_evolution.enabled is true                (else skill_manage is unbound)
+# E2 skills.path is on the persistent .deer-flow volume
+# E3 both compose lanes mount the seed corpus read-only
+# E4 every seed's name matches its directory and has a matchable description
+# E5 no seed declares a partial allowed-tools
+# E6 live: the running stack loads the seeds with the surface intact
+$gates += 'scripts/test-skill-evolution.ps1'
+
 $failed = @()
 
 # Suite launcher. Windows PowerShell 5.1 machines have no `pwsh`; hardcoding the

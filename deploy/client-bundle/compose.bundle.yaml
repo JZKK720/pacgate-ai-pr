@@ -307,6 +307,10 @@ services:
       # frontend's formatTimeAgo("") threw RangeError: Invalid time value,
       # killing the settings memory card. Bind-mounted until upstreamed.
       - ./patches/pacgate-adapter-storage.py:/app/adapters/pacgate_deerflow_adapter/storage.py:ro
+      # Pacgate 2026-10-30: seeded legal skills (see compose.prod.yaml for the
+      # rationale). Read-only; the agent writes its own skills to custom/ via the
+      # scanned `skill_manage` path, never by editing a seed.
+      - ./deer-flow-skills:/app/backend/.deer-flow/skills/public:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).

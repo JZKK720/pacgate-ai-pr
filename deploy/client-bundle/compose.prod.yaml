@@ -382,6 +382,19 @@ services:
       # frontend's formatTimeAgo("") threw RangeError: Invalid time value,
       # killing the settings memory card. Bind-mounted until upstreamed.
       - ./patches/pacgate-adapter-storage.py:/app/adapters/pacgate_deerflow_adapter/storage.py:ro
+      # Pacgate 2026-10-30: SEED SKILLS. Read-only into the skills root that
+      # `skills.path: .deer-flow/skills` resolves to, so these are the competent
+      # starting corpus the agent patches instead of authoring from nothing.
+      #
+      # `:ro` is deliberate and matches what the sandbox already enforces:
+      # `sandbox/tools.py:validate_local_tool_path` permits `/mnt/skills/*` only
+      # for read_only access, so the agent can never edit a seeded skill through
+      # bash. Changes must go through `skill_manage`, which is scanned.
+      #
+      # Mounted read-only over the same directory the agent writes custom skills
+      # into. If a seeded skill needs a durable change, the agent copies its
+      # content into `custom/` via `skill_manage` - it does not mutate the seed.
+      - ./deer-flow-skills:/app/backend/.deer-flow/skills/public:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).

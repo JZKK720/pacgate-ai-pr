@@ -88,6 +88,11 @@ $IncludeDirs = @(
     'patches'
     'personas'
     'workflows'
+    # Pacgate 2026-10-30: the seeded legal skills deer-flow mounts at
+    # .deer-flow/skills/public. Omitting this ships a compose file that mounts a
+    # directory the client does not have, and the agent silently starts with no
+    # skills - the exact failure this seed corpus exists to prevent.
+    'deer-flow-skills'
     # openviking/ is deliberately NOT shipped: ov.conf and workspace/ are
     # git-ignored per-machine runtime state, created by the client's install.
     # qm-pacgate/ is staged from its tracked source - see $StagedDeployments.

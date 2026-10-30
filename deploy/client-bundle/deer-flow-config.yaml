@@ -321,6 +321,45 @@ memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
   model_name: gemma4-12b-memory
 
+# Pacgate 2026-10-30: SKILLS + AGENT-MANAGED SKILL EVOLUTION.
+#
+# WHY `path` IS SET (this was the whole reason the agent had ZERO skills).
+# Measured live on 0.2.7: `load_skills()` returned `count: 0` and the skills
+# prompt section rendered as `len: 0`. The default root is
+# `project_root()/skills` = `/app/backend/skills`, which does not exist in the
+# image and is NOT on a mounted volume - so even if a skill had been written it
+# would have died at the next container recreation. Pointing it at
+# `.deer-flow/skills` puts skills on the volume compose already mounts
+# (`./data/deer-flow:/app/backend/.deer-flow`), which needs no new mount.
+# Verified by writing, loading and reading back a skill under that path in the
+# live container.
+skills:
+  path: .deer-flow/skills
+  # container_path stays at the default /mnt/skills: it is the path the agent's
+  # read_file/ls see, and `sandbox/tools.py` maps it onto the host skills root.
+
+# Pacgate 2026-10-30: allow the agent to author and patch its own skills.
+#
+# What this actually does (verified, not assumed): `tools.py:92-96` appends
+# `skill_manage` to the builtin tool list ONLY when this flag is true. With a
+# throwaway config setting it, `get_available_tools()` went from 44 tools to 45
+# with `skill_manage` present. With it false - the current state - the tool does
+# not exist and no amount of prompting can produce a skill.
+#
+# SAFETY: `skill_manage` routes every write through `skills/security_scanner.py`,
+# which asks a chat model to classify the content allow/warn/block and fails
+# CLOSED (an unreachable moderation model yields `block`, not `allow`).
+# Verified live under the default local model (gemma4-12b-local): a sample
+# Chinese-law NDA skill was correctly allowed. `executable=True` content (a
+# skill carrying `scripts/`) is blocked unless the decision is exactly `allow`.
+#
+# `moderation_model_name` is deliberately left unset so the scanner rides the
+# primary local model. Do NOT point it at a cloud model: skill bodies quote
+# client matter content, and the 2026-08-30 decision to accept prompt egress for
+# CHAT models was never extended to skill-review input.
+skill_evolution:
+  enabled: true
+
 # Pacgate 2026-10-17: PIN the title-generation model.
 #
 # Root cause (measured live, 2026-10-17): `title.model_name` was unset, so

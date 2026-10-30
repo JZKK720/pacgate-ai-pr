@@ -28,6 +28,8 @@
           (documented as an assertion so nobody "optimises" the mount away)
       K3  workflow templates: tracked count matches the client bundle copy
       K4  every workflow template parses as YAML with an id and a name
+      K5  the deer-flow seed skill corpus exists, is loadable, is mounted, and is
+          packaged for clients (a SEPARATE corpus from the qm skills in K1)
 
     Static where possible; K2 and the live mount check are advisory when Docker or
     the image is unavailable, because a clean machine has neither.
@@ -237,6 +239,96 @@ if (Test-Path -LiteralPath $wfBundle) {
     }
     if ($bad -eq 0) {
         Write-Pass "all $($files.Count) template(s) declare id, name and steps"
+    }
+}
+
+Write-Host ''
+Write-Host 'K5  the seeded deer-flow skills are present and declared' -ForegroundColor Cyan
+
+# Pacgate 2026-10-30: these are a SEPARATE corpus from the qm sandbox skills in
+# K1. The qm skills are prose that the qm agent reads via /layer/skills; these are
+# mounted into deer-flow's own skills root so the research workspace agent sees
+# legal playbooks. They are not the same files and are not interchangeable.
+#
+# The specific trap: deer-flow's compose mounts ../deer-flow-skills, a directory
+# that exists only if it is tracked. A missing directory produces an empty mount
+# and zero skills with no error - the agent just has no playbooks.
+$dfSeedDir = Join-Path $repoRoot 'deploy/client-bundle/deer-flow-skills'
+$dfCompose = Join-Path $repoRoot 'deploy/client-bundle/compose.prod.yaml'
+
+if (-not (Test-Path -LiteralPath $dfSeedDir)) {
+    Write-Fail 'deploy/client-bundle/deer-flow-skills is missing - compose mounts it, so the agent gets no seeded skills'
+}
+else {
+    $dfSeeds = @(Get-ChildItem -LiteralPath $dfSeedDir -Directory)
+    if ($dfSeeds.Count -eq 0) {
+        Write-Fail 'deer-flow-skills is empty - the agent would have no legal playbooks'
+    }
+    else {
+        Write-Info "$($dfSeeds.Count) deer-flow seed skill(s): $(($dfSeeds | ForEach-Object { $_.Name }) -join ', ')"
+    }
+    $badSeed = 0
+    foreach ($s in $dfSeeds) {
+        $md = Join-Path $s.FullName 'SKILL.md'
+        if (-not (Test-Path -LiteralPath $md)) {
+            Write-Fail "deer-flow skill '$($s.Name)' has no SKILL.md"
+            $badSeed++
+            continue
+        }
+        $text = [System.IO.File]::ReadAllText($md)
+        $fmMatch = [regex]::Match($text, '(?s)^\s*---\s*\r?\n(?<fm>.+?)\r?\n---')
+        if (-not $fmMatch.Success) {
+            Write-Fail "deer-flow skill '$($s.Name)' has no --- frontmatter block"
+            $badSeed++
+            continue
+        }
+        $fm = $fmMatch.Groups['fm'].Value
+        $nm = [regex]::Match($fm, '(?m)^name:\s*(\S+)')
+        # The loader requires frontmatter name == directory name, and rejects a
+        # mismatch with only a log line - a silent missing capability.
+        if (-not $nm.Success -or $nm.Groups[1].Value.Trim() -ne $s.Name) {
+            Write-Fail "deer-flow skill '$($s.Name)' frontmatter name does not match its directory - the loader will reject it"
+            $badSeed++
+            continue
+        }
+        if ($fm -notmatch '(?m)^description:\s*\S.{39,}') {
+            Write-Fail "deer-flow skill '$($s.Name)' description is missing or too thin to match against"
+            $badSeed++
+            continue
+        }
+        # See scripts/test-skill-evolution.ps1 E5: a partial allowed-tools list is
+        # a union that amputates the tool surface for EVERY skill.
+        if ($fm -match '(?m)^allowed-tools:') {
+            Write-Fail "deer-flow skill '$($s.Name)' declares allowed-tools - allowed_tools is a UNION, so a partial list silently removes tools from every skill's surface"
+            $badSeed++
+            continue
+        }
+    }
+    if ($badSeed -eq 0) {
+        Write-Pass "all $($dfSeeds.Count) deer-flow seed skill(s) are loadable"
+    }
+
+    if (Test-Path -LiteralPath $dfCompose) {
+        $dc = [System.IO.File]::ReadAllText($dfCompose)
+        if ($dc -match '\./deer-flow-skills:/app/backend/\.deer-flow/skills/public:ro') {
+            Write-Pass 'compose.prod.yaml mounts the seed corpus read-only'
+        }
+        else {
+            Write-Fail 'compose.prod.yaml no longer mounts ./deer-flow-skills - the seeded skills would not reach the agent'
+        }
+    }
+
+    # The packaging script must ship the directory, or a client's compose mounts a
+    # path that was never delivered.
+    $pkg = Join-Path $repoRoot 'scripts/package-bundle.ps1'
+    if (Test-Path -LiteralPath $pkg) {
+        $pkgText = [System.IO.File]::ReadAllText($pkg)
+        if ($pkgText -match "'deer-flow-skills'") {
+            Write-Pass 'package-bundle.ps1 ships the seed corpus'
+        }
+        else {
+            Write-Fail "package-bundle.ps1 does not include 'deer-flow-skills' - clients would get a compose file mounting a missing directory"
+        }
     }
 }
 
