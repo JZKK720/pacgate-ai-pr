@@ -618,6 +618,17 @@ $liveStackGates = @(
     # compose.prod.yaml, while both declare `name: pacgate-ai-bundle` (same project).
     # Exits 2 when nothing is reachable, so a clean machine is not a false red.
     'scripts/test-lane-connectivity.ps1'
+    # LEGAL JOURNEY, registered 2026-10-31. This is the closest thing to a real
+    # acceptance test in the repo - matter -> upload -> extract -> sanitize -> review
+    # gate -> KB search -> external search -> connector health -> deer-flow auth ->
+    # qm -> OpenViking recall - and it was never in this list. It passed 19/19 while
+    # unregistered, which means a release could have shipped with the whole journey
+    # broken and the suite would still have said "all green".
+    #
+    # It is a LIVE gate: exit 2 (CANNOT CHECK) when the stack or credentials are
+    # absent, exit 1 only on a real broken step. It names the first failing step
+    # rather than collecting them, because once step N fails the rest is noise.
+    'scripts/test-legal-journey.ps1'
     # qm CURRENTNESS, registered 2026-10-18. `install.ps1 -Update` deliberately does
     # NOT restart the qm stack - "a restart of the co-working stack is user-visible
     # (qm is where staff work)" - which is the right call, and which means qm can sit
