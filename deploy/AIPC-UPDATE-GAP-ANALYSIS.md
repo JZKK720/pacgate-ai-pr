@@ -364,3 +364,50 @@ pwsh -NoProfile -File scripts/test-legal-journey.ps1 2>&1 | Select-String 'conne
 
 and correct this paragraph if the number differs - do not leave a claim that was not
 measured.
+
+### 0.2.9 release verification (2026-10-31)
+
+Tag `v0.2.9` = `706845f`. Workflow 41167126785 completed; all five images published
+and the connector is in the shipped binary - verified by grepping the image, not by
+trusting the build log:
+
+```text
+grep -ao "api\.firecrawl\.dev"        /usr/local/bin/pacgate-server  -> api.firecrawl.dev
+grep -ao "Firecrawl (Web Search)"     /usr/local/bin/pacgate-server  -> Firecrawl (Web Search)
+grep -ao "FIRECRAWL_API_KEY"          /usr/local/bin/pacgate-server  -> FIRECRAWL_API_KEY
+```
+
+Live on the 0.2.9 stack, both fixes measured rather than assumed:
+
+| Check | 0.2.8 | 0.2.9 |
+|---|---|---|
+| `/api/search/health` entries | 10 | **11**, now including `firecrawl` |
+| `firecrawl` available | n/a | **false** - correct with no key set |
+| `/api/search/registry` implemented claims | 11 | **10** |
+| `ansvar` marked implemented | true | **false** |
+
+Full suite: **all 61 gates passed**, including the two new e2e gates
+(`test-legal-journey.ps1`, `test-agent-mcp-e2e.ps1`) and `test-rust-workspace.ps1`.
+
+### Why 0.2.9 exists at all
+
+`test-release-provenance.ps1` refused to pass 0.2.8 once
+`pacgate-ai/crates/pacgate-search/src/lib.rs` changed: that path is COPYed into the
+`pacgate-api` image, so editing it after a tag invalidates the release. The gate was
+right and there was no way to argue with it - the connector could not reach a client
+on a 0.2.8 pin. That is the intended behaviour of a provenance check, and it is worth
+recording because the alternative ("just re-push :0.2.8") is exactly what this gate
+exists to prevent.
+
+### Still blocked on this machine, and not a repo defect
+
+- **Docker Hub is unreachable** (`registry-1.docker.io` times out; the configured
+  proxy at 127.0.0.1:7892 is not running). A local `build-images.ps1` cannot resolve
+  `rust:1.94-bookworm`, and `docker compose pull` cannot resolve the `nginx` base
+  image. GHCR itself is fine. Any local rebuild work needs that proxy restored or
+  the egress fixed first.
+- Task 8's "prove it through the container with a real key" step therefore ran at the
+  connector boundary against the live Firecrawl API instead (ignored-by-default test,
+  passes in 1.26s), plus the live stack proving `firecrawl` appears and is correctly
+  unavailable without a key. A real key has not been exercised end to end inside the
+  container because no key exists on this machine and none should be committed.
