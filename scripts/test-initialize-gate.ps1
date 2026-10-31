@@ -40,6 +40,25 @@ param(
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
+# The default network name encodes the compose project directory (`client-bundle`),
+# but the project is named after whatever directory compose is run from. On a box
+# whose bundle lives in `pacgate-ai-bundle` the hardcoded default resolves to
+# nothing, `docker run` fails, and the gate reports a code defect that is really a
+# path mismatch. Resolve it from the running stack instead of guessing.
+docker network inspect $Network 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    $detected = (& docker inspect $DbFrom -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>&1 | Out-String) -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -First 1
+    if ($detected) {
+        Write-Host "  network '$Network' not found - using '$detected' from $DbFrom" -ForegroundColor DarkGray
+        $Network = $detected.Trim()
+    }
+    else {
+        Write-Host "  cannot resolve a network: '$Network' does not exist and $DbFrom is not running" -ForegroundColor Red
+        Write-Host '  start the bundle first, or pass -Network explicitly' -ForegroundColor Red
+        exit 2
+    }
+}
+
 $script:pass = 0
 $script:fail = 0
 function Check($name, $ok, $detail) {
