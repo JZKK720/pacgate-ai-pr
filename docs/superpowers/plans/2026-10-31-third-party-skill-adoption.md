@@ -1,6 +1,16 @@
 # Third-Party Skills And Tools: Adopt, Extend, Or Build
 
-Status: decision record, 2026-10-31.
+Status: decision record, 2026-10-31. **Partly superseded** by
+`2026-10-31-laya-local-decision-engine.md`.
+
+Two conclusions here did not survive further research, and both are corrected in
+that document. The `jev` egress objection has an answer: `laya` serves the same
+`/v1/systemone` protocol locally, and `jev-mcp` can be pointed at it via
+`JEV_PROVIDER=compatible`. And `wandb/openui` was rejected as cloud-only, which
+is wrong - it documents `OLLAMA_HOST` and this stack already runs Ollama, plus
+`ghcr.io/wandb/openui:latest` is pullable despite the Docker Hub outage. Its
+rejection now rests only on relevance, not on egress.
+
 Scope: whether five external repositories can be built into the Pacgate AIPC stack.
 
 ## The question, stated correctly
