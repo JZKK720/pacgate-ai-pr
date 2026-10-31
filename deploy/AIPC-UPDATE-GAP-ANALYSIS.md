@@ -411,3 +411,49 @@ exists to prevent.
   passes in 1.26s), plus the live stack proving `firecrawl` appears and is correctly
   unavailable without a key. A real key has not been exercised end to end inside the
   container because no key exists on this machine and none should be committed.
+
+## Third-party skills and tools (2026-10-31)
+
+Five external repositories were proposed for building into the product:
+`wuyoscar/jev-skill`, `ibelick/ui-skills`, `cobusgreyling/loop-engineering`,
+`wandb/openui`, and `CopilotKit/OpenIntelligentUI`.
+
+All five are structurally mountable and all five are rejected. The reasons are
+not structural, which is why the decision is stable across their future
+releases. Full reasoning in
+`docs/superpowers/plans/2026-10-31-third-party-skill-adoption.md`.
+
+- **Cloud egress is the blocker, not format.** Every `jev-*` skill requires
+  `TYPESAFE_API_KEY` and three name the metered `jev-mcp` server directly.
+  `openui` and `OpenIntelligentUI` each require an OpenAI-compatible key.
+  Mounting any of them makes a closed-box matter send prompts to a third party.
+  `ui-skills` has no egress but no client-facing surface either.
+- **Bundle-sealed seeds are never scanned.** `scan_skill_content` is imported
+  only by `installer.py`, `skill_manage_tool.py`, and `gateway/routers/skills.py`
+  - the install and learn paths. `deer-flow-skills/` is bind-mounted read-only
+  and never passes through it. That is acceptable for three self-authored
+  skills with no executable content. It would not be acceptable for 14
+  imported ones, so an install-time scan in `package-bundle.ps1` is the
+  prerequisite for any externally sourced seed.
+- **Verified conformance anyway.** 14 third-party skills were checked against
+  E4/E5: every `name` matches its directory, none declares `allowed-tools`, and
+  the only keys used (`name, description, license, metadata, version`) are all
+  in `ALLOWED_FRONTMATTER_PROPERTIES`.
+
+### Two gate false-failures found and fixed by this analysis
+
+Neither was caused by the third-party review, but that review is what exposed
+them. Both were reporting correct input as a defect.
+
+- **E4 rejected valid YAML block scalars.** The loader parses frontmatter with
+  `yaml.safe_load`, so `description: >` resolves to the joined text. E4 matched
+  only the first physical line, captured the literal `>`, and failed the skill
+  as too short. `ui-skills/fixing-metadata` is written that way: 340 chars
+  resolved, 1 reported. Fixed; 14/14 third-party skills now pass, a 19-char
+  description still fails.
+- **`test-initialize-gate.ps1` hardcoded its network.** The default
+  `client-bundle_default` only resolves when the bundle directory is named
+  `client-bundle`. Here it is `pacgate-ai-bundle`, so `docker run --network`
+  failed and the gate reported "container starts from 0.1.17" as a product
+  defect. All 8 assertions passed once the network was right. It now resolves
+  from the running stack and exits 2 when it cannot.
