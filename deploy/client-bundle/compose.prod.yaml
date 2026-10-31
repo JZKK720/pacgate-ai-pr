@@ -584,7 +584,15 @@ services:
       HF_HUB_OFFLINE: "1"
       LAYA_REVISION: ${LAYA_REVISION:-}
     volumes:
-      - ${LAYA_MODEL_DIR:-../laya-models}:/models:ro
+      # laya resolves checkpoints through huggingface_hub.snapshot_download, so it
+      # reads an HF *cache* layout (<home>/.cache/huggingface/hub), not a directory
+      # we name. An earlier revision of this file mounted
+      # ${LAYA_MODEL_DIR}:/models, which laya never looks at: the container would
+      # start, then try to download with HF_HUB_OFFLINE=1 and fail at the first
+      # clause. Stage with
+      #   huggingface-cli download convaiinnovations/laya --include "multilingual/*"
+      # which produces exactly this layout, then point LAYA_HF_CACHE at it.
+      - ${LAYA_HF_CACHE:-../laya-hf-cache}:/home/laya/.cache/huggingface:ro
     restart: unless-stopped
 
   ocr-service:

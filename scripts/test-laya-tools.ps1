@@ -199,6 +199,90 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
 }
 
 Write-Host ''
+Write-Host 'L7  the laya service can actually resolve its weights' -ForegroundColor Cyan
+
+# A service that starts and then has no weights is worse than one that is off:
+# /health returns 200 with no checkpoint loaded, so it looks healthy while every
+# clause call fails. This assertion exists because exactly that shipped in the
+# first cut - the compose mounted ${LAYA_MODEL_DIR}:/models, but laya resolves
+# its checkpoint through huggingface_hub.snapshot_download and reads an HF cache
+# (<home>/.cache/huggingface/hub). It never looks at /models.
+#
+# The vars laya reads, from ITS OWN compose.http.yaml and http-api.md - the
+# authoritative list. A pure source scan under-reports them, because
+# LAYA_DEVICE / LAYA_PRELOAD / LAYA_MAX_LOADED / LAYA_THREADS go through
+# pydantic settings rather than a literal os.environ.get. There is deliberately
+# no LAYA_MODEL_DIR: laya resolves checkpoints through an HF cache and has no
+# such variable.
+# The env vars laya reads, taken from ITS OWN compose.http.yaml and http-api.md
+# - the authoritative list - plus the ones a source scan found. A pure source
+# scan is not enough: LAYA_DEVICE / LAYA_PRELOAD / LAYA_MAX_LOADED /
+# LAYA_THREADS are read through pydantic settings, not by a literal
+# os.environ.get, so scanning only .py call sites under-reports them.
+# There is deliberately no LAYA_MODEL_DIR: laya resolves checkpoints through an
+# HF cache and has no such variable.
+$layaEnvVars = @(
+    'LAYA_HOST', 'LAYA_PORT', 'LAYA_ROOT_PATH', 'LAYA_DEVICE', 'LAYA_PRELOAD',
+    'LAYA_MODELS', 'LAYA_DEFAULT_MODEL', 'LAYA_EXTRA_MODELS', 'LAYA_MAX_LOADED',
+    'LAYA_THREADS', 'LAYA_IDLE_UNLOAD_SECONDS', 'LAYA_MAX_CONCURRENT',
+    'LAYA_MAX_TOKEN_BUDGET', 'LAYA_MAX_BATCH_TOKENS', 'LAYA_JEV_STRICT',
+    'LAYA_TOURNAMENT_GROUP', 'LAYA_LOG_LEVEL', 'LAYA_REVISION',
+    'LAYA_SHA256_DIGESTS', 'LAYA_API_KEY', 'LAYA_API_KEY_FILE',
+    'LAYA_CUDA_AMP', 'LAYA_CPU_AMP', 'LAYA_AUTO_TASK', 'LAYA_BASE_URL',
+    'LAYA_REMOTE_TIMEOUT', 'LAYA_USER_AGENT',
+    'XDG_CACHE_HOME', 'TORCHINDUCTOR_CACHE_DIR'
+)
+$invented = @()
+foreach ($m in [regex]::Matches($src, '\$\{?(LAYA_[A-Z0-9_]+)')) { if ($layaEnvVars -notcontains $m.Groups[1].Value) { $invented += $m.Groups[1].Value } }
+Check 'pacgate-mcp only uses LAYA_* variables that exist' ($invented.Count -eq 0) `
+    ("invented: " + (($invented | Select-Object -Unique) -join ', '))
+
+foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
+    $p = Join-Path 'deploy/client-bundle' $lane
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $t = [System.IO.File]::ReadAllText((Resolve-Path $p))
+
+    # Pull the laya service block, then drop comment lines before inspecting it.
+    # Without that, an explanatory comment naming a removed variable reads as a
+    # live reference and the gate fails on its own documentation.
+    $svc = [regex]::Match($t, '(?ms)^  laya:\r?\n(?<body>.*?)(?=^\s{2}[a-z0-9-]+:\s*$|\z)')
+    if (-not $svc.Success) { Check "$lane laya block parseable" $false; continue }
+    $bodyLines = @(($svc.Groups['body'].Value -split '\r?\n') | Where-Object { $_.Trim() -notmatch '^#' })
+
+    Check "$lane mounts the HF cache laya reads" (($bodyLines -join "`n") -match ':/home/laya/\.cache/huggingface') `
+        'laya resolves checkpoints via an HF cache; a different mount path is invisible to it'
+
+    # environment: values must be variables laya itself reads.
+    $envLines = @()
+    $inEnv = $false
+    foreach ($line in $bodyLines) {
+        if ($line -match '^\s{4}environment:\s*$') { $inEnv = $true; continue }
+        if ($inEnv -and $line -match '^\s{4}[a-z]') { break }
+        if ($inEnv) { $envLines += $line }
+    }
+    $badEnv = @()
+    foreach ($line in $envLines) {
+        $key = ($line -split ':', 2)[0].Trim()
+        if ($key -match '^LAYA_' -and $layaEnvVars -notcontains $key) { $badEnv += $key }
+    }
+    Check "$lane sets only LAYA_* variables laya reads" ($badEnv.Count -eq 0) `
+        ("laya does not read: " + (($badEnv | Select-Object -Unique) -join ', '))
+
+    # Volume sources are compose-side, so a different namespace is expected there -
+    # but a *model* path variable is the specific mistake being guarded against.
+    $volVars = @()
+    foreach ($line in $bodyLines) {
+        if ($line -notmatch '^\s*-\s') { continue }
+        foreach ($m in [regex]::Matches($line, '\$\{(LAYA_[A-Z0-9_]+)')) { $volVars += $m.Groups[1].Value }
+    }
+    Check "$lane names no model-directory variable laya ignores" ($volVars -notcontains 'LAYA_MODEL_DIR') `
+        'LAYA_MODEL_DIR does not exist in laya; the mount must target the HF cache path'
+
+    Check "$lane keeps runtime offline" (($bodyLines -join "`n") -match 'HF_HUB_OFFLINE:\s*"?1') `
+        'without HF_HUB_OFFLINE the service would try huggingface.co at run time on a client machine'
+}
+
+Write-Host ''
 $total = $script:pass + $script:fail
 if ($script:fail -eq 0) {
     Write-Host "RESULT: the laya tools ship, degrade safely, and keep abstention. ($($script:pass) passed, $($script:skip) skipped)" -ForegroundColor Green

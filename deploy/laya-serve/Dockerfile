@@ -2,18 +2,22 @@ FROM python:3.12-slim
 
 # laya as a local decision engine (2026-10-31).
 #
-# Deliberately `laya[serve,onnx]` and NOT the default torch path: ONNX Runtime
-# runs the same checkpoints without PyTorch, which is ~2.5 GB saved in an image
-# that has to sit on a client machine. Measured: laya imports and runs without
-# torch when only the onnx extra is present.
+# CORRECTION (2026-10-31): an earlier version of this file claimed `laya[onnx]`
+# avoided PyTorch and saved ~2.5 GB. That is FALSE and was measured false: with
+# `laya[onnx]` installed, `pip list` reports torch 2.15.0+cpu alongside
+# onnxruntime 1.31.1, and `laya/agent.py` imports `safetensors.torch` at
+# construction. The published ONNX *graph* artifacts (`onnx/` paths) are not in
+# the repo at all - checked the HF and ModelScope file trees, zero matches - and
+# the shipped checkpoints are `model.safetensors`, i.e. PyTorch weights. So this
+# image carries torch whatever extra is requested; the `serve` extra is what
+# provides `laya-serve`, and that is what we actually need.
 #
-# The weights are NOT baked in. They are a 1.2 GB external-data sidecar per
-# checkpoint, they are mounted read-only at /models, and HF_HUB_OFFLINE=1 is set
-# by compose. Baking them would mean re-publishing 1.2 GB per release. This
-# image stays small on purpose.
+# The weights are NOT baked in. They are mounted read-only at /models and
+# HF_HUB_OFFLINE=1 is set by compose, so nothing is fetched at run time on a
+# client machine. See the LAYA_MODEL_DIR note in .env.example for staging.
 ARG LAYA_VERSION=0.4.19
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir "laya[serve,onnx]==${LAYA_VERSION}"
+    && pip install --no-cache-dir "laya[serve]==${LAYA_VERSION}"
 
 # Run unprivileged. The HF cache is the only writable path, so it must exist and
 # be owned by this user before compose mounts the read-only model directory.
