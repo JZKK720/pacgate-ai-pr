@@ -7,6 +7,8 @@ name: Build & Push GHCR Images
 # Images pushed (release authority = SOURCE OF TRUTH):
 #   ghcr.io/jzkk720/pacgate-api:<tag>
 #   ghcr.io/jzkk720/pacgate-mcp:<tag>
+#   ghcr.io/jzkk720/ocr-service:<tag>
+#   ghcr.io/jzkk720/laya-serve:<tag>            (optional; behind the `laya` profile)
 #   ghcr.io/jzkk720/deer-flow-pacgate:<tag>
 #   ghcr.io/jzkk720/deer-flow-frontend-pacgate:<tag>
 #
@@ -281,6 +283,29 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
+      # ── laya-serve (optional local decision engine) ──────────────────────
+      # Not a default service: it sits behind the `laya` compose profile and
+      # costs a 1.2 GB checkpoint on the client. It is built and published on
+      # every release anyway, because the only way a client can enable it is to
+      # `docker compose pull` an image that already exists. An unpublished
+      # optional service is an optional service nobody can turn on.
+      #
+      # The weights are NOT in the image (see deploy/laya-serve/Dockerfile):
+      # they are mounted read-only and HF_HUB_OFFLINE=1 keeps runtime offline.
+      - name: Build & push laya-serve
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/laya-serve
+          file: deploy/laya-serve/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ns.outputs.prefix }}/laya-serve:${{ steps.tag.outputs.tag }}
+            ${{ steps.ns.outputs.prefix }}/laya-serve:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
+
       # ── ocr-service (PaddleOCR perception lane) ──────────────────────────
       # Plan 019's extraction service. Shipped as a first-class release image
       # from 0.1.16: the OCR surface is a user-facing feature (standalone
@@ -380,7 +405,7 @@ jobs:
           ACCEPT="application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json"
 
           echo "Verifying ghcr.io/${PREFIX#ghcr.io/}/*:$TAG"
-          for img in pacgate-api pacgate-mcp ocr-service deer-flow-pacgate deer-flow-frontend-pacgate; do
+          for img in pacgate-api pacgate-mcp ocr-service laya-serve deer-flow-pacgate deer-flow-frontend-pacgate; do
             ok=0
             for attempt in 1 2 3 4 5; do
               tok=$(curl -s "https://ghcr.io/token?scope=repository:${PREFIX#ghcr.io/}/${img}:pull" | jq -r .token)

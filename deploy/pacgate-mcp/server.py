@@ -1000,9 +1000,300 @@ def pacgate_sanitize_text(text: str, data_level: str = "T3") -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# laya: local System 1 decision engine (optional)
+#
+# WHY THIS EXISTS (2026-10-31)
+#
+# laya is a non-autoregressive decision engine: you ask typed questions
+# (choice / score / noul) about a piece of text and get calibrated answers from
+# one forward pass. Nothing is generated, so there is nothing to parse and
+# nothing to hallucinate. That makes it the right tool for judging a clause
+# that the extraction pipeline has ALREADY found - not for reading documents,
+# which is what the reasoning model does.
+#
+# It runs as its own HTTP service (`laya-serve`) because the deer-flow image is
+# upstream and cannot take a new Python dependency. It is OPTIONAL: it costs a
+# 1.2 GB checkpoint, so a machine may not have it. Everything below therefore
+# degrades to an explicit "unavailable" result rather than raising. A tool that
+# raises on an unconfigured machine looks broken; a tool that says it is not
+# enabled is a capability that is simply absent.
+#
+# No API key is involved anywhere in this path - that is the entire point of
+# using laya instead of a metered judgment API.
+# ---------------------------------------------------------------------------
+
+LAYA_DEFAULT_URL = "http://laya:8000/v1/systemone"
+
+# The three questions are fixed here rather than taken from the caller so the
+# model is always asked the same thing. A caller-supplied question set would
+# make results incomparable across clauses, which is the one property a risk
+# signal has to have.
+_LAYA_RISK_QUESTIONS: dict[str, Any] = {
+    "risk": {
+        "type": "choice",
+        "instructions": "How risky is this contract clause for our client?",
+        "criteria": {
+            "high": (
+                "uncapped or unlimited liability, punitive or liquidated damages, "
+                "one-sided termination, broad indemnity, waiver of key remedies"
+            ),
+            "medium": (
+                "ambiguous wording, asymmetric obligations, unclear remedies, "
+                "short or missing notice periods"
+            ),
+            "low": (
+                "routine terms, balanced obligations, standard boilerplate, "
+                "clear and mutual remedies"
+            ),
+        },
+    },
+    "favored_party": {
+        "type": "choice",
+        "instructions": "Which party does this clause favor?",
+        "criteria": {
+            "client": "clearly favors our client",
+            "counterparty": "clearly favors the other party",
+            "neutral": "balanced, mutual, or standard",
+        },
+    },
+}
+
+_LAYA_FLAG_QUESTIONS: dict[str, Any] = {
+    "uncapped_liability": {
+        "type": "noul",
+        "instructions": "Does this clause expose our client to liability with no cap?",
+    },
+    "unilateral_termination": {
+        "type": "noul",
+        "instructions": "Can the other party terminate without our client having a matching right?",
+    },
+    "auto_renewal": {
+        "type": "noul",
+        "instructions": "Does this clause renew the agreement automatically unless notice is given?",
+    },
+    "dispute_waiver": {
+        "type": "noul",
+        "instructions": "Does this clause waive or restrict our client's right to litigate or arbitrate?",
+    },
+}
+
+
+def _laya_url() -> str:
+    return os.environ.get("PACGATE_LAYA_URL", LAYA_DEFAULT_URL).rstrip("/")
+
+
+def _laya_post(payload: dict[str, Any]) -> dict[str, Any]:
+    """POST to laya-serve, or raise _LayaUnavailable."""
+    timeout = float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+    try:
+        resp = httpx.post(_laya_url(), json=payload, timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise _LayaUnavailable(
+            f"laya is not reachable at {_laya_url()} "
+            f"(set PACGATE_LAYA_URL, or enable the laya service): {type(exc).__name__}"
+        ) from exc
+    if resp.status_code >= 400:
+        raise _LayaUnavailable(
+            f"laya returned {resp.status_code} for this request: {resp.text[:300]}"
+        )
+    return resp.json()
+
+
+class _LayaUnavailable(RuntimeError):
+    """laya is not configured for this deployment, or did not answer."""
+
+
+def _laya_unavailable_result(tool: str, exc: Exception) -> str:
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": False,
+            "reason": str(exc),
+            "note": (
+                "laya is an optional local decision engine. The clause tools are "
+                "inactive until a laya service is configured for this deployment."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _laya_answers(
+    state: str,
+    questions: dict[str, Any],
+    *,
+    min_confidence: float | None = None,
+    max_len: int | None = None,
+    lang: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"state": state, "questions": questions}
+    # Forwarded only when set, so the deployment's own Router settings stay in
+    # charge otherwise. min_confidence is the abstention gate: without it laya
+    # is forced to pick a bucket, and a confident wrong answer is worse than
+    # "cannot judge" in legal review.
+    if min_confidence is not None:
+        payload["min_confidence"] = float(min_confidence)
+    if max_len is not None:
+        payload["max_len"] = int(max_len)
+    if lang:
+        payload["lang"] = lang
+    return _laya_post(payload)
+
+
+@mcp.tool()
+def pacgate_clause_risk(
+    clause: str,
+    min_confidence: float = 0.55,
+    lang: str | None = None,
+) -> str:
+    """Judge a single contract clause for risk and for which party it favors.
+
+    Use this on a clause the extraction pipeline has already pulled out of a
+    document. It answers two typed questions in one forward pass - how risky the
+    clause is for our client, and which side it favors - with calibrated
+    probabilities. It does not read or summarize documents; for that use
+    pacgate_kb_search or pacgate_read_document.
+
+    This tool degrades to an explicit `available: false` result when the
+    deployment has no laya service, so treat that field as the capability check.
+
+    Args:
+        clause: The clause text, in any language laya supports (Chinese and
+            English included). Keep it to one clause: the engine judges a
+            bounded state, and a whole contract exceeds its window.
+        min_confidence: Abstention threshold in [0, 1]. An answer below it comes
+            back flagged `low_confidence` rather than being hidden - treat a low
+            confidence answer as "a human should read this clause".
+        lang: Optional language code (e.g. "zh", "en") to skip detection.
+    """
+    try:
+        data = _laya_answers(
+            clause,
+            _LAYA_RISK_QUESTIONS,
+            min_confidence=min_confidence,
+            lang=lang,
+        )
+    except _LayaUnavailable as exc:
+        return _laya_unavailable_result("pacgate_clause_risk", exc)
+    return json.dumps(
+        {
+            "tool": "pacgate_clause_risk",
+            "available": True,
+            "answers": data.get("answers", {}),
+            "routing": data.get("routing"),
+            "usage": data.get("usage"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_clause_flags(
+    clause: str,
+    min_confidence: float = 0.55,
+    lang: str | None = None,
+) -> str:
+    """Test a clause for four specific legal risk flags as probabilities.
+
+    Each flag is a yes/no probability, not a label: uncapped liability,
+    unilateral termination, auto-renewal, and a waiver of the right to litigate
+    or arbitrate. Probabilities are the useful form here because a reviewer can
+    set their own threshold, and because a 0.6 is honestly different from a 0.95.
+
+    Prefer this over pacgate_clause_risk when you need to know *which* risk is
+    present rather than how risky the clause is overall.
+
+    This tool degrades to an explicit `available: false` result when the
+    deployment has no laya service.
+
+    Args:
+        clause: The clause text. One clause, not a whole contract.
+        min_confidence: Abstention threshold in [0, 1].
+        lang: Optional language code to skip detection.
+    """
+    try:
+        data = _laya_answers(
+            clause,
+            _LAYA_FLAG_QUESTIONS,
+            min_confidence=min_confidence,
+            lang=lang,
+        )
+    except _LayaUnavailable as exc:
+        return _laya_unavailable_result("pacgate_clause_flags", exc)
+    return json.dumps(
+        {
+            "tool": "pacgate_clause_flags",
+            "available": True,
+            "answers": data.get("answers", {}),
+            "routing": data.get("routing"),
+            "usage": data.get("usage"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_route_language(
+    text: str,
+    lang_guess: str | None = None,
+) -> str:
+    """Report which laya checkpoint and language laya would use for this text.
+
+    Routing decides whether a clause is judged by the Chinese-capable
+    multilingual checkpoint or an English-tuned one, so it is worth checking
+    before trusting a batch of results. This makes no inference call and needs
+    no model loaded.
+
+    This tool degrades to an explicit `available: false` result when the
+    deployment has no laya service.
+
+    Args:
+        text: Sample text to route, typically a clause or a document's opening.
+        lang_guess: Optional language code from your own detection, consulted
+            before detection runs.
+    """
+    payload: dict[str, Any] = {"state": text, "questions": {}}
+    if lang_guess:
+        payload["lang_guess"] = lang_guess
+    try:
+        timeout = float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+        route_url = _laya_url().replace("/systemone", "/route")
+        resp = httpx.post(route_url, json=payload, timeout=timeout)
+        if resp.status_code >= 400:
+            raise _LayaUnavailable(
+                f"laya returned {resp.status_code} for this request: {resp.text[:300]}"
+            )
+        data = resp.json()
+    except _LayaUnavailable as exc:
+        return _laya_unavailable_result("pacgate_route_language", exc)
+    except httpx.HTTPError as exc:
+        return _laya_unavailable_result(
+            "pacgate_route_language",
+            _LayaUnavailable(
+                f"laya is not reachable at {_laya_url()}: {type(exc).__name__}"
+            ),
+        )
+    return json.dumps(
+        {
+            "tool": "pacgate_route_language",
+            "available": True,
+            "model": data.get("model"),
+            "repo": data.get("repo"),
+            "reason": data.get("reason"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def main() -> None:
     port = int(os.environ.get("PACGATE_MCP_PORT", "8000"))
     logger.info("Starting pacgate MCP server on :%s", port)
+    logger.info("laya endpoint: %s", _laya_url())
     # Tools are registered on the module-level `mcp` via @mcp.tool().
     mcp.run(transport="streamable-http")
 
