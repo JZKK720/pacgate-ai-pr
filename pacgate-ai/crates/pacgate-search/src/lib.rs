@@ -2275,6 +2275,35 @@ mod tests {
         assert!(!FirecrawlConnector::new(filtered_ws).is_available());
     }
 
+    /// End to end against the REAL Firecrawl API, using a deliberately invalid key.
+    ///
+    /// This is the path a client hits with a typo'd or expired key, and it must degrade
+    /// to an empty result set - not a panic, and not an error that fails the whole
+    /// search across every other connector.
+    ///
+    /// Measured 2026-10-31: `api.firecrawl.dev/v1/search` answers 200 with NO
+    /// Authorization header (unauthenticated/demo tier) but 401 with an INVALID one. So
+    /// a bad key is not a silent no-op upstream; this connector must absorb it.
+    ///
+    /// `#[ignore]` because it needs network egress, which an offline AIPC does not have.
+    /// Run with: cargo test -p pacgate-search -- --ignored
+    #[tokio::test]
+    #[ignore = "requires network egress to api.firecrawl.dev"]
+    async fn firecrawl_bad_key_yields_empty_not_panic() {
+        let c = FirecrawlConnector::new(Some("fc-not-a-real-key-000000".into()));
+        let q = SearchQuery { keywords: "contract law".into(), limit: 1, ..Default::default() };
+        // Must return, and must be empty. A panic or a propagated error fails here.
+        let results = c.search(&q).await;
+        assert!(results.is_empty(), "a rejected key must yield no results, got {}", results.len());
+
+        // health_check is the method that SHOULD surface the auth failure.
+        let h = c.health_check().await;
+        assert!(
+            matches!(h, Err(SearchError::Auth(_)) | Err(SearchError::Unavailable(_))),
+            "a rejected key must report Auth/Unavailable from health_check, got {h:?}"
+        );
+    }
+
     /// The registry must expose firecrawl. This is what makes the connector reachable
     /// from /api/search at all - an impl that is never registered is dead code.
     #[test]
