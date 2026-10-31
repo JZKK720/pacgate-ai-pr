@@ -297,6 +297,17 @@ $gates = @(    'scripts/test-install-render.ps1'
     # safe in the gate list. Negative-tested against both the stale tag and a
     # main.rs that bypasses the overrides.
     'scripts/test-model-roster-consistency.ps1'
+    # CONNECTOR REGISTRY, registered 2026-10-31. The code reads COURTLISTENER_API_KEY
+    # while both compose files and plans/013 told operators to set a differently
+    # spelled name with an extra underscore. Nothing read that spelling, so the
+    # connector reported available=false forever and the only symptom was a source
+    # that never returned results. This asserts every key the code reads is
+    # documented, and that no documented connector key is one the code ignores.
+    #
+    # Also asserts the property that makes per-machine keys safe: a keyed connector is
+    # inert without a key, and `search` never propagates an error into the router.
+    # STATIC - reads the Rust source, two compose files and .env.example.
+    'scripts/test-connector-registry.ps1'
     # THINKING DEFAULT, registered 2026-10-30. `thinking_enabled: mode !== "flash"`
     # is true for an unset mode, and the mode default is read from local storage on
     # mount - so a fresh profile ran every first turn with thinking on. The config's
