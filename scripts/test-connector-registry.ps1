@@ -186,6 +186,71 @@ Check 'K5 every source_level is a real SourceLevel variant' `
       ($badLevels.Count -eq 0) `
       "not in the enum: $($badLevels -join ', ') (enum: $($levels -join ', '))"
 
+# ── K6: the registry must not claim an implementation that does not exist ────
+# Measured 2026-10-31 before the fix: 11 entries claimed `implemented: true` while only
+# 10 had a `DataSourceConnector` impl - `ansvar` was the difference. Both endpoints are
+# user-visible and they disagreed: /api/search/registry listed it as implemented while
+# /api/search/connectors omitted the name. An operator reads the first and concludes the
+# connector works.
+$implNames = @()
+foreach ($m in [regex]::Matches($src, 'impl DataSourceConnector for ([A-Za-z0-9]+)Connector')) {
+    $implNames += $m.Groups[1].Value
+}
+
+# ConnectorMetadata struct name -> registry key, for the ones that have an impl.
+$implToKey = @{
+    'YuanDian'        = 'yuandian'
+    'PkuLaw'          = 'pkulaw'
+    'Qcc'             = 'qcc'
+    'FyOpen'          = 'fyopen'
+    'CourtListener'   = 'courtlistener'
+    'SecEdgar'        = 'sec_edgar'
+    'Gleif'           = 'gleif'
+    'Vaquill'         = 'vaquill'
+    'EurLex'          = 'eur_lex'
+    'OpenCorporates'  = 'opencorporates'
+    'Firecrawl'       = 'firecrawl'
+}
+
+$implKeys = @()
+foreach ($impl in $implNames) {
+    if ($implToKey.ContainsKey($impl)) { $implKeys += $implToKey[$impl] }
+}
+$implKeys = @($implKeys | Sort-Object -Unique)
+
+# Split STRUCTURALLY on the entry constructor rather than scanning backwards a fixed
+# number of characters. A 1400-char window was measured too small: the ansvar entry's
+# `implemented:` line sits 1654 chars after its `name:`, so the window never reached it
+# and the assertion passed on the broken state - a vacuous gate. Splitting on
+# `.with_entry(ConnectorMetadata` makes the boundary the entry itself, which cannot go
+# stale when a comment grows.
+$implementedKeys = @()
+$entryBlocks = $src -split '\.with_entry\(ConnectorMetadata\s*\{'
+foreach ($block in $entryBlocks) {
+    # Each block runs to the closing of that entry; the first name in it is its own.
+    $nameMatch = [regex]::Match($block, 'name:\s*"([a-z_\-]+)"\.into\(\)')
+    if (-not $nameMatch.Success) { continue }
+    # Trim at the next entry boundary is implicit (we already split), but a block can
+    # still contain the NEXT struct's tail; the `implemented:` flag for THIS entry is
+    # the first one in the block.
+    $implMatch = [regex]::Match($block, 'implemented:\s*(true|false)')
+    if ($implMatch.Success -and $implMatch.Groups[1].Value -eq 'true') {
+        $implementedKeys += $nameMatch.Groups[1].Value
+    }
+}
+$implementedKeys = @($implementedKeys | Sort-Object -Unique)
+
+$claimsWithoutImpl = @()
+foreach ($k in $implementedKeys) {
+    if ($implKeys -notcontains $k) { $claimsWithoutImpl += $k }
+}
+Check 'K6 no registry entry claims an implementation that does not exist' `
+      ($claimsWithoutImpl.Count -eq 0) `
+      ("claimed implemented with no DataSourceConnector: {0} - /api/search/registry and /api/search/connectors disagree about these" -f ($claimsWithoutImpl -join ', '))
+
+Write-Host ("         implemented claims ({0}): {1}" -f $implementedKeys.Count, ($implementedKeys -join ', ')) -ForegroundColor DarkGray
+Write-Host ("         connectors with an impl ({0}): {1}" -f $implKeys.Count, ($implKeys -join ', ')) -ForegroundColor DarkGray
+
 Write-Host ''
 $colour = if ($script:failed -gt 0) { 'Red' } else { 'Green' }
 Write-Host "RESULT: $($script:passed) passed, $($script:failed) failed" -ForegroundColor $colour

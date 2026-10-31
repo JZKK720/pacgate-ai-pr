@@ -593,7 +593,21 @@ impl ConnectorRegistry {
                 env_var: Some("ANSVAR_API_KEY".into()),
                 priority: ConnectorPriority::Evaluate,
                 region: ConnectorRegion::Europe,
-                implemented: true,
+                // Measured 2026-10-31: this flag was true while the crate contained no
+                // `impl DataSourceConnector for AnsvarConnector` anywhere, so
+                // GET /api/search/registry claimed an implementation that could not be
+                // called and GET /api/search/connectors omitted the name. Measured
+                // live on 0.2.8: 11 entries claimed implemented, 10 were actually
+                // constructible, and `ansvar` was the difference.
+                //
+                // Ansvar is a self-hosted MCP server
+                // (github.com/Ansvar-Systems/EU_compliance_MCP) and is NOT deployed in
+                // this stack, so there is nothing to point a client at. ANSVAR_API_KEY
+                // was documented in .env.example, both compose files and the archived
+                // handoff for a connector that cannot run. Catalogued-and-not-
+                // implemented is the honest state; flip this back only together with a
+                // real impl and a key that reaches it.
+                implemented: false,
             })
             // ── Hong Kong ──
             .with_entry(ConnectorMetadata {
