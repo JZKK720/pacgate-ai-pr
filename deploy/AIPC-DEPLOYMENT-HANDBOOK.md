@@ -102,11 +102,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.9` | Published, public (through 0.2.8); the 0.2.9 tag is published by the release workflow, and this row is corrected once it is. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.9` | Published, public (through 0.2.8); the 0.2.9 tag is published by the release workflow, and this row is corrected once it is. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.9` | Published, public (through 0.2.8); the 0.2.9 tag is published by the release workflow, and this row is corrected once it is. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.9` | Published, public (through 0.2.8); the 0.2.9 tag is published by the release workflow, and this row is corrected once it is. |
-| `ghcr.io/jzkk720/ocr-service:0.2.9` | Published, public (through 0.2.8); the 0.2.9 tag is published by the release workflow, and this row is corrected once it is. PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.10` | Published, public (through 0.2.9); the 0.2.10 tag is published by the release workflow, and this row is corrected once it is. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.10` | Published, public (through 0.2.9); the 0.2.10 tag is published by the release workflow, and this row is corrected once it is. Exposes 22 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.10` | Published, public (through 0.2.9); the 0.2.10 tag is published by the release workflow, and this row is corrected once it is. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.10` | Published, public (through 0.2.9); the 0.2.10 tag is published by the release workflow, and this row is corrected once it is. |
+| `ghcr.io/jzkk720/ocr-service:0.2.10` | Published, public (through 0.2.9); the 0.2.10 tag is published by the release workflow, and this row is corrected once it is. PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed
@@ -503,6 +503,7 @@ pacgate-ai-bundle_default  (Docker Compose network)
 ├── openviking :1933   ← long-term memory (MCP: find/search/read/remember)
 ├── pacgate-api :8080  ← metadata API (matters/workflows/connectors)
 ├── pacgate-mcp :8000  ← FastMCP bridge exposing pacgate KB/connector search
+├── laya :8000         ← optional local decision engine (opt-in profile)
 ├── deer-flow :8001    ← research workspace (consumes openviking + pacgate-mcp)
 └── nginx :8089        ← ingress (deer-flow frontend + /pacgate/ API)
 
@@ -524,6 +525,22 @@ reach openviking:1933, pacgate-api:8080, and host.docker.internal:11434 (Ollama)
 2. **deer-flow → pacgate**: `pacgate-mcp` (FastMCP) exposes
    `pacgate_kb_search` / `pacgate_connector_search` / `pacgate_list_connectors`
    to deer-flow, backed by pacgate-api's RAG + legal connectors.
+
+   From 0.2.10 the same server also exposes three clause tools -
+   `pacgate_clause_risk`, `pacgate_clause_flags`, `pacgate_route_language` -
+   which forward to the optional `laya` service. **laya is a local System 1
+   decision engine**: it answers typed questions about a single clause (how
+   risky, which risk flags, which party it favors) in one forward pass and
+   returns calibrated probabilities rather than generated prose. There is no API
+   key and no cloud call, which is the reason it was chosen over a metered
+   judgment API.
+
+   It is **off by default**. The multilingual checkpoint is 1.2 GB, so a machine
+   that does not run it is not broken: the three tools return `available: false`
+   with a reason, and every other tool is unaffected. To enable it, stage the
+   weights once on a machine that can reach huggingface.co, set `LAYA_MODEL_DIR`,
+   then `docker compose --profile laya up -d laya`. The service runs with
+   `HF_HUB_OFFLINE=1`, so a client machine never contacts the internet.
 3. **QM → OpenViking**: the QM core has `OPENVIKING_URL=http://openviking:1933`
    and `OPENVIKING_API_KEY` (the root key). The `pacgate-qm` sandbox tool
    (`ov-remember` / `ov-search` / `ov-read`) calls OpenViking from inside the

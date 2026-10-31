@@ -108,11 +108,11 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.9` | 已发布，公开（至 0.2.8）；0.2.9 标签由发布工作流推送，推送后本行即校正。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.9` | 已发布，公开（至 0.2.8）；0.2.9 标签由发布工作流推送，推送后本行即校正。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.9` | 已发布，公开（至 0.2.8）；0.2.9 标签由发布工作流推送，推送后本行即校正。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.9` | 已发布，公开（至 0.2.8）；0.2.9 标签由发布工作流推送，推送后本行即校正。 |
-| `ghcr.io/jzkk720/ocr-service:0.2.9` | 已发布，公开（至 0.2.8）；0.2.9 标签由发布工作流推送，推送后本行即校正。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
+| `ghcr.io/jzkk720/pacgate-api:0.2.10` | 已发布，公开（至 0.2.9）；0.2.10 标签由发布工作流推送，推送后本行即校正。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.10` | 已发布，公开（至 0.2.9）；0.2.10 标签由发布工作流推送，推送后本行即校正。向 deer-flow 暴露 22 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.10` | 已发布，公开（至 0.2.9）；0.2.10 标签由发布工作流推送，推送后本行即校正。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.10` | 已发布，公开（至 0.2.9）；0.2.10 标签由发布工作流推送，推送后本行即校正。 |
+| `ghcr.io/jzkk720/ocr-service:0.2.10` | 已发布，公开（至 0.2.9）；0.2.10 标签由发布工作流推送，推送后本行即校正。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
@@ -479,6 +479,7 @@ pacgate-ai-bundle_default  (Docker Compose 网络)
 ├── openviking :1933   ← 长期记忆（MCP：find/search/read/remember）
 ├── pacgate-api :8080  ← 元数据 API（事项/工作流/连接器）
 ├── pacgate-mcp :8000  ← FastMCP 桥接，暴露 pacgate KB/连接器搜索
+├── laya :8000         ← 可选的本地判定引擎（自选 profile）
 ├── deer-flow :8001    ← 研究工作空间（消费 openviking + pacgate-mcp）
 └── nginx :8089        ← 入口（deer-flow 前端 + /pacgate/ API）
 
@@ -499,6 +500,19 @@ openviking:1933、pacgate-api:8080 和 host.docker.internal:11434（Ollama）。
 2. **deer-flow → pacgate**：`pacgate-mcp`（FastMCP）向 deer-flow 暴露
    `pacgate_kb_search` / `pacgate_connector_search` / `pacgate_list_connectors`，
    由 pacgate-api 的 RAG + 法律连接器支撑。
+
+   自 0.2.10 起，同一服务还暴露三个条款工具：`pacgate_clause_risk`、
+   `pacgate_clause_flags`、`pacgate_route_language`，转发给可选的 `laya` 服务。
+   **laya 是本地 System 1 判定引擎**：对单个条款提出定型问题（风险高低、有哪些
+   风险标记、偏向哪一方），一次前向推理即返回校准后的概率，而不是生成式文本。
+   它不需要 API 密钥，也不发起任何云端调用——这正是选择它而不用按次计费的判定
+   API 的原因。
+
+   它**默认关闭**。多语种检查点为 1.2 GB，运行它的机器与不运行它的机器功能都
+   完整：三个工具会返回 `available: false` 并附带原因，其余工具完全不受影响。
+   如需启用：先在一台可访问 huggingface.co 的机器上一次性下载权重，设置
+   `LAYA_MODEL_DIR`，然后执行 `docker compose --profile laya up -d laya`。该服务
+   以 `HF_HUB_OFFLINE=1` 运行，因此客户端机器不会连通外网。
 3. **QM → OpenViking**：QM 核心有 `OPENVIKING_URL=http://openviking:1933` 和
    `OPENVIKING_API_KEY`（根密钥）。`pacgate-qm` 沙箱工具（`ov-remember` /
    `ov-search` / `ov-read`）在代理沙箱内通过 `http://host.docker.internal:1933`

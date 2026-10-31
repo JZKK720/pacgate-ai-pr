@@ -91,14 +91,54 @@ else { Fail "a real uncommitted source edit -> exit $code (expected 1)" }
 # restores the bytes but not the clock, so mtime alone says "edited" when nothing
 # changed. Asserting the negative here keeps the content check from being removed
 # as "redundant" later.
+#
+# THIS MUTATION NEEDS A CLEAN TREE. The gate only trusts mtime when the source is
+# dirty (`git status --porcelain` non-empty), so on a dirty tree the gate is
+# already in "possibly stale" mode and rejects this file whatever 1b does. The
+# mutation would then fail for a reason that has nothing to do with the content
+# check it exists to protect - measured 2026-10-31: it failed only because the
+# handbook was mid-edit during a release bump.
+#
+# Stash, mutate, assert, restore. Skipped loudly rather than silently when the
+# tree cannot be reasoned about: a mutation that cannot run must never read as a
+# pass, and must never fail for the wrong reason either.
 $srcBytesBefore = [System.IO.File]::ReadAllBytes($srcAbs)
-(Get-Item $srcAbs).LastWriteTime = (Get-Date).AddMinutes(5)
-$out2 = Invoke-Gate
-$code2 = $LASTEXITCODE
-[System.IO.File]::WriteAllBytes($srcAbs, $srcBytesBefore)
-(Get-Item $srcAbs).LastWriteTime = $srcOriginalTime
-if ($code2 -eq 0) { Pass 'mtime newer but content identical -> accepted (no false positive)' }
-else { Fail "a newer mtime with identical content was rejected (exit $code2) - the gate is crying wolf about an edit that did not happen"; Write-Host $out2 }
+# -C must be the REPO ROOT, not the file's directory: $src is a repo-relative
+# pathspec, so resolving it from deploy/ matches nothing and the check silently
+# reads as "clean" on a dirty tree.
+$dirtyFor1b = (& git -C $root status --porcelain -- $src 2>$null | Out-String)
+$stashed = $false
+if (-not [string]::IsNullOrWhiteSpace($dirtyFor1b)) {
+    & git -C $root stash push --quiet -- $src 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '  SKIP  mutation 1b - could not stash the in-progress edit on this source' -ForegroundColor Yellow
+        Write-Host '        (a skipped mutation is not a pass)' -ForegroundColor DarkGray
+    }
+    else { $stashed = $true }
+}
+
+if ($stashed -or [string]::IsNullOrWhiteSpace($dirtyFor1b)) {
+    (Get-Item $srcAbs).LastWriteTime = (Get-Date).AddMinutes(5)
+    $out2 = Invoke-Gate
+    $code2 = $LASTEXITCODE
+    # Restore in the right order. Popping is git's job and conflicts with a
+    # hand-written file, so when we stashed we let pop restore the content;
+    # WriteAllBytes is only for the case where the file was clean to begin with.
+    if ($stashed) {
+        & git -C $root stash pop --quiet 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '  note: stash pop conflicted; restoring the captured bytes directly' -ForegroundColor DarkGray
+            [System.IO.File]::WriteAllBytes($srcAbs, $srcBytesBefore)
+            & git -C $root stash drop --quiet 2>&1 | Out-Null
+        }
+    }
+    else {
+        [System.IO.File]::WriteAllBytes($srcAbs, $srcBytesBefore)
+    }
+    (Get-Item $srcAbs).LastWriteTime = $srcOriginalTime
+    if ($code2 -eq 0) { Pass 'mtime newer but content identical -> accepted (no false positive)' }
+    else { Fail "a newer mtime with identical content was rejected (exit $code2) - the gate is crying wolf about an edit that did not happen"; Write-Host $out2 }
+}
 
 # ── Mutation 2: regress the delivery copy so it drifts from its original. ────
 # Truncate one byte. The pair is byte-identical at HEAD, so by the gate's own
