@@ -220,13 +220,30 @@ else {
             continue
         }
 
-        $descMatch = [regex]::Match($fm, '(?m)^description:\s*(.+)')
+        # The loader parses frontmatter with yaml.safe_load (parser.py:92), so a
+        # folded (`description: >`) or literal (`|`) block scalar is valid YAML
+        # and resolves to the joined text. Matching only the first physical line
+        # captures the literal '>' and rejects a perfectly loadable skill. That
+        # is a false failure, and false failures teach people to ignore gates.
+        $descMatch = [regex]::Match($fm, '(?m)^description:[ \t]*(.*)$')
         if (-not $descMatch.Success) {
             Write-Fail "seed '$($s.Name)' frontmatter has no description"
             continue
         }
-        if ($descMatch.Groups[1].Value.Trim().Length -lt 40) {
-            Write-Fail "seed '$($s.Name)' description is too short for the model to match against"
+        $descText = $descMatch.Groups[1].Value.Trim()
+        if ($descText -match '^[>|][+-]?$') {
+            # Block scalar: take the indented continuation lines that follow.
+            $after = $fm.Substring($descMatch.Index + $descMatch.Length)
+            $blockLines = @()
+            foreach ($line in ($after -split '\r?\n')) {
+                if ($line -match '^\s+\S') { $blockLines += $line.Trim() }
+                elseif ($line.Trim() -eq '') { }
+                else { break }
+            }
+            $descText = ($blockLines -join ' ').Trim()
+        }
+        if ($descText.Length -lt 40) {
+            Write-Fail "seed '$($s.Name)' description is too short for the model to match against (resolved $($descText.Length) chars, need 40)"
             continue
         }
         Write-Pass "seed '$($s.Name)' is loadable (name matches directory, description is matchable)"
