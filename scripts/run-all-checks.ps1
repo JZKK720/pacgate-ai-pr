@@ -629,6 +629,18 @@ $liveStackGates = @(
     # absent, exit 1 only on a real broken step. It names the first failing step
     # rather than collecting them, because once step N fails the rest is noise.
     'scripts/test-legal-journey.ps1'
+    # AGENT -> MCP END TO END, registered 2026-10-31. smoke-full-stack.ps1 said so
+    # itself: "agent->MCP invocation NOT exercised ... there is no committed
+    # agent-run E2E". Every other MCP gate proves advertisement or argument
+    # translation; none proves the agent can start and CALL. The cost of that gap was
+    # measured: one unescaped brace in the prompt made EVERY run die at construction
+    # (KeyError: '"command"') and the full suite stayed green.
+    #
+    # This gate starts a run whose prompt cannot be answered without a tool call and
+    # asserts a real advertised tool name appears in the payload, with a result.
+    # Red-checked by reintroducing the brace: E3 and E4 fail, and the container log
+    # shows the same KeyError.
+    'scripts/test-agent-mcp-e2e.ps1'
     # qm CURRENTNESS, registered 2026-10-18. `install.ps1 -Update` deliberately does
     # NOT restart the qm stack - "a restart of the co-working stack is user-visible
     # (qm is where staff work)" - which is the right call, and which means qm can sit
