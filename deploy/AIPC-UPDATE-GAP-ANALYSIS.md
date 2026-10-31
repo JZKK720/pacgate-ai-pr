@@ -289,3 +289,78 @@ $env:HTTP_PROXY = ''; $env:HTTPS_PROXY = ''; $env:NO_PROXY = '*'
 
 The scripts are right to refuse to guess: an unreadable answer is not evidence the
 images exist. The mistake would be reading `UNVERIFIED` as "the registry is down".
+
+## Firecrawl and e2e coverage (2026-10-31)
+
+### Firecrawl is a connector, not an MCP server - and that is a safety decision
+
+Each AIPC pastes its own `FIRECRAWL_API_KEY` into `.env`; until then the connector
+reports `available=false` and /api/search simply returns no web results.
+
+The alternative - a `firecrawl` entry in `deer-flow-extensions-config.json` - was
+rejected on measurement, not preference:
+
+- the pinned deer-flow image carries no `firecrawl-mcp` binary (only `npx`), so the
+  entry would need a runtime install on an offline machine;
+- the MCP template has never contained a firecrawl entry;
+- and the image has NO per-server isolation. `get_mcp_tools()` awaits one
+  `client.get_tools()` for all servers and its `except` handler logs and `return []`.
+  A firecrawl entry with an empty key would not degrade web search, it would remove
+  every MCP tool including `pacgate` and `officecli`.
+
+As a `DataSourceConnector` the failure mode is one empty result set. Verified
+contract: `POST https://api.firecrawl.dev/v1/search` with `{"query","limit"}` returns
+`{"success",data:[{"url","title","description"}]}`; `limit` is honored and CJK
+queries round-trip.
+
+`source_level` is `auxiliary_db`. A web page is not statutory text and must not be
+graded `authority_verified`.
+
+### A connector key name was wrong for three releases
+
+The code reads `COURTLISTENER_API_KEY`. Both compose files and `plans/013` told
+operators to set a differently spelled name with an extra underscore. Nothing reads
+that spelling, so an operator who followed the docs got a connector that reported
+`available=false` forever with no error, no log line, and no symptom beyond "this
+source never returns results". `test-connector-registry.ps1` now asserts the contract
+in both directions: every key the code reads is documented, and no documented
+connector key is one the code ignores.
+
+### A second false "implemented" claim
+
+The registry has 27 catalog entries; 11 were marked `implemented: true` while only 10
+had a `DataSourceConnector` impl. `ansvar` was the mismatch, and `ANSVAR_API_KEY` was
+documented for a connector that cannot be constructed. `GET /api/search/registry`
+returned the claim while `GET /api/search/connectors` omitted the name, so the two
+endpoints disagreed. Fixed, and `K6` in `test-connector-registry.ps1` now compares the
+flags against the impls so it cannot drift again.
+
+### Two coverage gaps closed
+
+- The **legal journey** (matter -> upload -> extract -> sanitize -> review gate ->
+  KB search -> external search -> connector health -> deer-flow auth -> qm ->
+  OpenViking recall) passed 19/19 while being absent from `run-all-checks.ps1`. A
+  release could have shipped with the entire journey broken and the suite would have
+  said "all green".
+- **No agent->MCP E2E existed.** `smoke-full-stack.ps1` said so in its own text. The
+  measured cost: an unescaped brace in the prompt made every agent run die at
+  construction with `KeyError: '"command"'` and the full suite stayed green.
+  `test-agent-mcp-e2e.ps1` now starts a run that cannot be answered without a tool
+  call and asserts a real advertised tool name appears in the payload, with a result.
+  Verified live: the run calls `pacgate_list_connectors` and `pacgate_kb_search`.
+
+### Baseline for the next release
+
+Connector availability on the shipped `0.2.8` image, measured: **4 of 10** -
+`courtlistener`, `sec_edgar`, `gleif`, `eur-lex`. Firecrawl is registered in this
+change but is not in that image; a rebuild makes it **5 of 11**, and adding
+`FIRECRAWL_API_KEY` makes it available. The rest (`yuandian`, `pkulaw`, `qcc`,
+`fyopen`, `vaquill`, `opencorporates`) need subscriptions only the client can
+provide. Re-measure with:
+
+```powershell
+pwsh -NoProfile -File scripts/test-legal-journey.ps1 2>&1 | Select-String 'connector health'
+```
+
+and correct this paragraph if the number differs - do not leave a claim that was not
+measured.
