@@ -3,6 +3,53 @@
 Status: research and implementation plan, 2026-10-31.
 Supersedes the verdict table in `2026-10-31-third-party-skill-adoption.md`.
 
+## Measured: laya on Chinese clauses (2026-10-31)
+
+This section exists because the earlier version of this document said accuracy was
+unmeasured. It is now measured, and the result is nuanced rather than a clean win.
+
+**Setup.** Weights staged from ModelScope (HuggingFace egress on this box is
+DNS-hijacked to an X/Twitter range and transfers at ~10 KB/s; ModelScope, on
+Alibaba Cloud, measured **0.59 MB/s** and served the same checkpoint). Placed in
+an HF cache layout because that is what `snapshot_download` reads, with
+`HF_HUB_OFFLINE=1`. 614 MB weights + 33 MB tokenizer.
+
+**It runs, offline, and it is fast.**
+
+| Clause (Chinese) | Verdict | `answer_confidence` |
+|---|---|---|
+| unlimited liability incl. indirect loss and legal fees | **high** | **0.955** (h=0.955 m=0.013 l=0.032) |
+| unilateral termination, no liability, no objection permitted | **medium** | 0.446 (h=0.233 m=0.446 l=0.321) |
+| mutual 30-day notice to terminate | low | 0.475 (h=0.159 m=0.366 l=0.475) |
+| payment within 30 days of invoice | low | 0.536 (h=0.220 m=0.244 l=0.536) |
+
+Latency: **88-91 ms** warm per clause, 6.9 s on the very first call (model load).
+That is the number that matters commercially - a per-clause pass over a contract
+is cheap in a way a 27B local model could never be.
+
+**The honest reading.** It nails the unambiguous worst case and gets the routine
+cases right, but it called unilateral termination `medium` rather than `high`, and
+the three non-obvious clauses all landed between 0.45 and 0.54. Near 0.5 on a
+three-way choice is close to uniform, which is the model declining to commit.
+
+That is not a defect to work around - it is the reason `min_confidence` is
+forwarded. With a 0.55 threshold, three of these four clauses come back
+`low_confidence` and reach a human, while the unlimited-liability clause is
+flagged automatically. The engine is a **triage filter, not an adjudicator**, and
+the integration is correct as built; what must not happen is treating its `low`
+verdict as clearance.
+
+**Not established.** This is four hand-written clauses, not a corpus. There is no
+measured precision or recall, so it does not justify removing any human review
+step. Before it changes any workflow, run it over a real annotated set of the
+firm's contracts and measure agreement per risk bucket. Until then the correct
+framing is: it reliably escalates the worst clause and defers on the rest.
+
+**Field naming, measured and easy to get wrong:**
+`confidence` is the *margin* between the top two options (0.0432 in one sample),
+while `answer_confidence` is the probability of the chosen option (0.4267). Only
+the latter is comparable to a 0-1 threshold, so `min_confidence` gates on it.
+
 ## What changed and what did not
 
 The earlier record rejected five repositories. Two of its reasons were wrong and

@@ -221,3 +221,7 @@ sync-fork-after.png
 # A zero-byte file PowerShell creates from an unexpanded ${input...} in a command.
 # Committed by accident twice; this makes the third time impossible.
 /${input*
+
+# Staged laya weights (staged per machine, never committed)
+laya-hf-cache/
+
