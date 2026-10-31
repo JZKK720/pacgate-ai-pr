@@ -113,9 +113,10 @@ services:
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
-    # FYOPEN_API_KEY, COURT_LISTENER_API_KEY, VAQUILL_API_KEY, ANSVAR_API_KEY,
-    # OPENCORPORATES_API_KEY). Without these, every external legal connector
-    # reports available=false and search returns only free sources.
+    # FYOPEN_API_KEY, COURTLISTENER_API_KEY, VAQUILL_API_KEY,
+    # OPENCORPORATES_API_KEY, FIRECRAWL_API_KEY). Without these, every external
+    # legal connector reports available=false and search returns only free sources.
+    # Kept identical to compose.prod.yaml - see the CourtListener spelling note there.
     env_file:
       - .env
     volumes:

@@ -278,7 +278,7 @@ Verified wiring (names, not values):
 
 | Key | Referenced in |
 | --- | --- |
-| `COURT_LISTENER_API_KEY` | `compose.prod.yaml` (passed to pacgate-search) |
+| `COURTLISTENER_API_KEY` | `compose.prod.yaml` (passed to pacgate-search) |
 | `VAQUILL_API_KEY` | `compose.prod.yaml`, `.env.example`, Rust (3 refs) |
 | `FYOPEN_API_KEY` | `compose.prod.yaml`, Rust (4 refs) |
 | `ANSVAR_API_KEY` | `compose.prod.yaml`, `.env.example`, Rust (1 ref) |

@@ -1847,7 +1847,14 @@ pub fn default_router() -> SearchRouter {
             std::env::var("OPENCORPORATES_API_KEY").ok(),
         )))
         .with_connector(Arc::new(FirecrawlConnector::new(
-            std::env::var("FIRECRAWL_API_KEY").ok(),
+            // `.ok()` alone yields `Some("")` for a variable that is set but empty,
+            // which would make `is_available()` true and call the API with an empty
+            // bearer token. `.env.example` ships the line as `#FIRECRAWL_API_KEY=`,
+            // and an operator who uncomments it without pasting a key must get the
+            // "not configured" state, not a 401 on every search.
+            std::env::var("FIRECRAWL_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty()),
         )))
 }
 
@@ -2237,6 +2244,21 @@ mod tests {
             !search_fn.contains("authority_verified"),
             "a web page must never be graded authority_verified"
         );
+    }
+
+    /// An empty-but-present key must count as NO key. `.env.example` ships the line as
+    /// `#FIRECRAWL_API_KEY=`; an operator who uncomments it without pasting a value
+    /// must get the inert state, not a 401 on every search. This is why the router
+    /// filters empty values rather than calling `.ok()` alone.
+    #[test]
+    fn firecrawl_treats_an_empty_key_as_absent() {
+        let raw = Some(String::new());
+        let filtered = raw.filter(|k: &String| !k.trim().is_empty());
+        assert!(!FirecrawlConnector::new(filtered).is_available());
+
+        let whitespace = Some("   ".to_string());
+        let filtered_ws = whitespace.filter(|k: &String| !k.trim().is_empty());
+        assert!(!FirecrawlConnector::new(filtered_ws).is_available());
     }
 
     /// The registry must expose firecrawl. This is what makes the connector reachable

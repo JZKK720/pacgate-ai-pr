@@ -137,9 +137,17 @@ services:
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
-    # FYOPEN_API_KEY, COURT_LISTENER_API_KEY, VAQUILL_API_KEY, ANSVAR_API_KEY,
-    # OPENCORPORATES_API_KEY). Without these, every external legal connector
-    # reports available=false and search returns only free sources.
+    # FYOPEN_API_KEY, COURTLISTENER_API_KEY, VAQUILL_API_KEY,
+    # OPENCORPORATES_API_KEY, FIRECRAWL_API_KEY). Without these, every external
+    # legal connector reports available=false and search returns only free sources.
+    #
+    # NOTE the CourtListener spelling: the code reads COURTLISTENER_API_KEY
+    # (pacgate-search/src/lib.rs, the ConnectorMetadata entry and default_router).
+    # This comment and plans/013 said COURT_LISTENER_API_KEY for three releases, and
+    # nothing reads that spelling - so an operator who followed the docs got a
+    # connector that reported available=false forever, with no error and no log line.
+    # Keep this list in lockstep with the code; test-connector-registry.ps1 fails when
+    # a documented key is one the code never reads.
     env_file:
       - .env
     volumes:
