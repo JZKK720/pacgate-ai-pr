@@ -247,19 +247,41 @@ only place it can be proven.
   for, and costs a Node 22 image (Docker Hub, blocked). Revisit when a concrete
   workflow wants `jev_gate` or `jev_extract`.
 
-### Phase 4 - port two loop skills, do not depend on the repo
+### Phase 4 - REJECTED: do not ship loop skills to the product
 
-- Author `loop-verifier` and `minimal-fix` in-repo, with `user_invocable`
-  removed so they pass `_validate_skill_frontmatter`.
-- They must pass `test-skill-evolution.ps1` (E4/E5) and
-  `test-skills-and-templates.ps1`. No executable support files, per the
-  standing rule.
+Superseded by a check that should have come first. The product's seed corpus is
+three Chinese-law skills (`cn-contract-review`, `cn-nda-review`,
+`matter-scoping`) and contains no code-oriented instructions at all. `loop-verifier`
+and `minimal-fix` are **software-engineering** skills: run the project's tests,
+review a diff, find reasons to reject a patch, fix a CI failure.
 
-### Phase 5 - openui, experimental only
+Shipping them would put instructions about diffs, test commands, and CI failures
+into a lawyer-facing skill corpus, where they would dilute skill matching and
+describe work the product never does. The original justification - "we already
+run this discipline through `test-workflow-mutations`" - was about *our* process,
+and our process is not a client capability. These belong in the agent skill
+directory (`~/.agents/skills`), which is where they already are, and that costs a
+client nothing.
 
-- Opt-in compose profile, `ghcr.io/wandb/openui:latest`, `OLLAMA_HOST` at the
-  existing Ollama. Never mounted in the client bundle default. Purpose is
-  proposal-page scaffolding, not contract review.
+The `user_invocable` finding stands as a fact worth keeping: seven external
+skills would have loaded as zero, silently. That is a reason to check
+frontmatter on any imported skill, not a reason to import these.
+
+### Phase 5 - NOT IMPLEMENTED: openui needs a pinned image first
+
+Left out deliberately, for two reasons that are not about effort.
+
+1. **The only available reference is `:latest`.** `ghcr.io/wandb/openui:latest`
+   resolves (HTTP 200), but an unpinned third-party image in a client-facing
+   compose file is a supply-chain hole - the tag can change under a deployment
+   with no diff and no review. Pinning by digest is the precondition, and a
+   digest has to be re-verified per release.
+2. **No contract-review use.** It renders generative UI from a prompt. The
+   defensible use is scaffolding proposal pages in `docs/`, which is our
+   development surface, not the client's.
+
+If it is ever revisited: pin by digest, keep it behind a profile, and never in
+the client bundle default. Not worth a compose stanza today.
 
 ## Standing rule, unchanged
 
