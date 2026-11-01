@@ -62,6 +62,71 @@ deliberately, as questions, not as documentation.
 while `answer_confidence` is the probability of the chosen option (0.4267). Only
 the latter is comparable to a 0-1 threshold, so `min_confidence` gates on it.
 
+## Benchmark: measured against CUAD, 2026-11-01
+
+The earlier sections called accuracy "unmeasured" and rested on four hand-written
+clauses. That gap is now closed for English, with real ground truth.
+
+**Data.** CUAD (Contract Understanding Atticus Dataset): 510 real commercial
+contracts from EDGAR, ~13,000 expert span annotations over 41 clause categories,
+CC BY 4.0 - the datasheet states it is "free to the public for commercial and
+non-commercial use". Four of its categories are the direct semantic counterparts
+of our flags, which is the only reason this is measurable at all:
+
+| flag | CUAD category | positives / 510 |
+|---|---|---|
+| `uncapped_liability` | Uncapped Liability | 111 |
+| `termination_for_convenience` | Termination For Convenience | 183 |
+| `auto_renewal` | Renewal Term | 176 |
+| `dispute_waiver` | Covenant Not To Sue | 100 |
+
+**Result** (`scripts/bench-laya-clause-flags.ps1 -Contracts 25`, seed 11, 80
+predictions, 23 s, English checkpoint):
+
+| flag | AUC | P@0.5 | R@0.5 | F1 | median pos | median neg |
+|---|---|---|---|---|---|---|
+| `uncapped_liability` | 0.931 | 0.83 | 0.83 | 0.83 | 0.93 | 0.23 |
+| `termination_for_convenience` | **0.988** | 1.00 | 0.81 | 0.90 | 0.62 | 0.03 |
+| `auto_renewal` | 0.942 | 0.90 | 0.82 | 0.86 | 0.83 | 0.10 |
+| `dispute_waiver` | **1.000** | 1.00 | 0.71 | 0.83 | 0.82 | 0.06 |
+
+Every flag separates the concept it names. **This is the first number in this
+document that justifies shipping the flags as risk signals rather than hints.**
+
+### Two wrong numbers I produced first, and why they were wrong
+
+Both were defects in the measurement, not the model. Recorded because
+re-deriving them is expensive and the failure modes are easy to repeat.
+
+**1. AUC 0.235 - worse than chance - for "unilateral termination".** The negative
+side of the first run was one hand-written benign sentence: *"Either party may
+terminate this Agreement on thirty (30) days' prior written notice."* Measured
+against CUAD, **that sentence is a positive** - it is a Termination For
+Convenience. So the benchmark scored a positive as a negative and reported the
+model as inverted. Fixed by drawing negatives from spans of *unrelated* CUAD
+categories in the *same* contracts, and by using the semantic opposite
+(`Cap On Liability`) as the hard negative for the liability flag.
+
+**2. The flag asked a different question than the label.** CUAD's Termination For
+Convenience includes mutual rights; our `unilateral_termination` adds an
+asymmetry requirement CUAD does not annotate. On the same clauses the matching
+question scores **AUC 0.988** and the asymmetry question **0.600**. Both are
+honest numbers about different questions. The benchmark measures the concept
+CUAD labels, and the flag is now named for it.
+
+### Still not established
+
+- **English only.** laya routes Latin text to the `english` checkpoint, so none of
+  this transfers to Chinese. No public Chinese-language *contract* corpus with
+  clause-level annotations exists to measure against, so Chinese remains a
+  smoke-test-only claim.
+- **80 predictions on 25 contracts.** Enough to separate a working flag from a
+  broken one; not a confidence interval. Raise `-Contracts` for a tighter estimate.
+- **CUAD is US commercial contracts.** Chinese-law and civil-law drafting differ
+  enough that a good AUC here does not promise good behaviour on PRC deals.
+- **Precision/recall per risk bucket is now measured; the decision to remove any
+  human review step is still not justified.** Triage remains the correct framing.
+
 ## What changed and what did not
 
 The earlier record rejected five repositories. Two of its reasons were wrong and
