@@ -1150,18 +1150,32 @@ def pacgate_clause_risk(
 ) -> str:
     """Judge a single contract clause for risk and for which party it favors.
 
+    EVALUATED, NOT ASSUMED (measured 2026-11-01 against public benchmarks):
+
+    - English: good. Against CUAD, the English checkpoint's risk flags score
+      AUC 0.93-1.00 (n=80 over 25 contracts). Its graded risk verdicts are
+      usable as a triage signal.
+    - Chinese: NOT RELIABLE. Against CCL-DRR (6,794 Chinese contract clauses,
+      3-way labels), this question reached 0.333 accuracy - exactly chance -
+      and recall on the high-risk class was **0.00**: it did not flag a single
+      dangerous Chinese clause, calling most of them "medium". Overall accuracy
+      looked better (0.24-0.57) depending on framing and sample, which is the
+      trap: on this class balance a tool that always says "medium" looks
+      accurate while catching nothing.
+
+    So: use this for English clauses. For Chinese, treat a "low" verdict as
+    MEANINGLESS - it is not clearance - and rely on the language model and the
+    reviewing lawyer. Do not present a Chinese "low" to a client as safe.
+
     Use this on a clause the extraction pipeline has already pulled out of a
-    document. It answers two typed questions in one forward pass - how risky the
-    clause is for our client, and which side it favors - with calibrated
-    probabilities. It does not read or summarize documents; for that use
+    document. It does not read or summarize documents; for that use
     pacgate_kb_search or pacgate_read_document.
 
     This tool degrades to an explicit `available: false` result when the
     deployment has no laya service, so treat that field as the capability check.
 
     Args:
-        clause: The clause text, in any language laya supports (Chinese and
-            English included). Keep it to one clause: the engine judges a
+        clause: The clause text. Keep it to one clause: the engine judges a
             bounded state, and a whole contract exceeds its window.
         min_confidence: Abstention threshold in [0, 1]. An answer below it comes
             back flagged `low_confidence` rather than being hidden - treat a low
@@ -1198,13 +1212,24 @@ def pacgate_clause_flags(
 ) -> str:
     """Test a clause for four specific legal risk flags as probabilities.
 
-    Each flag is a yes/no probability, not a label: uncapped liability,
-    unilateral termination, auto-renewal, and a waiver of the right to litigate
-    or arbitrate. Probabilities are the useful form here because a reviewer can
-    set their own threshold, and because a 0.6 is honestly different from a 0.95.
+    EVALUATED, NOT ASSUMED (measured 2026-11-01 against CUAD, 25 contracts,
+    80 predictions, English checkpoint):
 
-    Prefer this over pacgate_clause_risk when you need to know *which* risk is
-    present rather than how risky the clause is overall.
+        uncapped_liability            AUC 0.931   P 0.83  R 0.83
+        termination_for_convenience   AUC 0.988   P 1.00  R 0.81
+        auto_renewal                  AUC 0.942   P 0.90  R 0.82
+        dispute_waiver                AUC 1.000   P 1.00  R 0.71
+
+    Every flag separates its concept from unrelated clauses in the same
+    contracts. Reproduce with scripts/bench-laya-clause-flags.ps1.
+
+    ENGLISH ONLY AS MEASURED. These figures come from the `english` checkpoint on
+    US commercial contracts. Nothing here is verified for Chinese text: on
+    CCL-DRR the Chinese path flagged 0 of 7 high-risk clauses, so a low
+    probability on a Chinese clause is NOT evidence that the risk is absent.
+
+    Each flag is a yes/no probability, not a label, so a reviewer can set their
+    own threshold and see that 0.6 is honestly different from 0.95.
 
     This tool degrades to an explicit `available: false` result when the
     deployment has no laya service.
