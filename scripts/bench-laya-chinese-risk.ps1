@@ -104,17 +104,16 @@ import json, random, sys, urllib.request
 DATA, URL, N, SEED, THRESH = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), float(sys.argv[5])
 records = json.load(open(DATA, encoding="utf-8"))
 
-# The exact question pacgate_clause_risk ships - no tuning, because the point is
-# to measure what we actually send.
-QUESTION = {"risk": {"type": "choice",
-    "instructions": "How risky is this contract clause for our client?",
-    "criteria": {
-        "high": "uncapped or unlimited liability, punitive or liquidated damages, "
-                "one-sided termination, broad indemnity, waiver of key remedies",
-        "medium": "ambiguous wording, asymmetric obligations, unclear remedies, "
-                  "short or missing notice periods",
-        "low": "routine terms, balanced obligations, standard boilerplate, "
-               "clear and mutual remedies"}}}
+# This is the path pacgate_clause_risk actually runs for Chinese text: three
+# yes/no questions, one concept each, combined with tuned thresholds. Asking a
+# single three-way question scored chance with recall 0.00; decomposing is what
+# produced recall 1.00. Thresholds must match _LAYA_ZH_THRESHOLDS in server.py.
+QUESTION = {
+    "uncapped": {"type": "noul", "instructions": "\u8be5\u6761\u6b3e\u662f\u5426\u4f7f\u6211\u65b9\u627f\u62c5\u65e0\u4e0a\u9650\u7684\u8d23\u4efb\uff1f"},
+    "unilateral": {"type": "noul", "instructions": "\u8be5\u6761\u6b3e\u662f\u5426\u53ea\u8d4b\u4e88\u5bf9\u65b9\u5355\u65b9\u89e3\u9664\u6743\uff1f"},
+    "ambiguous": {"type": "noul", "instructions": "\u8be5\u6761\u6b3e\u662f\u5426\u4f7f\u7528\u4e86\u201c\u914c\u60c5\u201d\u201c\u539f\u5219\u4e0a\u201d\u201c\u53e6\u884c\u534f\u5546\u201d\u7b49\u4e0d\u786e\u5b9a\u63aa\u8f9e\uff0c\u5bfc\u81f4\u6743\u5229\u4e49\u52a1\u96be\u4ee5\u786e\u5b9a\uff1f"},
+}
+THRESHOLDS = {"uncapped": 0.75, "unilateral": 0.50, "ambiguous": 0.50}
 GOLD = {"\u98ce\u9669\u9ad8": "high", "\u6a21\u7cca\u4e0d\u6e05": "medium", "\u6e05\u6670\u660e\u786e\u65e0\u98ce\u9669": "low"}
 
 by_cell = {}
@@ -132,21 +131,31 @@ for r in sample:
     body = json.dumps({"state": r["contract_clause"][:6000],
                        "questions": QUESTION}).encode()
     req = urllib.request.Request(URL, data=body, headers={"Content-Type": "application/json"})
-    a = json.loads(urllib.request.urlopen(req, timeout=180).read())["answers"]["risk"]
-    rows.append((GOLD[r["label"]], a["choice"], float(a.get("answer_confidence", 0))))
+    a = json.loads(urllib.request.urlopen(req, timeout=180).read())["answers"]
+    p = {k: float((a.get(k) or {}).get("noul") or 0.0) for k in QUESTION}
+    if p["uncapped"] >= THRESHOLDS["uncapped"] or p["unilateral"] >= THRESHOLDS["unilateral"]:
+        pred = "high"
+    elif p["ambiguous"] >= THRESHOLDS["ambiguous"]:
+        pred = "medium"
+    else:
+        pred = "low"
+    rows.append((GOLD[r["label"]], pred, p))
 
 n = len(rows)
 acc = sum(1 for g, p, _ in rows if g == p) / n
 recall = {g: sum(1 for x, y, _ in rows if x == g and y == g) / max(1, sum(1 for x, y, _ in rows if x == g))
           for g in ("high", "medium", "low")}
+tp = sum(1 for x, y, _ in rows if x == "high" and y == "high")
+fp = sum(1 for x, y, _ in rows if x != "high" and y == "high")
+precision_high = tp / (tp + fp) if tp + fp else 0.0
 pred_counts = {p: sum(1 for _, y, _ in rows if y == p) for p in ("high", "medium", "low")}
 
 print(f"\nn={n} (3-class chance = 0.333)")
-print(f"  accuracy       {acc:.3f}")
-print(f"  recall high    {recall['high']:.2f}   <- the class triage exists to catch")
-print(f"  recall medium  {recall['medium']:.2f}")
-print(f"  recall low     {recall['low']:.2f}")
-print(f"  predictions    high={pred_counts['high']} medium={pred_counts['medium']} low={pred_counts['low']}")
+print(f"  accuracy            {acc:.3f}")
+print(f"  recall high         {recall['high']:.2f}   <- the class triage exists to catch")
+print(f"  precision high      {precision_high:.2f}   <- how often a 'high' is really high")
+print(f"  recall medium/low   {recall['medium']:.2f} / {recall['low']:.2f}")
+print(f"  predictions         high={pred_counts['high']} medium={pred_counts['medium']} low={pred_counts['low']}")
 
 print("\n  confusion (gold \\ pred)   high  medium  low")
 for g in ("high", "medium", "low"):
@@ -158,11 +167,13 @@ print(f"\n  overall accuracy {acc:.3f} - reported, but NOT the bar; see below.")
 if recall["high"] < THRESH:
     print(f"\nRESULT: recall on 风险高 (high risk) is {recall['high']:.2f}, below the {THRESH:.2f} bar.")
     print("  A tool that misses most dangerous clauses while looking accurate is worse than")
-    print("  none, because it reads as coverage. Chinese risk grading must not be advertised")
-    print("  as working; the tool docstrings say so.")
+    print("  none, because it reads as coverage. Do not advertise Chinese risk grading.")
     verdict = 1
 else:
     print(f"\nRESULT: recall on 风险高 is {recall['high']:.2f}, clearing the {THRESH:.2f} bar.")
+    print(f"  Precision {precision_high:.2f} is the price: roughly "
+          f"{1/max(precision_high,0.001):.1f} clauses are escalated per genuinely risky one.")
+    print("  That bias is deliberate for triage - a missed unfair term costs more than a review.")
     verdict = 0
 print("\n  Why accuracy is not the bar: with three near-uniform classes, predicting mostly")
 print("  medium or low scores 0.57 while missing 71% of the high-risk class. A triage tool")

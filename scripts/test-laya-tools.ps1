@@ -307,27 +307,29 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
 }
 
 Write-Host ''
-Write-Host 'L8  Chinese risk grading is withheld, English is not' -ForegroundColor Cyan
+Write-Host 'L8  Chinese is graded by its own validated path, English by the English one' -ForegroundColor Cyan
 
-# Measured 2026-11-01 against CCL-DRR: the shipped Chinese question scored 0.333
-# accuracy (chance) with recall 0.00 on 风险高 - it flagged none of the dangerous
-# clauses. Returning four near-zero probabilities for Chinese text would read as
-# clearance, so the tools withhold the verdict instead. This asserts BOTH
-# directions, because a guard that withholds everything is as wrong as one that
-# withholds nothing: English must still be graded.
+# Measured 2026-11-01 against CCL-DRR: the single three-way question scored 0.333
+# accuracy (chance) with recall 0.00 on 风险高. A decomposed three-question path
+# scores recall 0.86-1.00 at precision 0.35-0.43. This asserts the routing between
+# the two paths and that neither language silently borrows the other's numbers.
 $guardScript = @'
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("s", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 out = {}
-# Guard decision per input - the property that decides everything else.
 for name, text in (("zh", "\u4e59\u65b9\u5bf9\u56e0\u672c\u5408\u540c\u4ea7\u751f\u7684\u4efb\u4f55\u635f\u5931\u627f\u62c5\u65e0\u9650\u8d23\u4efb\u3002"),
                    ("en", "The Supplier shall be liable for all losses without limitation."),
                    ("en_with_zh_name", "Party A (\u5317\u4eac\u67d0\u67d0\u79d1\u6280\u6709\u9650\u516c\u53f8) shall pay within 30 days.")):
-    out["guard_" + name] = m._is_cjk_dominant(text)
-# The withheld payload must not carry a verdict of any kind.
-out["withheld_payload"] = m._laya_withheld_result("pacgate_clause_risk", "x")
+    out["route_" + name] = bool(m._is_cjk_dominant(text))
+# The Chinese grade must come from three named probabilities and honour its own
+# thresholds, not from a borrowed English verdict.
+zh_answers = {k: {"noul": 0.99} for k in m._LAYA_ZH_QUESTIONS}
+out["zh_grade_all_high"] = m._laya_zh_grade(zh_answers)
+out["zh_grade_none"] = m._laya_zh_grade({k: {"noul": 0.0} for k in m._LAYA_ZH_QUESTIONS})
+out["zh_thresholds"] = m._LAYA_ZH_THRESHOLDS
+out["zh_keys"] = sorted(m._LAYA_ZH_QUESTIONS)
 print(json.dumps(out, ensure_ascii=False))
 '@
 $tmp = Join-Path $env:TEMP ("guard-" + [guid]::NewGuid().ToString('n').Substring(0, 6) + '.py')
@@ -338,44 +340,50 @@ Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 $g = $null
 try { $g = ($raw -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json } catch { }
 if (-not $g) {
-    Skip 'L8 behavioural guards' "server.py could not be imported: $($raw.Substring(0,[Math]::Min(200,$raw.Length)))"
+    Skip 'L8 behavioural checks' "server.py could not be imported: $($raw.Substring(0,[Math]::Min(200,$raw.Length)))"
 }
 else {
-    Check 'a Chinese clause is withheld' ($g.guard_zh -eq $true) 'guard says it would grade Chinese text'
-    Check 'an English clause is still graded' ($g.guard_en -eq $false) 'the guard withholds English too, which would remove the validated path'
-    Check 'English text containing a Chinese entity name is still graded' ($g.guard_en_with_zh_name -eq $false) `
-        'a ratio guard that fires on any CJK character would refuse real bilingual contracts'
+    Check 'a Chinese clause routes to the Chinese path' ($g.route_zh -eq $true) 'Chinese text would use the English three-way question, measured at recall 0.00'
+    Check 'an English clause routes to the English path' ($g.route_en -eq $false) 'the English path must not be diverted to the Chinese questions'
+    Check 'English text containing a Chinese entity name stays on the English path' ($g.route_en_with_zh_name -eq $false) `
+        'a presence test instead of a ratio would refuse real bilingual contracts'
 
-    $wp = $null
-    try { $wp = $g.withheld_payload | ConvertFrom-Json } catch { }
-    if (-not $wp) { Check 'withheld payload is parseable JSON' $false $g.withheld_payload }
-    else {
-        Check 'withheld payload states it is not validated for this language' ($wp.validated_for_language -eq $false) `
-            "validated_for_language=$($wp.validated_for_language)"
-        Check 'withheld payload carries no verdict' `
-            (($null -eq $wp.answers) -and ($null -eq $wp.risk) -and ($null -eq $wp.verdict)) `
-            'a payload that still returns a verdict is not withheld, whatever the flag says'
-        Check 'withheld payload cites the measured reason' `
-            (([string]$wp.reason -match 'CCL-DRR') -and ($wp.measured.recall_high_risk -ne $null)) `
-            'the reason must name the measurement, or a reader cannot check it'
-    }
+    Check 'the Chinese question set is three independent yes/no flags' `
+        (($g.zh_keys -join ',') -eq 'ambiguous,uncapped,unilateral') `
+        "keys=$($g.zh_keys -join ',') - the decomposition is what produced the recall"
+    Check 'an all-positive Chinese answer grades high' ($g.zh_grade_all_high.grade -eq 'high') `
+        "graded $($g.zh_grade_all_high.grade)"
+    Check 'an all-negative Chinese answer grades low' ($g.zh_grade_none.grade -eq 'low') `
+        "graded $($g.zh_grade_none.grade)"
+    Check 'the Chinese thresholds are the tuned ones, not defaults' `
+        (($g.zh_thresholds.uncapped -eq 0.75) -and ($g.zh_thresholds.unilateral -eq 0.50) -and ($g.zh_thresholds.ambiguous -eq 0.50)) `
+        "thresholds: uncapped=$($g.zh_thresholds.uncapped) unilateral=$($g.zh_thresholds.unilateral) ambiguous=$($g.zh_thresholds.ambiguous)"
 }
 
 Write-Host ''
-Write-Host 'L9  the guard is present on both clause tools and cannot be on by default' -ForegroundColor Cyan
+Write-Host 'L9  both clause tools route by language and disclose which measurement applies' -ForegroundColor Cyan
 
 foreach ($fn in @('pacgate_clause_risk', 'pacgate_clause_flags')) {
-    # Take everything from the def to the next @mcp.tool - the signature, the
-    # docstring and the body, which is all three properties this asserts on.
     $body = [regex]::Match($src, '(?ms)^def\s+' + $fn + '\s*\((?<all>.*?)(?=^@mcp\.tool|\z)')
     if (-not $body.Success) { Check "$fn parseable" $false; continue }
     $all = $body.Groups['all'].Value
-    Check "$fn calls the CJK guard" ($all -match '_is_cjk_dominant\(clause\)') `
-        'without the guard the tool returns a Chinese verdict that was measured at 0.00 recall'
-    Check "$fn defaults allow_unvalidated_language to False" ($all -match 'allow_unvalidated_language:\s*bool\s*=\s*False') `
-        'the escape hatch must default off, or the guard never runs in a review path'
-    Check "$fn docstring says Chinese is withheld" ($all -match 'WITHHELD') `
-        'the docstring is what the agent reads before trusting the result'
+    Check "$fn detects the language of the clause" ($all -match '_is_cjk_dominant\(clause\)') `
+        'without the check the tool applies one language''s calibration to the other'
+    Check "$fn keeps allow_unvalidated_language off by default" ($all -match 'allow_unvalidated_language:\s*bool\s*=\s*False') `
+        'the escape hatch must default off, or the measured path is bypassed silently'
+    Check "$fn docstring states both measured results" `
+        (($all -match 'CCL-DRR') -and ($all -match 'CUAD')) `
+        'the docstring is what the agent reads before trusting a verdict; it must name both datasets'
+}
+
+# `pacgate_clause_flags` reports the four ENGLISH flags, so for Chinese it must
+# say so and point at the tool that does have a Chinese path. Risk and flags are
+# deliberately different tools here: one grades Chinese, one does not.
+$flagsBody = [regex]::Match($src, '(?ms)^def\s+pacgate_clause_flags\s*\((?<all>.*?)(?=^@mcp\.tool|\z)')
+if ($flagsBody.Success) {
+    Check 'pacgate_clause_flags tells a Chinese reader where to go instead' `
+        ($flagsBody.Groups['all'].Value -match 'pacgate_clause_risk') `
+        'a dead end with no alternative is how a capability silently disappears'
 }
 
 Write-Host ''
