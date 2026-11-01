@@ -119,9 +119,12 @@ for fn in ("pacgate_clause_risk", "pacgate_clause_flags", "pacgate_route_languag
         out[fn] = "MISSING"
         continue
     try:
-        # Positional on purpose: the gate must not depend on the parameter's
-        # name, only on the tool existing and degrading.
-        r = f("甲方应在收到发票后三十日内付款。")
+        # ENGLISH on purpose. Two separate properties are under test here:
+        # this probe checks that an unreachable laya degrades gracefully, and
+        # L8 checks that Chinese is withheld. Probing degradation with Chinese
+        # text would hit the CJK guard first and never reach the laya call, so
+        # the assertion would pass for the wrong reason.
+        r = f("The Supplier shall be liable for all losses howsoever arising.")
         out[fn] = r if isinstance(r, str) else str(r)
     except Exception as e:
         out[fn] = f"RAISED {type(e).__name__}: {e}"
@@ -301,6 +304,78 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     $maxLoaded = [regex]::Match($body, 'LAYA_MAX_LOADED:\s*"(\d+)"')
     Check "$lane allows both checkpoints resident" ($maxLoaded.Success -and [int]$maxLoaded.Groups[1].Value -ge 2) `
         'MAX_LOADED below 2 evicts a checkpoint on every language switch, reloading ~800MB each time'
+}
+
+Write-Host ''
+Write-Host 'L8  Chinese risk grading is withheld, English is not' -ForegroundColor Cyan
+
+# Measured 2026-11-01 against CCL-DRR: the shipped Chinese question scored 0.333
+# accuracy (chance) with recall 0.00 on 风险高 - it flagged none of the dangerous
+# clauses. Returning four near-zero probabilities for Chinese text would read as
+# clearance, so the tools withhold the verdict instead. This asserts BOTH
+# directions, because a guard that withholds everything is as wrong as one that
+# withholds nothing: English must still be graded.
+$guardScript = @'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("s", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+out = {}
+# Guard decision per input - the property that decides everything else.
+for name, text in (("zh", "\u4e59\u65b9\u5bf9\u56e0\u672c\u5408\u540c\u4ea7\u751f\u7684\u4efb\u4f55\u635f\u5931\u627f\u62c5\u65e0\u9650\u8d23\u4efb\u3002"),
+                   ("en", "The Supplier shall be liable for all losses without limitation."),
+                   ("en_with_zh_name", "Party A (\u5317\u4eac\u67d0\u67d0\u79d1\u6280\u6709\u9650\u516c\u53f8) shall pay within 30 days.")):
+    out["guard_" + name] = m._is_cjk_dominant(text)
+# The withheld payload must not carry a verdict of any kind.
+out["withheld_payload"] = m._laya_withheld_result("pacgate_clause_risk", "x")
+print(json.dumps(out, ensure_ascii=False))
+'@
+$tmp = Join-Path $env:TEMP ("guard-" + [guid]::NewGuid().ToString('n').Substring(0, 6) + '.py')
+[System.IO.File]::WriteAllText($tmp, $guardScript, [System.Text.UTF8Encoding]::new($false))
+$raw = & $py $tmp (Resolve-Path $server) 2>&1 | Out-String
+Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+
+$g = $null
+try { $g = ($raw -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json } catch { }
+if (-not $g) {
+    Skip 'L8 behavioural guards' "server.py could not be imported: $($raw.Substring(0,[Math]::Min(200,$raw.Length)))"
+}
+else {
+    Check 'a Chinese clause is withheld' ($g.guard_zh -eq $true) 'guard says it would grade Chinese text'
+    Check 'an English clause is still graded' ($g.guard_en -eq $false) 'the guard withholds English too, which would remove the validated path'
+    Check 'English text containing a Chinese entity name is still graded' ($g.guard_en_with_zh_name -eq $false) `
+        'a ratio guard that fires on any CJK character would refuse real bilingual contracts'
+
+    $wp = $null
+    try { $wp = $g.withheld_payload | ConvertFrom-Json } catch { }
+    if (-not $wp) { Check 'withheld payload is parseable JSON' $false $g.withheld_payload }
+    else {
+        Check 'withheld payload states it is not validated for this language' ($wp.validated_for_language -eq $false) `
+            "validated_for_language=$($wp.validated_for_language)"
+        Check 'withheld payload carries no verdict' `
+            (($null -eq $wp.answers) -and ($null -eq $wp.risk) -and ($null -eq $wp.verdict)) `
+            'a payload that still returns a verdict is not withheld, whatever the flag says'
+        Check 'withheld payload cites the measured reason' `
+            (([string]$wp.reason -match 'CCL-DRR') -and ($wp.measured.recall_high_risk -ne $null)) `
+            'the reason must name the measurement, or a reader cannot check it'
+    }
+}
+
+Write-Host ''
+Write-Host 'L9  the guard is present on both clause tools and cannot be on by default' -ForegroundColor Cyan
+
+foreach ($fn in @('pacgate_clause_risk', 'pacgate_clause_flags')) {
+    # Take everything from the def to the next @mcp.tool - the signature, the
+    # docstring and the body, which is all three properties this asserts on.
+    $body = [regex]::Match($src, '(?ms)^def\s+' + $fn + '\s*\((?<all>.*?)(?=^@mcp\.tool|\z)')
+    if (-not $body.Success) { Check "$fn parseable" $false; continue }
+    $all = $body.Groups['all'].Value
+    Check "$fn calls the CJK guard" ($all -match '_is_cjk_dominant\(clause\)') `
+        'without the guard the tool returns a Chinese verdict that was measured at 0.00 recall'
+    Check "$fn defaults allow_unvalidated_language to False" ($all -match 'allow_unvalidated_language:\s*bool\s*=\s*False') `
+        'the escape hatch must default off, or the guard never runs in a review path'
+    Check "$fn docstring says Chinese is withheld" ($all -match 'WITHHELD') `
+        'the docstring is what the agent reads before trusting the result'
 }
 
 Write-Host ''

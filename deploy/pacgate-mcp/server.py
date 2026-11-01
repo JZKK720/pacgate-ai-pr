@@ -1142,30 +1142,109 @@ def _laya_answers(
     return _laya_post(payload)
 
 
+# ---------------------------------------------------------------------------
+# Chinese risk grading is withheld on purpose.
+#
+# Measured 2026-11-01 against CCL-DRR (6,794 Chinese contract clauses, three-way
+# labels, near-uniform so chance is 0.333), running the questions this server
+# ships:
+#
+#     accuracy          0.333   exactly chance
+#     recall on 风险高    0.00    it did not flag ONE high-risk clause
+#     predictions       high=0  medium=17  low=4
+#
+# Asking the same question in Chinese was worse (0.238). Overall accuracy moves
+# between 0.238 and 0.571 depending on framing and sample, which is the trap: on
+# this class balance, answering "medium" most of the time scores 0.57 while
+# catching nothing. So a Chinese "low" is not clearance, and returning one at all
+# invites exactly that misreading in a legal review.
+#
+# Reproduce: scripts/bench-laya-chinese-risk.ps1 (gates on recall of 风险高).
+#
+# The guard is on CJK content, not on `lang`, because the caller may not pass
+# `lang` and the text is the ground truth. `validated_for_language: false` plus a
+# null verdict makes the reason impossible to ignore and impossible to sum into a
+# report as if it were a green result.
+# ---------------------------------------------------------------------------
+_CJK_RANGES: tuple[tuple[int, int], ...] = (
+    (0x3400, 0x4DBF),    # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
+    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),    # Halfwidth and Fullwidth Forms
+    (0x20000, 0x2FA1F),  # CJK Extension B and beyond
+)
+
+
+def _is_cjk_dominant(text: str) -> bool:
+    """True when the text's letters are mostly CJK.
+
+    Ratio rather than presence: an English contract legitimately contains a
+    Chinese party name, and refusing those would make the English path useless.
+    """
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return False
+    cjk = sum(
+        1 for ch in letters
+        if any(lo <= ord(ch) <= hi for lo, hi in _CJK_RANGES)
+    )
+    return cjk / len(letters) >= 0.30
+
+
+def _laya_withheld_result(tool: str, clause: str) -> str:
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": True,
+            "validated_for_language": False,
+            "verdict_withheld": True,
+            "reason": (
+                "Chinese clause-risk grading is withheld: measured against CCL-DRR "
+                "it returned chance-level accuracy with 0.00 recall on high-risk "
+                "clauses (it flagged none of them). A 'low' verdict here would be "
+                "read as clearance, which it is not."
+            ),
+            "measured": {
+                "dataset": "CCL-DRR (6794 Chinese contract clauses, MIT)",
+                "accuracy": 0.333,
+                "chance_accuracy": 0.333,
+                "recall_high_risk": 0.00,
+                "reproduce": "scripts/bench-laya-chinese-risk.ps1",
+            },
+            "use_instead": (
+                "Read the clause with the reasoning model and have the reviewing "
+                "lawyer judge it. English clauses are unaffected and remain graded."
+            ),
+            "validated_languages": ["en"],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 @mcp.tool()
 def pacgate_clause_risk(
     clause: str,
     min_confidence: float = 0.55,
     lang: str | None = None,
+    allow_unvalidated_language: bool = False,
 ) -> str:
     """Judge a single contract clause for risk and for which party it favors.
 
-    EVALUATED, NOT ASSUMED (measured 2026-11-01 against public benchmarks):
+    VALIDATED FOR ENGLISH ONLY (measured 2026-11-01 against public benchmarks):
 
-    - English: good. Against CUAD, the English checkpoint's risk flags score
-      AUC 0.93-1.00 (n=80 over 25 contracts). Its graded risk verdicts are
-      usable as a triage signal.
-    - Chinese: NOT RELIABLE. Against CCL-DRR (6,794 Chinese contract clauses,
-      3-way labels), this question reached 0.333 accuracy - exactly chance -
-      and recall on the high-risk class was **0.00**: it did not flag a single
-      dangerous Chinese clause, calling most of them "medium". Overall accuracy
-      looked better (0.24-0.57) depending on framing and sample, which is the
-      trap: on this class balance a tool that always says "medium" looks
-      accurate while catching nothing.
+    - English: usable as a triage signal. Against CUAD the English checkpoint's
+      clause-level flags score AUC 0.93-1.00 (n=80 over 25 contracts).
+    - Chinese: WITHHELD. Against CCL-DRR (6,794 Chinese contract clauses,
+      3-way labels, chance 0.333) this question scored exactly chance accuracy
+      with recall 0.00 on the high-risk class - it flagged none of them. Ask it
+      in Chinese and it got worse (0.238). A "low" verdict would be read as
+      clearance, so no verdict is returned at all; the reply carries
+      `validated_for_language: false` and a null verdict.
 
-    So: use this for English clauses. For Chinese, treat a "low" verdict as
-    MEANINGLESS - it is not clearance - and rely on the language model and the
-    reviewing lawyer. Do not present a Chinese "low" to a client as safe.
+    If you are reading a Chinese clause, use the reasoning model and the
+    reviewing lawyer. Do not present a Chinese clause as safe on this tool's
+    authority, or on its silence.
 
     Use this on a clause the extraction pipeline has already pulled out of a
     document. It does not read or summarize documents; for that use
@@ -1181,7 +1260,12 @@ def pacgate_clause_risk(
             back flagged `low_confidence` rather than being hidden - treat a low
             confidence answer as "a human should read this clause".
         lang: Optional language code (e.g. "zh", "en") to skip detection.
+        allow_unvalidated_language: Escape hatch for benchmarking only. Set true
+            to get the raw Chinese verdict that the guard otherwise withholds.
+            Never leave this on in a review path.
     """
+    if not allow_unvalidated_language and _is_cjk_dominant(clause):
+        return _laya_withheld_result("pacgate_clause_risk", clause)
     try:
         data = _laya_answers(
             clause,
@@ -1209,11 +1293,12 @@ def pacgate_clause_flags(
     clause: str,
     min_confidence: float = 0.55,
     lang: str | None = None,
+    allow_unvalidated_language: bool = False,
 ) -> str:
     """Test a clause for four specific legal risk flags as probabilities.
 
-    EVALUATED, NOT ASSUMED (measured 2026-11-01 against CUAD, 25 contracts,
-    80 predictions, English checkpoint):
+    VALIDATED FOR ENGLISH (measured 2026-11-01 against CUAD, 25 contracts, 80
+    predictions, English checkpoint):
 
         uncapped_liability            AUC 0.931   P 0.83  R 0.83
         termination_for_convenience   AUC 0.988   P 1.00  R 0.81
@@ -1223,10 +1308,11 @@ def pacgate_clause_flags(
     Every flag separates its concept from unrelated clauses in the same
     contracts. Reproduce with scripts/bench-laya-clause-flags.ps1.
 
-    ENGLISH ONLY AS MEASURED. These figures come from the `english` checkpoint on
-    US commercial contracts. Nothing here is verified for Chinese text: on
-    CCL-DRR the Chinese path flagged 0 of 7 high-risk clauses, so a low
-    probability on a Chinese clause is NOT evidence that the risk is absent.
+    CHINESE IS WITHHELD. The figures above come from the `english` checkpoint on
+    US commercial contracts. On Chinese text the same questions flagged 0 of 7
+    high-risk clauses, so a low probability is NOT evidence that the risk is
+    absent. Chinese input returns `validated_for_language: false` with no
+    probabilities rather than four reassuring near-zero numbers.
 
     Each flag is a yes/no probability, not a label, so a reviewer can set their
     own threshold and see that 0.6 is honestly different from 0.95.
@@ -1238,7 +1324,12 @@ def pacgate_clause_flags(
         clause: The clause text. One clause, not a whole contract.
         min_confidence: Abstention threshold in [0, 1].
         lang: Optional language code to skip detection.
+        allow_unvalidated_language: Escape hatch for benchmarking only. Set true
+            to get the raw Chinese probabilities the guard otherwise withholds.
+            Never leave this on in a review path.
     """
+    if not allow_unvalidated_language and _is_cjk_dominant(clause):
+        return _laya_withheld_result("pacgate_clause_flags", clause)
     try:
         data = _laya_answers(
             clause,

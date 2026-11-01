@@ -642,7 +642,7 @@ if ($Update -and -not $SkipRepoPull) {
             # this was found.
             #
             # `--untracked-files=no` is what narrows the check to tracked state.
-            $dirty = @(git status --porcelain)
+            $dirty = @(git status --porcelain --untracked-files=no)
             if ($dirty.Count -gt 0) {
                 Write-Host "[WARN] Repo has local changes to tracked files - skipping the repo update." -ForegroundColor Yellow
                 Write-Host "  Not modifying anything, because that could discard work. Changed files:" -ForegroundColor Yellow
