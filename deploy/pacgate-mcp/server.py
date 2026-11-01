@@ -1192,6 +1192,21 @@ def _is_cjk_dominant(text: str) -> bool:
 
 
 def _laya_withheld_result(tool: str, clause: str) -> str:
+    # The alternative differs by tool, and getting it wrong leaves a reader stuck:
+    # pacgate_clause_risk DOES grade Chinese (its own calibrated path), so for it
+    # the honest answer points at `allow_unvalidated_language`; only
+    # pacgate_clause_flags has nowhere else to send a Chinese clause.
+    if tool == "pacgate_clause_flags":
+        instead = (
+            "Use pacgate_clause_risk on this Chinese clause: it has a "
+            "Chinese-calibrated path measured at recall 0.86-1.00 on the "
+            "high-risk class. The four English flags are not available for Chinese."
+        )
+    else:
+        instead = (
+            "Read the clause with the reasoning model and have the reviewing "
+            "lawyer judge it."
+        )
     return json.dumps(
         {
             "tool": tool,
@@ -1211,10 +1226,7 @@ def _laya_withheld_result(tool: str, clause: str) -> str:
                 "recall_high_risk": 0.00,
                 "reproduce": "scripts/bench-laya-chinese-risk.ps1",
             },
-            "use_instead": (
-                "Read the clause with the reasoning model and have the reviewing "
-                "lawyer judge it. English clauses are unaffected and remain graded."
-            ),
+            "use_instead": instead,
             "validated_languages": ["en"],
         },
         ensure_ascii=False,

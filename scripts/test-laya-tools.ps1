@@ -386,6 +386,31 @@ if ($flagsBody.Success) {
         'a dead end with no alternative is how a capability silently disappears'
 }
 
+# The payload is what a caller actually reads. A docstring that names the
+# alternative is useless if the returned JSON does not.
+$wpScript = @'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("s", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+out = {}
+for tool in ("pacgate_clause_flags", "pacgate_clause_risk"):
+    r = json.loads(m._laya_withheld_result(tool, "x"))
+    out[tool] = r.get("use_instead", "")
+print(json.dumps(out, ensure_ascii=False))
+'@
+$tmp2 = Join-Path $env:TEMP ("wp-" + [guid]::NewGuid().ToString('n').Substring(0, 6) + '.py')
+[System.IO.File]::WriteAllText($tmp2, $wpScript, [System.Text.UTF8Encoding]::new($false))
+$raw2 = & $py $tmp2 (Resolve-Path $server) 2>&1 | Out-String
+Remove-Item -LiteralPath $tmp2 -Force -ErrorAction SilentlyContinue
+$wp = $null
+try { $wp = ($raw2 -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json } catch { }
+if ($wp) {
+    Check 'the withheld payload routes a Chinese reader to a working tool' `
+        ([string]$wp.pacgate_clause_flags -match 'pacgate_clause_risk') `
+        "use_instead for flags: '$($wp.pacgate_clause_flags)'"
+}
+
 Write-Host ''
 $total = $script:pass + $script:fail
 if ($script:fail -eq 0) {
