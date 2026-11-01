@@ -280,6 +280,27 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
 
     Check "$lane keeps runtime offline" (($bodyLines -join "`n") -match 'HF_HUB_OFFLINE:\s*"?1') `
         'without HF_HUB_OFFLINE the service would try huggingface.co at run time on a client machine'
+
+    # BILINGUAL (2026-11-01). This stack serves English and Chinese, and laya
+    # routes by script: Latin text goes to the `english` checkpoint and Han to
+    # `multilingual`. Measured: with only `multilingual` loaded, an English
+    # clause makes the router build `english` and the request returns HTTP 500.
+    # So the default must name both, and MAX_LOADED must be >= 2 or the second
+    # checkpoint is evicted on every language switch.
+    $body = ($bodyLines -join "`n")
+    $modelsLine = [regex]::Match($body, 'LAYA_MODELS:\s*\$\{LAYA_MODELS:-([^}]+)\}')
+    if (-not $modelsLine.Success) {
+        Check "$lane defaults LAYA_MODELS to both checkpoints" $false `
+            'no LAYA_MODELS default found - an English clause would 500'
+    }
+    else {
+        $val = $modelsLine.Groups[1].Value
+        Check "$lane loads both checkpoints by default" (($val -match 'multilingual') -and ($val -match 'english')) `
+            "default is '$val'; laya routes Latin text to 'english', so a bilingual stack needs both"
+    }
+    $maxLoaded = [regex]::Match($body, 'LAYA_MAX_LOADED:\s*"(\d+)"')
+    Check "$lane allows both checkpoints resident" ($maxLoaded.Success -and [int]$maxLoaded.Groups[1].Value -ge 2) `
+        'MAX_LOADED below 2 evicts a checkpoint on every language switch, reloading ~800MB each time'
 }
 
 Write-Host ''

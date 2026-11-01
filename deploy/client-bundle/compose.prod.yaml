@@ -576,8 +576,13 @@ services:
       # Preload so the first clause does not pay the load, and cap resident
       # checkpoints at 1 so a second checkpoint cannot silently double memory.
       LAYA_PRELOAD: "1"
-      LAYA_MODELS: ${LAYA_MODELS:-multilingual}
-      LAYA_MAX_LOADED: "1"
+      # BOTH checkpoints, because routing sends English text to the `english`
+      # checkpoint and Chinese to `multilingual`. With only multilingual
+      # loaded, an English clause makes the router build `english` and fail
+      # with a 500 (measured). ~1.45 GB staged in total; MAX_LOADED must be 2
+      # or the second checkpoint is evicted on every switch.
+      LAYA_MODELS: ${LAYA_MODELS:-multilingual,english}
+      LAYA_MAX_LOADED: "2"
       LAYA_THREADS: ${LAYA_THREADS:-4}
       # Offline by construction. Staged weights only; nothing is fetched at run
       # time, which is the whole reason this can run on a client machine.
