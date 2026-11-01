@@ -281,6 +281,52 @@ $dockerfiles = @(
     'deploy/deer-flow-frontend-pacgate/Dockerfile'
 )
 
+# ── SHADOWED INPUTS (added 2026-11-01) ───────────────────────────────────────
+#
+# A file can be a COPY source AND be bind-mounted read-only over the same path in
+# both compose lanes. The mount wins at run time, so the file's content reaches
+# clients through compose - not through the image - and changing it does NOT
+# invalidate the release.
+#
+# This distinction was missing, and it cost three release tags in one session.
+# deploy/pacgate-mcp/ is in $contextPrefixes above (the Dockerfile COPYs
+# server.py), so every edit to it failed this gate and demanded a bump. But both
+# lanes mount `../pacgate-mcp/server.py:/app/server.py:ro`, and measured on the
+# live stack:
+#
+#     working tree sha256 == running container /app/server.py sha256
+#
+# The fix was already serving before the bump that claimed to ship it existed.
+#
+# Image-affecting now requires BOTH that a COPY can reach the file AND that no
+# lane mounts it read-only. The mounts are read from the compose files, not
+# assumed.
+$shadowed = @{}
+$mountPattern = '^\s*-\s*(?<src>[^:\s]+):(?<dst>/[^\s:]+):ro\s*$'
+foreach ($lane in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
+    if (-not (Test-Path -LiteralPath $lane)) { continue }
+    foreach ($line in (Get-Content -LiteralPath $lane)) {
+        $m = [regex]::Match($line, $mountPattern)
+        if (-not $m.Success) { continue }
+        $dst = $m.Groups['dst'].Value
+        $src = $m.Groups['src'].Value
+        # ${VAR} sources cannot be resolved to a repo path, so they stay unmapped
+        # and their files keep counting as image inputs - the conservative side.
+        if ($src -match '\$\{') { continue }
+        $norm = ($src -replace '^\.\./', 'deploy/') -replace '^\./', 'deploy/client-bundle/'
+        if (-not $norm.StartsWith('deploy/')) { continue }
+        if (-not $shadowed.ContainsKey($dst)) { $shadowed[$dst] = @() }
+        $shadowed[$dst] += $norm
+    }
+}
+
+function Get-ShadowedPath([string]$file) {
+    foreach ($dst in $shadowed.Keys) {
+        if ($shadowed[$dst] -contains $file) { return "$file -> $dst" }
+    }
+    return $null
+}
+
 # .dockerignore genuinely narrows the pacgate-ai context (this is what excluded
 # the changed pacgate-ai-assets/render.py from the image). Honouring its
 # directory prefixes here keeps the gate's report actionable instead of listing
@@ -300,6 +346,7 @@ if (Test-Path 'pacgate-ai/.dockerignore') {
 $changed = @(& git diff --name-only "$resolved..HEAD" 2>$null | Where-Object { $_ })
 $affecting = @()
 $benign = @()
+$shadowedChanges = @()
 foreach ($f in $changed) {
     $isInput = $false
     foreach ($p in $contextPrefixes) { if ($f.StartsWith($p)) { $isInput = $true; break } }
@@ -307,7 +354,14 @@ foreach ($f in $changed) {
     if ($isInput) {
         foreach ($ip in $ignoredPrefixes) { if ($f.StartsWith($ip)) { $isInput = $false; break } }
     }
-    if ($isInput) { $affecting += $f } else { $benign += $f }
+    if ($isInput) {
+        # A COPY-reachable file that both lanes bind-mount read-only cannot change
+        # the published artifact: the mount shadows the baked copy at run time.
+        $sh = Get-ShadowedPath $f
+        if ($sh) { $shadowedChanges += $sh; continue }
+        $affecting += $f
+    }
+    else { $benign += $f }
 }
 
 Info "checked $($changed.Count) file(s) changed between $($builtRev) and HEAD"
@@ -352,6 +406,11 @@ if ($affecting.Count -gt 0) {
     Pass "no image-affecting file changed between $($builtRev) and HEAD, so the tag still describes the published artifacts"
     # Reported, not hidden: this is the evidence that the diff was read, and it
     # is what lets a reviewer see the judgement rather than trust a count.
+    if ($shadowedChanges.Count -gt 0) {
+        Info "$($shadowedChanges.Count) COPY-reachable file(s) changed but a compose lane mounts them read-only, so the mount - not the image - carries the change:"
+        $shadowedChanges | ForEach-Object { Info "  $_" }
+        Info 'these reach clients through install -Update once the lane is re-rendered; no release tag is needed'
+    }
     if ($benign.Count -gt 0) {
         Info "$($benign.Count) file(s) changed but cannot reach an image (docs, gates, CI, ignored context):"
         $benign | ForEach-Object { Info "  $_" }
