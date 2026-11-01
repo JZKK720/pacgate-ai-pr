@@ -535,12 +535,20 @@ reach openviking:1933, pacgate-api:8080, and host.docker.internal:11434 (Ollama)
    key and no cloud call, which is the reason it was chosen over a metered
    judgment API.
 
-   It is **off by default**. The multilingual checkpoint is 1.2 GB, so a machine
+   It is **off by default**. The two checkpoints are about 1.45 GB on disk, so a machine
    that does not run it is not broken: the three tools return `available: false`
    with a reason, and every other tool is unaffected. To enable it, stage the
-   weights once on a machine that can reach huggingface.co, set `LAYA_MODEL_DIR`,
-   then `docker compose --profile laya up -d laya`. The service runs with
-   `HF_HUB_OFFLINE=1`, so a client machine never contacts the internet.
+   weights once on a machine with internet access
+   (`pwsh -File scripts/stage-laya-models.ps1 -OutDir ..\laya-hf-cache`, which
+   stages from ModelScope because huggingface.co is blocked or throttled here),
+   set `LAYA_HF_CACHE`, then `docker compose --profile laya up -d laya`. The
+   service runs with `HF_HUB_OFFLINE=1`, so a client machine never contacts the
+   internet.
+
+   Both checkpoints are required. laya routes by script - Latin text to
+   `english`, Chinese to `multilingual` - and a missing checkpoint makes that
+   language fail with HTTP 500. Measured on English clauses, the `english`
+   checkpoint is also the more accurate of the two.
 3. **QM → OpenViking**: the QM core has `OPENVIKING_URL=http://openviking:1933`
    and `OPENVIKING_API_KEY` (the root key). The `pacgate-qm` sandbox tool
    (`ov-remember` / `ov-search` / `ov-read`) calls OpenViking from inside the

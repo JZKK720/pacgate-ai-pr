@@ -45,6 +45,18 @@ step. Before it changes any workflow, run it over a real annotated set of the
 firm's contracts and measure agreement per risk bucket. Until then the correct
 framing is: it reliably escalates the worst clause and defers on the rest.
 
+**Verdicts are sensitive to how the criteria are worded.** The same English clause
+("the Company may terminate at any time without liability") returns **high 0.808**
+under the fuller criteria in `pacgate_clause_risk` and **low 0.672** under terse
+criteria (`high: one-sided termination`, `medium: ambiguous`, `low: routine`).
+A third of the gap is the question, not the clause.
+
+That is the single most important operational note here: the criteria shipped in
+server.py are part of the model's behaviour, so changing them changes verdicts.
+Any future tuning must be measured against a fixed clause set - never judged by
+eyeballing one result. It also means the shipped sets are worth reviewing
+deliberately, as questions, not as documentation.
+
 **Field naming, measured and easy to get wrong:**
 `confidence` is the *margin* between the top two options (0.0432 in one sample),
 while `answer_confidence` is the probability of the chosen option (0.4267). Only

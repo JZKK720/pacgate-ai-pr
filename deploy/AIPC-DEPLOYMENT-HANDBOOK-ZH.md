@@ -510,9 +510,15 @@ openviking:1933、pacgate-api:8080 和 host.docker.internal:11434（Ollama）。
 
    它**默认关闭**。多语种检查点为 1.2 GB，运行它的机器与不运行它的机器功能都
    完整：三个工具会返回 `available: false` 并附带原因，其余工具完全不受影响。
-   如需启用：先在一台可访问 huggingface.co 的机器上一次性下载权重，设置
-   `LAYA_MODEL_DIR`，然后执行 `docker compose --profile laya up -d laya`。该服务
-   以 `HF_HUB_OFFLINE=1` 运行，因此客户端机器不会连通外网。
+   如需启用：先在一台可联网的机器上一次性下载权重
+   （`pwsh -File scripts/stage-laya-models.ps1 -OutDir ..\laya-hf-cache`；脚本从
+   ModelScope 拉取，因为本地区 huggingface.co 被阻断或限速），设置 `LAYA_HF_CACHE`，
+   然后执行 `docker compose --profile laya up -d laya`。该服务以 `HF_HUB_OFFLINE=1`
+   运行，因此客户端机器不会连通外网。
+
+   两个检查点都需要。laya 按文字体系路由：拉丁文本走 `english`，中文走
+   `multilingual`；缺少任一检查点，该语言的请求会返回 HTTP 500。实测英文条款上
+   `english` 检查点也更准确。
 3. **QM → OpenViking**：QM 核心有 `OPENVIKING_URL=http://openviking:1933` 和
    `OPENVIKING_API_KEY`（根密钥）。`pacgate-qm` 沙箱工具（`ov-remember` /
    `ov-search` / `ov-read`）在代理沙箱内通过 `http://host.docker.internal:1933`
