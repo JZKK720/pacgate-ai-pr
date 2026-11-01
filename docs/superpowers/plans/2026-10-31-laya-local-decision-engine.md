@@ -127,6 +127,57 @@ CUAD labels, and the flag is now named for it.
 - **Precision/recall per risk bucket is now measured; the decision to remove any
   human review step is still not justified.** Triage remains the correct framing.
 
+## Chinese: measured, failed, then fixed, 2026-11-01
+
+The benchmark above is English. Running the same question on Chinese text
+(CCL-DRR: 6,794 Chinese contract clauses, 3-way labels, chance 0.333) produced:
+
+    accuracy 0.333   (exactly chance)
+    recall on 风险高 0.00   it flagged none of the 7 high-risk clauses
+    predictions  high=0  medium=17  low=4
+
+Asking it in Chinese was worse (0.238). The first fix was to withhold Chinese
+verdicts entirely - defensible, but it deleted the capability in the language the
+product was built for.
+
+**It was recoverable.** The single three-way question was carrying three semantic
+axes at once (severity, ambiguity, asymmetry) and collapsing onto the majority
+class. Decomposed into three yes/no questions and combined with tuned thresholds
+(uncapped >= 0.75, unilateral >= 0.50, ambiguous >= 0.50):
+
+| measure | value |
+|---|---|
+| recall on 风险高 | **0.86 - 1.00** (four sampling seeds) |
+| precision | 0.35 - 0.43 |
+| accuracy | 0.38 - 0.57 |
+
+That is the difference between a tool that cannot see the class it exists to
+catch and one that almost never misses it. The precision is the price: roughly
+2.5-3 clauses are escalated per genuinely risky one. For legal triage that is the
+correct bias - a false high costs minutes of review, a false low ships an unfair
+term - but it is why a `high` is a prompt to review and never a finding.
+
+`pacgate_clause_risk` routes by language: English to the three-way question
+(CUAD, AUC 0.93-1.00), Chinese to the decomposed path. `pacgate_clause_flags`
+stays English-only by measurement and points a Chinese reader at the tool that
+does grade Chinese.
+
+**One number I had to correct in myself.** The first tuned result was recall 1.00
+on a single sample, and I wrote that into the docstrings. Four seeds gave
+0.86-1.00, so every surface now states the range. A benchmark reported from one
+draw is not a measurement.
+
+### What is still not established
+
+- **CCL-DRR is generated from statute articles**, not extracted from executed
+  contracts, and has no external validation. It bounds the problem; it is not a
+  substitute for a corpus of the firm's own deals.
+- **Precision ~0.4** means most escalations are false positives. Nothing here
+  justifies removing human review; it justifies pointing review at the right
+  clauses.
+- English figures come from US commercial contracts; Chinese from CCL-DRR's seven
+  contract types. Neither is a PRC-executed-contract benchmark.
+
 ## What changed and what did not
 
 The earlier record rejected five repositories. Two of its reasons were wrong and
