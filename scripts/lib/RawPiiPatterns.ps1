@@ -60,8 +60,20 @@ $PacgateRawPiiPatterns = [ordered]@{
     # A Unified Social Credit Code: 18 characters from a restricted alphabet.
     'uscc'          = "$PacgatePlaceholderZeroGuard[0-9A-HJ-NPQRTUWXY]{18}"
 
-    # A PRC mobile number.
-    'cn_mobile'     = '1[3-9][0-9]{9}'
+    # A PRC mobile number, with an optional 86 country code.
+    #
+    # The leading `(^|[^0-9])` is a boundary test, and it is needed only here. The
+    # Rust detector calls `is_bounded` and rejects a match with a digit immediately
+    # before it; SQL ERE has no lookbehind, so the guard has to consume the preceding
+    # character instead. MEASURED 2026-11-02: without it, the Thai juristic ID
+    # `0115565002108` in `Juristic ID No.0115565002108` matched as an INNER substring
+    # and the audit reported `LEAK cn_mobile 1` on a document that the rescan and the
+    # redactor both correctly considered clean. A false positive that no remediation
+    # can clear is exactly what trains an operator to ignore this audit.
+    #
+    # `86` is part of the pattern for the same reason it is in the rule layer: a
+    # country-coded mobile must not depend on its Luhn checksum to be found.
+    'cn_mobile'     = '(^|[^0-9])(86)?1[3-9][0-9]{9}'
 
     # A PRC landline with an area code, hyphen optional.
     'cn_landline'   = '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}'

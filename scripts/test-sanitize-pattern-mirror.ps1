@@ -132,6 +132,9 @@ $mustMatch = [ordered]@{
     # A lower-case plate is the same plate. Both the rule layer and this audit
     # missed it until 2026-11-02, when an adversarial probe compared the two.
     '抵押车辆 京a12345'        = 'cn_plate'
+    # A country-coded mobile must be found without relying on Luhn, and a longer
+    # foreign identifier that merely CONTAINS the digits must not be reported.
+    '手机 +8613912345679'      = 'cn_mobile'
 }
 foreach ($value in $mustMatch.Keys) {
     $hits = Test-AnyPattern $value
@@ -145,7 +148,12 @@ $mustNotMatch = @(
     '期限 2026-01-01 至 2028-12-31',
     'Contract No.PG-2026-0042',
     'Invoice Total USD 18,400.00',
-    '参见 (2019)最高法民终1234号'
+    '参见 (2019)最高法民终1234号',
+    # A Thai juristic ID that CONTAINS a mobile-shaped substring. The Rust detector
+    # rejects it via is_bounded; SQL has no lookbehind, so the pattern carries an
+    # explicit `(^|[^0-9])` guard. Without it this document reported LEAK cn_mobile
+    # forever and no remediation could clear it.
+    'Juristic ID No.0115565002108'
 )
 foreach ($text in $mustNotMatch) {
     $hits = Test-AnyPattern $text
