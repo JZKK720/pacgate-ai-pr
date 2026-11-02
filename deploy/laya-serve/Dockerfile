@@ -15,10 +15,9 @@
 # 2. The same comment claimed pip reports `torch 2.15.0+cpu`. It did not. A plain
 #    `pip install laya[serve]` resolved torch from PyPI's default CUDA build and
 #    dragged in 4.2 GB of `nvidia-*` packages onto a CPU-only box: the image was
-#    9.23 GB. Installing torch from the CPU-only index FIRST makes that claim
-#    true and drops the image to 1.79 GB (measured; 3.2 GB once weights are
-#    baked). TORCH_VERSION is a build argument so a future laya release cannot
-#    silently swap the wheel.
+#    9.23 GB. Installing torch from the CPU-only index FIRST makes that claim true
+#    and drops it to 1.79 GB before weights (measured). TORCH_VERSION is a build
+#    argument so a future laya release cannot silently swap the wheel.
 #
 # WHY NO NPU BACKEND. Considered and rejected on measured grounds, 2026-11-02.
 # An NPU is real hardware - this fleet's AIPCs are AMD Ryzen AI 9 HX 370 class
@@ -45,10 +44,12 @@
 # Apache-2.0 (verified via the ModelScope model API), so redistribution is fine.
 #
 # SIZING. Weights are 1.45 GB (803.6 MB English + 614.0 MB multilingual + 35 MB
-# tokenizers), so the image lands near 3.2 GB. That cost is paid ONLY by machines
-# that enable the `laya` profile: the service declares `profiles: ["laya"]`, and
-# `docker compose config --images` omits this image entirely without it. Clients
-# who never opt in never pull it.
+# tokenizers). Measured on 0.2.13: 1.64 GB COMPRESSED in the registry, 2.8 GB as
+# an uncompressed rootfs (`du -sh /`). `docker images` shows 4.69 GB, which is
+# Docker Desktop accounting rather than what a client downloads - use the registry
+# figure. That cost is paid ONLY by machines that enable the `laya` profile: the
+# service declares `profiles: ["laya"]`, and `docker compose config --images`
+# omits this image entirely without it. Clients who never opt in never pull it.
 #
 # THE MOUNT THAT CAN HIDE ALL OF THIS. compose.prod.yaml bind-mounts
 # ${LAYA_HF_CACHE} over /home/laya/.cache/huggingface. A bind mount does not

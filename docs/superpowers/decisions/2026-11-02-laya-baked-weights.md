@@ -18,11 +18,17 @@ those were staged onto the client machine and bind-mounted.
 
 | | Measured |
 |---|---|
-| `laya-serve` image as shipped to 0.2.12 | **9.23 GB** |
+| `laya-serve` image as shipped to 0.2.12 | **9.23 GB** (`docker images`; ~2.96 GB compressed) |
 | …of which `nvidia-*` CUDA libraries | **4.2 GB**, on a CPU-only box |
 | `torch` version in that image | `2.15.0` (CUDA build) — **not** `2.15.0+cpu`, which the Dockerfile claimed |
-| Same image with torch pinned to the CPU index | **1.79 GB** |
-| …plus baked weights | **≈ 3.2 GB** uncompressed |
+| Same image with torch pinned to the CPU index | **1.79 GB**, no CUDA |
+| 0.2.13 as published | **1.64 GB compressed**, **2.8 GB** uncompressed rootfs (`du -sh /`) |
+| 0.2.12 as published | 2.96 GB compressed |
+
+`docker images` reports 4.69 GB for the 0.2.13 image on Docker Desktop. That figure
+is not the rootfs: summing the layer sizes from `docker history` gives 2.93 GB and
+`du -sh /` inside the container gives 2.8 GB. The registry figure, 1.64 GB
+compressed, is the number a client actually downloads.
 
 The Dockerfile's own comment said pip reported `2.15.0+cpu`. It did not: a plain
 `pip install "laya[serve]"` resolves torch from PyPI's default CUDA build, dragging
@@ -53,9 +59,10 @@ over `/home/laya/.cache/huggingface` silently un-bakes the image.
 ## Cost
 
 The weights are 1.45 GB (803.6 MB `english` = the repo root, 614.0 MB
-`multilingual` subfolder, 35 MB tokenizers). That cost is paid **only** by machines
-that enable the profile: `docker compose config --images` omits `laya-serve`
-entirely without `--profile laya`. Verified in both lanes.
+`multilingual` subfolder, 35 MB tokenizers). Measured on 0.2.13: **1.64 GB
+compressed** in the registry, **2.8 GB** as an uncompressed rootfs. That cost is
+paid **only** by machines that enable the profile: `docker compose config --images`
+omits `laya-serve` entirely without `--profile laya`. Verified in both lanes.
 
 ## NPU, considered and rejected
 
