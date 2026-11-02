@@ -21,11 +21,14 @@
     without trees/, the cache resolves and serves; with it, every load fails.
     `blobs/` is NOT needed either (measured), so this does not duplicate ~1.4 GB.
 
-    Run this on a machine with internet access, then copy $OutDir to the AIPC and
-    point LAYA_HF_CACHE at it. Nothing is fetched at run time on the client.
+    Run this on a machine with internet access. From 0.2.13 the checkpoints are
+    BAKED into ghcr.io/jzkk720/laya-serve, so a client install needs no staging:
+    this output is a laya-serve BUILD CONTEXT, used to rebuild the image or to
+    override the baked weights on one machine.
 
 .PARAMETER OutDir
-    Where to write the cache. Becomes LAYA_HF_CACHE.
+    Where to write the cache. For a rebuild, point it at
+    deploy/laya-serve/laya-weights (the Dockerfile's COPY source).
 
 .PARAMETER Models
     Checkpoints to stage. Default stages both, which is what an en/zh deployment
@@ -255,10 +258,18 @@ if ($failCount -gt 0 -or $missing.Count -gt 0) {
 
 Write-Host ''
 Write-Host 'Next:' -ForegroundColor Cyan
-Write-Host "  1. Set LAYA_HF_CACHE to '$OutDir' in the bundle .env"
-Write-Host '  2. docker compose --profile laya up -d laya'
-Write-Host '  3. Prove the weights resolve - /health passes WITHOUT loading a model, so use routing:'
-Write-Host "       curl -s http://127.0.0.1:8000/v1/route -H 'content-type: application/json' ``"
-Write-Host '            -d ''{"state":"甲方应在三十日内付款","questions":{}}'''
+Write-Host "  This output is the laya-serve BUILD CONTEXT for baking, not a runtime mount."
+Write-Host "  From 0.2.13 the checkpoints ship inside ghcr.io/jzkk720/laya-serve, so a"
+Write-Host '  client install needs no staging at all. This script is for the two cases'
+Write-Host '  that baking cannot cover:'
+Write-Host "    1. REBUILDING the image. Copy '$OutDir' to deploy/laya-serve/laya-weights"
+Write-Host '       and rebuild:  docker build -t laya-serve:local deploy/laya-serve'
+Write-Host '    2. PINNING different weights on one machine, by mounting this directory'
+Write-Host '       over /home/laya/.cache/huggingface. That REPLACES the baked layer, so'
+Write-Host '       it only works with a complete directory - a partial or empty one'
+Write-Host '       crash-loops the container.'
+Write-Host ''
+Write-Host '  To use the shipped image instead, do nothing here:'
+Write-Host '       docker compose --profile laya up -d laya'
 Write-Host 'RESULT: checkpoints staged and verified.' -ForegroundColor Green
 exit 0

@@ -508,13 +508,14 @@ openviking:1933、pacgate-api:8080 和 host.docker.internal:11434（Ollama）。
    它不需要 API 密钥，也不发起任何云端调用——这正是选择它而不用按次计费的判定
    API 的原因。
 
-   它**默认关闭**。多语种检查点为 1.2 GB，运行它的机器与不运行它的机器功能都
-   完整：三个工具会返回 `available: false` 并附带原因，其余工具完全不受影响。
-   如需启用：先在一台可联网的机器上一次性下载权重
-   （`pwsh -File scripts/stage-laya-models.ps1 -OutDir ..\laya-hf-cache`；脚本从
-   ModelScope 拉取，因为本地区 huggingface.co 被阻断或限速），设置 `LAYA_HF_CACHE`，
-   然后执行 `docker compose --profile laya up -d laya`。该服务以 `HF_HUB_OFFLINE=1`
-   运行，因此客户端机器不会连通外网。
+   它**默认关闭**。两个检查点合计约 1.45 GB，运行它的机器与不运行它的机器功能都
+完整：三个工具会返回 `available: false` 并附带原因，其余工具完全不受影响。
+**自 0.2.13 起，检查点已打包进镜像**，因此启用只需一条命令：
+`docker compose --profile laya up -d laya`。无需预置权重，运行时也不下载任何内容
+——权重在构建镜像时校验 SHA-256，服务以 `HF_HUB_OFFLINE=1` 运行。
+请为它预留 **4.4 GiB 主机内存**：这是两个检查点均加载后的实测空闲占用，因为每个
+检查点各持有一份 fp32 副本。这是主机内存而非显存；在 16 GiB 且已驻留大模型的
+机器上，建议先确认可用内存。
 
    两个检查点都需要。laya 按文字体系路由：拉丁文本走 `english`，中文走
    `multilingual`；缺少任一检查点，该语言的请求会返回 HTTP 500。实测英文条款上

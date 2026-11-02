@@ -51,14 +51,14 @@
 # service declares `profiles: ["laya"]`, and `docker compose config --images`
 # omits this image entirely without it. Clients who never opt in never pull it.
 #
-# THE MOUNT THAT CAN HIDE ALL OF THIS. compose.prod.yaml bind-mounts
-# ${LAYA_HF_CACHE} over /home/laya/.cache/huggingface. A bind mount does not
-# merge with the image layer - it REPLACES it. Proven 2026-11-02: with an empty
-# source directory the baked weights vanish and the container sees an empty
-# cache. That mount is therefore opt-in via compose.laya-models.yaml, kept only
-# for pinning a different revision without rebuilding. Shipping it by default
-# would silently un-bake this image - the same class of defect as a COPY source
-# shadowed by a read-only mount.
+# THE MOUNT THAT CAN HIDE ALL OF THIS. An earlier revision of compose.prod.yaml
+# bind-mounted ${LAYA_HF_CACHE} over /home/laya/.cache/huggingface. A bind mount
+# does not merge with the image layer - it REPLACES it. Proven 2026-11-02: with an
+# empty source directory the baked weights vanish and the container sees an empty
+# cache. That mount is gone from both shipped lanes. Pinning a different revision
+# means rebuilding with a different LAYA_REVISION build arg, not mounting over the
+# baked layer - the same class of defect as a COPY source shadowed by a read-only
+# mount.
 #
 # HF_HUB_OFFLINE=1 stays: the snapshot is present, and a failed lookup must fail
 # loudly rather than reach for the network on a machine that may not have one.
