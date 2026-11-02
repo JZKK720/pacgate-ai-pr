@@ -108,12 +108,20 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.13` | 已发布且公开；2026-11-02 验证（清单返回 HTTP 200）。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.13` | 已发布且公开；2026-11-02 验证（清单返回 HTTP 200）。向 deer-flow 暴露 22 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.13` | 已发布且公开；2026-11-02 验证（清单返回 HTTP 200）。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.13` | 已发布且公开；2026-11-02 验证（清单返回 HTTP 200）。 |
-| `ghcr.io/jzkk720/ocr-service:0.2.13` | 已发布且公开；2026-11-02 验证（清单返回 HTTP 200）。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
+| `ghcr.io/jzkk720/pacgate-api:0.2.14` | **脱敏修复版本。** 修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.14` | 向 deer-flow 暴露 24 个 MCP 工具；新增 `pacgate_rescan_residue` 与 `pacgate_reset_sanitization` 供补救流程使用。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 即可获得这些工具，无需新镜像。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.14` | 本版本未变更。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.14` | 本版本未变更。 |
+| `ghcr.io/jzkk720/ocr-service:0.2.14` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
+
+> **0.2.14 是正确性修复，不是功能版本。** 客户扫描真实扫描件时返回
+> `verdict: pass`、13 处替换，而八类标识符原样保留在被检索的文本里；该文档还带有
+> `sanitized` 标记，下游因此不再复核。账本记录的原因是
+> `"noise replay: 1 of 1 surviving matches dropped by the same suppressor the redaction used"`：
+> 校验器重放了脱敏器自己的抑制器，抑制器在入口漏掉的，出口必然同样漏掉。
+>
+> 现在校验器绝不允许该抑制器触碰规则匹配。修复只对后续生效，因此另有两项能力：`pacgate_rescan_residue` 按**库中实际存储**的分块重扫（仅规则层，不加载模型）并指出残留内容；`pacgate_reset_sanitization` 把 `sanitized` 文档退回 `pending`，使重跑是真正重写而非空操作。在完成一次重扫之前，不要把该机器的 RAG 结果当作干净数据使用。
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
 > `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.28，见上表）匿名拉取均返回 HTTP 200。

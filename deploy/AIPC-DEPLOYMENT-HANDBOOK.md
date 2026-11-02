@@ -102,12 +102,28 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). Exposes 22 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). |
-| `ghcr.io/jzkk720/ocr-service:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.14` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.14` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.14` | Unchanged this release. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.14` | Unchanged this release. |
+| `ghcr.io/jzkk720/ocr-service:0.2.14` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
+
+> **0.2.14 is a correctness fix, not a feature release.** A client scan of a real
+> scanned contract produced `verdict: pass` with 13 replacements while eight
+> identifier classes stayed verbatim in text that was then indexed as searchable -
+> and the document carried the `sanitized` label, so nothing downstream looked at it
+> again. The recorded reason was
+> `"noise replay: 1 of 1 surviving matches dropped by the same suppressor the redaction used"`:
+> the verifier replayed the redactor's own suppressor, so any survivor it missed on
+> the way in was missed again on the way out.
+>
+> The verifier now never lets that suppressor touch a rule match. Two capabilities
+> exist because the fix is forward-only - text already mislabelled needs a way back:
+> `pacgate_rescan_residue` re-reads the STORED chunks (rules only, no model) and
+> names what survived, and `pacgate_reset_sanitization` returns a `sanitized`
+> document to `pending` so a re-run is a real rewrite rather than a no-op. Until a
+> machine has been rescanned, do not treat its RAG results as clean.
 
 > Namespace and version corrected 2026-09-22. This table previously listed
 > `ghcr.io/pacgate-ai/*` at 0.1.0/0.1.3. `pacgate-ai` is the legacy mirror; the
