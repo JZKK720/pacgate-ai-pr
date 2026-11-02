@@ -57,11 +57,33 @@ const MARK_BLOCKED_DOCUMENT_SQL: &str = "\
     UPDATE documents SET sanitization_state = 'blocked' \
     WHERE id = $1 AND tenant_id = $2 AND sanitization_state = 'pending'";
 
+/// Un-publish a document that was labelled `sanitized` but still carries an
+/// identifier (see `reset_sanitized_handler`).
+///
+/// `SET sanitization_state = 'pending'` is the fail-closed direction: pending is
+/// not searched by the RAG gate and not downloadable, so an un-publish can only
+/// remove reachability, never add it.
+const RESET_SANITIZED_DOCUMENT_SQL: &str = "\
+    UPDATE documents SET sanitization_state = 'pending' \
+    WHERE id = $1 AND tenant_id = $2 AND sanitization_state = 'sanitized'";
+
+const RESET_SANITIZED_CHUNKS_SQL: &str = "\
+    UPDATE kb_chunks SET sanitization_state = 'pending' \
+    WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
+      AND sanitization_state = 'sanitized'";
+
 /// Audit actions (stable codes; the review panel and tests rely on them).
 const AUDIT_SANITIZE: &str = "document.sanitize";
 const AUDIT_REOPEN: &str = "document.reopen";
 const AUDIT_RESTORE: &str = "document.restore";
 const AUDIT_APPROVE: &str = "document.approve";
+/// A `sanitized` document returned to `pending` because a rescan found an
+/// identifier still in it.
+const AUDIT_RESET: &str = "document.sanitize-reset";
+/// A read-only residue scan. Audited because a scan that found a leak is
+/// itself evidence, and a scan that found nothing must not look like an audit
+/// that was never run.
+const AUDIT_RESCAN: &str = "document.sanitize-rescan";
 
 #[derive(Debug, Serialize)]
 pub struct JobOutcome {
@@ -509,6 +531,310 @@ fn role_may_approve(role: &str) -> bool {
     role_may_restore(role)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Residue rescan - the remediation path for text that already passed
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How many stored chunks one rescan request examines.
+///
+/// A rescan is read-only and cheap (rules only, no model, no embedding), so this
+/// exists to bound the response size rather than to protect the process. Callers
+/// page with `offset` when a matter has more.
+const RESCAN_MAX_CHUNKS: i64 = 2000;
+
+#[derive(Debug, Deserialize)]
+pub struct RescanRequest {
+    /// `true` scans every chunk in the matter. `false` (default) scans only one
+    /// document.
+    #[serde(default)]
+    pub matter_wide: bool,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RescanFinding {
+    pub document_id: String,
+    pub chunk_id: String,
+    pub document_state: String,
+    pub entity: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RescanResponse {
+    /// Chunks examined in this call.
+    pub chunks_scanned: i64,
+    /// Chunks that still contain at least one structurally-identifiable value.
+    pub chunks_offending: i64,
+    /// Distinct documents among them.
+    pub documents_offending: Vec<String>,
+    /// One entry per surviving span, so the reviewer sees WHAT survived.
+    pub findings: Vec<RescanFinding>,
+    /// Documents whose stored state is already `sanitized`.
+    ///
+    /// These are the dangerous ones: the text is searchable AND labelled clean,
+    /// so nothing downstream will look at it again. Reported separately because
+    /// the remediation is different - they are not "waiting" for a job, they are
+    /// published and wrong.
+    pub already_marked_sanitized: Vec<String>,
+    /// How to fix what this call found.
+    pub next: String,
+    /// True when the scan hit `RESCAN_MAX_CHUNKS` and stopped early.
+    pub truncated: bool,
+}
+
+/// Re-scan stored chunks for identifiers that are still present.
+///
+/// This exists because the verifier was circular (see `pacgate_redact::verify`):
+/// until 2026-11-02 the suppressor that drove redaction was replayed over the
+/// residue, so a document could be labelled `sanitized` while still holding, in
+/// the client's measured case, eight identifier classes - including a resident ID
+/// that could then be used as a search key against the vector store.
+///
+/// The old evidence cannot be trusted for that window, so the only sound
+/// remediation is to re-examine the TEXT THAT IS ACTUALLY STORED rather than
+/// re-read the ledger's verdict. That is what this does: a single indexed query,
+/// the rule layer only (no model, no embedding, so it is fast and deterministic),
+/// and the surviving value reported verbatim so a reviewer - or
+/// `PATCH /api/documents/:id/sanitize-reset` - can act.
+///
+/// Read-only. It never promotes or blocks anything itself; changing a state on
+/// the strength of a scan would repeat the mistake of letting one mechanism both
+/// decide and certify.
+pub async fn rescan_residue_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
+    Path(id): Path<String>,
+    axum::Json(req): axum::Json<RescanRequest>,
+) -> Result<axum::Json<RescanResponse>, ApiError> {
+    let (tenant_id, _user_id) = crate::documents::claims_to_ids(&claims)?;
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+    let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    let rows = if req.matter_wide {
+        sqlx::query(
+            "SELECT c.id AS chunk_id, c.document_id, c.content, d.sanitization_state \
+             FROM kb_chunks c JOIN documents d ON d.id = c.document_id \
+             WHERE c.tenant_id = $1 AND c.matter_id = $2 \
+             ORDER BY c.document_id, c.chunk_index \
+             LIMIT $3 OFFSET $4",
+        )
+        .bind(tenant_id.0)
+        .bind(doc.matter_id.0)
+        .bind(RESCAN_MAX_CHUNKS)
+        .bind(req.offset.unwrap_or(0))
+        .fetch_all(&state.db)
+        .await
+    } else {
+        sqlx::query(
+            "SELECT c.id AS chunk_id, c.document_id, c.content, d.sanitization_state \
+             FROM kb_chunks c JOIN documents d ON d.id = c.document_id \
+             WHERE c.tenant_id = $1 AND c.document_id = $2 \
+             ORDER BY c.chunk_index \
+             LIMIT $3 OFFSET $4",
+        )
+        .bind(tenant_id.0)
+        .bind(document_id.0)
+        .bind(RESCAN_MAX_CHUNKS)
+        .bind(req.offset.unwrap_or(0))
+        .fetch_all(&state.db)
+        .await
+    }
+    .map_err(|e| ApiError::internal(format!("rescan query failed: {e}")))?;
+
+    // Rules only. A rescan must answer "is a structural identifier still in this
+    // text", and the model answers a different question badly and slowly.
+    let detectors = detect::tier_one_detectors();
+
+    let mut findings: Vec<RescanFinding> = Vec::new();
+    let mut offending_docs: Vec<String> = Vec::new();
+    let mut already_sanitized: Vec<String> = Vec::new();
+
+    for row in &rows {
+        let chunk_id: uuid::Uuid = row.get("chunk_id");
+        let chunk_doc: uuid::Uuid = row.get("document_id");
+        let content: String = row.get("content");
+        let doc_state: String = row.get("sanitization_state");
+
+        let mut found = Vec::new();
+        for d in &detectors {
+            match d.detect(&content) {
+                Ok(mut m) => found.append(&mut m),
+                // A detector error here must be visible, not silent.
+                Err(e) => {
+                    return Err(ApiError::internal(format!(
+                        "rescan detector {} failed: {e}",
+                        d.name()
+                    )))
+                }
+            }
+        }
+        if found.is_empty() {
+            continue;
+        }
+
+        let doc_id = chunk_doc.to_string();
+        if !offending_docs.contains(&doc_id) {
+            offending_docs.push(doc_id.clone());
+        }
+        if doc_state == "sanitized" && !already_sanitized.contains(&doc_id) {
+            already_sanitized.push(doc_id.clone());
+        }
+
+        // One finding per chunk keeps the response readable; the entity and the
+        // surviving text are what a reviewer needs to judge it.
+        let first = found
+            .into_iter()
+            .min_by_key(|m| (m.start, m.end))
+            .expect("non-empty checked above");
+        findings.push(RescanFinding {
+            document_id: doc_id,
+            chunk_id: chunk_id.to_string(),
+            document_state: doc_state,
+            entity: first.entity.code().to_string(),
+            text: first.text,
+        });
+    }
+
+    let chunks_scanned = rows.len() as i64;
+    let next = if findings.is_empty() {
+        "No structural identifier survived in the scanned chunks.".to_string()
+    } else if already_sanitized.is_empty() {
+        "Re-run the sanitize job on the documents listed in documents_offending; their chunks are not yet published."
+            .to_string()
+    } else {
+        format!(
+            "{} document(s) are BOTH published and still carrying an identifier. Reset each one with \
+             PATCH /api/documents/:id/sanitize-reset, then re-run POST /api/documents/:id/sanitize. \
+             Until then, do not treat their RAG results as clean.",
+            already_sanitized.len()
+        )
+    };
+
+    // Audited even on a clean result: a scan that ran and found nothing is
+    // different evidence from a scan that was never run, and a compliance record
+    // must be able to tell the two apart.
+    audit_row(
+        &state,
+        &tenant_id,
+        Some(&_user_id),
+        &doc.matter_id,
+        &document_id,
+        AUDIT_RESCAN,
+        serde_json::json!({
+            "matter_wide": req.matter_wide,
+            "offset": req.offset.unwrap_or(0),
+            "chunks_scanned": chunks_scanned,
+            "chunks_offending": findings.len(),
+            "documents_offending": offending_docs,
+            "already_marked_sanitized": already_sanitized,
+        }),
+    )
+    .await?;
+
+    Ok(axum::Json(RescanResponse {
+        chunks_scanned,
+        chunks_offending: findings.len() as i64,
+        documents_offending: offending_docs,
+        findings,
+        already_marked_sanitized: already_sanitized,
+        next,
+        truncated: chunks_scanned >= RESCAN_MAX_CHUNKS,
+    }))
+}
+#[derive(Debug, Serialize)]
+pub struct ResetResponse {
+    pub document_id: String,
+    pub document_reopened: bool,
+    pub chunks_reopened: u64,
+    pub note: String,
+}
+
+/// Return a `sanitized` document to `pending` so a re-run actually replaces its
+/// chunks.
+///
+/// Distinct from the automatic reopen in `sanitize_document_handler`, and
+/// deliberately so. That one only fires for a document in state `blocked`,
+/// because a Block is a refusal that a re-run may legitimately retry. This one
+/// fires for `sanitized` - the state that says "this text is published and
+/// clean" - and un-publishing is a decision with consequences, so it is a
+/// separate, auditable call rather than something a re-run does silently.
+///
+/// Needed because `reingest_sanitized_chunks` selects `IN ('pending',
+/// 'sanitized')` inside a transaction, but the surrounding job is gated on the
+/// document row: a `sanitized` document whose chunks are already published has
+/// no other way back into the pipeline. Measured 2026-11-02: 26 of 28 documents
+/// in the default matter were `pending`, so most corpus damage was caught before
+/// publication - but the ones that did pass are the reason this endpoint exists.
+///
+/// Admin/partner only, like approve and restore: it is the same class of
+/// authority, since it makes client text un-retrievable for the duration.
+pub async fn reset_sanitized_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<pacgate_auth::Claims>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ResetResponse>, ApiError> {
+    let (tenant_id, user_id) = crate::documents::claims_to_ids(&claims)?;
+    if !role_may_restore(&claims.role) {
+        return Err(ApiError::unauthorized(
+            "resetting a published document requires the admin or partner role",
+        ));
+    }
+    let document_id: DocumentId = id
+        .parse()
+        .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
+    let doc = crate::documents::fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    let document_reopened = sqlx::query(RESET_SANITIZED_DOCUMENT_SQL)
+        .bind(document_id.0)
+        .bind(tenant_id.0)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("reset document failed: {e}")))?
+        .rows_affected()
+        > 0;
+
+    let chunks_reopened = sqlx::query(RESET_SANITIZED_CHUNKS_SQL)
+        .bind(tenant_id.0)
+        .bind(doc.matter_id.0)
+        .bind(document_id.0)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("reset chunks failed: {e}")))?
+        .rows_affected();
+
+    let note = if document_reopened || chunks_reopened > 0 {
+        "Document returned to 'pending': not searchable, not downloadable. Re-run the sanitize job to publish it again."
+            .to_string()
+    } else {
+        "Nothing to reset: the document is not in state 'sanitized'.".to_string()
+    };
+
+    audit_row(
+        &state,
+        &tenant_id,
+        Some(&user_id),
+        &doc.matter_id,
+        &document_id,
+        AUDIT_RESET,
+        serde_json::json!({
+            "document_reopened": document_reopened,
+            "chunks_reopened": chunks_reopened,
+        }),
+    )
+    .await?;
+
+    Ok(axum::Json(ResetResponse {
+        document_id: document_id.as_str().to_string(),
+        document_reopened,
+        chunks_reopened,
+        note,
+    }))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ApproveRequest {
     /// The job whose clean verdict is being accepted. Required so the approval
@@ -906,6 +1232,80 @@ mod gate_tests {
         assert!(
             handler.contains("AUDIT_REOPEN"),
             "a reopen changes a compliance state and must be audited"
+        );
+    }
+
+    /// The reset exists because a document can be published AND wrong.
+    ///
+    /// Measured 2026-11-02: a document carried the `sanitized` label with a
+    /// resident ID still in its chunks, so the id could be used as a search key
+    /// and downstream treated the text as clean. The two directions that matter
+    /// here are that a reset only ever UN-publishes, and that it cannot touch a
+    /// blocked row (whose refusal is a different decision).
+    #[test]
+    fn a_published_document_can_be_unpublished_but_never_blocked_by_the_reset() {
+        assert!(
+            RESET_SANITIZED_DOCUMENT_SQL.contains("sanitization_state = 'sanitized'"),
+            "a reset must only match a PUBLISHED document; 'pending' has nothing to reset \
+             and 'blocked' is a refusal that a re-run does not own"
+        );
+        assert!(
+            RESET_SANITIZED_DOCUMENT_SQL.contains("SET sanitization_state = 'pending'"),
+            "a reset must move toward the fail-closed state, never toward 'sanitized'"
+        );
+        assert!(
+            !RESET_SANITIZED_DOCUMENT_SQL.contains("'blocked'"),
+            "a reset must not be a back door around the blocked state"
+        );
+        assert!(
+            !RESET_SANITIZED_DOCUMENT_SQL.contains("SET sanitization_state = 'sanitized'"),
+            "no path may promote without a verdict"
+        );
+        assert!(
+            RESET_SANITIZED_CHUNKS_SQL.contains("sanitization_state = 'sanitized'")
+                && RESET_SANITIZED_CHUNKS_SQL.contains("tenant_id = $1")
+                && RESET_SANITIZED_CHUNKS_SQL.contains("matter_id = $2")
+                && RESET_SANITIZED_CHUNKS_SQL.contains("document_id = $3"),
+            "the chunk reset must be scoped to one document in one matter"
+        );
+    }
+
+    /// The rescan is read-only on purpose.
+    ///
+    /// It answers "is an identifier still in the stored text", and it must not
+    /// also decide. A scan that flipped states would be the same
+    /// one-mechanism-decides-and-certifies mistake the verifier made.
+    #[test]
+    fn the_rescan_reads_and_never_writes_a_sanitization_state() {
+        let src = include_str!("sanitize.rs");
+        let handler = src
+            .split("pub async fn rescan_residue_handler")
+            .nth(1)
+            .expect("rescan handler must exist");
+        let handler = &handler[..handler
+            .find("pub struct ResetResponse")
+            .expect("reset section marker")];
+        assert!(
+            !handler.contains("SET sanitization_state"),
+            "the rescan must not mutate a compliance state"
+        );
+        assert!(
+            !handler.contains("reingest_sanitized_chunks"),
+            "the rescan must not rewrite chunks"
+        );
+        assert!(
+            handler.contains("AUDIT_RESCAN"),
+            "a scan that found a leak is evidence and must be audited"
+        );
+        // Rules only: a rescan must answer the structural question, not the
+        // model's guess at it, and it must stay cheap enough to run over a matter.
+        assert!(
+            handler.contains("tier_one_detectors"),
+            "the rescan must not load the NER model"
+        );
+        assert!(
+            !handler.contains("full_detectors"),
+            "the rescan must not depend on the 400MB model bundle"
         );
     }
 

@@ -208,6 +208,11 @@ class PacgateApi:
     def delete(self, path: str) -> httpx.Response:
         return self._request("DELETE", path)
 
+    def patch(
+        self, path: str, json: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> httpx.Response:
+        return self._request("PATCH", path, json=json, timeout=timeout)
+
     def post_multipart(
         self, path: str, data: dict[str, Any], files: dict[str, Any]
     ) -> httpx.Response:
@@ -900,6 +905,14 @@ def pacgate_sanitize_document(
     be downloaded or retrieved until a human decides. Restore is NOT exposed
     through MCP; it is a client-side operator action in pacgate-api.
 
+    Trusting the verdict: since 2026-11-02 the verifier re-scans with the rule
+    layer independently of the redactor's suppressor, so a `pass` means no
+    structural identifier survived - it is no longer a replay of the same
+    suppressor that drove the redaction. `verification_notes` records a
+    `model gate:` line when a MODEL guess was suppressed; that never applies to
+    a checksum or pattern match. For text sanitized BEFORE that date, use
+    pacgate_rescan_residue rather than trusting the stored verdict.
+
     LONG-RUNNING: large documents can take several minutes (the sanitizer
     re-verifies with the same detector set it redacted with). This call uses
     its own long timeout; do not reduce PACGATE_SANITIZE_TIMEOUT below the
@@ -944,6 +957,80 @@ def pacgate_verify_sanitized(document_id: str) -> str:
     """
     client = get_client()
     resp = client.get(f"/api/documents/{document_id}/sanitize-status")
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_rescan_residue(
+    document_id: str,
+    matter_wide: bool = False,
+    offset: int = 0,
+) -> str:
+    """Re-scan STORED text for identifiers that are still present (read-only).
+
+    Use this BEFORE relying on any `sanitized` verdict produced before
+    2026-11-02. Until that date the verifier replayed the redactor's own
+    suppressor over the residue, so a document could pass while still holding
+    身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌,
+    微信号 and 纳税人识别号 verbatim - and a surviving resident ID could then
+    be used as a lookup key against the knowledge base.
+
+    This does not trust the ledger. It reads the chunks as stored, runs the
+    deterministic rule layer only (no NER model, no embeddings, so it is fast
+    and repeatable), and reports the surviving value.
+
+    READ-ONLY: it never promotes, blocks or rewrites anything. Fixing what it
+    finds is a separate, explicit step - see the `next` field, which names the
+    reset + re-sanitize sequence.
+
+    Args:
+        document_id: The UUID of the document to scan, or the anchor document
+                     when matter_wide is true.
+        matter_wide: Scan every chunk in the document's matter instead of just
+                     this document (default false).
+        offset: Skip this many chunks, for paging a large matter.
+
+    Returns: { chunks_scanned, chunks_offending, documents_offending,
+    findings[{document_id, chunk_id, document_state, entity, text}],
+    already_marked_sanitized[], next, truncated }.
+
+    Read `already_marked_sanitized` first: those documents are published AND
+    still carrying an identifier, so their search results must not be treated as
+    clean until they are reset and re-sanitized.
+    """
+    client = get_client()
+    resp = client.post(
+        f"/api/documents/{document_id}/sanitize-rescan",
+        json={"matter_wide": matter_wide, "offset": offset},
+    )
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_reset_sanitization(document_id: str) -> str:
+    """Un-publish a document so a re-sanitize can actually replace its chunks.
+
+    A document in state `sanitized` whose chunks still carry an identifier (see
+    pacgate_rescan_residue) cannot be repaired by simply re-running the job: the
+    published rows are what the repair has to overwrite, and the promotion path
+    is pending-only on purpose. This returns the document and its chunks to
+    `pending` - not searchable, not downloadable - so the next sanitize run is a
+    real rewrite rather than a no-op.
+
+    This REMOVES reachability for the duration. That is the fail-closed
+    direction, and it is why the call is explicit: admin/partner only, audited as
+    `document.sanitize-reset`.
+
+    Args:
+        document_id: The UUID of the published document to reset.
+
+    Returns: { document_id, document_reopened, chunks_reopened, note }.
+    Re-run pacgate_sanitize_document afterwards to publish the repaired text.
+    """
+    client = get_client()
+    resp = client.patch(f"/api/documents/{document_id}/sanitize-reset")
     _handle_error(resp)
     return json.dumps(resp.json(), ensure_ascii=False, indent=2)
 

@@ -80,6 +80,20 @@ pub fn build_router(state: AppState) -> Router {
             "/api/documents/:id/sanitize-status",
             get(sanitize::sanitize_status_handler),
         )
+        // Residue rescan: re-examine the TEXT THAT IS STORED rather than trusting
+        // a ledger verdict from before the verifier was made independent
+        // (2026-11-02). Read-only; rules only; reports the surviving value.
+        .route(
+            "/api/documents/:id/sanitize-rescan",
+            post(sanitize::rescan_residue_handler),
+        )
+        // Un-publish a document that was labelled 'sanitized' while still holding
+        // an identifier, so a re-run actually replaces its chunks. Admin/partner
+        // only: it makes client text un-retrievable for the duration.
+        .route(
+            "/api/documents/:id/sanitize-reset",
+            patch(sanitize::reset_sanitized_handler),
+        )
         .route("/api/documents/:id/accept", post(documents::accept_changes))
         // Matters
         .route("/api/matters", post(matters::create_matter))
