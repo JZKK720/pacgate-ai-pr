@@ -55,17 +55,6 @@ $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 
-# The release ocr-service image, used purely as a FIXTURE BUILDER (it is the
-# container that has PIL). It was `ocr-service:local`, an invented tag nothing
-# builds: on any machine that never made it this gate exited 2 and was skipped
-# while the suite still reported success - coverage that quietly disappears.
-. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
-$OcrImage = Get-ReleaseOcrImage
-if (-not $OcrImage) { Die 'cannot derive the release ocr-service image' 2 }
-if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
-    Die "$OcrImage is not published yet (release window) and is not present locally" 2
-}
-
 $script:passed = 0
 $script:skipped = @()
 $script:artifacts = @{ matterId = $null; docId = $null }
@@ -85,9 +74,32 @@ function Skip($lane, $why) {
 function Die($m, $code = 1) {
     Write-Host "  [FAIL] $m" -ForegroundColor Red
     Write-Host ''
-    Write-Host "RESULT: journey FAILED at this step. Later steps were not attempted." -ForegroundColor Red
+    # Exit 2 means CANNOT CHECK, not FAILED. run-all-checks reports it as SKIP.
+    # Printing "FAILED" for it made a release-window skip look like a break.
+    if ($code -eq 2) {
+        Write-Host 'RESULT: CANNOT CHECK - the journey was not attempted.' -ForegroundColor Yellow
+    }
+    else {
+        Write-Host 'RESULT: journey FAILED at this step. Later steps were not attempted.' -ForegroundColor Red
+    }
     Write-Host "  artifacts left: matter=$($script:artifacts.matterId) doc=$($script:artifacts.docId)" -ForegroundColor DarkGray
     exit $code
+}
+
+# The release ocr-service image, used purely as a FIXTURE BUILDER (it is the
+# container that has PIL). It was `ocr-service:local`, an invented tag nothing
+# builds: on any machine that never made it this gate exited 2 and was skipped
+# while the suite still reported success - coverage that quietly disappears.
+#
+# This block MUST stay BELOW the function definitions. It was originally above
+# them, so the release-window call to Die() resolved to nothing and every such
+# run raised CommandNotFoundException at line 66. exit 2 became exit 1, so a
+# gate that means "cannot check" was counted as a hard failure by the suite.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+$OcrImage = Get-ReleaseOcrImage
+if (-not $OcrImage) { Die 'cannot derive the release ocr-service image' 2 }
+if ((Test-ReleaseOcrImagePresent -Reference $OcrImage) -eq 'absent') {
+    Die "$OcrImage is not published yet (release window) and is not present locally" 2
 }
 
 Write-Host '=== LEGAL JOURNEY (matter -> ... -> OpenViking recall) ===' -ForegroundColor Cyan
