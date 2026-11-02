@@ -7,7 +7,10 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::checksum::{validate_cn_resident_id, validate_luhn, validate_uscc};
+use crate::checksum::{
+    bank_account_shape_ok, cn_resident_id_shape_ok, uscc_shape_ok, validate_cn_resident_id,
+    validate_luhn, validate_uscc, vehicle_plate_shape_ok,
+};
 use crate::{EntityType, Match, MatchSource, RedactError, RedactResult};
 
 use super::Detector;
@@ -141,11 +144,14 @@ static RE_PERMIT_DIGITS: Lazy<Regex> =
 ///
 /// The label alternation covers the printed forms: 身份证 / 身份证号 /
 /// 身份证号码, 证件号码, and the 一代证 phrasings 旧身份证 / 旧行身份证
-/// with or without the 号码 suffix. The `号码?` groups stay per-branch
-/// because `号码?` binds to 码 only - lifting the suffix out of the
-/// branches would wrongly make 号 obligatory on every branch. The optional
-/// whitespace keeps `身份证 130503670401001` (space-separated) matching;
-/// `is_bounded` still rejects anything longer.
+/// with or without the 号码 suffix.
+///
+/// `号码?` inside each branch, NOT `(?:号码)?`. The non-capturing form binds
+/// 号 and 码 into one optional unit, so it matches 号码 or nothing - never the
+/// far more common 号 alone. Measured 2026-11-02: the lawyer-licence label had
+/// that shape and did not match `律师执业证号 11101201810123456`; it only worked
+/// because the detector then searched the remaining text for a digit run, which
+/// a single-pattern SQL audit cannot do. See `RE_LAWYER_LABEL`.
 static RE_LEGACY_ID_LABEL: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:旧行?身份证(?:号码?)?|身份证(?:号码?)?|证件号码?)[:：\s]*")
         .expect("legacy-id label regex is valid")
@@ -157,11 +163,74 @@ static RE_LEGACY_ID: Lazy<Regex> =
 /// 律师执业证号: 17 digits, structurally fixed - kind(1) province(2)
 /// city(2) year(4) class(1) gender(1) serial(6). The label is the anchor;
 /// `is_bounded` rejects the 18th digit continuation.
+///
+/// `号码?`, not `(?:号码)?` - see `RE_LEGACY_ID_LABEL`. The non-capturing form
+/// cannot match 号 on its own, so `律师执业证号 11101201810123456` failed here;
+/// it still worked because the detector then searched forward for the digits,
+/// but a single-pattern consumer (the SQL audit in
+/// `scripts/lib/RawPiiPatterns.ps1`) has no second step and silently missed it.
+/// Measured 2026-11-02, found while reconciling the two.
 static RE_LAWYER_LABEL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"律师执业证(?:号码)?[:：\s]*").expect("lawyer label regex is valid"));
+    Lazy::new(|| Regex::new(r"律师执业证(号码?)?[:：\s]*").expect("lawyer label regex is valid"));
 
 static RE_LAWYER_NO: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[0-9]{17}").expect("lawyer number regex is valid"));
+
+// ---------------------------------------------------------------------------
+// Identifier classes the 2026-11-02 client scan showed were still surviving.
+//
+// That run reported `verdict: pass` with 13 replacements while these eight
+// classes stayed verbatim in the text:
+//   身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌,
+//   微信号, 纳税人识别号.
+//
+// Two of those were a rule-layer gap in an existing class (the 18-digit ID and
+// the USCC both required a CHECKSUM, so a mistyped or OCR-damaged number was
+// skipped); the rest had no rule at all. Each rule below is anchored on the
+// document's own label or on a closed structural shape, never on "a long
+// digit run", so spec 8.4 still holds.
+// ---------------------------------------------------------------------------
+
+/// 车牌号: province + authority letter + 5 characters, or 6 for new energy.
+///
+/// No label needed: the leading character must be one of the 31 province
+/// ideographs, so the shape is closed. `vehicle_plate_shape_ok` re-checks it so
+/// the pattern and the validator cannot drift.
+static RE_VEHICLE_PLATE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"[京津冀晋蒙辽吉黑沪苏浙皖闽赣鲁豫鄂湘粤桂琼渝川贵云藏陕甘青宁新][A-Z][A-Z0-9]{5,6}",
+    )
+    .expect("vehicle plate regex is valid")
+});
+
+/// 纳税人识别号 label. The number itself may be a USCC (18 chars) or one of
+/// the older 15/17/18/20-digit tax codes, so only the label is fixed here.
+static RE_TAX_ID_ANCHOR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"纳税人识别号(?:码)?[:：\s]*").expect("tax id anchor regex is valid")
+});
+
+static RE_TAX_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9A-Z]{15,20}").expect("tax id regex is valid"));
+
+/// 银行账号 / 对公账户 label.
+static RE_BANK_ACCOUNT_ANCHOR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:基本户|一般户|开户行|开户银行)?(?:银行)?(?:账号|帐号|账户|帐户)(?:号码)?[:：\s]*")
+        .expect("bank account anchor regex is valid")
+});
+
+/// A digit run that may carry printed grouping separators. The width is
+/// bounded generously here and trimmed to the real range by
+/// `bank_account_shape_ok` after the separators are stripped.
+static RE_GROUPED_DIGITS: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9][0-9 \u{FF0D}\u{2013}\u{2014}\-]{6,40}[0-9]").expect("grouped digit regex is valid"));
+
+/// 微信号 label. The handle form is fixed by the platform: starts with a
+/// letter, then 5-19 letters/digits/underscore/hyphen.
+static RE_WECHAT_ANCHOR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:微信号|微信|WeChat\s*ID)[:：\s]*").expect("wechat anchor regex is valid"));
+
+static RE_WECHAT_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[A-Za-z][A-Za-z0-9_\-]{5,19}").expect("wechat id regex is valid"));
 
 /// Ceiling on matches from one text, to turn a pathological input into a
 /// fatal error instead of unbounded memory growth.
@@ -280,16 +349,26 @@ impl Detector for TierOneDetector {
             if !is_bounded(text, start, end) {
                 continue;
             }
-            if validate_cn_resident_id(m.as_str()) {
-                self.push_span(
-                    &mut out,
-                    start,
-                    end,
-                    &text[start..end],
-                    EntityType::CnResidentId,
-                    MatchSource::Checksum,
-                );
-            }
+            // Checksum first: a valid ID is the strongest evidence there is.
+            // A value that has the FULL SHAPE but fails the check digit is
+            // still personal data - it is a mistyped or OCR-damaged ID, not a
+            // non-ID - so it is claimed at Pattern strength instead of skipped.
+            //
+            // Measured 2026-11-02: the client OCR sample's
+            // `110105199003074512` (region 110105, birth 1990-03-07, expected
+            // check `X`) survived exactly here and was then indexed as
+            // searchable, so the number itself could be used as a lookup key
+            // against the vector store. A miss in this class is a defect, not a
+            // tuning choice (entity.rs, Tier 1), and "your typo is safe" is not
+            // a policy.
+            let (entity, source) = if validate_cn_resident_id(m.as_str()) {
+                (EntityType::CnResidentId, MatchSource::Checksum)
+            } else if cn_resident_id_shape_ok(m.as_str()) {
+                (EntityType::CnResidentId, MatchSource::Pattern)
+            } else {
+                continue;
+            };
+            self.push_span(&mut out, start, end, &text[start..end], entity, source);
         }
 
         for m in RE_USCC_CANDIDATE.find_iter(&normalized.text) {
@@ -299,16 +378,26 @@ impl Detector for TierOneDetector {
             if !is_bounded(text, start, end) {
                 continue;
             }
-            if validate_uscc(m.as_str()) {
-                self.push_span(
-                    &mut out,
-                    start,
-                    end,
-                    &text[start..end],
-                    EntityType::Uscc,
-                    MatchSource::Checksum,
-                );
+            // Precedence: an 18-character run that has the FULL resident-ID
+            // shape is an ID. The USCC alphabet is a superset of the ID's
+            // (digits plus uppercase letters, `X` included), so a resident ID
+            // is always also a USCC CANDIDATE and would otherwise be reported
+            // twice - once correctly, once as a company registration. The ID
+            // test is the stricter of the two (region prefix plus a real
+            // calendar birthdate), so it decides.
+            if cn_resident_id_shape_ok(m.as_str()) {
+                continue;
             }
+            // Same two-strength discipline as the resident ID above: a bad
+            // MOD-31 digit does not un-register a company.
+            let (entity, source) = if validate_uscc(m.as_str()) {
+                (EntityType::Uscc, MatchSource::Checksum)
+            } else if uscc_shape_ok(m.as_str()) {
+                (EntityType::Uscc, MatchSource::Pattern)
+            } else {
+                continue;
+            };
+            self.push_span(&mut out, start, end, &text[start..end], entity, source);
         }
 
         for m in RE_MOBILE_CANDIDATE.find_iter(&normalized.text) {
@@ -510,7 +599,7 @@ impl Detector for TierOneDetector {
             (
                 &RE_LAWYER_LABEL,
                 &RE_LAWYER_NO,
-                EntityType::RegistrationNumber,
+                EntityType::LawyerLicense,
             ),
         ] {
             for a in label_re.find_iter(text) {
@@ -533,6 +622,103 @@ impl Detector for TierOneDetector {
                     );
                 }
             }
+        }
+
+        // 车牌号 - shape only, no label. See RE_VEHICLE_PLATE: the province
+        // character set is closed, so an arbitrary ASCII token cannot match.
+        for m in RE_VEHICLE_PLATE.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            if vehicle_plate_shape_ok(m.as_str()) {
+                self.push(&mut out, m, EntityType::VehiclePlate, MatchSource::Pattern);
+            }
+        }
+
+        // 纳税人识别号 - label anchored. The 15/17/18/20-digit tax codes and the
+        // 18-character USCC share this label, so the run is accepted on shape
+        // breadth rather than a single fixed length.
+        for a in RE_TAX_ID_ANCHOR.find_iter(text) {
+            let Some(rest) = text.get(a.end()..) else {
+                continue;
+            };
+            let Some(m) = RE_TAX_ID.find(rest) else {
+                continue;
+            };
+            let start = a.end() + m.start();
+            let end = a.end() + m.end();
+            if !is_bounded(text, start, end) {
+                continue;
+            }
+            // A 15-20 character run of uppercase/digits; require at least one
+            // digit so a bare word cannot satisfy the label.
+            if !m.as_str().chars().any(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                start,
+                end,
+                &text[start..end],
+                EntityType::CnTaxId,
+                MatchSource::Context,
+            );
+        }
+
+        // 银行账号 / 对公账户 - label anchored, then a digit run whose printed
+        // grouping separators are stripped before the length test.
+        for a in RE_BANK_ACCOUNT_ANCHOR.find_iter(text) {
+            let Some(rest) = text.get(a.end()..) else {
+                continue;
+            };
+            let Some(m) = RE_GROUPED_DIGITS.find(rest) else {
+                continue;
+            };
+            let start = a.end() + m.start();
+            let end = a.end() + m.end();
+            if !is_bounded(text, start, end) {
+                continue;
+            }
+            let digits: String = text[start..end].chars().filter(|c| c.is_ascii_digit()).collect();
+            if !bank_account_shape_ok(&digits) {
+                continue;
+            }
+            // `Match.text` must be the ORIGINAL bytes - it is what the restore
+            // mapping returns (rules.rs `push_span`). The stripped digits are
+            // only used for the length decision above.
+            self.push_span(
+                &mut out,
+                start,
+                end,
+                &text[start..end],
+                EntityType::BankAccount,
+                MatchSource::Context,
+            );
+        }
+
+        // 微信号 - label anchored. The handle charset is fixed by the platform
+        // and always starts with a letter, so a label followed by ordinary
+        // prose is rejected.
+        for a in RE_WECHAT_ANCHOR.find_iter(text) {
+            let Some(rest) = text.get(a.end()..) else {
+                continue;
+            };
+            let Some(m) = RE_WECHAT_ID.find(rest) else {
+                continue;
+            };
+            let start = a.end() + m.start();
+            let end = a.end() + m.end();
+            if !is_bounded(text, start, end) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                start,
+                end,
+                &text[start..end],
+                EntityType::WeChatId,
+                MatchSource::Context,
+            );
         }
 
         if out.len() > MAX_MATCHES {
@@ -1116,24 +1302,34 @@ mod tests {
         );
     }
 
-    /// 律师执业证号: 17 digits with the structured kind/province/city/year/
-    /// class/gender/serial layout, matched only after the label.
+    /// The licence label must match 号 on its own, not only 号码.
+    ///
+    /// `(?:号码)?` binds 号 and 码 into one optional unit, so it matches 号码 or
+    /// nothing - never the common `律师执业证号`. The detector still worked because
+    /// it searched forward for the digits after whatever the label consumed, which
+    /// hid the defect from every test here. The SQL audit in
+    /// `scripts/lib/RawPiiPatterns.ps1` has no second step, so it silently missed a
+    /// real 17-digit licence. Found 2026-11-02 while reconciling the two.
     #[test]
     fn finds_lawyer_license_only_with_label() {
-        let labelled = TierOneDetector::new().detect("律师执业证号11101201810123456").unwrap();
-        assert!(
-            labelled
-                .iter()
-                .any(|m| m.entity == EntityType::RegistrationNumber
+        for text in [
+            "律师执业证号11101201810123456",
+            "律师执业证号码11101201810123456",
+            "律师执业证11101201810123456",
+            "律师执业证号 11101201810123456",
+        ] {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                found.iter().any(|m| m.entity == EntityType::LawyerLicense
                     && m.text == "11101201810123456"),
-            "labelled lawyer license must be found; got {:?}",
-            labelled.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
-        );
-
+                "labelled lawyer license must be found in {text:?}; got {:?}",
+                found.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
+            );
+        }
         // 18 digits: the extra digit kills the match via is_bounded.
         let eighteen = TierOneDetector::new().detect("律师执业证号111012018101234567").unwrap();
         assert!(
-            !eighteen.iter().any(|m| m.entity == EntityType::RegistrationNumber),
+            !eighteen.iter().any(|m| m.entity == EntityType::LawyerLicense),
             "an 18-digit continuation must be rejected; got {:?}",
             eighteen.iter().map(|m| (m.entity, m.text.as_str())).collect::<Vec<_>>()
         );

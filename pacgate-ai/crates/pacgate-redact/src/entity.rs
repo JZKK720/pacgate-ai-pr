@@ -41,6 +41,7 @@ pub enum EntityType {
     Uscc,
     CnMobile,
     BankCard,
+    CnTaxId,
     // Tier 1 - generic structured
     Email,
     // Tier 1 - pattern-anchored cross-jurisdiction IDs (no checksum exists;
@@ -57,11 +58,25 @@ pub enum EntityType {
     CaseNumber,
     RegistrationNumber,
     Location,
+    /// 律师执业证号 - 17 digits with a fixed field layout, but no check digit.
+    ///
+    /// Was previously reported as `RegistrationNumber`, which conflated a
+    /// natural person's licence with a company registration. Same detection
+    /// mechanism (label plus bounded digit run), distinct reporting row.
+    LawyerLicense,
+    /// 车牌号 - province character plus authority letter plus 5-6 characters.
+    ///
+    /// A vehicle plate identifies its registered owner, and a plate in a
+    /// contract is nearly always next to the owner's name.
+    VehiclePlate,
     // Tier 3 - context-anchored: a bare 15-digit run is ambiguous, so the
     // 身份证/证件 label is the only thing that makes it an identifier.
     LegacyIdNumber,
     // Tier 4 - accounts and secrets
     BankAccount,
+    /// 微信号 - an account handle, and for a Chinese client nearly always a
+    /// live contact channel. Tier 4 for the same reason a bank account is.
+    WeChatId,
     Credential,
     IpAddress,
 }
@@ -73,6 +88,7 @@ impl EntityType {
         EntityType::Uscc,
         EntityType::CnMobile,
         EntityType::BankCard,
+        EntityType::CnTaxId,
         EntityType::Email,
         EntityType::Passport,
         EntityType::HkMoPermit,
@@ -84,8 +100,11 @@ impl EntityType {
         EntityType::CaseNumber,
         EntityType::RegistrationNumber,
         EntityType::Location,
+        EntityType::LawyerLicense,
+        EntityType::VehiclePlate,
         EntityType::LegacyIdNumber,
         EntityType::BankAccount,
+        EntityType::WeChatId,
         EntityType::Credential,
         EntityType::IpAddress,
     ];
@@ -97,6 +116,7 @@ impl EntityType {
             EntityType::Uscc => "USCC",
             EntityType::CnMobile => "CN_MOBILE",
             EntityType::BankCard => "BANK_CARD",
+            EntityType::CnTaxId => "CN_TAX_ID",
             EntityType::Email => "EMAIL",
             EntityType::Passport => "PASSPORT",
             EntityType::HkMoPermit => "HK_MO_PERMIT",
@@ -108,8 +128,11 @@ impl EntityType {
             EntityType::CaseNumber => "CASE_NO",
             EntityType::RegistrationNumber => "REG_NO",
             EntityType::Location => "LOCATION",
+            EntityType::LawyerLicense => "LAWYER_NO",
+            EntityType::VehiclePlate => "PLATE",
             EntityType::LegacyIdNumber => "LEGACY_ID",
             EntityType::BankAccount => "BANK_ACCOUNT",
+            EntityType::WeChatId => "WECHAT",
             EntityType::Credential => "CREDENTIAL",
             EntityType::IpAddress => "IP",
         }
@@ -125,6 +148,7 @@ impl EntityType {
             | EntityType::Uscc
             | EntityType::CnMobile
             | EntityType::BankCard
+            | EntityType::CnTaxId
             | EntityType::Email
             | EntityType::Passport
             | EntityType::HkMoPermit
@@ -136,10 +160,13 @@ impl EntityType {
             EntityType::CaseNumber
             | EntityType::RegistrationNumber
             | EntityType::Location
+            | EntityType::LawyerLicense
+            | EntityType::VehiclePlate
             | EntityType::LegacyIdNumber => Tier::Three,
-            EntityType::BankAccount | EntityType::Credential | EntityType::IpAddress => {
-                Tier::Four
-            }
+            EntityType::BankAccount
+            | EntityType::WeChatId
+            | EntityType::Credential
+            | EntityType::IpAddress => Tier::Four,
         }
     }
 

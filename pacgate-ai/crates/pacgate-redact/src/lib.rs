@@ -18,11 +18,10 @@ pub mod pipeline;
 pub use pipeline::{SanitizeOutcome, Sanitizer};
 pub use policy::{decide, PolicyDecision};
 pub use ledger::RedactionLedger;
-pub use verify::{verify, Verdict, Verification};
+pub use verify::{verify, verify_raw, Verification, VerifyScope, Verdict};
 pub use replace::{AppliedRedaction, Redaction, Redactor};
 pub use mapping::{JobId, Mapping, MappingVersion};
-pub use placeholder::PlaceholderAllocator;
-pub use entity::{EntityType, PlaceholderPolicy, Tier};
+pub use placeholder::PlaceholderAllocator;pub use entity::{EntityType, PlaceholderPolicy, Tier};
 
 /// Errors from detection, redaction or verification.
 ///
