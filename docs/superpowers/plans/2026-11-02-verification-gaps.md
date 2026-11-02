@@ -17,6 +17,16 @@
 - `deploy/pacgate-mcp/server.py` is bind-mounted read-only in both lanes, so editing it does **not** require a version bump. Do not bump.
 - Chinese assertions use the exact bytes the product emits; a Unicode-escaped copy silently tests something else.
 
+## Status (updated 2026-11-02)
+
+| Task | State |
+|---|---|
+| 1 - gate every configured laya checkpoint | **DONE** — three assertions in `scripts/test-laya-tools.ps1` L10, four states red-checked, `.env.example` uncommented |
+| 2 - `compose.bench.yaml` benchmark override | **DEFERRED** by the operator on 2026-11-02 |
+| 3 - retract the false qm-digest gap | not started |
+| 4 - document the benchmark ceiling | not started |
+| 5 - full read-back | not started |
+
 ---
 
 ## Verified starting state
@@ -225,7 +235,43 @@ Expected: `[FAIL] every checkpoint in LAYA_MODELS is loaded` (asks for multiling
 
 Note: `LAYA_MODELS` must name **both** here even though the cache holds one, because that is what compose defaults to. With `LAYA_MODELS=multilingual` the same partial cache is *correct* and the assertions rightly pass — that distinction is the whole point.
 
-- [ ] **Step 5: Commit**
+- [x] **RAN 2026-11-02: the red-check contradicted this plan in three places**
+
+The steps above were written from reasoning. Running them changed the picture, and
+the corrections are the substance of what this task taught:
+
+1. **A partial cache does not reach `/health` at all under the shipped default.**
+   `Router.preload()` builds every name `LAYA_MODELS` lists, and `laya/agent.py:664`
+   raises `FileNotFoundError: Incompatible model: ... does not contain
+   'rl_agent_config.json'` when the root checkpoint is absent. The `english`
+   checkpoint *is* the repo root (`DEFAULT_MODELS["english"] = (BUNDLE_REPO, None)`),
+   so "multilingual subfolder present, root weights absent" is a boot crash, not a
+   healthy-but-500 service.
+
+2. **The silent case needs a narrowed `LAYA_MODELS`.** With `LAYA_MODELS=multilingual`
+   against that same cache the container is `Up`, `/health` is `200`,
+   `loaded: ["multilingual"]`, Chinese works, and English returns `HTTP 500` —
+   because the router builds `english` lazily on the first Latin clause. That is the
+   state `[FAIL] a running laya can actually serve an English clause` catches, and it
+   is the only assertion that does.
+
+3. **The first version of the block SKIPped on a crashed container.** It tested
+   `docker ps` (running only) and treated "not in `docker ps`" as "profile not
+   enabled". So the boot-crash case from (1) produced a **green** summary against a
+   dead service — the same vacuous-pass class this task exists to remove. Fixed:
+   `docker ps -a` distinguishes *absent* (skip, legitimate) from *exited* (FAIL, with
+   `docker ps -a` status and the last log lines in the detail).
+
+Verified states, all measured against `ghcr.io/jzkk720/laya-serve:0.2.12`:
+
+| Cache / config | Gate result |
+|---|---|
+| no `laya` container | `[SKIP] no laya container exists (the profile is opt-in)`, exit **0** |
+| complete cache, `LAYA_MODELS=multilingual,english` | all pass, exit **0** |
+| partial cache, `LAYA_MODELS=multilingual,english` | `[FAIL] the existing laya container is running` (exited 1, log quoted), exit **1** |
+| partial cache, `LAYA_MODELS=multilingual` | `[FAIL] a running laya can actually serve an English clause` (HTTP 500), exit **1** |
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/test-laya-tools.ps1 deploy/client-bundle/.env.example

@@ -412,6 +412,108 @@ if ($wp) {
 }
 
 Write-Host ''
+Write-Host 'L10 the laya profile cannot ship a checkpoint-less or half-loaded service' -ForegroundColor Cyan
+
+# Measured 2026-11-02. Two failure modes, only one silent:
+#   empty cache    -> container exits at boot (LocalEntryNotFoundError). Loud, safe.
+#   PARTIAL cache  -> healthy, /health 200, loaded:["multilingual"], English -> HTTP 500.
+# The partial case is the one this gate exists for, and it is why "the directory
+# is non-empty" is not an assertion: it would pass here.
+
+# 1. Both lanes must name the cache variable, or the mount silently falls back to a
+#    dev-box relative path that will not exist on an AIPC.
+foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
+    $p = Join-Path 'deploy/client-bundle' $lane
+    if (-not (Test-Path -LiteralPath $p)) { Check "$lane exists" $false; continue }
+    $t = [System.IO.File]::ReadAllText((Resolve-Path $p))
+    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($t -match 'LAYA_HF_CACHE') `
+        'without it the mount falls back to a path that will not exist on an AIPC'
+}
+
+# 2. .env.example must set it UNCOMMENTED. A commented `#LAYA_HF_CACHE=` is what
+#    shipped, and install.ps1 only tells the operator to copy the file - it does
+#    not render a default - so a commented entry stays absent in the real .env.
+$envExample = 'deploy/client-bundle/.env.example'
+if (-not (Test-Path -LiteralPath $envExample)) {
+    Check '.env.example exists' $false
+}
+else {
+    $active = @(Get-Content -LiteralPath $envExample | Where-Object { $_ -match '^\s*LAYA_HF_CACHE\s*=' })
+    Check '.env.example sets LAYA_HF_CACHE uncommented' ($active.Count -ge 1) `
+        'a commented default ships, install.ps1 does not render one, so the client gets no value'
+}
+
+# 3. Behavioural, and the only assertion that catches the partial cache. Compare the
+#    service's own `loaded` list against the checkpoints LAYA_MODELS asks for, then
+#    prove an ENGLISH round-trip - `loaded` is the service's claim, a 500 is the fact.
+#
+#    An existing-but-stopped container is a FAIL, not a skip. Measured 2026-11-02: a
+#    cache missing the checkpoint LAYA_MODELS names makes `laya-serve` exit 1 at boot,
+#    and the first version of this block treated that exactly like "profile not
+#    enabled" - green summary, dead service. Only the complete absence of a container
+#    is the legitimate skip.
+$exists = (& docker ps -a --filter 'name=^laya$' --format '{{.Names}}' 2>$null | Out-String).Trim()
+$running = (& docker ps --filter 'name=^laya$' --format '{{.Names}}' 2>$null | Out-String).Trim()
+if (-not $exists) {
+    Skip 'running laya serves every configured checkpoint' 'no laya container exists (the profile is opt-in)'
+}
+elseif (-not $running) {
+    $exitState = (& docker ps -a --filter 'name=^laya$' --format '{{.Status}}' 2>$null | Out-String).Trim()
+    $tail = (& docker logs --tail 6 laya 2>&1 | Out-String).Trim()
+    Check 'the existing laya container is running' $false `
+        "status: $exitState. A laya container that exists but is not running means the profile was enabled and the service died - most often a cache missing a checkpoint LAYA_MODELS names. Last log lines: $tail"
+}
+else {
+    $healthJson = (& docker exec laya python -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=6).read().decode())" 2>&1 | Out-String).Trim()
+    $health = $null
+    try { $health = $healthJson | ConvertFrom-Json } catch { }
+
+    if (-not $health) {
+        Check 'running laya answers /health with JSON' $false $healthJson
+    }
+    else {
+        # Read the configured list from the LIVE container. If it cannot be read,
+        # FAIL rather than assume a default: falling back to 'multilingual' here
+        # would make a multilingual-only cache pass, which is precisely the state
+        # this assertion exists to reject.
+        $modelsRaw = (& docker exec laya printenv LAYA_MODELS 2>&1 | Out-String).Trim()
+        if (-not $modelsRaw -or $modelsRaw -match 'not found|No such|executable file') {
+            Check 'LAYA_MODELS is readable from the running laya' $false `
+                "printenv returned: '$modelsRaw' - without it the checkpoints this service is meant to serve are unknown"
+        }
+        else {
+            $want = @($modelsRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $loaded = @($health.loaded)
+            $missing = @($want | Where-Object { $loaded -notcontains $_ })
+            Check 'every checkpoint in LAYA_MODELS is loaded' ($missing.Count -eq 0) `
+                "LAYA_MODELS asks for [$($want -join ', ')] but the service loaded [$($loaded -join ', ')]; a missing checkpoint makes that language return HTTP 500 while compose still reports healthy"
+        }
+
+        # The observable fact, not the service's self-report.
+        $enProbe = @'
+import json, urllib.request
+body = json.dumps({"state": "The Supplier shall be liable for all losses without limitation.",
+                    "questions": {"r": {"type": "noul", "instructions": "Is this risky?"}}}).encode()
+req = urllib.request.Request("http://127.0.0.1:8000/v1/systemone", data=body,
+                             headers={"Content-Type": "application/json"})
+try:
+    urllib.request.urlopen(req, timeout=90).read()
+    print("OK")
+except Exception as e:
+    print("FAIL " + type(e).__name__ + " " + str(e)[:80])
+'@
+        $tmpEn = Join-Path $env:TEMP ("enprobe-" + [guid]::NewGuid().ToString('n').Substring(0, 6) + '.py')
+        [System.IO.File]::WriteAllText($tmpEn, $enProbe, [System.Text.UTF8Encoding]::new($false))
+        & docker cp $tmpEn "laya:/tmp/enprobe.py" 2>&1 | Out-Null
+        $enOut = (& docker exec laya python /tmp/enprobe.py 2>&1 | Out-String).Trim()
+        & docker exec laya rm -f /tmp/enprobe.py 2>&1 | Out-Null
+        Remove-Item -LiteralPath $tmpEn -Force -ErrorAction SilentlyContinue
+        Check 'a running laya can actually serve an English clause' ($enOut -match '^OK') `
+            "English round-trip returned: $enOut - this is the partial-cache failure mode, where /health says ok and only English breaks"
+    }
+}
+
+Write-Host ''
 $total = $script:pass + $script:fail
 if ($script:fail -eq 0) {
     Write-Host "RESULT: the laya tools ship, degrade safely, and keep abstention. ($($script:pass) passed, $($script:skip) skipped)" -ForegroundColor Green
