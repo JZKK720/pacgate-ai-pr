@@ -43,6 +43,59 @@ pub const MIN_LEADING_ZEROS: usize = 4;
 /// not a law-firm document set.
 pub const MAX_STAMPED_INDEX: usize = 999_999;
 
+/// True when `value` is a format-preserving placeholder this crate minted.
+///
+/// The test is the invariant, not a guess: every format-preserved placeholder
+/// begins with at least `MIN_LEADING_ZEROS` zeros (see `MIN_LEADING_ZEROS`), and a
+/// real identifier does not. It is what lets a consumer that never saw the
+/// `AppliedRedaction` list - the SQL audit, and the rescan in `pacgate-api` - tell
+/// the redactor's own output from a leak.
+///
+/// MEASURED 2026-11-02: without this, the rescan reported
+/// `BANK_ACCOUNT '0000000000000000010'` as residue on an otherwise clean document,
+/// because the account rule is label-anchored and its placeholder keeps the label
+/// shape. A rescan that always says "dirty" is worse than no rescan.
+///
+/// Deliberately conservative on length (12..=24, the clamped widths) so a short
+/// numeric run that happens to start with zeros - an amount, a date fragment - is
+/// not excused.
+pub fn is_format_preserving_placeholder(value: &str) -> bool {
+    let zeros = value.chars().take_while(|c| *c == '0').count();
+    if zeros < MIN_LEADING_ZEROS {
+        return false;
+    }
+    (12..=24).contains(&value.chars().count())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == 'X')
+}
+
+/// True when `value` is any placeholder this crate mints: the opaque
+/// `[CODE_prefix_index]` form, or a format-preserved one.
+pub fn is_placeholder(value: &str) -> bool {
+    let t = value.trim();
+    if is_format_preserving_placeholder(t) {
+        return true;
+    }
+    let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) else {
+        return false;
+    };
+    // Two minted shapes:
+    //   [CODE_prefix_index]  - `PlaceholderAllocator::allocate`
+    //   [CODE_index]         - the opaque fallback past MAX_STAMPED_INDEX
+    //
+    // Prefix match against the known codes, not a split on '_': several codes
+    // themselves contain an underscore (`CN_ID`, `BANK_CARD`, `HK_MO_PERMIT`,
+    // `CN_MOBILE`, `CASE_NO`, `REG_NO`, `LAWYER_NO`, `LEGACY_ID`, `BANK_ACCOUNT`,
+    // `CN_TAX_ID`). Requiring `parts[0]` to be a code rejected `[CN_ID_1]` - caught
+    // by the test below on the first run.
+    crate::entity::EntityType::ALL.iter().any(|e| {
+        inner
+            .strip_prefix(e.code())
+            .is_some_and(|rest| rest.starts_with('_') && rest.len() > 1)
+    })
+}
+
 /// Maps exact original values to stable placeholders.
 ///
 /// One allocator is one job. Never share an allocator across matters
@@ -374,7 +427,6 @@ mod tests {
     /// collision.
     #[test]
     fn past_the_stamp_ceiling_placeholders_stay_unique_and_opaque() {
-        let mut a = PlaceholderAllocator::new("JOB1");
         // Allocate enough to cross the ceiling would need a million entries, so
         // assert on the function directly at the boundary.
         let just_under = format_preserving(EntityType::CnResidentId, "110105199003074512", MAX_STAMPED_INDEX);
@@ -385,6 +437,70 @@ mod tests {
             just_over.starts_with('['),
             "past the ceiling the form must be opaque, got {just_over}"
         );
+    }
+
+    /// A consumer with no access to `AppliedRedaction` must still be able to tell
+    /// the redactor's output from a real identifier.
+    ///
+    /// MEASURED 2026-11-02: the rescan reported `BANK_ACCOUNT
+    /// '0000000000000000010'` as residue on an otherwise clean document, because
+    /// the account rule is label-anchored and its placeholder keeps the label
+    /// shape. The sanitize job excludes minted spans by offset; a standalone rescan
+    /// has no such list, so it needs this predicate.
+    #[test]
+    fn a_placeholder_is_recognisable_without_the_applied_redaction_list() {
+        assert!(is_format_preserving_placeholder("0000000000000000010"));
+        assert!(is_format_preserving_placeholder("00000000X000000X30"));
+        assert!(is_format_preserving_placeholder("00000000000000002X"));
+
+        // Every opaque form this crate mints.
+        assert!(is_placeholder("[CN_ID_1]"));
+        assert!(is_placeholder("[LAWYER_NO_C723AAD5_4]"));
+        assert!(is_placeholder("[PLATE_ABC123_7]"));
+
+        // Real values must NOT be excused.
+        assert!(!is_placeholder("110105199003074512"));
+        assert!(!is_placeholder("6222020200112345678"));
+        assert!(!is_placeholder("91350100M000100Y43"));
+        assert!(!is_placeholder("1,250,000.00"));
+        // A short zero-padded number is not a placeholder: excusing it would hide
+        // a real leak whose value happens to start with zeros.
+        assert!(!is_placeholder("00000000"));
+        assert!(!is_format_preserving_placeholder("00001234"));
+    }
+
+    /// The exact round trip that failed: sanitize an account, then re-detect it.
+    #[test]
+    fn a_bank_account_placeholder_does_not_survive_as_residue() {
+        use crate::detect::tier_one_detectors;
+        let mut s = crate::Sanitizer::new(
+            tier_one_detectors(),
+            crate::mapping::MappingVersion::CURRENT,
+        );
+        let out = s
+            .sanitize(
+                "开户行：中国工商银行北京分行 账号：6222020200112345678",
+                pacgate_core::DataLevel::T3ProjectSpecific,
+            )
+            .unwrap();
+        assert_eq!(out.ledger.verdict(), crate::Verdict::Pass);
+        assert!(
+            !out.text.contains("6222020200112345678"),
+            "the account must be redacted: {:?}",
+            out.text
+        );
+
+        // What a standalone rescan would see, and what it must ignore.
+        for d in tier_one_detectors() {
+            for m in d.detect(&out.text).unwrap() {
+                assert!(
+                    is_placeholder(&m.text),
+                    "the rescan must be able to recognise {:?} '{}' as the redactor's own output",
+                    m.entity,
+                    m.text
+                );
+            }
+        }
     }
 
     #[test]

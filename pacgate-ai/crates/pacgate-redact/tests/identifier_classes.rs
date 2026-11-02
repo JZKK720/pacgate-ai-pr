@@ -300,6 +300,26 @@ fn a_wechat_label_before_prose_is_not_a_handle() {
     );
 }
 
+/// The redactor's own opaque placeholder must never be re-read as a handle.
+///
+/// MEASURED 2026-11-02: `[WECHAT_8CA97849_8]` contains the literal text `WECHAT`,
+/// so a WeChat rule with a separate label regex matched its own output and the
+/// rescan reported an otherwise clean document as leaking a handle. Caught only
+/// because the e2e ran the rescan against real stored text.
+#[test]
+fn a_wechat_placeholder_is_not_re_detected_as_a_handle() {
+    for text in [
+        "微信：[WECHAT_8CA97849_8]",
+        "微信号：[WECHAT_ABC123_1]",
+    ] {
+        let found = detected_entities(text);
+        assert!(
+            !found.contains(&EntityType::WeChatId),
+            "the redactor's own placeholder must not match its own rule in {text:?}: {found:?}"
+        );
+    }
+}
+
 /// A bank-account label followed by a 6-digit number is not an account: the
 /// length window starts at 8 precisely so a date or amount fragment cannot
 /// satisfy it.

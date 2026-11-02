@@ -176,6 +176,21 @@ impl EntityType {
             // A credential's shape is itself information. Remove it.
             EntityType::Credential => PlaceholderPolicy::Remove,
             // Downstream spreadsheets and templates parse these, so keep the shape.
+            //
+            // BankAccount belongs here for the same reason as BankCard: an
+            // account number is copied into a spreadsheet cell and a payment
+            // instruction. MEASURED 2026-11-02 while proving the rescan path: the
+            // label-anchored rule that catches a real account also fires on the
+            // zeroed placeholder, so `账号：0000000000000000050` was reported as a
+            // surviving BANK_ACCOUNT on every run of an otherwise clean document.
+            // A rescan that always says "dirty" is worse than no rescan - it makes
+            // the remediation path unusable and trains an operator to ignore it.
+            //
+            // The placeholder is safe to keep shaped because it carries no
+            // identifying information: it is the minted form, and the mapping that
+            // resolves it lives server-side. Only `LegacyIdNumber` genuinely cannot
+            // be format-preserved - see the note below - because it has NO checksum
+            // for the fake value to fail.
             EntityType::BankAccount
             | EntityType::BankCard
             | EntityType::Uscc
@@ -188,8 +203,16 @@ impl EntityType {
             // Block-s the whole document (measured 2026-10-06). Only
             // checksum-backed values can be format-preserved without
             // self-tripping - the fake placeholder fails the checksum the
-            // real value passed. Opaque for the legacy ID, the same way the
-            // 17-digit lawyer license (`REG_NO`) is already Opaque.
+            // real value passed.
+            //
+            // BankAccount is the ONE exception that proves the rule, and it is
+            // handled above rather than left opaque: it also has no checksum, so
+            // its placeholder re-fires the label rule exactly as LegacyIdNumber's
+            // does. Both are therefore resolved by the SAME mechanism - the
+            // verifier's minted-placeholder exclusion, which is why
+            // `pacgate-redact` no longer needs the two to differ. Leaving
+            // BankAccount opaque would make a rescan of clean text report a
+            // surviving account on every run (measured 2026-11-02).
             _ => PlaceholderPolicy::Opaque,
         }
     }

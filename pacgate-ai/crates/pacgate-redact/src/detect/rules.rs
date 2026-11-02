@@ -226,11 +226,22 @@ static RE_GROUPED_DIGITS: Lazy<Regex> =
 
 /// 微信号 label. The handle form is fixed by the platform: starts with a
 /// letter, then 5-19 letters/digits/underscore/hyphen.
-static RE_WECHAT_ANCHOR: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:微信号|微信|WeChat\s*ID)[:：\s]*").expect("wechat anchor regex is valid"));
-
-static RE_WECHAT_ID: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[A-Za-z][A-Za-z0-9_\-]{5,19}").expect("wechat id regex is valid"));
+///
+/// The label and the handle are matched as ONE pattern, deliberately. The opaque
+/// placeholder `[WECHAT_8CA97849_8]` contains the literal text `WECHAT`; with a
+/// separate label regex the label matched inside the redactor's own output and the
+/// following `_`-run was then read as a handle. Measured 2026-11-02: the rescan
+/// reported an otherwise clean document as leaking a WeChat handle, because the
+/// placeholder became the handle.
+///
+/// The `regex` crate has no lookahead, so the separation is done structurally: after
+/// the label the pattern requires an optional `[:：]` or whitespace, and the handle
+/// must begin with a letter. `WECHAT_8CA...` fails both - there is no separator, and
+/// the text right after the label starts with `_`.
+static RE_WECHAT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:微信号?|WeChat\s*ID)[:：\s]+([A-Za-z][A-Za-z0-9_\-]{5,19})")
+        .expect("wechat regex is valid")
+});
 
 /// Ceiling on matches from one text, to turn a pathological input into a
 /// fatal error instead of unbounded memory growth.
@@ -696,26 +707,20 @@ impl Detector for TierOneDetector {
             );
         }
 
-        // 微信号 - label anchored. The handle charset is fixed by the platform
-        // and always starts with a letter, so a label followed by ordinary
-        // prose is rejected.
-        for a in RE_WECHAT_ANCHOR.find_iter(text) {
-            let Some(rest) = text.get(a.end()..) else {
+        // 微信号 - label and handle in ONE pattern. See RE_WECHAT: a separate
+        // label regex matched inside the opaque `[WECHAT_...]` placeholder.
+        for c in RE_WECHAT.captures_iter(text) {
+            let Some(handle) = c.get(1) else {
                 continue;
             };
-            let Some(m) = RE_WECHAT_ID.find(rest) else {
-                continue;
-            };
-            let start = a.end() + m.start();
-            let end = a.end() + m.end();
-            if !is_bounded(text, start, end) {
+            if !is_bounded(text, handle.start(), handle.end()) {
                 continue;
             }
             self.push_span(
                 &mut out,
-                start,
-                end,
-                &text[start..end],
+                handle.start(),
+                handle.end(),
+                &text[handle.start()..handle.end()],
                 EntityType::WeChatId,
                 MatchSource::Context,
             );

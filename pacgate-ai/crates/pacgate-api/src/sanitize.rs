@@ -672,6 +672,23 @@ pub async fn rescan_residue_handler(
                 }
             }
         }
+
+        // Drop the redactor's own placeholders. This rescan has no access to the
+        // `AppliedRedaction` list that let the sanitize job exclude them, so it
+        // identifies them by shape instead - see `is_placeholder`. The span is
+        // checked as well as the matched text, because a label-anchored rule can
+        // capture part of a placeholder: `[WECHAT_8CA97849_8]` matched the WeChat
+        // handle pattern and reported itself as residue, measured 2026-11-02.
+        //
+        // MEASURED 2026-11-02 without this: an otherwise clean document reported
+        // `BANK_ACCOUNT '0000000000000000010'` and then `WECHAT 'WECHAT_8CA97849_8'`
+        // as residue. A rescan that always says "dirty" is worse than no rescan - it
+        // makes the remediation path unusable and trains an operator to ignore it.
+        found.retain(|m| {
+            !pacgate_redact::is_placeholder(&m.text)
+                && !pacgate_redact::is_placeholder(&content[m.start..m.end])
+        });
+
         if found.is_empty() {
             continue;
         }

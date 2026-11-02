@@ -89,7 +89,13 @@ $PacgateRawPiiPatterns = [ordered]@{
     # account label, because a bare digit run of that length is an amount or an order
     # number. The separators are spelled out as a character class rather than `\s`,
     # which in Postgres ERE would also match newlines and let a match span two lines.
-    'bank_account'  = '(账号|帐号|账户|帐户)(号码)?[:：]?[[:space:]]*[0-9][0-9 -]{6,40}[0-9]'
+    #
+    # The placeholder guard is repeated HERE, unlike the id/uscc patterns which carry
+    # it once at the front, because this pattern is anchored on a LABEL that the
+    # placeholder preserves: `账号：0000000000000000050` still reads as an account and
+    # its digits match the run. Measured 2026-11-02 - without the guard the rescan
+    # reported a clean document as dirty on every run.
+    'bank_account'  = "(账号|帐号|账户|帐户)(号码)?[:：]?[[:space:]]*$PacgatePlaceholderZeroGuard[0-9][0-9 -]{6,40}[0-9]"
 
     # 车牌: province ideograph + authority letter + 5-6 characters. The province set is
     # closed, which is why the audit can look for a bare plate without a label.
