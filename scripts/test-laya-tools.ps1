@@ -503,6 +503,97 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     }
 }
 
+Write-Host ''
+Write-Host 'L11 a probability over part of a clause is never presented as a verdict' -ForegroundColor Cyan
+
+# MEASURED 2026-11-02 against the published 0.2.13 image. laya DOES report
+# `usage.truncated`; nothing read it. The shipped question sets set the boundary,
+# because the options share the window with the state:
+#
+#   deployed default (max_len 512), 4 EN flags : ~330 words read in full, ~384 drops 12
+#   deployed default (max_len 512), 2 EN risk  : same boundary (~480 state tokens)
+#   multilingual default (max_len 1024)        : ~1,000 Chinese chars, ~1,400 drops 17
+#
+# A 384-word clause is ordinary. Before this assertion the only difference between
+# "judged the clause" and "judged its first two thirds" was a boolean inside
+# `usage`, which no caller reads. Two parts, both checked: the English paths must
+# SURFACE it, and the Chinese path must REFUSE to grade, because Chinese
+# synthesises one word from the three numbers.
+
+$truncScript = @'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("s", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+out = {}
+out["clean"] = m._laya_truncation({"truncated": False, "state_tokens": 100, "state_tokens_dropped": 0})
+out["partial"] = m._laya_truncation({"truncated": True, "state_tokens": 489, "state_tokens_dropped": 1932})
+out["missing"] = m._laya_truncation(None)
+
+abstained = {k: {"noul": 0.4773, "answer_confidence": 0.4773,
+                 "low_confidence": True, "abstention": "abstained"}
+             for k in m._LAYA_ZH_QUESTIONS}
+out["zh_grade_abstained"] = m._laya_zh_verdict(abstained)
+
+passed = {k: {"noul": 0.99, "answer_confidence": 0.99, "abstention": "passed"}
+          for k in m._LAYA_ZH_QUESTIONS}
+out["zh_grade_passed"] = m._laya_zh_verdict(passed)
+
+clear = {k: {"noul": 0.01, "answer_confidence": 0.9, "abstention": "passed"}
+         for k in m._LAYA_ZH_QUESTIONS}
+out["zh_grade_clear"] = m._laya_zh_verdict(clear)
+
+mixed = dict(clear)
+mixed["unilateral"] = {"noul": 0.6, "answer_confidence": 0.6,
+                       "low_confidence": True, "abstention": "abstained"}
+out["zh_grade_mixed"] = m._laya_zh_verdict(mixed)
+print(json.dumps(out, ensure_ascii=False))
+'@
+$tmp3 = Join-Path $env:TEMP ("trunc-" + [guid]::NewGuid().ToString('n').Substring(0, 6) + '.py')
+[System.IO.File]::WriteAllText($tmp3, $truncScript, [System.Text.UTF8Encoding]::new($false))
+$raw3 = & $py $tmp3 (Resolve-Path $server) 2>&1 | Out-String
+Remove-Item -LiteralPath $tmp3 -Force -ErrorAction SilentlyContinue
+
+$t = $null
+try { $t = ($raw3 -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json } catch { }
+if (-not $t) {
+    Skip 'L11 behavioural checks' "server.py could not be imported: $($raw3.Substring(0,[Math]::Min(200,$raw3.Length)))"
+}
+else {
+    Check 'a fully-read clause reports no partial object' ($null -eq $t.clean) `
+        "reported: $($t.clean | ConvertTo-Json -Compress)"
+    Check 'a missing usage block does not report a partial object' ($null -eq $t.missing) `
+        'fabricating truncation on an absent usage block would cry wolf on every call'
+    Check 'a truncated read carries the dropped token count' `
+        (($t.partial.partial -eq $true) -and ($t.partial.state_tokens_dropped -eq 1932)) `
+        "reported: $($t.partial | ConvertTo-Json -Compress)"
+
+    Check 'an abstained Chinese answer withholds the grade' `
+        (($t.zh_grade_abstained.withheld -eq $true) -and ($null -eq $t.zh_grade_abstained.grade)) `
+        "grade='$($t.zh_grade_abstained.grade)' - an abstained answer graded low is false clearance, the one verdict this path must never emit"
+    Check 'the withheld payload names which question abstained' `
+        (@($t.zh_grade_abstained.abstained_questions).Count -eq 3) `
+        "abstained_questions=$($t.zh_grade_abstained.abstained_questions -join ',')"
+    Check 'one abstained question among passing ones still withholds' `
+        (($t.zh_grade_mixed.withheld -eq $true) -and ((@($t.zh_grade_mixed.abstained_questions) -join ',') -eq 'unilateral')) `
+        "withheld=$($t.zh_grade_mixed.withheld) questions=$($t.zh_grade_mixed.abstained_questions -join ',')"
+    Check 'a genuinely clear Chinese clause still grades low' `
+        (($t.zh_grade_clear.withheld -eq $false) -and ($t.zh_grade_clear.grade -eq 'low')) `
+        "grade='$($t.zh_grade_clear.grade)' withheld=$($t.zh_grade_clear.withheld) - withholding must not swallow the real low"
+    Check 'a clearly risky Chinese clause still grades high' `
+        (($t.zh_grade_passed.withheld -eq $false) -and ($t.zh_grade_passed.grade -eq 'high')) `
+        "grade='$($t.zh_grade_passed.grade)'"
+
+    foreach ($fn in @('pacgate_clause_risk', 'pacgate_clause_flags')) {
+        $body = [regex]::Match($src, '(?ms)^def\s+' + $fn + '\s*\((?<all>.*?)(?=^@mcp\.tool|\z)')
+        Check "$fn reports a partial read beside its answers" `
+            ($body.Success -and ($body.Groups['all'].Value -match '"partial":\s*_laya_truncation\(data\.get\("usage"\)\)')) `
+            'usage.truncated lives in a block the agent never reads; a probability over a prefix must not look like one over the clause'
+    }
+}
+
+Write-Host ''
 # 6. Behavioural, and the last line of defence. Compare the service's own `loaded`
 #    list against the checkpoints LAYA_MODELS asks for, then prove an ENGLISH
 #    round-trip - `loaded` is the service's claim, a 500 is the observable fact.

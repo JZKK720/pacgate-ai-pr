@@ -126,6 +126,25 @@ CUAD labels, and the flag is now named for it.
   enough that a good AUC here does not promise good behaviour on PRC deals.
 - **Precision/recall per risk bucket is now measured; the decision to remove any
   human review step is still not justified.** Triage remains the correct framing.
+- **Two plumbing defects were found later, by trial against the running stack
+  (2026-11-02), and fixed there:** abstention was forwarded but unread, so an
+  abstained Chinese answer graded `low`; and truncation was reported by laya but
+  unread, so a ~384-word clause was judged as if it were the whole clause. See
+  `decisions/2026-11-02-laya-live-trial.md`. The lesson is not about laya: a
+  measured model does not make the layer around it correct, and neither defect
+  was visible in any benchmark of the model.
+- **`unilateral_termination` does not separate termination clauses.** Eight
+  one-sided against eight mutual clauses, judged in isolation: mean P 0.55 vs
+  0.57, mutual clauses reaching 0.93. The `termination_for_convenience` AUC 0.988
+  above belongs to a *different question* - the matched one, which CUAD annotates
+  and this tool does not ask. A three-option perception phrasing separates 3/3 vs
+  0/4 in Chinese and is not shipped because the English number would need
+  re-measuring first.
+- **Latency in the shipped shape is ~1 s per English clause, not 0.3 s.** Four
+  flags in one call measured 707-1150 ms; four separate calls 1010 ms. The batch
+  endpoint is *slower per clause* (795 ms at 8 states, 920 ms at 32), so it does
+  not make portfolio-wide triage cheap - it amortises per question, not per
+  clause.
 
 ## Chinese: measured, failed, then fixed, 2026-11-01
 

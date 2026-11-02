@@ -1104,6 +1104,39 @@ class _LayaUnavailable(RuntimeError):
     """laya is not configured for this deployment, or did not answer."""
 
 
+def _laya_truncation(usage: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Describe a state that laya cut short, or None when it read all of it.
+
+    WHY THIS IS NOT LEFT IN `usage` (measured 2026-11-02). laya reports
+    `usage.truncated` honestly, and every consumer of these tools reads the
+    `answers` field - the probabilities look identical whether they were computed
+    over the clause or over its first 400 words. Measured on the shipped question
+    sets against the 4-flag endpoint: a clause of ~330 words is read in full, and
+    ~384 words already drops 12 tokens, silently. Chinese is worse in practice
+    because a single clause can carry 1,000+ characters.
+
+    A probability computed over a prefix is not a wrong number; it is a number
+    about a different clause. So it is surfaced at the top level, next to the
+    answer, and the Chinese path refuses to grade at all - a `low` derived from
+    the first third of a clause is exactly the false clearance the withholding
+    logic elsewhere in this file exists to prevent.
+    """
+    if not isinstance(usage, dict) or not usage.get("truncated"):
+        return None
+    dropped = usage.get("state_tokens_dropped")
+    return {
+        "partial": True,
+        "state_tokens_dropped": dropped,
+        "state_tokens_read": usage.get("state_tokens"),
+        "note": (
+            "The clause exceeded laya's window and the tail was dropped before "
+            "judgement, so these numbers describe only the part that was read. "
+            "Do not treat an absence of flags in the dropped text as absence of "
+            "risk. Split the clause, or raise max_len for this deployment."
+        ),
+    }
+
+
 def _laya_unavailable_result(tool: str, exc: Exception) -> str:
     return json.dumps(
         {
@@ -1311,6 +1344,47 @@ def _laya_zh_grade(answers: dict[str, Any]) -> dict[str, Any]:
     return {"grade": grade, "probabilities": probs, "thresholds": _LAYA_ZH_THRESHOLDS}
 
 
+def _laya_zh_verdict(answers: dict[str, Any]) -> dict[str, Any]:
+    """Grade the Chinese answers, or withhold the grade when the engine abstained.
+
+    WHY ABSTENTION HAS TO STOP THE GRADE (measured 2026-11-02). `min_confidence`
+    reaches laya and laya marks the answer - `low_confidence: true` and
+    `abstention: "abstained"` - but the grader only ever read `noul`, so
+    abstention changed nothing. Measured on an isolated clause: `noul` 0.4773 at
+    `answer_confidence` 0.4773 with the default 0.55 threshold came back
+    `abstained` and was still graded. `noul` 0.4773 is below every threshold in
+    `_LAYA_ZH_THRESHOLDS`, so the grade that reaches the caller is `low` - the
+    one verdict this path must never emit on a clause it could not judge. The
+    English path has the same hole (`abstention` sits unread in the payload), but
+    there the numbers are at least visible to the reader; here a single word is
+    synthesised from them, so the hole is fixed here first.
+    """
+    withheld = [
+        key for key in _LAYA_ZH_QUESTIONS
+        if (answers.get(key) or {}).get("abstention") == "abstained"
+    ]
+    if withheld:
+        return {
+            "grade": None,
+            "withheld": True,
+            "abstained_questions": withheld,
+            "note": (
+                "The engine declined to judge "
+                + ", ".join(withheld)
+                + " at this min_confidence. No grade is reported: a clause it "
+                  "could not decide is not a low-risk clause. Read it, or lower "
+                  "min_confidence to see the raw probabilities and treat them as "
+                  "a prompt to review."
+            ),
+            "probabilities": {
+                key: float((answers.get(key) or {}).get("noul") or 0.0)
+                for key in _LAYA_ZH_QUESTIONS
+            },
+            "thresholds": _LAYA_ZH_THRESHOLDS,
+        }
+    return {**_laya_zh_grade(answers), "withheld": False}
+
+
 @mcp.tool()
 def pacgate_clause_risk(
     clause: str,
@@ -1324,7 +1398,9 @@ def pacgate_clause_risk(
 
     - English: against CUAD the English checkpoint's four flags score AUC
       0.93-1.00 (n=80 over 25 contracts). Reproduce with
-      scripts/bench-laya-clause-flags.ps1.
+      scripts/bench-laya-clause-flags.ps1. One of those figures belongs to a
+      different question than the flag this server ships - see
+      pacgate_clause_flags, which says which one and why it matters.
     - Chinese: the English three-way question was measured at chance with recall
       0.00 - it flagged none of 7 high-risk clauses. Chinese text therefore uses
       three dedicated yes/no questions instead, measured on CCL-DRR at recall
@@ -1349,7 +1425,9 @@ def pacgate_clause_risk(
             bounded state, and a whole contract exceeds its window.
         min_confidence: Abstention threshold in [0, 1]. An answer below it comes
             back flagged `low_confidence` rather than being hidden - treat a low
-            confidence answer as "a human should read this clause".
+            confidence answer as "a human should read this clause". For Chinese
+            the grade is withheld outright instead: a clause the engine declined
+            to judge is not a low-risk clause.
         lang: Optional language code (e.g. "zh", "en") to skip detection.
         allow_unvalidated_language: Escape hatch for benchmarking only. Set true
             to get the English three-way verdict for Chinese text instead of the
@@ -1360,7 +1438,34 @@ def pacgate_clause_risk(
             data = _laya_zh_answers(clause, min_confidence=min_confidence, lang=lang)
         except _LayaUnavailable as exc:
             return _laya_unavailable_result("pacgate_clause_risk", exc)
-        grade = _laya_zh_grade(data.get("answers", {}))
+        partial = _laya_truncation(data.get("usage"))
+        if partial:
+            # Refuse rather than grade a prefix: the Chinese path exists because a
+            # missed unfair term is expensive, and a tail nobody read cannot be
+            # cleared. The English path reports `partial` beside its answers; here
+            # one word is synthesised, so there is nothing honest to report it beside.
+            return json.dumps(
+                {
+                    "tool": "pacgate_clause_risk",
+                    "available": True,
+                    "validated_for_language": True,
+                    "language": "zh",
+                    "verdict_withheld": True,
+                    "partial": True,
+                    "reason": (
+                        "The clause did not fit laya's window and "
+                        f"{partial['state_tokens_dropped']} tokens of it were dropped "
+                        "before judgement. A clause-level grade over part of a clause "
+                        "is not a grade, and a 'low' would be false clearance. Split "
+                        "the clause and judge each part."
+                    ),
+                    "usage": data.get("usage"),
+                    "routing": data.get("routing"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        grade = _laya_zh_verdict(data.get("answers", {}))
         return json.dumps(
             {
                 "tool": "pacgate_clause_risk",
@@ -1368,6 +1473,8 @@ def pacgate_clause_risk(
                 "validated_for_language": True,
                 "language": "zh",
                 "risk": grade["grade"],
+                "verdict_withheld": grade["withheld"],
+                "abstained_questions": grade.get("abstained_questions"),
                 "probabilities": grade["probabilities"],
                 "thresholds": grade["thresholds"],
                 "routing": data.get("routing"),
@@ -1402,6 +1509,10 @@ def pacgate_clause_risk(
         {
             "tool": "pacgate_clause_risk",
             "available": True,
+            # Beside the answers, because that is the field a caller reads: a
+            # probability over a truncated clause looks exactly like one over the
+            # whole clause, and only this key says which it is.
+            "partial": _laya_truncation(data.get("usage")),
             "answers": data.get("answers", {}),
             "routing": data.get("routing"),
             "usage": data.get("usage"),
@@ -1431,6 +1542,25 @@ def pacgate_clause_flags(
     Every flag separates its concept from unrelated clauses in the same
     contracts. Reproduce with scripts/bench-laya-clause-flags.ps1.
 
+    ONE OF THOSE FOUR IS NOT A FLAG THIS TOOL RETURNS. The benchmark measures a
+    `termination_for_convenience` question ("may a party end this agreement without
+    cause, for convenience, on notice?"), and this tool asks a different one:
+    `unilateral_termination` adds an asymmetry requirement CUAD does not annotate.
+    On identical clauses the matched question scores AUC 0.988 and the asymmetry
+    question 0.600 - both honest numbers about different questions. The 0.988 is
+    reported here because the measurement exists, not because this tool earns it,
+    and the number above is labelled with the question it belongs to.
+
+    The shipped asymmetry question is also the weakest of the four in isolation
+    (2026-11-02): over 8 one-sided and 8 mutual termination clauses it did not
+    separate the groups at all - mean P 0.55 against 0.57, with mutual clauses
+    reaching 0.93. `uncapped_liability` (0.96 vs 0.17) and `auto_renewal`
+    (0.97 vs 0.51) did separate cleanly. Treat a high
+    `unilateral_termination` as a prompt to read the termination clause, never as
+    a finding. A replacement phrasing exists and separates perfectly in Chinese
+    (a three-option perception question, 3/3 vs 0/4); it is not shipped because it
+    changes the English number and has not been re-measured against CUAD.
+
     CHINESE: the four English flags are NOT reported. They were measured on English
     contracts, and on Chinese text the same questions flagged 0 of 7 high-risk
     clauses (CCL-DRR), so four reassuring near-zero numbers would read as
@@ -1440,6 +1570,10 @@ def pacgate_clause_flags(
 
     Each flag is a yes/no probability, not a label, so a reviewer can set their
     own threshold and see that 0.6 is honestly different from 0.95.
+
+    A `partial` key appears beside the answers when the clause did not fit the
+    window. laya reads about 330 words at this deployment's settings; beyond that
+    the tail is dropped before judgement and four probabilities describe a prefix.
 
     This tool degrades to an explicit `available: false` result when the
     deployment has no laya service.
@@ -1467,6 +1601,10 @@ def pacgate_clause_flags(
         {
             "tool": "pacgate_clause_flags",
             "available": True,
+            # Same reason as pacgate_clause_risk: `answers` is what a caller reads,
+            # and four reassuring probabilities over the first part of a clause are
+            # otherwise indistinguishable from four over all of it.
+            "partial": _laya_truncation(data.get("usage")),
             "answers": data.get("answers", {}),
             "routing": data.get("routing"),
             "usage": data.get("usage"),
