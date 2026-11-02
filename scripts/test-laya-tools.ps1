@@ -420,14 +420,20 @@ Write-Host 'L10 the laya profile cannot ship a checkpoint-less or half-loaded se
 # The partial case is the one this gate exists for, and it is why "the directory
 # is non-empty" is not an assertion: it would pass here.
 
-# 1. Both lanes must name the cache variable, or the mount silently falls back to a
-#    dev-box relative path that will not exist on an AIPC.
+# 1. Both lanes must name the cache variable IN THE MOUNT, or the mount falls back to
+#    a dev-box relative path that will not exist on an AIPC.
+#
+#    Comment lines are stripped first. Both lanes carry the string in a comment on
+#    the line above the mount ("then point LAYA_HF_CACHE at it"), so a whole-file
+#    match passes after the mount itself is deleted - red-checked 2026-11-02 and it
+#    did exactly that. Match the YAML list item, not the vocabulary.
 foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     $p = Join-Path 'deploy/client-bundle' $lane
     if (-not (Test-Path -LiteralPath $p)) { Check "$lane exists" $false; continue }
-    $t = [System.IO.File]::ReadAllText((Resolve-Path $p))
-    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($t -match 'LAYA_HF_CACHE') `
-        'without it the mount falls back to a path that will not exist on an AIPC'
+    $mounts = @(Get-Content -LiteralPath $p |
+        Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'LAYA_HF_CACHE' })
+    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($mounts.Count -ge 1) `
+        'no non-comment line names LAYA_HF_CACHE; without it the mount falls back to a path that will not exist on an AIPC'
 }
 
 # 2. .env.example must set it UNCOMMENTED. A commented `#LAYA_HF_CACHE=` is what
@@ -441,6 +447,27 @@ else {
     $active = @(Get-Content -LiteralPath $envExample | Where-Object { $_ -match '^\s*LAYA_HF_CACHE\s*=' })
     Check '.env.example sets LAYA_HF_CACHE uncommented' ($active.Count -ge 1) `
         'a commented default ships, install.ps1 does not render one, so the client gets no value'
+}
+
+# 2b. The compose DEFAULT for LAYA_MODELS must name both checkpoints. This is static,
+#     so it has teeth on a machine that never runs laya - which is most of them, since
+#     the profile is opt-in. Routing sends Latin text to `english` and Han to
+#     `multilingual`; a default missing `english` breaks every English clause in an
+#     en/zh product. Asserting the default is not the vacuous "the directory is
+#     non-empty" check: this fails on a real, silent, one-word regression.
+foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
+    $p = Join-Path 'deploy/client-bundle' $lane
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $line = @(Get-Content -LiteralPath $p | Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'LAYA_MODELS' })
+    if ($line.Count -eq 0) {
+        Check "$lane defaults LAYA_MODELS to both checkpoints" $false 'no non-comment LAYA_MODELS line'
+    }
+    else {
+        $joined = $line -join ' '
+        Check "$lane defaults LAYA_MODELS to both checkpoints" `
+            (($joined -match 'english') -and ($joined -match 'multilingual')) `
+            "LAYA_MODELS line is '$($joined.Trim())'; dropping either checkpoint leaves that language returning HTTP 500"
+    }
 }
 
 # 3. Behavioural, and the only assertion that catches the partial cache. Compare the

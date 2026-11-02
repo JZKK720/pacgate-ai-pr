@@ -38,7 +38,7 @@ These were measured before writing the plan, not assumed:
 | No gate knows `LAYA_HF_CACHE` is required | `Select-String scripts/test-*.ps1 -Pattern LAYA_HF_CACHE` → **0 matches** |
 | `LAYA_HF_CACHE` absent from the deployed `.env` | **absent** — see the corrected failure analysis below |
 | Benchmarks never run in CI | **0** gate references `bench-laya-*` |
-| qm digests untracked | **FALSE** — `compose.qm.yaml:19` pins `sha256:bee03e7f2271...` |
+| qm digests untracked | **FALSE, re-verified 2026-11-02.** `compose.qm.yaml:19` pins `ghcr.io/yc-software/qm/core@sha256:bee03e7f2271...` by digest and the running container matches it. Digest pinning is the *stronger* form, so there was never a gap. The audit reported it without checking; the check is one `Select-String`. No code action, and nothing to retract in the laya plan - that document never made this claim. |
 | "No PRC benchmark exists" | **TRUE and unfixable here** — needs real firm contracts |
 
 ### CORRECTED 2026-11-02: how laya actually fails without weights
@@ -93,9 +93,27 @@ assertions replace it, each targeting a state the experiment actually produced:
 mount configured, `.env.example` uncommented, and `loaded` matching `LAYA_MODELS`
 plus a live English round-trip.
 
-- [ ] **Step 1: Write the three assertions**
+- [x] **Step 1: Write the three assertions**
 
 Append immediately before the `Write-Host ''` / `$total = $script:pass + $script:fail` block at L415:
+
+> **Written as shipped, then corrected twice by red-checking.** The version below is
+> what landed. Three defects were found in it *after* it went green the first time,
+> each by reintroducing the defect rather than by reasoning:
+>
+> 1. **Comment-vs-mount.** `$t -match 'LAYA_HF_CACHE'` over the whole file passes on
+>    the comment alone, and both lanes have that comment. Deleting the mount while
+>    keeping the comment still printed `[PASS]`. Now comment lines are stripped and
+>    the match runs on non-comment lines only.
+> 2. **Skip-on-crash.** Using `docker ps` (running only) meant a container that
+>    **exited at boot** looked identical to "profile never enabled", so a dead
+>    service summed green. Now `docker ps -a` separates absent (skip) from exited
+>    (FAIL, with status and last log lines).
+> 3. **No static teeth.** The only assertion able to catch the real defect was
+>    inert on every machine where laya is not running - i.e. nearly all of them.
+>    Added 2b: assert the `LAYA_MODELS` *default in both lanes* names both
+>    checkpoints. That is static, survives a dead profile, and fails on a one-word
+>    silent regression (`english` dropped ⇒ every English clause 500s).
 
 ```powershell
 Write-Host ''
@@ -107,14 +125,21 @@ Write-Host 'L10 the laya profile cannot ship a checkpoint-less or half-loaded se
 # The partial case is the one this gate exists for, and it is why "the directory
 # is non-empty" is not an assertion: it would pass here.
 
-# 1. Both lanes must name the cache variable, or the mount silently falls back to a
-#    dev-box relative path that will not exist on an AIPC.
+# 1. Both lanes must name the cache variable IN THE MOUNT, or the mount falls back to
+#    a dev-box relative path that will not exist on an AIPC.
+#
+#    Comment lines are stripped first. Both lanes carry the string in a COMMENT on
+#    the line above the mount ("then point LAYA_HF_CACHE at it"), so a whole-file
+#    match passes after the mount itself is deleted - red-checked 2026-11-02 and it
+#    did exactly that. This is the seventh vacuous assertion found in this gate
+#    suite by red-checking; assume prose-matching assertions here are decoration.
 foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     $p = Join-Path 'deploy/client-bundle' $lane
     if (-not (Test-Path -LiteralPath $p)) { Check "$lane exists" $false; continue }
-    $t = [System.IO.File]::ReadAllText((Resolve-Path $p))
-    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($t -match 'LAYA_HF_CACHE') `
-        'without it the mount falls back to a path that will not exist on an AIPC'
+    $mounts = @(Get-Content -LiteralPath $p |
+        Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'LAYA_HF_CACHE' })
+    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($mounts.Count -ge 1) `
+        'no non-comment line names LAYA_HF_CACHE; without it the mount falls back to a path that will not exist on an AIPC'
 }
 
 # 2. .env.example must set it UNCOMMENTED. A commented `#LAYA_HF_CACHE=` is what
@@ -206,34 +231,61 @@ Replace the commented block with:
 LAYA_HF_CACHE=../laya-hf-cache
 ```
 
-- [ ] **Step 4: Verify green, then red-check the partial cache**
+- [x] **Step 4: Verify green, then red-check the partial cache**
 
-Run: `pwsh -NoProfile -File scripts/test-laya-tools.ps1`
-Expected: all pass, behavioural pair skipped.
+The version of this step below was **unrunnable**, and running it is how that was
+found. Two defects, both verified:
 
-Now prove assertion 3 catches the real defect:
+- It started the probe as `--name laya-mt`, but the gate matches `name=^laya$`
+  (`docker ps -a --filter 'name=^laya$'` returns `[]` for a container named
+  `laya-mt`). The gate would print nothing and the expected `[FAIL]` could never
+  appear.
+- The cache it built had only `refs/main` and `snapshots/<sha>/multilingual`. That
+  omits the snapshot root, so `laya-serve` dies with
+  `FileNotFoundError: Incompatible model ... does not contain 'rl_agent_config.json'`
+  before any HTTP surface exists. The documented `HTTP 500` was unreachable.
+
+The **verified** procedure is the block below. Note it names the probe `laya`, and
+uses `LAYA_MODELS=multilingual` because that is the configuration in which a
+partial cache is silent rather than fatal.
 
 ```powershell
-# Stage multilingual only - the partial cache that shipped silently.
-$full = 'laya-hf-cache\hub\models--convaiinnovations--laya'
-$part = "$env:TEMP\partial-cache\hub\models--convaiinnovations--laya"
-$sha  = '7b928d828b7b0e022f929d9bd2e44165aa270148'
-New-Item -ItemType Directory -Force -Path "$part\snapshots\$sha", "$part\refs" | Out-Null
-Copy-Item "$full\refs\main" "$part\refs\main" -Force
-Copy-Item -Recurse "$full\snapshots\$sha\multilingual" "$part\snapshots\$sha\multilingual" -Force
-docker run -d --name laya-mt --network pacgate-ai-bundle_default `
-  -e LAYA_PRELOAD=1 -e LAYA_MODELS=multilingual,english -e HF_HUB_OFFLINE=1 `
+# The dev cache at .\laya-hf-cache is COMPLETE: `english` is the repo root and
+# `multilingual` is a subfolder, so this one cache serves both checkpoints.
+$src = 'laya-hf-cache\hub\models--convaiinnovations--laya'
+$dst = "$env:TEMP\partial-cache\hub\models--convaiinnovations--laya"
+$sha = '7b928d828b7b0e022f929d9bd2e44165aa270148'
+New-Item -ItemType Directory -Force -Path "$dst\snapshots\$sha", "$dst\refs" | Out-Null
+Copy-Item -LiteralPath "$src\refs\main" -Destination "$dst\refs\main"
+Copy-Item -LiteralPath "$src\snapshots\$sha\multilingual" -Destination "$dst\snapshots\$sha\multilingual" -Recurse
+Copy-Item -LiteralPath "$src\snapshots\$sha\config.json" -Destination "$dst\snapshots\$sha\config.json"
+
+# Silent case: multilingual loads, english is built lazily and 500s.
+docker run -d --name laya --network pacgate-ai-bundle_default `
+  -e LAYA_PRELOAD=1 -e LAYA_MODELS=multilingual -e LAYA_MAX_LOADED=3 `
+  -e HF_HUB_OFFLINE=1 `
   -v "$env:TEMP\partial-cache:/home/laya/.cache/huggingface:ro" `
   ghcr.io/jzkk720/laya-serve:0.2.12
-Start-Sleep -Seconds 50
-pwsh -NoProfile -File scripts/test-laya-tools.ps1 | Select-String 'loaded|English clause'
-docker rm -f laya-mt | Out-Null
+Start-Sleep -Seconds 28
+pwsh -NoProfile -File scripts/test-laya-tools.ps1 | Select-String 'English clause'
+docker rm -f laya | Out-Null
 Remove-Item -Recurse -Force "$env:TEMP\partial-cache" -ErrorAction SilentlyContinue
 ```
 
-Expected: `[FAIL] every checkpoint in LAYA_MODELS is loaded` (asks for multilingual,english; loaded multilingual) **and** `[FAIL] a running laya can actually serve an English clause` with `FAIL HTTPError HTTP Error 500`.
+Expected: `[FAIL] a running laya can actually serve an English clause` with
+`FAIL HTTPError HTTP Error 500`.
 
-Note: `LAYA_MODELS` must name **both** here even though the cache holds one, because that is what compose defaults to. With `LAYA_MODELS=multilingual` the same partial cache is *correct* and the assertions rightly pass — that distinction is the whole point.
+Then swap to the shipped default to exercise the other branch:
+
+```powershell
+# Fatal case: the default names both checkpoints, so the missing root weights
+# crash the container instead. The gate must FAIL on 'the existing laya container
+# is running', not skip.
+docker run -d --name laya --network pacgate-ai-bundle_default `
+  -e LAYA_PRELOAD=1 -e LAYA_MODELS=multilingual,english -e HF_HUB_OFFLINE=1 `
+  -v "$env:TEMP\partial-cache:/home/laya/.cache/huggingface:ro" `
+  ghcr.io/jzkk720/laya-serve:0.2.12
+```
 
 - [x] **RAN 2026-11-02: the red-check contradicted this plan in three places**
 
@@ -288,6 +340,13 @@ git commit -m "test(laya): catch the partial cache that reports healthy and 500s
 - Create: `deploy/client-bundle/compose.bench.yaml`
 - Modify: `deploy/client-bundle/.env.example` (document the override next to `LAYA_HF_CACHE`)
 
+**Shipped or not, decided 2026-11-02: NOT shipped.** `scripts/package-bundle.ps1:74-84`
+lists exactly `compose.prod.yaml` and `compose.bundle.yaml` plus named dirs; a new
+override is not in that list and must not be added to it. This is a developer
+re-measurement aid, not a client artifact - the shipped lane correctly publishes no
+port, because laya holds model weights and only `pacgate-mcp` should reach it. State
+this in the file header so nobody adds it to `$IncludeFiles` by reflex.
+
 **Interfaces:**
 - Consumes: the `laya` service from `compose.prod.yaml`, and the `-LayaUrl` parameter both benchmarks already accept (default `http://127.0.0.1:8000/v1/systemone`)
 - Produces: nothing consumed by later tasks
@@ -298,10 +357,15 @@ git commit -m "test(laya): catch the partial cache that reports healthy and 500s
 
 Run:
 ```powershell
-docker compose -f deploy/client-bundle/compose.prod.yaml config --services | Select-String laya
+docker compose -f deploy/client-bundle/compose.prod.yaml --profile laya config --services | Select-String laya
 docker port laya 2>&1
 ```
 Expected: `laya` is listed but `docker port` reports no published ports (or the container is absent). This is the condition to be fixed.
+
+**Correction (2026-11-02): `--profile laya` is required.** Without it,
+`config --services` returns 8 services and **omits `laya`**, because the service
+declares `profiles: ["laya"]` (`compose.prod.yaml:559`). Expected output without the
+flag would send an implementer hunting a bug that does not exist.
 
 - [ ] **Step 2: Create the override**
 
@@ -380,10 +444,18 @@ git commit -m "feat(bench): opt-in loopback port so the accuracy benchmarks are 
 
 **Why:** The 2026-11-02 audit reported four gaps. On re-verification one was false (qm digests **are** tracked at `compose.qm.yaml:19`). Leaving a false gap in the record is worse than having the gap: someone will spend a day closing something already closed.
 
-**Files:**
-- Modify: `docs/superpowers/plans/2026-10-31-laya-local-decision-engine.md` (the benchmark section's "Still not established")
+**CORRECTED 2026-11-02 - the original target was wrong.** This task pointed at
+`docs/superpowers/plans/2026-10-31-laya-local-decision-engine.md`'s "Still not
+established" list. Verified: that file has **zero** matches for `qm`, and it holds
+**two** sections with that heading (L117 and L170) - neither about qm. Appending a
+qm-digest retraction there would attach an unrelated correction to a laya document
+and close nothing. The four-gap record lives in *this* plan's own "Verified starting
+state" table, which is where the retraction belongs.
 
-- [ ] **Step 1: Verify the qm digest claim is really true**
+**Files:**
+- Modify: `docs/superpowers/plans/2026-11-02-verification-gaps.md` (the "Verified starting state" table)
+
+- [x] **Step 1: Verify the qm digest claim is really true**
 
 Run:
 ```powershell
@@ -392,19 +464,15 @@ docker inspect qm-pacgate-core -f '{{.Config.Image}}'
 ```
 Expected: the digest appears in the compose file and matches the running container.
 
-- [ ] **Step 2: Add a dated correction to the plan**
+- [x] **Step 2: Add a dated correction to the plan's own table**
 
-Append to the "Still not established" list:
+Replace the qm row of "Verified starting state" with:
 
 ```markdown
-- **CORRECTION 2026-11-02.** An earlier version of this list claimed the qm stack
-  images were "never version-audited". That was wrong: `compose.qm.yaml:19` pins
-  `ghcr.io/yc-software/qm/core@sha256:bee03e7f2271...` by digest, and the running
-  container matches it. Digest pinning is the stronger form, so there was no gap.
-  The audit reported it without checking; the check is one `Select-String`.
+| qm digests untracked | **FALSE, re-verified 2026-11-02.** `compose.qm.yaml:19` pins `ghcr.io/yc-software/qm/core@sha256:bee03e7f2271...` by digest and the running container matches it. Digest pinning is the *stronger* form, so there was never a gap. The audit reported it without checking; the check is one `Select-String`. No action, and nothing to retract in the laya plan - that document never made this claim. |
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-10-31-laya-local-decision-engine.md
@@ -445,10 +513,17 @@ Chinese, in the mirrored position:
 
 Run:
 ```powershell
-(Select-String -Path deploy/AIPC-DEPLOYMENT-HANDBOOK.md -Pattern 'laya').Count
-(Select-String -Path deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md -Pattern 'laya').Count
+(Select-String -Path deploy/AIPC-DEPLOYMENT-HANDBOOK.md -Pattern '<what the numbers do not cover|这些数字未覆盖' -CaseSensitive:$false).Count
+(Select-String -Path deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md -Pattern '<what the numbers do not cover|这些数字未覆盖' -CaseSensitive:$false).Count
 ```
-Expected: equal counts.
+Expected: **1 and 1** - the newly added limitation section, present in both.
+
+**Correction (2026-11-02): counting `laya` cannot be the parity check.** Measured at
+baseline, before any edit: EN = **5**, ZH = **7**. "Equal counts" is unachievable
+today and, worse, a check that starts red cannot distinguish a wrong edit from the
+pre-existing 5-vs-7. Parity must be asserted on the text this task adds - a marker
+unique to the new section, one occurrence per language. The pre-existing 5-vs-7 is a
+real asymmetry, but it is out of scope here; note it rather than silently fix it.
 
 - [ ] **Step 3: Re-render and sync the PDFs**
 
@@ -477,25 +552,48 @@ git commit -m "docs(aipc): state what the clause benchmarks do not cover"
 Run:
 ```powershell
 $env:HTTP_PROXY=''; $env:HTTPS_PROXY=''; $env:NO_PROXY='*'
-$fail=@(); Get-ChildItem scripts -Filter 'test-*.ps1' | ForEach-Object {
+$fail=@(); $cannot=@(); Get-ChildItem scripts -Filter 'test-*.ps1' | ForEach-Object {
   $o = pwsh -NoProfile -File $_.FullName 2>&1 | Out-String
-  if ($LASTEXITCODE -ne 0) { $fail += "[$LASTEXITCODE] $($_.Name)" }
+  if ($LASTEXITCODE -eq 2) { $cannot += $_.Name }
+  elseif ($LASTEXITCODE -ne 0) { $fail += "[$LASTEXITCODE] $($_.Name)" }
 }
-if ($fail.Count -eq 0) { 'ALL PASS' } else { $fail }
+"pass=$(82 - $fail.Count - $cannot.Count) fail=$($fail.Count) cannot=$($cannot.Count)"
+$fail; $cannot
 ```
-Expected: `ALL PASS` (82 today, 82 after Task 1 adds assertions to an existing gate).
+
+Expected: `fail=0`, `cannot=1`, the one being `test-chat-artifact-durability.ps1`.
+That gate exits 2 **by design** when no thread reports an output file - it is a
+data-absence skip, not a pass and not a regression. Corrected baseline (measured):
+**81 pass / 0 fail / 1 cannot**, 82 scripts total. The earlier "82/82 ALL PASS"
+wording was wrong and would have made a healthy run look broken.
+
+Classifying exit 2 separately also resolves the apparent conflict with the Global
+Constraint "exit 2 is never a pass": a CANNOT-CHECK is not a pass, but neither is it
+a failure of the code under test - it must be *named*, never silently counted green.
+
+Also required: clear the proxy variables first. A dead proxy at `127.0.0.1:7892`
+makes `test-release-provenance.ps1` report `registry read failed` and exit 2, which
+is an environment fault, not a defect. Without the clears, this sweep shows two
+CANNOT-CHECKs instead of one.
 
 - [ ] **Step 2: Prove the enable path once more, end to end**
 
 Run:
 ```powershell
-$env:LAYA_HF_CACHE = (Resolve-Path ..\laya-hf-cache).Path
+$env:LAYA_HF_CACHE = (Resolve-Path .\laya-hf-cache).Path   # repo root; NOT ..\laya-hf-cache
 docker compose -f deploy/client-bundle/compose.prod.yaml --profile laya up -d laya
-docker compose -f deploy/client-bundle/compose.bench.yaml -f deploy/client-bundle/compose.prod.yaml --profile laya up -d laya
-pwsh -NoProfile -File scripts/bench-laya-chinese-risk.ps1
-docker compose -f deploy/client-bundle/compose.prod.yaml --profile laya down
+pwsh -NoProfile -File scripts/bench-laya-chinese-risk.ps1 -LayaUrl http://127.0.0.1:8000/v1/systemone
+docker compose -f deploy/client-bundle/compose.prod.yaml --profile laya stop laya
+docker compose -f deploy/client-bundle/compose.prod.yaml --profile laya rm -f laya
 ```
-Expected: recall on 风险高 ≥ 0.86, then clean teardown.
+Expected: recall on 风险高 ≥ 0.86, then a teardown that touches **only** `laya`.
+
+Two corrections. `(Resolve-Path ..\laya-hf-cache)` does not exist from the repo root
+(staged cache is `.\laya-hf-cache`, gitignored at `.gitignore:226`); the stage
+script's `-OutDir ..\laya-hf-cache` is written for a caller in
+`deploy/client-bundle`, not the repo root. And `down` tears down the entire merged
+project context - on this box the main stack project `pacgate-ai-bundle` is live, so
+`stop` + `rm -f laya` is the safe teardown.
 
 - [ ] **Step 3: Commit anything the read-back changed, or confirm clean**
 
