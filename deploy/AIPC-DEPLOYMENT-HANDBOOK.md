@@ -102,11 +102,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.13` | Published, public (through 0.2.11); the 0.2.13 tag is published by the release workflow, and this row is corrected once it is. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.13` | Published, public (through 0.2.11); the 0.2.13 tag is published by the release workflow, and this row is corrected once it is. Exposes 22 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.13` | Published, public (through 0.2.11); the 0.2.13 tag is published by the release workflow, and this row is corrected once it is. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.13` | Published, public (through 0.2.11); the 0.2.13 tag is published by the release workflow, and this row is corrected once it is. |
-| `ghcr.io/jzkk720/ocr-service:0.2.13` | Published, public (through 0.2.11); the 0.2.13 tag is published by the release workflow, and this row is corrected once it is. PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). Exposes 22 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). |
+| `ghcr.io/jzkk720/ocr-service:0.2.13` | Published and public; verified 2026-11-02 (manifest HTTP 200). PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > Namespace and version corrected 2026-09-22. This table previously listed

@@ -598,7 +598,8 @@ services:
     # rather than merging with it, so mounting ${LAYA_HF_CACHE} over
     # /home/laya/.cache/huggingface hides every baked weight - proven 2026-11-02 by
     # mounting an empty directory and watching the snapshot disappear. Overriding
-    # the weights is opt-in through compose.laya-models.yaml.
+    # the weights means rebuilding the image with a different LAYA_REVISION build
+    # arg; shipping a mount here would un-bake it.
     #
     # HF_HUB_OFFLINE=1 keeps a bad lookup loud instead of reaching for the network.
     restart: unless-stopped
