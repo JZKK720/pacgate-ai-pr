@@ -170,8 +170,9 @@ static RE_LEGACY_ID: Lazy<Regex> =
 /// but a single-pattern consumer (the SQL audit in
 /// `scripts/lib/RawPiiPatterns.ps1`) has no second step and silently missed it.
 /// Measured 2026-11-02, found while reconciling the two.
-static RE_LAWYER_LABEL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"律师执业证(号码?)?[:：\s]*").expect("lawyer label regex is valid"));
+static RE_LAWYER_LABEL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:律师)?执业证(号码?)?[:：\s]*").expect("lawyer label regex is valid")
+});
 
 static RE_LAWYER_NO: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[0-9]{17}").expect("lawyer number regex is valid"));
@@ -196,9 +197,13 @@ static RE_LAWYER_NO: Lazy<Regex> =
 /// No label needed: the leading character must be one of the 31 province
 /// ideographs, so the shape is closed. `vehicle_plate_shape_ok` re-checks it so
 /// the pattern and the validator cannot drift.
+///
+/// The authority letter is `[A-Za-z]`, not `[A-Z]`. A plate printed in lower case
+/// (`京a12345`) is the same plate, and refusing it meant the value stayed in the
+/// text. `vehicle_plate_shape_ok` normalises case before the I/O exclusion.
 static RE_VEHICLE_PLATE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"[京津冀晋蒙辽吉黑沪苏浙皖闽赣鲁豫鄂湘粤桂琼渝川贵云藏陕甘青宁新][A-Z][A-Z0-9]{5,6}",
+        r"[京津冀晋蒙辽吉黑沪苏浙皖闽赣鲁豫鄂湘粤桂琼渝川贵云藏陕甘青宁新][A-Za-z][A-Za-z0-9]{5,6}",
     )
     .expect("vehicle plate regex is valid")
 });
@@ -235,11 +240,18 @@ static RE_GROUPED_DIGITS: Lazy<Regex> =
 /// placeholder became the handle.
 ///
 /// The `regex` crate has no lookahead, so the separation is done structurally: after
-/// the label the pattern requires an optional `[:：]` or whitespace, and the handle
-/// must begin with a letter. `WECHAT_8CA...` fails both - there is no separator, and
-/// the text right after the label starts with `_`.
+/// the label the separator is optional, and the handle must begin with a letter.
+/// `WECHAT_8CA...` fails on the letter requirement - the text right after the label
+/// starts with `_`.
+///
+/// The separator is `[:：\s]*`, not `[:：\s]+`. Measured 2026-11-02: Chinese documents
+/// routinely write `微信号zhangsan_2024` with no separator at all, so requiring one
+/// left that handle in the text. Dropping the `+` is safe ONLY because the handle
+/// must start with an ASCII letter: `微信号是主要联系方式` still fails, since 是 is not
+/// `[A-Za-z]`. That is why the leading-letter requirement cannot be relaxed to gain
+/// recall - it is what makes the optional separator safe.
 static RE_WECHAT: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:微信号?|WeChat\s*ID)[:：\s]+([A-Za-z][A-Za-z0-9_\-]{5,19})")
+    Regex::new(r"(?:微信号?|WeChat\s*ID)[:：\s]*([A-Za-z][A-Za-z0-9_\-]{5,19})")
         .expect("wechat regex is valid")
 });
 

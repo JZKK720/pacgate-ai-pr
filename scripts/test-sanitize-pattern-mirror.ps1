@@ -129,6 +129,9 @@ $mustMatch = [ordered]@{
     '律师执业证号 11101201810123456' = 'lawyer_license'
     '账号：6222020200112345678'      = 'bank_account'
     '抵押车辆 粤B12345'        = 'cn_plate'
+    # A lower-case plate is the same plate. Both the rule layer and this audit
+    # missed it until 2026-11-02, when an adversarial probe compared the two.
+    '抵押车辆 京a12345'        = 'cn_plate'
 }
 foreach ($value in $mustMatch.Keys) {
     $hits = Test-AnyPattern $value

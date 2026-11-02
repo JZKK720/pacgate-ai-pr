@@ -331,3 +331,74 @@ fn a_bank_account_label_before_a_short_number_is_not_an_account() {
         "a 6-digit run is too short to be an account: {found:?}"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spellings the canonical fixtures missed.
+//
+// Every test below was found by an adversarial probe on 2026-11-02, not by a
+// user report. The committed fixtures used ONE spelling per class; a scan does
+// not. Each of these was a real miss before the fix, and each is a case where
+// the detector HAD already matched the value and then discarded it, or where a
+// separator convention was assumed rather than checked.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A lowercase `x` check character must not defeat the resident-ID rule.
+///
+/// MEASURED 2026-11-02: `RE_CN_ID_CANDIDATE` matches `[\dXx]` but
+/// `cn_resident_id_shape_ok` accepted only `'X'`, so the regex matched and the
+/// validator threw the match away. A lowercase check character is ordinary in
+/// hand-typed and scanned forms, and the ID is just as identifying either way.
+#[test]
+fn a_lowercase_check_character_still_redacts_the_resident_id() {
+    for text in [
+        "身份证号：11010519900307001x",
+        "身份证号：11010519900307001X",
+    ] {
+        let found = detected_entities(text);
+        assert!(
+            found.contains(&EntityType::CnResidentId),
+            "a lowercase check character left the ID in the text: {text:?} -> {found:?}"
+        );
+    }
+}
+
+/// A licence label without the 律师 prefix is still the same field.
+#[test]
+fn a_bare_licence_label_still_redacts_the_lawyer_number() {
+    let found = detected_entities("执业证号：13101200510123456");
+    assert!(
+        found.contains(&EntityType::LawyerLicense),
+        "a bare 执业证号 label was not recognised: {found:?}"
+    );
+}
+
+/// A plate printed in lower case is the same plate.
+#[test]
+fn a_lowercase_plate_still_redacts() {
+    let found = detected_entities("车牌号：京a12345");
+    assert!(
+        found.contains(&EntityType::VehiclePlate),
+        "a lower-case plate was left in the text: {found:?}"
+    );
+}
+
+/// A 微信号 written with no separator at all is the common Chinese form.
+///
+/// This is only safe because the handle must begin with an ASCII letter, which
+/// is what keeps `微信号是主要联系方式` from becoming a match. Both halves are
+/// asserted here together, deliberately: relaxing the separator without that
+/// anchor would trade one false negative for a false positive.
+#[test]
+fn a_wechat_handle_needs_no_separator_but_still_needs_a_latin_letter() {
+    let no_separator = detected_entities("微信号zhangsan_2024");
+    assert!(
+        no_separator.contains(&EntityType::WeChatId),
+        "微信号 with no separator was missed: {no_separator:?}"
+    );
+
+    let prose = detected_entities("微信号是主要联系方式");
+    assert!(
+        !prose.contains(&EntityType::WeChatId),
+        "ordinary prose became a handle: {prose:?}"
+    );
+}

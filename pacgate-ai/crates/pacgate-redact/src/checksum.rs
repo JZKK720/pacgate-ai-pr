@@ -8,7 +8,13 @@
 /// China resident ID (身份证号), 18-digit ISO 7064 MOD 11-2.
 ///
 /// Layout: 6-digit region + 8-digit birthdate + 3-digit sequence + 1 check.
-/// The final character may be `X` (uppercase) representing 10.
+/// The final character may be `X` representing 10. Both cases are accepted on
+/// input: `RE_CN_ID_CANDIDATE` matches `[\dXx]`, and a lowercase `x` is a normal
+/// way for a scan or a hand-typed form to render the check character. Measured
+/// 2026-11-02: `cn_resident_id_shape_ok` accepted only `'X'` while the pattern
+/// accepted both, so `身份证号：11010519900307001x` matched the regex and was
+/// then thrown away by the validator - a real identifier left in the text by a
+/// detector that had already found it.
 pub fn validate_cn_resident_id(s: &str) -> bool {
     if !cn_resident_id_shape_ok(s) {
         return false;
@@ -54,7 +60,7 @@ pub fn cn_resident_id_shape_ok(s: &str) -> bool {
     if !chars[6..17].iter().all(|c| c.is_ascii_digit()) {
         return false;
     }
-    if !(chars[17].is_ascii_digit() || chars[17] == 'X') {
+    if !(chars[17].is_ascii_digit() || chars[17] == 'X' || chars[17] == 'x') {
         return false;
     }
     is_real_date(&chars[6..14])
@@ -196,12 +202,12 @@ pub fn vehicle_plate_shape_ok(s: &str) -> bool {
     if !PROVINCES.contains(&chars[0]) {
         return false;
     }
-    if !chars[1].is_ascii_uppercase() {
+    if !chars[1].is_ascii_alphabetic() {
         return false;
     }
-    chars[2..]
-        .iter()
-        .all(|c| c.is_ascii_digit() || (c.is_ascii_uppercase() && *c != 'I' && *c != 'O'))
+    chars[2..].iter().all(|c| {
+        c.is_ascii_digit() || (c.is_ascii_alphabetic() && *c != 'I' && *c != 'i' && *c != 'O' && *c != 'o')
+    })
 }
 
 /// Luhn (ISO/IEC 7812) for bank card numbers.

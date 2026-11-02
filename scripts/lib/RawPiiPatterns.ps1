@@ -83,7 +83,7 @@ $PacgateRawPiiPatterns = [ordered]@{
     # so the audit stayed silent on a real 17-digit licence. The Rust label regex has
     # the same shape but survives it by searching unanchored for the digits after the
     # label; a single SQL regex has no second step to fall back on.
-    'lawyer_license' = '律师执业证(号码?)?[:：]?[[:space:]]*[0-9]{17}'
+    'lawyer_license' = '(律师)?执业证(号码?)?[:：]?[[:space:]]*[0-9]{17}'
 
     # 银行账号: a digit run of 8-32 with optional grouping separators. Anchored on the
     # account label, because a bare digit run of that length is an amount or an order
@@ -99,7 +99,11 @@ $PacgateRawPiiPatterns = [ordered]@{
 
     # 车牌: province ideograph + authority letter + 5-6 characters. The province set is
     # closed, which is why the audit can look for a bare plate without a label.
-    'cn_plate'      = '[京津冀晋蒙辽吉黑沪苏浙皖闽赣鲁豫鄂湘粤桂琼渝川贵云藏陕甘青宁新][A-Z][A-Z0-9]{5,6}'
+    #
+    # `[A-Za-z]`, not `[A-Z]`. Measured 2026-11-02: a plate printed in lower case
+    # (`京a12345`) was invisible to both the rule layer and this audit, so a real plate
+    # could sit in a `sanitized` chunk and neither would report it.
+    'cn_plate'      = '[京津冀晋蒙辽吉黑沪苏浙皖闽赣鲁豫鄂湘粤桂琼渝川贵云藏陕甘青宁新][A-Za-z][A-Za-z0-9]{5,6}'
 
     # 纳税人识别号: the label plus a 15-20 character code (an old tax code or a USCC).
     'cn_tax_id'     = '纳税人识别号(码)?[:：]?[[:space:]]*[0-9A-Z]{15,20}'
