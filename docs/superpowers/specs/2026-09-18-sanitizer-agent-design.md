@@ -291,7 +291,8 @@ limitation; do not try to fix it here.
              Each match carries type, span, offset, rule_version, method.
 3 DECIDE     context rules → T1–T4 → replace / keep / escalate (HITL)
 4 REPLACE    apply spans deterministically. NO LLM in this stage.
-5 VERIFY     re-scan with THE SAME MATCHER that drove redaction.
+5 VERIFY     re-scan with THE SAME DETECTORS that drove redaction,
+             independently of the SUPPRESSOR that drove it.
              any residual, or any error → BLOCK
 6 RESTORE    local only, bound to the job's mapping version.
              unknown/mismatched placeholder → error or HITL, NEVER guess
@@ -301,6 +302,27 @@ limitation; do not try to fix it here.
 *"the residual check uses the same matcher that drove redaction, so a detected
 credential cannot pass."* Verification is **exact and deterministic**, never
 model-based.
+
+**The distinction that text elides, and that cost us a leak (2026-11-02).**
+"Same matcher" and "same suppression" are not the same claim. Reusing the
+*detector* is what makes verification exact: the verifier sees exactly the
+evidence the redactor acted on. Replaying the *suppressor* is the opposite - it
+re-creates the redactor's blind spots, so any survivor the suppressor missed on
+the way in is missed again on the way out, and `PASS` proves nothing. Measured
+consequence: `verdict: pass` with 13 replacements while 身份证号,
+统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and
+纳税人识别号 stayed verbatim in text that was then indexed as searchable, and a
+surviving resident ID was usable as a lookup key against the vector store.
+
+The implemented boundary (`pacgate_redact::verify`):
+
+| Residue source | May the redaction's suppressor drop it? |
+|---|---|
+| `Checksum` / `Pattern` / `Context` (a rule matched) | **No.** Only the exclusion of the redactor's own minted placeholder may explain it. |
+| `Model` (a guess) | **Yes**, and the drop is recorded in `verification_notes` as `model gate: ...`. |
+
+So the circularity is confined to the one class where it cannot hide a
+structural identifier, and the audit trail says when it happened.
 
 **Fail-closed rule:** unparseable input, a sanitizer error, an unassessable
 span, or an invalid encoding all resolve to BLOCK - never PASS. This is the

@@ -187,6 +187,16 @@ $gates = @(    'scripts/test-install-render.ps1'
     'scripts/test-staleness-probe.ps1'
     'scripts/audit-qm-bootstrap.ps1'
     'scripts/test-qm-sandbox-fingerprint.ps1'
+    # Proves the SQL audit's hand-written mirror of the rule layer has not drifted.
+    # That mirror is a second source of truth by necessity (the audit runs as SQL,
+    # where Rust cannot reach), and this repo has paid for the drift three times:
+    # 2026-10-15 the remediation "fixed" 39 clean documents; 2026-10-25 a `(?!0{17})`
+    # guard never matched its own placeholder (37 false leaks per pattern); and
+    # 2026-11-02 a placeholder-format change broke the then-correct guard from index
+    # 10 onward. Each failure was silent, and two were in the dangerous direction
+    # (a clean machine reported as leaking, or a leak reported as clean). Offline:
+    # no docker, no database.
+    'scripts/test-sanitize-pattern-mirror.ps1'
     'scripts/test-version-marker.ps1'
     'scripts/test-version-marker-against-image.ps1'
     # Asserts the release TAG still identifies the PUBLISHED artifacts - that the

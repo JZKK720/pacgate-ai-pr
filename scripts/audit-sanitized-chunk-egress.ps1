@@ -1,4 +1,4 @@
-# Audit: do `sanitized` chunks in kb_chunks still carry RAW identifiers?
+﻿# Audit: do `sanitized` chunks in kb_chunks still carry RAW identifiers?
 #
 # READ-ONLY. Issues SELECT statements only; never writes, never deletes.
 #
@@ -174,6 +174,13 @@ Write-Output ''
 # four documents, of which ZERO were real leaks - one was the redactor's own
 # placeholder (a guard off-by-one, now fixed), two were checksum-invalid
 # fictional fixtures, and the rest were substring double-counts.
+# The placeholder guard comes from the shared file, not a local copy. Three more
+# copies of the literal `(?!0{16})` lived here and in the remediation script; the
+# 2026-11-02 placeholder change broke all of them at once (index 10 onward eats a
+# leading zero per digit), which is exactly why the value is defined once.
+$idCardPattern = $patterns['cn_id_card']
+$usccPattern   = $patterns['uscc']
+
 $classify = Invoke-Psql @"
 WITH m AS (
   SELECT c.document_id, c.chunk_index, c.content
@@ -182,8 +189,8 @@ WITH m AS (
     AND ($(Get-PacgateRawPiiPredicate 'c.content'))
 )
 SELECT left(document_id::text,8) || '|' || chunk_index || '|' ||
-       (content ~ '(?!0{16})[0-9]{17}[0-9Xx]')::text || '|' ||
-       (content ~ '(?!0{16})[0-9A-HJ-NPQRTUWXY]{18}')::text || '|' ||
+       (content ~ '$idCardPattern')::text || '|' ||
+       (content ~ '$usccPattern')::text || '|' ||
        (content ~ '1[3-9][0-9]{9}')::text || '|' ||
        (content ~ '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}')::text
 FROM m
@@ -205,16 +212,28 @@ if ($classify.Count -gt 0) {
     Write-Output ''
 }
 
-# 2c. Checksum-validate the ID-shaped matches.
+# 2c. Classify the ID-shaped matches by check digit.
 #
-# This is the distinction the audit was missing. The product refuses to call a
-# bare digit run an identifier (spec 8.4), so a checksum-INVALID 18-digit run in
-# a sanitized chunk is the product working as designed, not a leak. Only a
-# checksum-VALID one proves the row was never rewritten.
+# This used to be a LEAK / NO-LEAK decision: the audit concluded that a
+# checksum-invalid 18-digit run was the product working as designed, so a machine
+# whose only matches were invalid IDs got "NO LEAK, exit 0".
 #
-# Measured 2026-10-25: both remaining documents are fixtures whose IDs fail the
-# ISO 7064 MOD 11-2 check (110105199003074512 -> expected 6, got 2;
-# 320102199205067890 -> expected 4, got 0). Zero real leaks.
+# MEASURED 2026-11-02 that conclusion is WRONG and was removed. A resident ID whose
+# shape is well-formed (region prefix plus a real calendar birthdate) is now redacted
+# even when its check digit is wrong, because a mistyped or OCR-damaged ID is still
+# personal data. The client case that forced this: `110105199003074512` has a bad
+# check digit (expected X, got 2), survived the old rule layer, was indexed as
+# searchable, and could be used as a lookup key against the vector store - in a
+# document carrying the `sanitized` label.
+#
+# So this number is now EVIDENCE WEIGHT, not a verdict input:
+#   * checksum-VALID matches are certainly issued identifiers;
+#   * checksum-INVALID matches are identifier-SHAPED values that the current rule
+#     layer redacts anyway, so finding one in a `sanitized` chunk means the chunk was
+#     written before the fix (or by a build without it) and must be re-sanitized.
+#
+# Both are reported as leaks. The distinction survives because an operator triaging a
+# long list wants to know which ones are unambiguous.
 $validIds = Invoke-Psql @"
 CREATE OR REPLACE FUNCTION pg_temp.cn_id_valid(s text) RETURNS boolean AS `$`$
 DECLARE
@@ -234,7 +253,7 @@ END;
 SELECT count(*) FROM kb_chunks c
 WHERE c.sanitization_state = 'sanitized'
   AND EXISTS (
-    SELECT 1 FROM regexp_matches(c.content, '(?!0{16})[0-9]{17}[0-9Xx]', 'g') AS r
+    SELECT 1 FROM regexp_matches(c.content, '$idCardPattern', 'g') AS r
     WHERE pg_temp.cn_id_valid(r[1])
   )
 "@
@@ -242,29 +261,17 @@ $validIds = ($validIds | Where-Object { $_ -and $_.Trim() -match '^\d+$' } | Sel
 if (-not $validIds) { $validIds = '0' }
 $validIds = $validIds.Trim()
 Write-Output "  checksum-VALID resident IDs in sanitized chunks: $validIds"
-Write-Output '  (a checksum-INVALID 18-digit run is NOT a leak - spec 8.4 forbids'
-Write-Output '   identifying an identifier from a bare digit run)'
+Write-Output '  (checksum-INVALID ID-shaped values are ALSO leaks since 2026-11-02:'
+Write-Output '   a mistyped or OCR-damaged ID is still personal data and is now'
+Write-Output '   redacted by the rule layer - see cn_resident_id_shape_ok)'
 Write-Output ''
-
-if ($totalLeak -gt 0 -and $validIds -eq '0') {
-    # Pattern matches exist, but not one of them is a checksum-valid identifier.
-    # This is the product working as designed, not a leak - and calling it one
-    # sends an operator to re-sanitize documents that are already clean.
-    Write-Output "== RESULT: $totalLeak pattern match(es), 0 checksum-valid - NO LEAK =="
-    Write-Output ''
-    Write-Output 'Every match is either a checksum-INVALID digit run (which spec 8.4'
-    Write-Output 'forbids treating as an identifier) or an inner substring of one. The'
-    Write-Output 'sanitizer is behaving as designed; there is nothing to remediate.'
-    Write-Output ''
-    Write-Output 'If these documents are fixtures, this is expected. If one is real'
-    Write-Output 'client material, check whether the ID is genuinely invalid before'
-    Write-Output 'concluding the redactor missed it.'
-    exit 0
-}
 
 if ($totalLeak -gt 0) {
     Write-Output "== RESULT: $totalLeak raw match(es) inside SANITIZED chunks - LEAK PRESENT =="
-    Write-Output "   $validIds of them are checksum-VALID resident IDs - those are real."
+    Write-Output "   $validIds of them are checksum-VALID resident IDs (certain)."
+    Write-Output "   The remaining $(($totalLeak) - [int]$validIds) match(es) still count as leaks: a"
+    Write-Output '   checksum-invalid but well-shaped ID is redacted by the current rule layer,'
+    Write-Output '   so finding one in a sanitized chunk means the row predates the fix.'
     Write-Output ''
     Write-Output 'Remediation, per affected document (choose one):'
     Write-Output '  a) Re-sanitize it. The sanitize job REPLACES the chunk text with the'
