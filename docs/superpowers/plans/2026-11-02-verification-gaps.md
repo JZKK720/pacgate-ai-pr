@@ -21,11 +21,17 @@
 
 | Task | State |
 |---|---|
-| 1 - gate every configured laya checkpoint | **DONE** — three assertions in `scripts/test-laya-tools.ps1` L10, four states red-checked, `.env.example` uncommented |
-| 2 - `compose.bench.yaml` benchmark override | **DEFERRED** by the operator on 2026-11-02 |
-| 3 - retract the false qm-digest gap | not started |
+| 1 - gate every configured laya checkpoint | **DONE** — four assertions in `scripts/test-laya-tools.ps1` L10 (mount, `.env.example`, `LAYA_MODELS` default, live round-trip), four cache states red-checked, `.env.example` uncommented |
+| 2 - `compose.bench.yaml` benchmark override | **DEFERRED** by the operator on 2026-11-02. Decided dev-only, not shipped |
+| 3 - retract the false qm-digest gap | **DONE** — recorded in "Verified starting state" above; the original laya-plan target was wrong and is corrected in place |
 | 4 - document the benchmark ceiling | not started |
-| 5 - full read-back | not started |
+| 5 - full read-back | partially done — the gate sweep ran (81 pass / 0 fail / 1 known skip); the enable-path re-proof is outstanding |
+
+**What Task 1 cost, for the next person writing an assertion here.** The first
+version of the block went green and was wrong in three ways. Every one was found by
+*reintroducing the defect*, never by reading the code back. Six earlier assertions in
+this suite failed the same way. Treat a green result on a new assertion as no
+evidence at all until you have made it red.
 
 ---
 
@@ -213,23 +219,39 @@ except Exception as e:
 }
 ```
 
-- [ ] **Step 2: Run it to verify both red states**
+- [x] **Step 2: Run it to verify both red states**
 
 Run: `pwsh -NoProfile -File scripts/test-laya-tools.ps1`
 Expected today: **FAIL** on `.env.example sets LAYA_HF_CACHE uncommented` (it is commented — measured: `active LAYA_HF_CACHE lines: 0`), and **SKIP** on the behavioural pair because laya is not running.
 
-- [ ] **Step 3: Fix `.env.example`**
+> **RAN 2026-11-02: exactly as predicted** — `[FAIL] .env.example sets LAYA_HF_CACHE
+> uncommented` and `[SKIP] running laya serves every configured checkpoint`, exit 1.
+> This was the one step in the first draft whose expectation matched what happened.
+
+- [x] **Step 3: Fix `.env.example`**
 
 Replace the commented block with:
 
 ```dotenv
-# REQUIRED when the laya profile is enabled. Point it at a staged HF cache
-# (scripts/stage-laya-models.ps1). If unset, `--profile laya` still pulls and
-# starts the image, and an EMPTY cache makes the container exit at boot - but a
-# PARTIAL cache reports healthy while the missing checkpoint's language returns
-# HTTP 500. Set it before enabling the profile.
+# REQUIRED when the laya profile is enabled. A relative value resolves against
+# THIS directory (deploy/client-bundle), not your shell's cwd - so the default
+# below means deploy/laya-hf-cache. Prefer an absolute path on any machine where
+# in doubt. Stage the cache with scripts/stage-laya-models.ps1. An EMPTY cache
+# makes the container exit at boot; a PARTIAL one reports healthy while the
+# missing checkpoint's language returns HTTP 500. Set it before enabling the
+# profile.
 LAYA_HF_CACHE=../laya-hf-cache
 ```
+
+> **Applied, then corrected 2026-11-02.** The first version omitted what the
+> relative path is relative to. Verified with `docker compose -f compose.prod.yaml
+> --profile laya config`: the shipped default resolves to
+> `deploy/laya-hf-cache`, a sibling of the compose directory that nothing creates.
+> It is the right value *for the compose file*, but an operator running
+> `stage-laya-models.ps1 -OutDir ..\laya-hf-cache` from the repo root gets
+> `D:\users\joeyzh\github-pr\laya-hf-cache` and then mounts an empty directory,
+> which is the boot crash. The comment now states the resolution base.
+> Also uncommented `LAYA_MODELS` with a note that it is not optional.
 
 - [x] **Step 4: Verify green, then red-check the partial cache**
 
@@ -471,6 +493,14 @@ Replace the qm row of "Verified starting state" with:
 ```markdown
 | qm digests untracked | **FALSE, re-verified 2026-11-02.** `compose.qm.yaml:19` pins `ghcr.io/yc-software/qm/core@sha256:bee03e7f2271...` by digest and the running container matches it. Digest pinning is the *stronger* form, so there was never a gap. The audit reported it without checking; the check is one `Select-String`. No action, and nothing to retract in the laya plan - that document never made this claim. |
 ```
+
+> **DONE 2026-11-02.** Applied to the "Verified starting state" table. Verified
+> first: `Select-String -Path docs/superpowers/plans/2026-10-31-laya-local-decision-engine.md
+> -Pattern qm` → **0 matches**, and that file has **two** `Still not established`
+> headings (L117, L170), neither about qm. The original Step 2 would have attached an
+> unrelated correction to a laya document and closed nothing. No separate commit was
+> made for this task alone; the retraction landed with the gate corrections in
+> `7897ddf` because both touched the same table.
 
 - [x] **Step 3: Commit**
 
