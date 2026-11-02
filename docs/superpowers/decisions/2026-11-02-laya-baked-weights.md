@@ -87,13 +87,31 @@ separate evaluation, not an image change.
   red-checked by reintroducing its defect. The old L6 assertion that *required* a
   cache mount was inverted, because keeping it would have demanded the defect.
 
+### The CI path, exercised for real (2026-11-02)
+
+This section previously said the CI path was unproven. Tagging `v0.2.13` settled it:
+
+| Check | Result |
+|---|---|
+| `laya-serve:0.2.13` published to GHCR | **yes**, after ~12 min (it builds last, after ModelScope staging) |
+| Published compressed size | **1.64 GB**, vs **2.96 GB** for 0.2.12 |
+| Weight layer in the published image | **1312.7 MB** — the staging step worked from a GitHub runner |
+| `torch` in the published image | `2.15.0+cpu`, and no `nvidia/` directory |
+| Runs with no mount | `loaded: ["multilingual","english"]`, healthy in ~30 s |
+| `docker compose --profile laya up -d laya` | one command, no staging, healthy in 30 s |
+| Gate against the published container | **54 passed, 0 skipped** |
+| `pacgate_clause_risk` through pacgate-mcp | EN `high` 0.93, ZH `high` 0.70 — real verdicts, both languages |
+| Full suite on 0.2.13 | 81 pass / 0 fail / 1 known CANNOT-CHECK |
+
+ModelScope from a GitHub-hosted runner was **fast enough**: the staged weights made
+it into the image on the first attempt. The `continue-on-error` guard was not needed
+this time, and stays as protection against the mirror being slow on a future release.
+
 ## Still not established
 
-- **No CI run has staged weights, built, and published 0.2.13.** Everything above is
-  a local build of the same Dockerfile. The workflow change is validated as YAML,
-  not as a green publish.
-- **Whether ModelScope is fast enough from a GitHub-hosted runner** to keep the job
-  inside its timeout. It was slow from this dev box (a partial pull stalled after
-  257 MB). The staging step is `continue-on-error`, so a slow mirror cannot block
-  the other five images; when it fails, only `laya-serve` is missing that release,
-  which is the right blast radius.
+- **How long a cold staging run takes from a runner.** This release staged and
+  published, but no timing was recorded, so the job's timeout headroom is unknown.
+- **Pulling ~1.6 GB on a client's link.** The AIPC install path was not re-measured
+  with the larger image. On this dev box the pull needed retries against TLS
+  handshake timeouts, which is a property of this link rather than of the image, but
+  it is the one client-facing cost that went up.
