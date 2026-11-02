@@ -151,7 +151,10 @@ documentation implies is settled.
 - In-budget decisions: abstention fires, and the grade now follows it.
 - Both guardrails: the Chinese withheld payload routes to `pacgate_clause_risk`;
   the English `partial` flag reaches the payload.
-- Batch-64: `MAX_BATCH_STATES = 64`, `MAX_QUESTIONS = 64`, `MAX_STATE_CHARS = 50000`.
+- Batch limits: `MAX_BATCH_STATES = 64`, `MAX_QUESTIONS = 64`,
+  `MAX_STATE_CHARS = 50000`. A 32-state batch ran; single-vs-batch parity was
+  checked at 8 states (8 answers, 0 mismatch). The 64 cap is read from the
+  service, not exercised here.
 - Parity: single vs `/v1/systemone/batch`, 8 answers compared, 0 mismatch.
 - Gate: `scripts/test-laya-tools.ps1` **64 passed, 0 skipped**, with four new L11
   assertions red-checked by reintroducing both defects (4 failures) and restoring.
