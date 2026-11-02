@@ -26,120 +26,210 @@ These were measured before writing the plan, not assumed:
 | Claim | Verified result |
 |---|---|
 | No gate knows `LAYA_HF_CACHE` is required | `Select-String scripts/test-*.ps1 -Pattern LAYA_HF_CACHE` → **0 matches** |
-| `LAYA_HF_CACHE` absent from the deployed `.env` | **absent** — service starts, `/health` passes, every clause call fails |
+| `LAYA_HF_CACHE` absent from the deployed `.env` | **absent** — see the corrected failure analysis below |
 | Benchmarks never run in CI | **0** gate references `bench-laya-*` |
 | qm digests untracked | **FALSE** — `compose.qm.yaml:19` pins `sha256:bee03e7f2271...` |
 | "No PRC benchmark exists" | **TRUE and unfixable here** — needs real firm contracts |
 
+### CORRECTED 2026-11-02: how laya actually fails without weights
+
+The first draft of this plan claimed an unset `LAYA_HF_CACHE` yields "a container
+that passes `/health` and fails every clause call". That is **wrong**, and the
+wrong version would have produced a vacuous assertion. Measured by running the
+shipped image against two cache states:
+
+| Cache state | Container | `/health` | Clause calls |
+|---|---|---|---|
+| **Empty** (no `models--`) | **exits at boot** — `LocalEntryNotFoundError: ... outgoing traffic has been disabled` | never serves | never — fails loudly |
+| **Partial** (`multilingual` only, `english` missing) | **`running`, health `healthy`** | **`200`**, `loaded: ["multilingual"]` | Chinese **ok**; English **HTTP 500** |
+
+So there are two distinct failure modes and the dangerous one is partial:
+
+- An **empty** cache cannot ship silently. `LAYA_PRELOAD=1` makes the service
+  refuse to start. Loud, safe.
+- A **partial** cache ships silently: compose reports `healthy`, `/health` says
+  `ok`, and only the language whose checkpoint is missing returns 500. That is
+  exactly the en/zh deployment, where `LAYA_MODELS` defaults to
+  `multilingual,english`.
+
+**What this means for the assertions below.** "The hub directory is non-empty"
+would **pass** the partial-cache state, so it is not a check - it is decoration.
+The assertion must compare `/health`'s `loaded` list against the checkpoints
+`LAYA_MODELS` actually names, and additionally prove an English round-trip,
+because `loaded` is the service's own claim and a 500 is the observable fact.
+
 ---
 
-### Task 1: Gate `LAYA_HF_CACHE` is set when the laya profile is active
+### Task 1: Gate that laya can serve every checkpoint it is configured to load
 
-**Why:** The single highest-risk gap. A fresh AIPC running `--profile laya` gets a healthy container that fails every clause call, because `/health` returns 200 with **no checkpoint loaded**. The failure surfaces to a lawyer as a broken feature, days later.
+**Why:** Measured 2026-11-02. A **partial** cache ships silently: compose reports
+`healthy`, `/health` returns 200 with `loaded: ["multilingual"]`, Chinese clauses
+work, and **English clauses return HTTP 500**. In an en/zh product that is a
+missing feature nobody notices until a lawyer tries it. An **empty** cache is safe
+by comparison - `LAYA_PRELOAD=1` makes the container exit at boot with
+`LocalEntryNotFoundError`.
 
 **Files:**
-- Modify: `scripts/test-laya-tools.ps1` (append L10 after L9)
-- Modify: `deploy/client-bundle/.env.example` — make `LAYA_HF_CACHE` uncommented with a comment that it is required for the profile
+- Modify: `scripts/test-laya-tools.ps1` (append L10 before the summary block at L415)
+- Modify: `deploy/client-bundle/.env.example` — uncomment `LAYA_HF_CACHE` with a required note
 
 **Interfaces:**
-- Consumes: `$src` (server.py text), `Check`/`Skip` helpers already defined in the script
+- Consumes: `Check($name, $ok, $detail)` at L44 and `Skip($name, $why)` at L48, both already defined; `$src` at L59 (server.py text, in scope at the end of the script)
 - Produces: nothing consumed by later tasks
 
-- [ ] **Step 1: Write the failing assertion**
+**Design note — the first version of this assertion was vacuous.** It checked that
+the hub directory was non-empty, which the partial-cache state **passes**. Three
+assertions replace it, each targeting a state the experiment actually produced:
+mount configured, `.env.example` uncommented, and `loaded` matching `LAYA_MODELS`
+plus a live English round-trip.
 
-Append before the closing summary block in `scripts/test-laya-tools.ps1`:
+- [ ] **Step 1: Write the three assertions**
+
+Append immediately before the `Write-Host ''` / `$total = $script:pass + $script:fail` block at L415:
 
 ```powershell
 Write-Host ''
-Write-Host 'L10 the laya profile cannot start without a model cache' -ForegroundColor Cyan
+Write-Host 'L10 the laya profile cannot ship a checkpoint-less or half-loaded service' -ForegroundColor Cyan
 
-# Measured 2026-11-02: LAYA_HF_CACHE is absent from the deployed .env, and no
-# gate referenced it. A fresh AIPC enabling `--profile laya` gets a container that
-# passes /health (which loads no checkpoint) and fails every clause call. That is
-# the exact failure /health cannot detect, so it must be caught before start.
+# Measured 2026-11-02. Two failure modes, only one silent:
+#   empty cache    -> container exits at boot (LocalEntryNotFoundError). Loud, safe.
+#   PARTIAL cache  -> healthy, /health 200, loaded:["multilingual"], English -> HTTP 500.
+# The partial case is the one this gate exists for, and it is why "the directory
+# is non-empty" is not an assertion: it would pass here.
 
-# 1. Both lanes must default the mount somewhere explicit, never to a bare ../ path
-#    that only exists on a dev box.
+# 1. Both lanes must name the cache variable, or the mount silently falls back to a
+#    dev-box relative path that will not exist on an AIPC.
 foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     $p = Join-Path 'deploy/client-bundle' $lane
     if (-not (Test-Path -LiteralPath $p)) { Check "$lane exists" $false; continue }
     $t = [System.IO.File]::ReadAllText((Resolve-Path $p))
-    Check "$lane references LAYA_HF_CACHE for the model mount" ($t -match 'LAYA_HF_CACHE') `
-        'without it the mount falls back to a dev-box path that will not exist on an AIPC'
+    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($t -match 'LAYA_HF_CACHE') `
+        'without it the mount falls back to a path that will not exist on an AIPC'
 }
 
-# 2. .env.example must present it as required, not optional. This is prose in a
-#    template, so assert the variable is present UNCOMMENTED - a commented
-#    `#LAYA_HF_CACHE=` is exactly what produced the failure.
+# 2. .env.example must set it UNCOMMENTED. A commented `#LAYA_HF_CACHE=` is what
+#    shipped, and install.ps1 only tells the operator to copy the file - it does
+#    not render a default - so a commented entry stays absent in the real .env.
 $envExample = 'deploy/client-bundle/.env.example'
 if (-not (Test-Path -LiteralPath $envExample)) {
     Check '.env.example exists' $false
 }
 else {
-    $lines = Get-Content -LiteralPath $envExample
-    $active = @($lines | Where-Object { $_ -match '^\s*LAYA_HF_CACHE\s*=' })
+    $active = @(Get-Content -LiteralPath $envExample | Where-Object { $_ -match '^\s*LAYA_HF_CACHE\s*=' })
     Check '.env.example sets LAYA_HF_CACHE uncommented' ($active.Count -ge 1) `
-        'a commented default is what shipped, and the service then started with no weights'
+        'a commented default ships, install.ps1 does not render one, so the client gets no value'
 }
 
-# 3. If a laya container is running, its mount must actually resolve to a
-#    checkpoint. Behavioural: a running service with an empty cache is the
-#    condition being guarded.
+# 3. Behavioural, and the only assertion that catches the partial cache. Compare the
+#    service's own `loaded` list against the checkpoints LAYA_MODELS asks for, then
+#    prove an ENGLISH round-trip - `loaded` is the service's claim, a 500 is the fact.
 $running = (& docker ps --filter 'name=^laya$' --format '{{.Names}}' 2>$null | Out-String).Trim()
 if (-not $running) {
-    Skip 'running laya has a populated cache' 'laya is not running (the profile is opt-in)'
+    Skip 'running laya serves every configured checkpoint' 'laya is not running (the profile is opt-in)'
 }
 else {
-    $hub = (& docker exec laya sh -c 'ls /home/laya/.cache/huggingface/hub 2>/dev/null' 2>&1 | Out-String).Trim()
-    $hasModel = $hub -match 'models--'
-    Check 'running laya can see a staged checkpoint' $hasModel `
-        "hub contents: '$hub' - the container is healthy in name only"
+    $healthJson = (& docker exec laya python3 -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=6).read().decode())" 2>&1 | Out-String).Trim()
+    $health = $null
+    try { $health = $healthJson | ConvertFrom-Json } catch { }
+
+    if (-not $health) {
+        Check 'running laya answers /health with JSON' $false $healthJson
+    }
+    else {
+        # Read the configured list from the LIVE container. If it cannot be read,
+        # FAIL rather than assume a default: falling back to 'multilingual' here
+        # would make a multilingual-only cache pass, which is precisely the state
+        # this assertion exists to reject.
+        $modelsRaw = (& docker exec laya sh -c 'printenv LAYA_MODELS' 2>&1 | Out-String).Trim()
+        if (-not $modelsRaw -or $modelsRaw -match 'not found|No such|executable file') {
+            Check 'LAYA_MODELS is readable from the running laya' $false `
+                "printenv returned: '$modelsRaw' - without it, the checkpoints this service is meant to serve are unknown"
+        }
+        else {
+            $want = @($modelsRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $loaded = @($health.loaded)
+            $missing = @($want | Where-Object { $loaded -notcontains $_ })
+            Check 'every checkpoint in LAYA_MODELS is loaded' ($missing.Count -eq 0) `
+                "LAYA_MODELS asks for [$($want -join ', ')] but the service loaded [$($loaded -join ', ')]; a missing checkpoint makes that language return HTTP 500 while compose still reports healthy"
+        }
+
+        # The observable fact, not the service's self-report.
+        $enProbe = @'
+import json, urllib.request, sys
+body = json.dumps({"state": "The Supplier shall be liable for all losses without limitation.",
+                    "questions": {"r": {"type": "noul", "instructions": "Is this risky?"}}}).encode()
+req = urllib.request.Request("http://127.0.0.1:8000/v1/systemone", data=body,
+                             headers={"Content-Type": "application/json"})
+try:
+    urllib.request.urlopen(req, timeout=90).read()
+    print("OK")
+except Exception as e:
+    print("FAIL " + type(e).__name__ + " " + str(e)[:80])
+'@
+        $tmpEn = Join-Path $env:TEMP ("enprobe-" + [guid]::NewGuid().ToString('n').Substring(0, 6) + '.py')
+        [System.IO.File]::WriteAllText($tmpEn, $enProbe, [System.Text.UTF8Encoding]::new($false))
+        & docker cp $tmpEn "laya:/tmp/enprobe.py" 2>&1 | Out-Null
+        $enOut = (& docker exec laya python /tmp/enprobe.py 2>&1 | Out-String).Trim()
+        & docker exec laya rm -f /tmp/enprobe.py 2>&1 | Out-Null
+        Remove-Item -LiteralPath $tmpEn -Force -ErrorAction SilentlyContinue
+        Check 'a running laya can actually serve an English clause' ($enOut -match '^OK') `
+            "English round-trip returned: $enOut - this is the partial-cache failure mode, where /health says ok and only English breaks"
+    }
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails for the right reason**
+- [ ] **Step 2: Run it to verify both red states**
 
 Run: `pwsh -NoProfile -File scripts/test-laya-tools.ps1`
-Expected: FAIL on `.env.example sets LAYA_HF_CACHE uncommented` (it is commented today). The two lane assertions should PASS (both lanes already reference it).
+Expected today: **FAIL** on `.env.example sets LAYA_HF_CACHE uncommented` (it is commented — measured: `active LAYA_HF_CACHE lines: 0`), and **SKIP** on the behavioural pair because laya is not running.
 
-- [ ] **Step 3: Fix `.env.example` so the assertion can pass**
+- [ ] **Step 3: Fix `.env.example`**
 
-Change the commented block to an uncommented, explained default:
+Replace the commented block with:
 
 ```dotenv
 # REQUIRED when the laya profile is enabled. Point it at a staged HF cache
-# (see scripts/stage-laya-models.ps1). If this is unset the laya container still
-# starts and /health still returns 200, but every clause call fails - /health
-# does not load a checkpoint. Set it before `--profile laya up`.
+# (scripts/stage-laya-models.ps1). If unset, `--profile laya` still pulls and
+# starts the image, and an EMPTY cache makes the container exit at boot - but a
+# PARTIAL cache reports healthy while the missing checkpoint's language returns
+# HTTP 500. Set it before enabling the profile.
 LAYA_HF_CACHE=../laya-hf-cache
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [ ] **Step 4: Verify green, then red-check the partial cache**
 
 Run: `pwsh -NoProfile -File scripts/test-laya-tools.ps1`
-Expected: `RESULT: ... (N passed, 1 skipped)` with the skip naming the non-running laya profile.
+Expected: all pass, behavioural pair skipped.
 
-- [ ] **Step 5: Red-check the behavioural half**
+Now prove assertion 3 catches the real defect:
 
 ```powershell
-# Start laya pointed at an EMPTY cache - the exact AIPC failure.
-New-Item -ItemType Directory -Force -Path "$env:TEMP\empty-cache" | Out-Null
+# Stage multilingual only - the partial cache that shipped silently.
+$full = 'laya-hf-cache\hub\models--convaiinnovations--laya'
+$part = "$env:TEMP\partial-cache\hub\models--convaiinnovations--laya"
+$sha  = '7b928d828b7b0e022f929d9bd2e44165aa270148'
+New-Item -ItemType Directory -Force -Path "$part\snapshots\$sha", "$part\refs" | Out-Null
+Copy-Item "$full\refs\main" "$part\refs\main" -Force
+Copy-Item -Recurse "$full\snapshots\$sha\multilingual" "$part\snapshots\$sha\multilingual" -Force
 docker run -d --name laya-mt --network pacgate-ai-bundle_default `
-  -e LAYA_PRELOAD=1 -e LAYA_MODELS=multilingual -e HF_HUB_OFFLINE=1 `
-  -v "$env:TEMP\empty-cache:/home/laya/.cache/huggingface:ro" `
+  -e LAYA_PRELOAD=1 -e LAYA_MODELS=multilingual,english -e HF_HUB_OFFLINE=1 `
+  -v "$env:TEMP\partial-cache:/home/laya/.cache/huggingface:ro" `
   ghcr.io/jzkk720/laya-serve:0.2.12
-Start-Sleep -Seconds 20
-pwsh -NoProfile -File scripts/test-laya-tools.ps1 | Select-String 'staged checkpoint'
+Start-Sleep -Seconds 50
+pwsh -NoProfile -File scripts/test-laya-tools.ps1 | Select-String 'loaded|English clause'
 docker rm -f laya-mt | Out-Null
+Remove-Item -Recurse -Force "$env:TEMP\partial-cache" -ErrorAction SilentlyContinue
 ```
 
-Expected: `[FAIL] running laya can see a staged checkpoint` with `hub contents: ''`. Then removing the container returns the gate to a skip.
+Expected: `[FAIL] every checkpoint in LAYA_MODELS is loaded` (asks for multilingual,english; loaded multilingual) **and** `[FAIL] a running laya can actually serve an English clause` with `FAIL HTTPError HTTP Error 500`.
 
-- [ ] **Step 6: Commit**
+Note: `LAYA_MODELS` must name **both** here even though the cache holds one, because that is what compose defaults to. With `LAYA_MODELS=multilingual` the same partial cache is *correct* and the assertions rightly pass — that distinction is the whole point.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/test-laya-tools.ps1 deploy/client-bundle/.env.example
-git commit -m "test(laya): gate the model cache the laya profile silently requires"
+git commit -m "test(laya): catch the partial cache that reports healthy and 500s one language"
 ```
 
 ---
