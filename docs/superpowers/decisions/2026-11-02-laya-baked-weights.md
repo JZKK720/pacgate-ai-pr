@@ -64,6 +64,20 @@ compressed** in the registry, **2.8 GB** as an uncompressed rootfs. That cost is
 paid **only** by machines that enable the profile: `docker compose config --images`
 omits `laya-serve` entirely without `--profile laya`. Verified in both lanes.
 
+**The larger cost is resident memory, and it is not in any capacity model.**
+Measured 2026-11-02 with both checkpoints loaded and idle: `docker stats` reports
+**4.378 GiB**, summed in-container RSS **3.27 GiB** — roughly 3× the weights,
+because each checkpoint holds an fp32 copy. That is host RAM, not VRAM.
+
+`install.ps1`'s residency tiers (`high` / `big-ram-small-vram` / `standard` /
+`constrained`) describe **Ollama only**; no gate references laya at all
+(`Select-String scripts/test-*.ps1 -Pattern laya` returns nothing in the four
+capacity and memory gates). On a 16 GiB AIPC with a large local model already
+resident, enabling laya is a plausible route into paging — the exact failure mode
+`LLAMA_ARG_CACHE_RAM` exists to prevent. This is now documented in `.env.example`;
+it is **not** enforced, because the right threshold depends on which local models a
+given AIPC runs.
+
 ## NPU, considered and rejected
 
 The AIPC class is AMD Ryzen AI 9 HX 370 and does expose an NPU — this dev box
