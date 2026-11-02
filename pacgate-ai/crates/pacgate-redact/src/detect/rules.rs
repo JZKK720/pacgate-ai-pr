@@ -30,8 +30,20 @@ static RE_USCC_CANDIDATE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"[0-9A-HJ-NPQRTUWXY]{18}").expect("uscc candidate regex is valid")
 });
 
+/// PRC mobile number, with an optional country code.
+///
+/// The `(?:86)?` is required, not cosmetic. MEASURED 2026-11-02: a business card
+/// written `手机 +8613912345679` kept the number in the text, because `is_bounded`
+/// saw the `6` of `86` immediately before the `1` as an ASCII alphanumeric and
+/// rejected the match. The digits were then offered to the bank-card rule, which
+/// claims them only when they happen to pass Luhn - so whether a mobile leaked
+/// depended on its checksum. `+8613812345678` was redacted (a `+` breaks the run and
+/// the 13-digit remainder passed Luhn) while `+8613912345679` was not.
+///
+/// Anchoring `86` inside the candidate is safe because it is at the START of the
+/// match: it cannot swallow a digit that belongs to a preceding number.
 static RE_MOBILE_CANDIDATE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"1[3-9]\d{9}").expect("mobile regex is valid"));
+    Lazy::new(|| Regex::new(r"(?:86)?1[3-9]\d{9}").expect("mobile regex is valid"));
 
 static RE_DIGIT_RUN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d{12,19}").expect("digit run regex is valid"));
@@ -126,8 +138,16 @@ static RE_HK_MO_TRAVEL_PERMIT: Lazy<Regex> =
 static RE_TRAVEL_PERMIT_ANCHOR: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"港澳(?:通行证|居民来往内地通行证)(?:号码|编号)?[:：]?\s*").expect("travel permit anchor is valid"));
 
-static RE_TRAVEL_PERMIT_C: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"C[0-9]{7,8}").expect("travel permit C number regex is valid"));
+/// The number after a 港澳通行证 label, in any prefix the permit is issued with.
+///
+/// `[CHM]`, not `C`. MEASURED 2026-11-02: the label-anchored path accepted only a
+/// `C`-prefixed number, while the unlabelled `RE_HK_MO_PERMIT` rule requires `H`/`M`
+/// followed by exactly TEN digits. So `港澳通行证 H01234567` - a labelled permit
+/// with the shorter printed form - matched NEITHER, stayed in the text through a
+/// `verdict: pass`, and was published to the knowledge base. The label is what makes
+/// this safe: an unlabelled `[HM]` + 7 digits is still never claimed.
+static RE_TRAVEL_PERMIT_NUMBER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[CHM][0-9]{7,10}").expect("travel permit number regex is valid"));
 
 /// 台胞证 requires a label; this anchor finds the label itself so the digit
 /// run right after it can be promoted to a Tier-1 match.
@@ -559,7 +579,7 @@ impl Detector for TierOneDetector {
             let Some(rest) = text.get(label_end..) else {
                 continue;
             };
-            if let Some(m) = RE_TRAVEL_PERMIT_C.captures(rest) {
+            if let Some(m) = RE_TRAVEL_PERMIT_NUMBER.captures(rest) {
                 if let Some(c) = m.get(0) {
                     let start = label_end + c.start();
                     let end = label_end + c.end();

@@ -66,7 +66,14 @@ function Invoke-Psql([string]$sql) {
     # wrong loudly, which is how it was caught. STDIN has no quoting to get wrong.
     $out = $sql | docker exec -i $DbContainer psql -U pacgate -d pacgate -t -A 2>&1
     if ($LASTEXITCODE -ne 0) { return $null }
-    return @($out | Where-Object { $_ -and $_.Trim() })
+    # `2>&1` merges docker's STDERR into this stream as ErrorRecord objects, and an
+    # ErrorRecord has no .Trim(). A warning line (a container-health notice, a psql
+    # NOTICE) therefore threw MethodNotFound inside this filter and the error object
+    # itself survived into the returned array as a counted "match". Measured
+    # 2026-11-02: the audit reported "10 raw match(es)" while printing the exception
+    # above the count. Cast to string first, then filter on CONTENT, so a diagnostic
+    # can never be counted as a leak again.
+    return @($out | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_.Trim() })
 }
 
 # 0. Reachability. Exit 2 rather than reporting a clean bill of health for a

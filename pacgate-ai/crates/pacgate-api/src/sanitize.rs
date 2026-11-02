@@ -542,6 +542,11 @@ fn role_may_approve(role: &str) -> bool {
 /// page with `offset` when a matter has more.
 const RESCAN_MAX_CHUNKS: i64 = 2000;
 
+/// Ceiling on reported findings. One chunk can hold many surviving identifiers
+/// (a form row with a plate, a permit, a handle and a USCC measured four), so the
+/// finding count is not bounded by the chunk count.
+const RESCAN_MAX_FINDINGS: usize = 5000;
+
 #[derive(Debug, Deserialize)]
 pub struct RescanRequest {
     /// `true` scans every chunk in the matter. `false` (default) scans only one
@@ -652,6 +657,7 @@ pub async fn rescan_residue_handler(
     let mut findings: Vec<RescanFinding> = Vec::new();
     let mut offending_docs: Vec<String> = Vec::new();
     let mut already_sanitized: Vec<String> = Vec::new();
+    let mut truncated = false;
 
     for row in &rows {
         let chunk_id: uuid::Uuid = row.get("chunk_id");
@@ -701,19 +707,29 @@ pub async fn rescan_residue_handler(
             already_sanitized.push(doc_id.clone());
         }
 
-        // One finding per chunk keeps the response readable; the entity and the
-        // surviving text are what a reviewer needs to judge it.
-        let first = found
-            .into_iter()
-            .min_by_key(|m| (m.start, m.end))
-            .expect("non-empty checked above");
-        findings.push(RescanFinding {
-            document_id: doc_id,
-            chunk_id: chunk_id.to_string(),
-            document_state: doc_state,
-            entity: first.entity.code().to_string(),
-            text: first.text,
-        });
+        // Report EVERY surviving match, not one per chunk.
+        //
+        // This used to keep only `min_by_key(|m| (m.start, m.end))` for
+        // readability. MEASURED 2026-11-02: a chunk holding a plate, a HK/MO
+        // permit, a WeChat handle AND a USCC reported only `PLATE 京A12345`.
+        // Re-sanitizing fixes all four, so nothing was left behind - but the
+        // operator could not see that four classes were exposed, and the report
+        // could not answer the one question being asked of it ("which classes are
+        // still leaking"). An understated leak report is its own hazard: it looks
+        // like a small problem.
+        for m in found {
+            if findings.len() >= RESCAN_MAX_FINDINGS {
+                truncated = true;
+                break;
+            }
+            findings.push(RescanFinding {
+                document_id: doc_id.clone(),
+                chunk_id: chunk_id.to_string(),
+                document_state: doc_state.clone(),
+                entity: m.entity.code().to_string(),
+                text: m.text,
+            });
+        }
     }
 
     let chunks_scanned = rows.len() as i64;
@@ -759,7 +775,7 @@ pub async fn rescan_residue_handler(
         findings,
         already_marked_sanitized: already_sanitized,
         next,
-        truncated: chunks_scanned >= RESCAN_MAX_CHUNKS,
+        truncated: chunks_scanned >= RESCAN_MAX_CHUNKS || truncated,
     }))
 }
 #[derive(Debug, Serialize)]

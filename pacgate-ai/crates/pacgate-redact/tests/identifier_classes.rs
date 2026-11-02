@@ -320,9 +320,54 @@ fn a_wechat_placeholder_is_not_re_detected_as_a_handle() {
     }
 }
 
-/// A bank-account label followed by a 6-digit number is not an account: the
-/// length window starts at 8 precisely so a date or amount fragment cannot
-/// satisfy it.
+/// A mobile written with a country code must not depend on its Luhn checksum.
+///
+/// MEASURED 2026-11-02: `is_bounded` rejected the match when `86` sat flush against
+/// the `1`, because `6` is an ASCII alphanumeric. The digits then fell through to the
+/// bank-card rule, which claims them only if they pass Luhn - so `+8613812345678` was
+/// redacted while `+8613912345679` was not. Which mobiles leak must not depend on a
+/// checksum that has nothing to do with mobile numbers.
+#[test]
+fn a_mobile_with_a_country_code_is_redacted_regardless_of_luhn() {
+    for (text, digits) in [
+        ("手机 +8613812345678", "8613812345678"),
+        ("手机 +8613912345679", "8613912345679"),
+        ("手机 +8613712345671", "8613712345671"),
+        ("Tel +86 13912345679", "86 13912345679"),
+    ] {
+        let found = detected_entities(text);
+        assert!(
+            found.contains(&EntityType::CnMobile),
+            "a +86 mobile depended on Luhn and was missed: {text:?} -> {found:?}"
+        );
+        assert!(
+            text.contains(digits),
+            "fixture no longer contains the digits it claims to test: {text:?}"
+        );
+    }
+}
+
+///
+/// MEASURED 2026-11-02: the label-anchored path accepted only a `C` prefix, while
+/// the unlabelled rule requires `H`/`M` + exactly ten digits. `港澳通行证 H01234567`
+/// therefore matched neither and survived a `verdict: pass` into the knowledge
+/// base. A document that writes the label explicitly must always have its number
+/// claimed, whatever prefix the issuing authority printed.
+#[test]
+fn a_labelled_hk_mo_permit_is_redacted_whatever_its_prefix() {
+    for text in [
+        "港澳通行证 H01234567",
+        "港澳通行证：H01234567",
+        "港澳通行证 C12345678",
+        "港澳通行证 M01234567",
+    ] {
+        let found = detected_entities(text);
+        assert!(
+            found.contains(&EntityType::HkMoPermit),
+            "a labelled permit number survived: {text:?} -> {found:?}"
+        );
+    }
+}
 #[test]
 fn a_bank_account_label_before_a_short_number_is_not_an_account() {
     let found = detected_entities("账号 123456");
