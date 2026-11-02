@@ -222,6 +222,9 @@ sync-fork-after.png
 # Committed by accident twice; this makes the third time impossible.
 /${input*
 
-# Staged laya weights (staged per machine, never committed)
+# Staged laya weights (staged per machine, never committed). laya-weights/ is the
+# staging target for the laya-serve BUILD CONTEXT: the weights are baked into that
+# image, so CI needs them present only at build time.
 laya-hf-cache/
+deploy/laya-serve/laya-weights/
 

@@ -252,8 +252,15 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     if (-not $svc.Success) { Check "$lane laya block parseable" $false; continue }
     $bodyLines = @(($svc.Groups['body'].Value -split '\r?\n') | Where-Object { $_.Trim() -notmatch '^#' })
 
-    Check "$lane mounts the HF cache laya reads" (($bodyLines -join "`n") -match ':/home/laya/\.cache/huggingface') `
-        'laya resolves checkpoints via an HF cache; a different mount path is invisible to it'
+    # L6 originally asserted the laya block MOUNTS the HF cache. That assertion is
+    # inverted as of 2026-11-02, because the weights are now baked into the image and
+    # a mount over the cache directory replaces the baked layer instead of merging
+    # with it. Keeping the old assertion would have demanded the defect. The current
+    # guarantee lives in L10; what L6 still owes here is that the service does not
+    # point laya at a mount path it never reads.
+    Check "$lane does not mount laya's cache at a path laya ignores" `
+        (-not (($bodyLines -join "`n") -match ':/models\b')) `
+        'an earlier revision mounted ${LAYA_MODEL_DIR}:/models, which laya never reads'
 
     # environment: values must be variables laya itself reads.
     $envLines = @()
@@ -412,49 +419,75 @@ if ($wp) {
 }
 
 Write-Host ''
-Write-Host 'L10 the laya profile cannot ship a checkpoint-less or half-loaded service' -ForegroundColor Cyan
+Write-Host 'L10 the laya profile ships its own weights, and no mount may hide them' -ForegroundColor Cyan
 
-# Measured 2026-11-02. Two failure modes, only one silent:
-#   empty cache    -> container exits at boot (LocalEntryNotFoundError). Loud, safe.
-#   PARTIAL cache  -> healthy, /health 200, loaded:["multilingual"], English -> HTTP 500.
-# The partial case is the one this gate exists for, and it is why "the directory
-# is non-empty" is not an assertion: it would pass here.
-
-# 1. Both lanes must name the cache variable IN THE MOUNT, or the mount falls back to
-#    a dev-box relative path that will not exist on an AIPC.
+# MODE CHANGE 2026-11-02: weights are BAKED INTO the image, not staged at the client.
 #
-#    Comment lines are stripped first. Both lanes carry the string in a comment on
-#    the line above the mount ("then point LAYA_HF_CACHE at it"), so a whole-file
-#    match passes after the mount itself is deleted - red-checked 2026-11-02 and it
-#    did exactly that. Match the YAML list item, not the vocabulary.
-foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
-    $p = Join-Path 'deploy/client-bundle' $lane
-    if (-not (Test-Path -LiteralPath $p)) { Check "$lane exists" $false; continue }
-    $mounts = @(Get-Content -LiteralPath $p |
-        Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'LAYA_HF_CACHE' })
-    Check "$lane mounts laya's cache through LAYA_HF_CACHE" ($mounts.Count -ge 1) `
-        'no non-comment line names LAYA_HF_CACHE; without it the mount falls back to a path that will not exist on an AIPC'
+# Three failure states were measured on the staged-cache design, and the assertions
+# below each target one:
+#   no cache at all     -> exits at boot (LocalEntryNotFoundError). Loud, safe.
+#   PARTIAL cache       -> healthy, /health 200, loaded:["multilingual"], English 500.
+#   EMPTY bind mount    -> identical to "no cache at all", because a bind mount
+#                          REPLACES the image layer instead of merging with it.
+# The last one is why the mount is opt-in: the shipped compose files must NOT mount
+# over the cache directory, or baking is silently undone.
+
+# 1. The Dockerfile must bake the weights, check them, and not pay for CUDA. A
+#    missing COPY leaves a weightless image; a COPY without the checksum lets a
+#    truncated weight ship and return meaningless numbers at run time.
+$img = 'deploy/laya-serve/Dockerfile'
+if (-not (Test-Path -LiteralPath $img)) {
+    Check 'deploy/laya-serve/Dockerfile exists' $false
+}
+else {
+    $dk = [System.IO.File]::ReadAllText((Resolve-Path $img))
+    $copies = @([regex]::Matches($dk, '(?m)^COPY\s.*laya-weights'))
+    Check 'the image bakes the checkpoints from the staging layout' ($copies.Count -ge 1) `
+        'no COPY of laya-weights/; without it the image has no weights and laya exits at boot'
+    Check 'the image verifies baked weight checksums at build time' `
+        ($dk -match '891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c') `
+        'a COPY with no sha256 guard ships whatever sits on disk under the staging path'
+    Check 'the image pins a CPU torch wheel, not the default CUDA build' `
+        ($dk -match 'download\.pytorch\.org/whl/cpu') `
+        'without the CPU index pip resolves torch from PyPI default and pulls ~4.2 GB of nvidia-* onto a CPU-only AIPC (measured: 9.23 GB image vs 1.79 GB)'
 }
 
-# 2. .env.example must set it UNCOMMENTED. A commented `#LAYA_HF_CACHE=` is what
-#    shipped, and install.ps1 only tells the operator to copy the file - it does
-#    not render a default - so a commented entry stays absent in the real .env.
+# 2. NEITHER shipped lane may bind-mount over the cache directory. A mount there
+#    replaces the baked layer; an empty source reproduces the boot crash baking
+#    removed.
+foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
+    $p = Join-Path 'deploy/client-bundle' $lane
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $shadow = @(Get-Content -LiteralPath $p |
+        Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'home/laya/\.cache/huggingface' })
+    Check "$lane does not mount over the baked weights" ($shadow.Count -eq 0) `
+        "non-comment mount(s) target the cache dir: $($shadow -join ' | '); a bind mount REPLACES the baked layer, so this silently un-bakes the image"
+    $envRef = @(Get-Content -LiteralPath $p |
+        Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'LAYA_HF_CACHE' })
+    Check "$lane does not reference LAYA_HF_CACHE at all" ($envRef.Count -eq 0) `
+        "LAYA_HF_CACHE appears on a non-comment line: $($envRef -join ' | ')"
+}
+
+# 3. .env.example must not present a cache path as required any more. The baked
+#    image needs none, so an operator told to stage models would follow a step that
+#    no longer exists.
 $envExample = 'deploy/client-bundle/.env.example'
 if (-not (Test-Path -LiteralPath $envExample)) {
     Check '.env.example exists' $false
 }
 else {
-    $active = @(Get-Content -LiteralPath $envExample | Where-Object { $_ -match '^\s*LAYA_HF_CACHE\s*=' })
-    Check '.env.example sets LAYA_HF_CACHE uncommented' ($active.Count -ge 1) `
-        'a commented default ships, install.ps1 does not render one, so the client gets no value'
+    $ex = [System.IO.File]::ReadAllText((Resolve-Path $envExample))
+    Check '.env.example stops presenting LAYA_HF_CACHE as REQUIRED' `
+        ($ex -notmatch 'REQUIRED when the laya profile is enabled') `
+        'the baked image needs no staged cache; a REQUIRED note sends operators to a step that no longer exists'
 }
 
-# 2b. The compose DEFAULT for LAYA_MODELS must name both checkpoints. This is static,
-#     so it has teeth on a machine that never runs laya - which is most of them, since
-#     the profile is opt-in. Routing sends Latin text to `english` and Han to
-#     `multilingual`; a default missing `english` breaks every English clause in an
-#     en/zh product. Asserting the default is not the vacuous "the directory is
-#     non-empty" check: this fails on a real, silent, one-word regression.
+# 5. The compose DEFAULT for LAYA_MODELS must name both checkpoints. This is static,
+#    so it has teeth on a machine that never runs laya - which is most of them, since
+#    the profile is opt-in. Routing sends Latin text to `english` and Han to
+#    `multilingual`; a default missing `english` breaks every English clause in an
+#    en/zh product. Asserting the default is not the vacuous "the directory is
+#    non-empty" check: this fails on a real, silent, one-word regression.
 foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     $p = Join-Path 'deploy/client-bundle' $lane
     if (-not (Test-Path -LiteralPath $p)) { continue }
@@ -470,9 +503,9 @@ foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
     }
 }
 
-# 3. Behavioural, and the only assertion that catches the partial cache. Compare the
-#    service's own `loaded` list against the checkpoints LAYA_MODELS asks for, then
-#    prove an ENGLISH round-trip - `loaded` is the service's claim, a 500 is the fact.
+# 6. Behavioural, and the last line of defence. Compare the service's own `loaded`
+#    list against the checkpoints LAYA_MODELS asks for, then prove an ENGLISH
+#    round-trip - `loaded` is the service's claim, a 500 is the observable fact.
 #
 #    An existing-but-stopped container is a FAIL, not a skip. Measured 2026-11-02: a
 #    cache missing the checkpoint LAYA_MODELS names makes `laya-serve` exit 1 at boot,

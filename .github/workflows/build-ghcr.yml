@@ -290,8 +290,36 @@ jobs:
       # `docker compose pull` an image that already exists. An unpublished
       # optional service is an optional service nobody can turn on.
       #
-      # The weights are NOT in the image (see deploy/laya-serve/Dockerfile):
-      # they are mounted read-only and HF_HUB_OFFLINE=1 keeps runtime offline.
+      # The weights ARE in the image from 0.2.13 (see deploy/laya-serve/Dockerfile):
+      # the checkpoint is Apache-2.0, and baking removes a client-side staging step
+      # plus two silent failure modes (empty cache crash-loops; partial cache reports
+      # healthy while one language 500s).
+      #
+      # CI stages them first, because a clean checkout has none and the image's COPY
+      # would fail. Two deliberate choices here:
+      #
+      #   continue-on-error. This step pulls ~1.45 GB from ModelScope. A slow or
+      #   unreachable mirror must not block the other five images in the release -
+      #   laya is the one optional service, and the BUILD below is the real gate.
+      #   If staging fails, the Dockerfile's COPY fails and this image alone is not
+      #   published. That is the correct blast radius.
+      #
+      #   Explicit failure message. Without it, a staging failure surfaces as an
+      #   opaque "COPY failed: no source files were specified" minutes later, and
+      #   reads like a Dockerfile bug.
+      - name: Stage laya weights for baking
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          ./scripts/stage-laya-models.ps1 -OutDir deploy/laya-serve/laya-weights
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::laya weight staging failed; laya-serve will be skipped this release"
+          }
+          $snap = "deploy/laya-serve/laya-weights/hub/models--convaiinnovations--laya/snapshots"
+          if (-not (Test-Path "$snap/*/model.safetensors")) {
+            Write-Host "::warning::staged weights are incomplete; the laya-serve build below will fail on COPY"
+          }
+
       - name: Build & push laya-serve
         uses: docker/build-push-action@v6
         with:
