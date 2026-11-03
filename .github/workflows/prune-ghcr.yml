@@ -50,6 +50,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Probes which packages endpoint this token can actually reach, and prints the
+      # answer instead of guessing. GITHUB_TOKEN is installation-scoped: it can use
+      # /repos/{owner}/{repo}/packages only for packages LINKED to the repo, and it
+      # can never use /user/packages (that path is for a user token). When a package
+      # was published before the OCI source label existed, or was never connected in
+      # its settings, the link is absent and the repo path answers 404 rather than
+      # 403 - which reads like "wrong URL" but means "not associated".
+      # continue-on-error: this step is diagnostic output, never the gate.
+      - name: Probe package reachability
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GHCR_PRUNE_TOKEN: ${{ github.token }}
+        run: |
+          $h = @{
+            Authorization          = "Bearer $env:GHCR_PRUNE_TOKEN"
+            Accept                 = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $repo = "${{ github.repository }}"
+          $targets = @(
+            "https://api.github.com/repos/$repo/packages?package_type=container",
+            "https://api.github.com/repos/$repo/packages/container/pacgate-api",
+            "https://api.github.com/repos/$repo/packages/container/pacgate-api/versions?per_page=1",
+            "https://api.github.com/orgs/JZKK720/packages/container/pacgate-api/versions?per_page=1"
+          )
+          foreach ($u in $targets) {
+            try {
+              $r = Invoke-WebRequest -Uri $u -Headers $h -UseBasicParsing -SkipHttpErrorCheck -TimeoutSec 30
+              Write-Host ("{0,-95} -> HTTP {1}" -f $u, $r.StatusCode)
+              if ($r.StatusCode -eq 200 -and $r.Content.Length -lt 400) {
+                Write-Host ("    body: {0}" -f ($r.Content -replace '\s+', ' '))
+              }
+            }
+            catch {
+              Write-Host ("{0,-95} -> EXCEPTION {1}" -f $u, $_.Exception.Message)
+            }
+          }
+
       - name: Show the plan
         id: plan
         shell: pwsh
