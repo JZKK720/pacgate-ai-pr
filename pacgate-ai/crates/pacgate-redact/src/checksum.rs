@@ -170,6 +170,34 @@ pub fn uscc_shape_ok(s: &str) -> bool {
     bytes[2..8].iter().all(|b| b.is_ascii_digit())
 }
 
+/// Shape test for a bank CARD number, independent of its check digit.
+///
+/// Added 2026-11-03 with the removal of the Luhn gate. Without a shape test the
+/// gate was doing two jobs at once, and only one of them can be dropped: Luhn
+/// must not decide whether a value is redacted, but SOMETHING still has to stop
+/// `RE_DIGIT_RUN` (12-19 digits) from claiming an order number, an amount written
+/// without separators, or a timestamp.
+///
+/// What separates a card from a long number:
+///   * length 13-19, the ISO/IEC 7812 range;
+///   * issuer prefix 2-6. Every bank card begins with a major industry identifier
+///     in this range (2 mastercard, 3 Amex/JCB, 4 Visa, 5 Mastercard, 6 UnionPay).
+///     No amount, date, phone, account-only number or contract number reliably
+///     does, and `1` is excluded because a run starting with `1` is what a mobile
+///     number and a legacy ID look like.
+///
+/// MEASURED 2026-11-03: with this test and no Luhn requirement, a misread card
+/// (`6222021234567890129`) is claimed while the review's precision controls
+/// (`1,250,000.00`, `2026-01-01`, `PG-2026-0042`) stay untouched - the separators
+/// break the run before length is even considered.
+pub fn card_number_shape_ok(digits: &str) -> bool {
+    let t = digits.trim();
+    if !(13..=19).contains(&t.len()) || !t.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    matches!(t.as_bytes()[0], b'2'..=b'6')
+}
+
 /// Shape test for a bank account number.
 ///
 /// No checksum exists domestically (the Luhn card rule covers cards, not
@@ -180,6 +208,28 @@ pub fn uscc_shape_ok(s: &str) -> bool {
 pub fn bank_account_shape_ok(digits: &str) -> bool {
     let t = digits.trim();
     (8..=32).contains(&t.len()) && t.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Shape test for a Malaysian identity card, applied to the pattern's span.
+///
+/// The layout is `YYMMDD-PB-###G`. The pattern already requires the hyphens; this
+/// adds the one check the pattern cannot express without a date engine - that the
+/// head is a real calendar day - so `999999-14-5567` is not an identity card.
+pub fn malaysian_id_shape_ok(s: &str) -> bool {
+    let digits: Vec<char> = s
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect();
+    if digits.len() != 12 {
+        return false;
+    }
+    // Two-digit year: try both centuries the printed card can mean.
+    is_real_date(&[
+        '1', '9', digits[0], digits[1], digits[2], digits[3], digits[4], digits[5],
+    ]) || is_real_date(&[
+        '2', '0', digits[0], digits[1], digits[2], digits[3], digits[4], digits[5],
+    ])
 }
 
 /// Shape test for a mainland vehicle registration plate.

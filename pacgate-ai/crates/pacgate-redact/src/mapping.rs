@@ -34,11 +34,30 @@ impl Default for JobId {
 
 /// Version of the mapping format and rule set. Recorded per job so history is
 /// never silently re-interpreted (spec 6.3 L136, 8.8, 9 acceptance).
+///
+/// ## Why this is bumped to 2 (2026-11-03)
+///
+/// v1 placeholders were a mix: opaque `[CODE_prefix_index]` tokens for
+/// text-shaped classes and a zeroed numeric mask for number-shaped ones. v2 mints
+/// one shape only, `[CODE_<64-bit tag>]`, where the tag is derived from the value.
+///
+/// The bump matters because a v1 mask is not stable under the v2 rules: the same
+/// ID that was `...001X` in one document is a different string in another, so a v1
+/// mapping cannot be interpreted with v2's assumptions. Recording the version per
+/// job is what lets old documents keep restoring correctly - `deserialize` is
+/// handed the version stored on the row, not this constant - while new jobs are
+/// unambiguously v2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MappingVersion(pub u32);
 
 impl MappingVersion {
-    pub const CURRENT: MappingVersion = MappingVersion(1);
+    pub const CURRENT: MappingVersion = MappingVersion(2);
+
+    /// The placeholder format that mixed tokens and numeric masks.
+    ///
+    /// Kept as a named constant so a migration or a test can name it instead of
+    /// writing a bare `1` and losing the reason.
+    pub const LEGACY_TOKEN_MASK_MIX: MappingVersion = MappingVersion(1);
 }
 
 /// One job's placeholder mapping.

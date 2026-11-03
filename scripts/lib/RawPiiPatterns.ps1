@@ -17,31 +17,36 @@
 #
 # WHY THE GUARD IS `(?!0{4})` AND NOT A WIDTH-SPECIFIC COUNT
 #
-# The redactor renders a format-preserved value by zeroing its middle and stamping
-# a per-job index into it, e.g. `000000000000000010`. That value is a legitimate
-# member of BOTH character classes below, so without a guard each pattern flags the
-# sanitizer's own output as a leak.
+# The redactor USED TO render a format-preserved value by zeroing its middle and
+# stamping a per-job index into it, e.g. `000000000000000010`. That value was a
+# legitimate member of BOTH character classes below, so without a guard each pattern
+# flagged the sanitizer's own output as a leak.
 #
-# MEASURED 2026-10-25: the guard was written `(?!0{17})`, which requires SEVENTEEN
+# MEASURED 2026-10-25: the guard was written `(?!0{17})`, which required SEVENTEEN
 # leading zeros and therefore never matched the placeholder it was meant to exclude.
 # `'000000000000000026' ~ '(?!0{17})[0-9]{17}[0-9Xx]'` returned true and the audit
 # reported the redactor's own output as a leak - 37 false "leaks" per pattern on a
 # machine with zero real ones. It was then fixed to `0{16}`, which was correct for
 # the placeholder format of that day and stopped being correct on 2026-11-02.
 #
-# MEASURED 2026-11-02: stamping a decimal index from the right eats one leading zero
+# MEASURED 2026-11-02: stamping a decimal index from the right ate one leading zero
 # per digit, so index 10 produced `000000000000000100` - fifteen leading zeros - and a
 # `0{16}` guard stopped excluding it. The count was never the right invariant.
 #
-# The invariant now comes FROM THE RUST CODE: `pacgate_redact::placeholder::
-# MIN_LEADING_ZEROS` is the number of zeros every format-preserving placeholder is
-# guaranteed to keep, and a Rust test (`every_format_preserving_placeholder_keeps_the
-# _audit_guard_satisfiable`) proves it holds at arbitrary index values and at every
-# format-preserved width. If you change the placeholder format, change that constant
-# and this guard follows - because it is below.
+# 2026-11-03: THE GUARD IS NO LONGER NEEDED, AND THAT IS THE FIX.
 #
-# A real Chinese ID card or USCC begins with at most a handful of zeros, never four
-# in a row after a province code, so `0{4}` excludes the placeholder and nothing else.
+# Every identifier class now renders as an opaque `[CODE_TAG]` token. There is no
+# numeric mask any more - the whole format-preserving mechanism was removed as the
+# defect it was (it leaked the value's length, letter layout and check character,
+# drifted with allocation order, and collided). So the sanitizer's own output can no
+# longer look like a raw value in the first place: a token is bracketed and contains
+# an uppercase code, which no pattern below can match.
+#
+# The guard is retained verbatim rather than deleted, ON PURPOSE. Three separate
+# episodes here were caused by widening a guard to match a moving target, and older
+# chunk rows on a live deployment may still hold placeholders minted by 0.2.16 and
+# earlier. Keeping `(?!0{4})` keeps those historical placeholders excluded from this
+# audit instead of reporting them as leaks that no remediation can clear.
 $PacgatePlaceholderZeroGuard = '(?!0{4})'
 
 $PacgateRawPiiPatterns = [ordered]@{
@@ -119,6 +124,33 @@ $PacgateRawPiiPatterns = [ordered]@{
 
     # 纳税人识别号: the label plus a 15-20 character code (an old tax code or a USCC).
     'cn_tax_id'     = '纳税人识别号(码)?[:：]?[[:space:]]*[0-9A-Z]{15,20}'
+
+    # ── 境外与少数类标识符, added 2026-11-03 ──
+    #
+    # These were measured surviving verbatim, and two of them were still plaintext in
+    # ALREADY-INDEXED chunks of a live matter (`invoice-ganjong`):
+    # `Juristic ID No.0115565002108` and `TaxID 3101401176368`. A rule layer fix does
+    # not clean rows that were ingested before it, so the audit has to be able to see
+    # these or the remediation cannot select them.
+
+    # 香港身份证: letter(s) + 6 digits + bracketed check character.
+    'hk_id'         = '[A-Z]{1,2}[0-9]{6}\([0-9A]\)'
+
+    # 新加坡 NRIC/FIN: [STFGM] + 7 digits + check letter.
+    'sg_nric'       = '[STFGM][0-9]{7}[A-Z]'
+
+    # 马来西亚身份证: YYMMDD-PB-###G. Hyphenated only - a run-together 12-digit form is
+    # indistinguishable from an order number, which is why the Rust rule refuses it
+    # too (measured: it claimed `编号010123456789`).
+    'my_id'         = '[0-9]{6}-[0-9]{2}-[0-9]{4}'
+
+    # 军官证: 军字第 + digits + 号.
+    'military_id'   = '军字第[0-9]{6,10}号'
+
+    # 泰国 TaxID and Juristic ID. Both are 13 digits, so the LABEL is the only thing
+    # that makes them identifiers - and the only thing that tells the two apart.
+    'th_tax_id'     = '(Tax[[:space:]]*ID|TaxID)[:：]?[[:space:]]*[0-9]{13}'
+    'th_juristic'   = 'Juristic[[:space:]]*ID([[:space:]]*No\.?)?[:：]?[[:space:]]*[0-9]{13}'
 }
 
 # SCOPE, STATED HONESTLY

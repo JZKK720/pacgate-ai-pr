@@ -21,15 +21,32 @@ pub enum Tier {
 }
 
 /// How a matched identifier is represented in the outbound text.
+///
+/// There were three variants until 2026-11-03, and the middle one was a defect
+/// rather than a policy. `FormatPreserving` rendered a number-shaped value as a
+/// zeroed run of the same width with the allocation counter stamped into it, so
+/// `91110105CA01ABCD26` left as `00000000XX00XXXX10`:
+///
+///   * the length, the letter positions and the check character survived, which
+///     is the search template, so the mask did not actually remove information;
+///   * the stamp was the ALLOCATION POSITION, so the same person got a different
+///     mask in every document and two documents could not be joined;
+///   * two distinct values could reach the same mask, which makes `restore`
+///     resolve one subject to the other's number;
+///   * the counter itself leaked - a mask said "third identifier in this file".
+///
+/// Meanwhile the same pipeline rendered plates, WeChat handles and permits as
+/// opaque `[CODE_...]` tokens. Two mechanisms in one pass is why one of them
+/// could rot unnoticed. As of 2026-11-03 there is ONE mechanism: an opaque token
+/// derived from the value, and this enum records intent rather than shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaceholderPolicy {
-    /// Replaced by an opaque token. Default for anything no machine parses.
+    /// Replaced by a token whose tag is derived from the value. The only
+    /// representation any detected identifier uses.
     Opaque,
-    /// Replaced by a structurally valid value of the same shape, so that a
-    /// downstream parser (spreadsheet formula, template) still works.
-    FormatPreserving,
-    /// Deleted outright. Only for secrets, where even a shape is a leak.
+    /// Deleted outright. Only for secrets, where even a token is a signal that
+    /// something was there, and the surrounding text is usually a secret line.
     Remove,
 }
 
@@ -49,6 +66,19 @@ pub enum EntityType {
     Passport,
     HkMoPermit,
     TaiwanPermit,
+    // Tier 1 - overseas and minority identifiers (added 2026-11-03).
+    //
+    // The second review measured seven classes surviving verbatim, and two of
+    // them (`TaxID`, `Juristic ID`) were confirmed still in plaintext inside
+    // already-indexed chunks of a live matter. For a cross-border practice these
+    // are not edge cases. Each is anchored on a published structural shape or on
+    // its own printed label, never on "a long digit run".
+    HkId,
+    SgNric,
+    MyId,
+    MilitaryId,
+    ThTaxId,
+    ThJuristicId,
     // Tier 2 - names and contact
     PersonName,
     OrgName,
@@ -93,6 +123,12 @@ impl EntityType {
         EntityType::Passport,
         EntityType::HkMoPermit,
         EntityType::TaiwanPermit,
+        EntityType::HkId,
+        EntityType::SgNric,
+        EntityType::MyId,
+        EntityType::MilitaryId,
+        EntityType::ThTaxId,
+        EntityType::ThJuristicId,
         EntityType::PersonName,
         EntityType::OrgName,
         EntityType::Landline,
@@ -121,6 +157,12 @@ impl EntityType {
             EntityType::Passport => "PASSPORT",
             EntityType::HkMoPermit => "HK_MO_PERMIT",
             EntityType::TaiwanPermit => "TW_PERMIT",
+            EntityType::HkId => "HK_ID",
+            EntityType::SgNric => "SG_NRIC",
+            EntityType::MyId => "MY_ID",
+            EntityType::MilitaryId => "MILITARY_ID",
+            EntityType::ThTaxId => "TH_TAXID",
+            EntityType::ThJuristicId => "TH_JURISTIC",
             EntityType::PersonName => "PERSON",
             EntityType::OrgName => "ORG",
             EntityType::Landline => "LANDLINE",
@@ -152,7 +194,13 @@ impl EntityType {
             | EntityType::Email
             | EntityType::Passport
             | EntityType::HkMoPermit
-            | EntityType::TaiwanPermit => Tier::One,
+            | EntityType::TaiwanPermit
+            | EntityType::HkId
+            | EntityType::SgNric
+            | EntityType::MyId
+            | EntityType::MilitaryId
+            | EntityType::ThTaxId
+            | EntityType::ThJuristicId => Tier::One,
             EntityType::PersonName
             | EntityType::OrgName
             | EntityType::Landline
@@ -170,49 +218,42 @@ impl EntityType {
         }
     }
 
+    /// Whether two spellings that differ only in letter case are the same value.
+    ///
+    /// True for every identifier whose alphabet is a published one and whose
+    /// case is a printing artefact: an ID's check character `x`, a USCC's letters,
+    /// a plate's authority letter. False for handles and addresses, where case is
+    /// part of the value the platform will resolve - `ZhangSan` and `zhangsan` are
+    /// two WeChat accounts, and merging them would attribute one person's messages
+    /// to another.
+    pub fn folds_case(&self) -> bool {
+        !matches!(
+            self,
+            EntityType::WeChatId | EntityType::Email | EntityType::Credential
+        )
+    }
+
     /// Per-identifier representation policy (design gap 6).
+    ///
+    /// There is exactly ONE representation for an identifier: an opaque token
+    /// whose tag is derived from the value. The old `FormatPreserving` policy is
+    /// gone (see `PlaceholderPolicy`) because it was the defect, not a policy.
+    ///
+    /// What replaced its justification: shape preservation existed so a
+    /// downstream spreadsheet or template would still parse the cell. That is a
+    /// real requirement, but it was being met at an unacceptable price - the mask
+    /// kept the value's length, its letter positions and its check character, so
+    /// it disclosed the search template while claiming to remove information.
+    /// The requirement is better met at the restore boundary, where the real
+    /// value is put back from the server-side mapping; nothing downstream needs
+    /// the sanitized text to be parseable AS a number.
     pub fn policy(&self) -> PlaceholderPolicy {
         match self {
-            // A credential's shape is itself information. Remove it.
+            // A credential is the one thing that must leave no trace at all: a
+            // token in its place would still mark the line as "a secret was
+            // here", and the surrounding text is usually a config line where
+            // that is itself a hint.
             EntityType::Credential => PlaceholderPolicy::Remove,
-            // Downstream spreadsheets and templates parse these, so keep the shape.
-            //
-            // BankAccount belongs here for the same reason as BankCard: an
-            // account number is copied into a spreadsheet cell and a payment
-            // instruction. MEASURED 2026-11-02 while proving the rescan path: the
-            // label-anchored rule that catches a real account also fires on the
-            // zeroed placeholder, so `账号：0000000000000000050` was reported as a
-            // surviving BANK_ACCOUNT on every run of an otherwise clean document.
-            // A rescan that always says "dirty" is worse than no rescan - it makes
-            // the remediation path unusable and trains an operator to ignore it.
-            //
-            // The placeholder is safe to keep shaped because it carries no
-            // identifying information: it is the minted form, and the mapping that
-            // resolves it lives server-side. Only `LegacyIdNumber` genuinely cannot
-            // be format-preserved - see the note below - because it has NO checksum
-            // for the fake value to fail.
-            EntityType::BankAccount
-            | EntityType::BankCard
-            | EntityType::Uscc
-            | EntityType::CnResidentId => PlaceholderPolicy::FormatPreserving,
-            // Nothing machine-parses a name, org, address or case number.
-            //
-            // LegacyIdNumber is FormatPreserving's poison: it has NO check
-            // digit, so a format-preserving placeholder still passes the same
-            // label-anchored rule that caught it, and the verifier then
-            // Block-s the whole document (measured 2026-10-06). Only
-            // checksum-backed values can be format-preserved without
-            // self-tripping - the fake placeholder fails the checksum the
-            // real value passed.
-            //
-            // BankAccount is the ONE exception that proves the rule, and it is
-            // handled above rather than left opaque: it also has no checksum, so
-            // its placeholder re-fires the label rule exactly as LegacyIdNumber's
-            // does. Both are therefore resolved by the SAME mechanism - the
-            // verifier's minted-placeholder exclusion, which is why
-            // `pacgate-redact` no longer needs the two to differ. Leaving
-            // BankAccount opaque would make a rescan of clean text report a
-            // surviving account on every run (measured 2026-11-02).
             _ => PlaceholderPolicy::Opaque,
         }
     }
@@ -239,6 +280,25 @@ mod tests {
         assert_eq!(EntityType::Passport.tier(), Tier::One);
         assert_eq!(EntityType::HkMoPermit.tier(), Tier::One);
         assert_eq!(EntityType::TaiwanPermit.tier(), Tier::One);
+    }
+
+    /// The 2026-11-03 overseas/minority set. Two of these (Thai TaxID and
+    /// Juristic ID) were found in plaintext inside already-indexed chunks, so
+    /// they are Tier 1: a miss is a defect, not a tuning choice.
+    #[test]
+    fn the_overseas_set_is_tier_one_with_unique_codes() {
+        for (entity, code) in [
+            (EntityType::HkId, "HK_ID"),
+            (EntityType::SgNric, "SG_NRIC"),
+            (EntityType::MyId, "MY_ID"),
+            (EntityType::MilitaryId, "MILITARY_ID"),
+            (EntityType::ThTaxId, "TH_TAXID"),
+            (EntityType::ThJuristicId, "TH_JURISTIC"),
+        ] {
+            assert_eq!(entity.tier(), Tier::One, "{entity:?} must be Tier 1");
+            assert_eq!(entity.code(), code);
+            assert_eq!(EntityType::from_code(code), Some(entity));
+        }
     }
 
     /// A 15-digit legacy ID run has no checksum and an ambiguous shape, so it
@@ -270,12 +330,22 @@ mod tests {
         assert_eq!(EntityType::Credential.policy(), PlaceholderPolicy::Remove);
     }
 
+    /// Shape preservation is gone. It rendered a number-shaped value as a zeroed
+    /// run carrying the allocation counter, which kept the value's length, letter
+    /// layout and check character, drifted with position, and collided.
+    ///
+    /// MEASURED 2026-11-03: `91350100M000100Y43` and `91110105CA01ABCD26` both
+    /// produced `00000000X000000X10` in one job - two companies, one placeholder.
     #[test]
-    fn account_numbers_keep_format_because_downstream_parses_them() {
-        assert_eq!(
-            EntityType::BankAccount.policy(),
-            PlaceholderPolicy::FormatPreserving
-        );
+    fn every_identifier_class_uses_one_representation() {
+        for e in EntityType::ALL {
+            let expected = match e {
+                // A credential leaves no trace at all.
+                EntityType::Credential => PlaceholderPolicy::Remove,
+                _ => PlaceholderPolicy::Opaque,
+            };
+            assert_eq!(e.policy(), expected, "{e:?}");
+        }
     }
 
     #[test]

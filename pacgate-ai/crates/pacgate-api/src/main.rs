@@ -61,6 +61,12 @@ async fn main() -> anyhow::Result<()> {
                 .as_str(),
             "true" | "1" | "yes"
         ),
+        // Key the sanitizer derives identifier tokens from. Unset means a
+        // per-process random key: safe, but cross-document correlation is given
+        // up. See `AppConfig::sanitizer_key`.
+        sanitizer_key: std::env::var("PACGATE_SANITIZER_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
     });
 
     // Create Postgres connection pool

@@ -136,6 +136,27 @@ pub struct AppConfig {
     /// is what actually closes the door. Flipping the default would silently
     /// change behaviour for any existing caller that relies on open registration.
     pub allow_registration: bool,
+    /// Secret the sanitizer derives its identifier tokens from.
+    ///
+    /// MEASURED 2026-11-03: the tokens used to be stamped with the job's ALLOCATION
+    /// INDEX, so the same person got a different token in every document and a
+    /// matter's corpus could not be joined on the number. The tag is now
+    /// HMAC-SHA256(matter key, class | normalized value), which only produces a
+    /// stable answer if every job in a matter uses the SAME key.
+    ///
+    /// Read from `PACGATE_SANITIZER_KEY`. Two consequences a deployment must know:
+    ///
+    ///   * Losing or changing it does not destroy data - the mapping that resolves a
+    ///     token to its original is stored server-side per job - but tokens minted
+    ///     before and after the change will not agree, so cross-document correlation
+    ///     is lost for material spanning the change.
+    ///   * It must be set per deployment and must not be shared between client sites,
+    ///     or two sites' corpora could be joined on a person if ever merged.
+    ///
+    /// `None` means "no key configured": the sanitizer falls back to a per-process
+    /// random key, which is safe but gives up cross-document correlation. That is the
+    /// honest default - inventing a constant would be worse than an obvious gap.
+    pub sanitizer_key: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -149,6 +170,7 @@ impl Default for AppConfig {
             ocr_service_url: None,
             ner_model_dir: None,
             allow_registration: true,
+            sanitizer_key: None,
         }
     }
 }

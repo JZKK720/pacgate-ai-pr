@@ -393,9 +393,11 @@ mod tests {
 
     #[test]
     fn a_placeholder_re_firing_its_own_detector_is_not_residue() {
-        // A format-preserving card placeholder is Luhn-valid by construction.
-        let placeholder = "0000000000000018";
-        let text = format!("卡号 {placeholder}");
+        // A token can re-fire a label-anchored rule: `账号：[BANK_ACCOUNT_...]` still
+        // reads as an account to the label regex. The span exclusion is what proves
+        // the verifier is looking at its own output, not a survivor.
+        let placeholder = "[BANK_ACCOUNT_D40135711C2E6271]";
+        let text = format!("账号：{placeholder}");
         let start = text.find(placeholder).expect("placeholder present");
         let v = verify(
             &text,
@@ -406,5 +408,28 @@ mod tests {
             |_| false,
         );
         assert_eq!(v.verdict, Verdict::Pass, "notes={:?}", v.notes);
+    }
+
+    /// The token is opaque, so it cannot re-fire a NUMERIC rule at all - the failure
+    /// mode the numeric mask had. A 64-bit hex tag never satisfies Luhn, MOD 31 or a
+    /// date check, so a class that used to need the span exclusion no longer does.
+    #[test]
+    fn a_numeric_token_cannot_re_fire_a_checksum_rule() {
+        let mut s = crate::Sanitizer::new(
+            tier_one_detectors(),
+            crate::mapping::MappingVersion::CURRENT,
+        );
+        let out = s
+            .sanitize(
+                "卡号 6222021234567890128 身份证 44030119800101123X",
+                pacgate_core::DataLevel::T3ProjectSpecific,
+            )
+            .unwrap();
+        assert_eq!(out.ledger.verdict(), Verdict::Pass, "notes={:?}", out.ledger.verification_notes);
+        for d in tier_one_detectors() {
+            for m in d.detect(&out.text).unwrap() {
+                assert!(crate::is_placeholder(&m.text), "{:?} '{}'", m.entity, m.text);
+            }
+        }
     }
 }

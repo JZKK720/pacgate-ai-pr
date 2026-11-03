@@ -8,8 +8,8 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::checksum::{
-    bank_account_shape_ok, cn_resident_id_shape_ok, uscc_shape_ok, validate_cn_resident_id,
-    validate_luhn, validate_uscc, vehicle_plate_shape_ok,
+    bank_account_shape_ok, card_number_shape_ok, cn_resident_id_shape_ok, malaysian_id_shape_ok,
+    uscc_shape_ok, validate_cn_resident_id, validate_luhn, validate_uscc, vehicle_plate_shape_ok,
 };
 use crate::{EntityType, Match, MatchSource, RedactError, RedactResult};
 
@@ -119,6 +119,33 @@ static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
 static RE_PASSPORT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"E[A-HJ-NPZ][0-9]{7}|E[0-9]{8}").expect("passport regex is valid"));
 
+/// 护照 label, for the passport shapes the structural rule cannot claim.
+///
+/// MEASURED 2026-11-03: `护照 PE1234567` survived verbatim. `RE_PASSPORT` is
+/// anchored on the PRC issuing prefix (`E`, plus the legacy `G` series), so a
+/// passport printed with any other prefix - a foreign passport in a cross-border
+/// file, which is exactly the case this class exists for - matched nothing.
+///
+/// The label is what makes the wider shape safe, the same trade the 台胞证 rule
+/// makes: an unlabelled `PE1234567` is still not claimed, so this cannot become
+/// "any two letters and seven digits".
+static RE_PASSPORT_ANCHOR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"护照(?:号码?)?[:：\s]*").expect("passport anchor is valid"));
+
+/// A passport number after a 护照 label: 1-2 letters then 7-8 digits.
+///
+/// ICAO 9303 documents are `[A-Z]{1,2}` followed by up to seven significant
+/// digits; the PRC `E`-series is one instance of that family.
+///
+/// `I` and `O` are excluded for the same published reason as in `RE_PASSPORT`:
+/// they are not used because they read as `1` and `0`. Allowing them here would
+/// make the labelled path claim `护照 EI1234567`, which the structural rule
+/// deliberately rejects - the same value accepted by one rule and refused by
+/// another is how a class gains a hole.
+static RE_PASSPORT_NUMBER: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"[A-HJ-NP-Z][A-HJ-NP-Z]?[0-9]{7,8}").expect("passport number regex is valid")
+});
+
 /// 回乡证: `H`/`M` + 8 digits + 2-digit reissue counter.
 static RE_HK_MO_PERMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[HM][0-9]{10}").expect("hk/mo permit regex is valid"));
@@ -149,10 +176,17 @@ static RE_TRAVEL_PERMIT_ANCHOR: Lazy<Regex> =
 static RE_TRAVEL_PERMIT_NUMBER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[CHM][0-9]{7,10}").expect("travel permit number regex is valid"));
 
-/// 台胞证 requires a label; this anchor finds the label itself so the digit
-/// run right after it can be promoted to a Tier-1 match.
-static RE_PERMIT_ANCHOR: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"台胞证(?:号码)?[:：]?").expect("taiwan permit anchor is valid"));
+/// 台胞证 / 台湾居民来往大陆通行证 requires a label; this anchor finds the label
+/// itself so the digit run right after it can be promoted to a Tier-1 match.
+///
+/// The alternation covers the printed names: `台胞证` (the colloquial form on
+/// contracts), `台湾通行证` and the full `台湾居民来往大陆通行证`. MEASURED
+/// 2026-11-03: only `台胞证` was anchored, so `台湾通行证 0123456789` - the form the
+/// second review used - matched nothing and stayed verbatim.
+static RE_PERMIT_ANCHOR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:台胞证|台湾(?:居民来往大陆)?通行证)(?:号码)?[:：]?")
+        .expect("taiwan permit anchor is valid")
+});
 
 static RE_PERMIT_DIGITS: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[0-9]{8}(?:[0-9]{2})?").expect("permit digits regex is valid"));
@@ -249,6 +283,88 @@ static RE_BANK_ACCOUNT_ANCHOR: Lazy<Regex> = Lazy::new(|| {
 static RE_GROUPED_DIGITS: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[0-9][0-9 \u{FF0D}\u{2013}\u{2014}\-]{6,40}[0-9]").expect("grouped digit regex is valid"));
 
+// ---------------------------------------------------------------------------
+// Overseas and minority identifiers (added 2026-11-03).
+//
+// The second review measured seven classes surviving verbatim, and two of them
+// (`TaxID 3101401176368`, `Juristic ID No.0115565002108`) were still in plaintext
+// inside ALREADY-INDEXED chunks of a live matter - `invoice-ganjong`. For a
+// cross-border practice these are not edge cases.
+//
+// Two anchoring disciplines, chosen per class:
+//
+//   * Own structural shape (HK ID, SG NRIC, MY ID): the letter/date structure is
+//     published and closed, so no label is needed. Same reasoning as the passport
+//     rule - a bare digit run is never claimed.
+//   * Label only (Thai TaxID, Thai Juristic ID, military ID): the number is a bare
+//     digit run of a length that is ALSO the length of a Thai phone number, a
+//     Chinese ID or an order number. Only the printed label distinguishes them, so
+//     these fire on `TaxID`, `Juristic ID`, `军字第...号` and nothing shorter.
+// ---------------------------------------------------------------------------
+
+/// Hong Kong identity card: letter + 6 digits + `(check)`.
+///
+/// The bracketed check digit is MANDATORY here. `A123456` alone is also the shape
+/// of a WeChat-style handle (`A123456` matched the WeChat rule in the review's own
+/// probe and the parentheses were left behind), so requiring the `(d)` keeps the
+/// two classes from stealing each other's values and keeps the whole printed value
+/// in one span - the review measured `[WECHAT_...](7)`, where the redaction split
+/// the number and left its check digit in the clear.
+static RE_HK_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[A-Z]{1,2}[0-9]{6}\([0-9A]\)").expect("hk id regex is valid"));
+
+/// Singapore NRIC / FIN: `[STFGM]` + 7 digits + checksum letter.
+///
+/// The trailing letter is the published check character; the class is closed on
+/// both ends by a letter, which is what makes it safe without a label.
+static RE_SG_NRIC: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[STFGM][0-9]{7}[A-Z]").expect("sg nric regex is valid"));
+
+/// Malaysian identity card: `YYMMDD-PB-###G`.
+///
+/// The HYPHENATED form only, deliberately. A first draft also accepted the
+/// run-together 12-digit variant, and it immediately claimed `编号010123456789`
+/// and `编号020123456789` as identity cards: any 12-digit run whose head parses as
+/// `YYMMDD` qualifies, which is a large slice of ordinary order numbers. The date
+/// prefix is not specific enough to stand alone, and the card is printed with its
+/// hyphens, so the hyphens are the anchor. `tests/recall.rs`
+/// (`rule_layer_landline_false_positives_stay_rejected`) is what caught this.
+static RE_MY_ID: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"[0-9]{6}-[0-9]{2}-[0-9]{4}").expect("my id regex is valid")
+});
+
+/// 军官证: `军字第` + digits + `号`.
+///
+/// Label-anchored on both ends. A bare 7-digit run is an order number; the printed
+/// form `军字第1234567号` is unambiguous, and the trailing 号 is what proves the
+/// run ended rather than continuing into a longer number.
+static RE_MILITARY_ID: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"军字第[0-9]{6,10}号").expect("military id regex is valid")
+});
+
+/// Thai TaxID (13 digits) and Juristic ID, label-anchored.
+///
+/// The label alternation covers the printed English forms the review's document
+/// used: `TaxID`, `Tax ID`, `Juristic ID`. Both labels are anchored to the
+/// numbers that follow them rather than to a bare digit run, because 13 digits is
+/// also the length of a Thai mobile number and of a Chinese legacy ID.
+///
+/// The two classes are SEPARATE on purpose. The review measured a Thai juristic
+/// id being swallowed by a preceding `泰国税号` window and labelled `TH_TAXID`;
+/// here the label decides the class, and the window is bounded by the match
+/// itself rather than by a lookback, so a label on a previous line cannot reach
+/// forward past its own value.
+static RE_TH_TAXID: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:Tax\s*ID|TaxID|เลขประจำตัวผู้เสียภาษี)[:：\s]*([0-9]{13})")
+        .expect("thai tax id regex is valid")
+});
+
+static RE_TH_JURISTIC: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"Juristic\s*ID(?:\s*No\.?)?[:：\s]*([0-9]{13})")
+        .expect("thai juristic id regex is valid")
+});
+
+
 /// 微信号 label. The handle form is fixed by the platform: starts with a
 /// letter, then 5-19 letters/digits/underscore/hyphen.
 ///
@@ -322,6 +438,22 @@ impl TierOneDetector {
         Self { include_email: true }
     }
 
+    /// True when this span is already claimed by a stronger rule.
+    ///
+    /// Precedence has to be explicit, because the classes overlap by construction:
+    /// a 13-digit Thai TaxID is card-shaped, an 18-digit mistyped resident ID can
+    /// satisfy Luhn, and a USCC's alphabet is a superset of the ID's. Without one
+    /// place that answers "who owns this span", each rule grew its own ad-hoc
+    /// check and they drifted - the review measured a resident ID labelled
+    /// BANK_CARD and a Thai TaxID labelled BANK_CARD in the same pass.
+    ///
+    /// A LABEL is stronger evidence than a structural shape, which is why the
+    /// label-anchored rules run first and claim their span here.
+    fn claimed(&self, out: &[Match], start: usize, end: usize) -> bool {
+        out.iter()
+            .any(|existing| existing.start == start && existing.end == end)
+    }
+
     fn push(
         &self,
         out: &mut Vec<Match>,
@@ -385,6 +517,74 @@ impl Detector for TierOneDetector {
         // `original_span`, which returns an exclusive, char-boundary end.
         let normalized = super::normalize::NormalizedText::build(text);
 
+        // Overseas and minority classes that need their own LABEL.
+        //
+        // These run BEFORE the checksum/shape rules for one reason: a 13-digit
+        // Thai TaxID is also a card-shaped 13-digit run, and a bare `RE_DIGIT_RUN`
+        // claimed it as BANK_CARD. MEASURED 2026-11-03: `TaxID 3101401176368`
+        // came back as `TaxID [BANK_CARD_905BCB78D25953F7]` - the value was
+        // redacted but the wrong class was recorded, which is the review's
+        // "label says one thing, token says another" defect in a new place.
+        //
+        // A label is stronger evidence than a shape, so it decides the class when
+        // both are present. Later rules skip a span that is already claimed.
+        for c in RE_TH_JURISTIC.captures_iter(text) {
+            let Some(value) = c.get(1) else { continue };
+            if !is_bounded(text, value.start(), value.end()) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                value.start(),
+                value.end(),
+                &text[value.start()..value.end()],
+                EntityType::ThJuristicId,
+                MatchSource::Context,
+            );
+        }
+        for c in RE_TH_TAXID.captures_iter(text) {
+            let Some(value) = c.get(1) else { continue };
+            if !is_bounded(text, value.start(), value.end()) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                value.start(),
+                value.end(),
+                &text[value.start()..value.end()],
+                EntityType::ThTaxId,
+                MatchSource::Context,
+            );
+        }
+        // 军官证: label-anchored on both ends, so the whole printed form is the span.
+        for m in RE_MILITARY_ID.find_iter(text) {
+            self.push(&mut out, m, EntityType::MilitaryId, MatchSource::Context);
+        }
+
+        // 护照 - label anchored, for the prefixes the PRC structural rule cannot
+        // claim. See RE_PASSPORT_ANCHOR: `护照 PE1234567` matched nothing before.
+        for a in RE_PASSPORT_ANCHOR.find_iter(text) {
+            let Some(rest) = text.get(a.end()..) else {
+                continue;
+            };
+            let Some(m) = RE_PASSPORT_NUMBER.find(rest) else {
+                continue;
+            };
+            let start = a.end() + m.start();
+            let end = a.end() + m.end();
+            if !is_bounded(text, start, end) || self.claimed(&out, start, end) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                start,
+                end,
+                &text[start..end],
+                EntityType::Passport,
+                MatchSource::Context,
+            );
+        }
+
         for m in RE_CN_ID_CANDIDATE.find_iter(&normalized.text) {
             let Some((start, end)) = normalized.original_span(text, m.start(), m.end()) else {
                 continue;
@@ -431,6 +631,9 @@ impl Detector for TierOneDetector {
             if cn_resident_id_shape_ok(m.as_str()) {
                 continue;
             }
+            if self.claimed(&out, start, end) {
+                continue;
+            }
             // Same two-strength discipline as the resident ID above: a bad
             // MOD-31 digit does not un-register a company.
             let (entity, source) = if validate_uscc(m.as_str()) {
@@ -450,6 +653,9 @@ impl Detector for TierOneDetector {
             if !is_bounded(text, start, end) {
                 continue;
             }
+            if self.claimed(&out, start, end) {
+                continue;
+            }
             self.push_span(
                 &mut out,
                 start,
@@ -460,6 +666,29 @@ impl Detector for TierOneDetector {
             );
         }
 
+        // Card-shaped runs.
+        //
+        // Luhn used to GATE this: only a checksum-valid run became a match, so a
+        // card with one digit misread - the single most likely OCR outcome - stayed
+        // in the text untouched. MEASURED 2026-11-03 on the review's set:
+        // `6222021234567890128` and `6222029876543210987` were redacted, while
+        // `6222021234567890129` (one digit off) and `6217000010000000123` came back
+        // verbatim. That is the same defect the resident ID had until 2026-11-02,
+        // in the same rule layer, fixed for one class and not the other.
+        //
+        // The check digit is now a LABEL, not a gate: a valid card is Checksum
+        // strength, a card-shaped run that fails it is Pattern strength. Both are
+        // redacted; the ledger records the difference for review.
+        //
+        // Precision is preserved by the requirement that matters: `RE_DIGIT_RUN` is
+        // 12-19 digits AND the run must be bounded, and a bare numeric run of that
+        // width that is not a card is claimed only when it is card-shaped (issuer
+        // prefix 2-6, which every bank card carries and no amount, date or order
+        // number does). `claimed` suppresses the double-report of an
+        // 18-digit value that is already an ID: MEASURED 2026-11-03, an
+        // OCR-mistyped 身份证 `440301198001011234` happens to satisfy Luhn and was
+        // relabelled BANK_CARD, which would route it past any downstream control
+        // keyed on identifier type.
         for m in RE_DIGIT_RUN.find_iter(&normalized.text) {
             let Some((start, end)) = normalized.original_span(text, m.start(), m.end()) else {
                 continue;
@@ -467,19 +696,29 @@ impl Detector for TierOneDetector {
             if !is_bounded(text, start, end) {
                 continue;
             }
-            // The checksum is over the DIGITS, so it validates the normalised
-            // slice - `4111 1111 1111 1111` is not Luhn-valid as written, with
-            // the spaces in it.
-            if validate_luhn(m.as_str()) {
-                self.push_span(
-                    &mut out,
-                    start,
-                    end,
-                    &text[start..end],
-                    EntityType::BankCard,
-                    MatchSource::Checksum,
-                );
+            let digits = m.as_str();
+            // Already claimed by a labelled or checksum-validated rule: the span
+            // belongs to that class, and relabelling it here would send the value
+            // past any downstream control keyed on identifier type.
+            if self.claimed(&out, start, end) {
+                continue;
             }
+            if !card_number_shape_ok(digits) {
+                continue;
+            }
+            let source = if validate_luhn(digits) {
+                MatchSource::Checksum
+            } else {
+                MatchSource::Pattern
+            };
+            self.push_span(
+                &mut out,
+                start,
+                end,
+                &text[start..end],
+                EntityType::BankCard,
+                source,
+            );
         }
 
         // Landline deliberately matches the ORIGINAL text, not `normalized`.
@@ -741,6 +980,11 @@ impl Detector for TierOneDetector {
 
         // 微信号 - label and handle in ONE pattern. See RE_WECHAT: a separate
         // label regex matched inside the opaque `[WECHAT_...]` placeholder.
+        //
+        // Runs BEFORE the structural overseas rules: `A123456` is a legal WeChat
+        // handle and the first six digits of a Hong Kong ID. The WeChat rule needs
+        // its label, so whichever value actually has a label wins, and a HK ID
+        // (`A123456(7)`) has no 微信号 label in front of it.
         for c in RE_WECHAT.captures_iter(text) {
             let Some(handle) = c.get(1) else {
                 continue;
@@ -756,6 +1000,34 @@ impl Detector for TierOneDetector {
                 EntityType::WeChatId,
                 MatchSource::Context,
             );
+        }
+
+        // Hong Kong identity card. Structural: letter + 6 digits + `(check)`.
+        for m in RE_HK_ID.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::HkId, MatchSource::Pattern);
+        }
+
+        // Singapore NRIC / FIN. Structural: letter + 7 digits + check letter.
+        for m in RE_SG_NRIC.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::SgNric, MatchSource::Pattern);
+        }
+
+        // Malaysian identity card. The 12-digit run-together form is only claimed
+        // when it has a real YYMMDD head, or `RE_MY_ID`'s 12-digit branch would
+        // make every 12-digit number an identity card.
+        for m in RE_MY_ID.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            if malaysian_id_shape_ok(m.as_str()) {
+                self.push(&mut out, m, EntityType::MyId, MatchSource::Pattern);
+            }
         }
 
         if out.len() > MAX_MATCHES {
@@ -809,13 +1081,45 @@ mod tests {
         assert!(bad.is_empty(), "must not treat an unallocated prefix as a mobile");
     }
 
+    /// The Luhn check digit is a LABEL, not a gate.
+    ///
+    /// Until 2026-11-03 only a Luhn-valid run became a card, so a card with one
+    /// digit misread - the most likely OCR outcome - stayed in the text verbatim.
+    /// Measured on the second review's set: `6222021234567890129` (one digit off)
+    /// and `6217000010000000123` both came back untouched while their valid
+    /// neighbours were redacted.
     #[test]
-    fn finds_bank_card_only_when_luhn_passes() {
+    fn finds_a_bank_card_whether_or_not_luhn_passes() {
         let good = TierOneDetector::new().detect("卡号 4111111111111111").unwrap();
-        assert_eq!(entities(&good), vec![EntityType::BankCard]);
+        let card = good
+            .iter()
+            .find(|m| m.entity == EntityType::BankCard)
+            .expect("a Luhn-valid card must be found");
+        assert_eq!(card.source, MatchSource::Checksum);
 
         let bad = TierOneDetector::new().detect("卡号 4111111111111112").unwrap();
-        assert!(bad.is_empty(), "a failing Luhn check must not produce a Tier-1 match");
+        let card = bad
+            .iter()
+            .find(|m| m.entity == EntityType::BankCard)
+            .expect("a one-digit-off card must still be found");
+        assert_eq!(
+            card.source,
+            MatchSource::Pattern,
+            "a failed check digit is weaker evidence, not a reason to leave the value"
+        );
+    }
+
+    /// Dropping the Luhn gate must not turn `RE_DIGIT_RUN` into "any long number".
+    #[test]
+    fn a_long_number_that_is_not_card_shaped_stays_untouched() {
+        // Starts with 1: a mobile, a legacy ID or an order number, never a card.
+        for text in ["编号 1381234567890123", "订单 7000000000000000"] {
+            let found = TierOneDetector::new().detect(text).unwrap();
+            assert!(
+                !found.iter().any(|m| m.entity == EntityType::BankCard),
+                "not a card: {text} -> {found:?}"
+            );
+        }
     }
 
     #[test]

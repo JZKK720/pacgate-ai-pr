@@ -34,7 +34,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.2.16
+    image: ghcr.io/jzkk720/pacgate-api:0.2.17
     healthcheck:
       # No curl and no wget in this image (measured 2026-10-14), so the probe
       # uses bash's /dev/tcp. /health is the one route that needs no auth
@@ -81,6 +81,21 @@ services:
       PACGATE_ALLOW_REGISTRATION: "false"
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
+      # Key the sanitizer derives identifier tokens from.
+      #
+      # This is NOT a duplicate of PACGATE_JWT_SECRET, even though both are
+      # secrets in the same block. Losing the JWT secret invalidates sessions;
+      # losing this one does not destroy data (the mapping that resolves a token
+      # to its original is stored per job), but tokens minted before and after a
+      # change no longer agree - so a matter's documents stop correlating on the
+      # same person. Rotating it is therefore a real, visible consequence rather
+      # than a non-event, which is why it gets its own value.
+      #
+      # Unset is accepted and is honest about the cost: pacgate-api falls back to
+      # a per-process random key and logs a warning, and cross-document
+      # correlation is lost. Never share one value between two client sites - two
+      # sites on one key could have their corpora joined on a person.
+      PACGATE_SANITIZER_KEY: ${PACGATE_SANITIZER_KEY:-}
       # The NER weights are baked into this image at /app/models/ner and verified
       # by SHA-256 at build time. Setting this path switches build_detectors()
       # from tier_one_detectors() to full_detectors(): 5 of 15 EntityType classes
@@ -162,7 +177,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.16
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.17
     healthcheck:
       # :8001 is the gateway nginx proxies to; /health verified 200.
       test:
@@ -428,7 +443,7 @@ services:
   # correct without a runtime patch. Published to GHCR by the build-ghcr.yml
   # workflow; pushed on every release tag so both AIPCs stay in sync.
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.16
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.17
     healthcheck:
       # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
       # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
@@ -480,7 +495,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.2.16
+    image: ghcr.io/jzkk720/pacgate-mcp:0.2.17
     healthcheck:
       # A real MCP `initialize` handshake, not a TCP connect. The image has no
       # curl; it does have python3, so the probe speaks the protocol and
@@ -557,7 +572,7 @@ services:
     # Models are pre-staged, never downloaded at runtime: HF_HUB_OFFLINE=1 plus a
     # mounted model directory. A client machine must not reach huggingface.co.
     profiles: ["laya"]
-    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.16}
+    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.17}
     healthcheck:
       # /health is documented by laya. start_period is long because with
       # LAYA_PRELOAD=1 the first boot loads a 1.2 GB checkpoint into memory, and a
@@ -605,7 +620,7 @@ services:
     restart: unless-stopped
 
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.2.16
+    image: ghcr.io/jzkk720/ocr-service:0.2.17
     healthcheck:
       # /health verified 200. python3, not curl - the image has no curl.
       # start_period is long on purpose: this service downloads its model on

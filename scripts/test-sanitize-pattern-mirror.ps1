@@ -61,19 +61,25 @@ Check 'the rule-layer source exists' (Test-Path $rulesPath) $rulesPath
 Check 'the placeholder source exists' (Test-Path $phPath) $phPath
 
 $phSrc = Get-Content $phPath -Raw
-# MIN_LEADING_ZEROS must be the number the SQL guard encodes.
-$m = [regex]::Match($phSrc, 'pub const MIN_LEADING_ZEROS: usize = (\d+);')
-Check 'MIN_LEADING_ZEROS is declared in the Rust source' $m.Success 'the constant was renamed or removed'
-$minZeros = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }
 
-$guardExpr = [regex]::Match($patterns['cn_id_card'], '^\(\?!0\{(\d+)\}\)')
-Check 'the id-card pattern starts with a placeholder guard' $guardExpr.Success `
-    "cn_id_card = $($patterns['cn_id_card'])"
-if ($guardExpr.Success -and $minZeros -gt 0) {
-    $sqlZeros = [int]$guardExpr.Groups[1].Value
-    Check 'the SQL guard is at least as strict as the Rust invariant' ($sqlZeros -le $minZeros) `
-        "SQL excludes {0} leading zeros, Rust guarantees {1}" -f $sqlZeros, $minZeros
-}
+# 2026-11-03: the invariant changed shape, so this check changed with it.
+#
+# Until this date the redactor minted a numeric mask and the mirror excluded it with
+# `(?!0{4})`, tied to `MIN_LEADING_ZEROS`. That whole mechanism is gone: it leaked the
+# value's length, letter layout and check character, drifted with allocation order, and
+# collided two different USCCs onto one placeholder. Every class now renders as an
+# opaque `[CODE_TAG]` token, which no raw-value pattern below can match.
+#
+# So the assertion is not "the guard matches a constant" any more - it is "there is no
+# numeric mask left to guard". Asserting the ABSENCE is what stops the mechanism being
+# reintroduced without this file being revisited; a positive check on the token format
+# would pass even if both mechanisms came back.
+Check 'no format-preserving numeric mask remains in the Rust source' `
+    (-not ($phSrc -match 'fn format_preserving')) 'format_preserving() is back - the numeric mask was removed as a defect; if it is reintroduced deliberately, this audit must change too'
+Check 'tokens are minted as [CODE_TAG]' `
+    ($phSrc -match 'fn join_token\(code: &str, tag: &str\) -> String') 'the token join point changed; re-derive the patterns below'
+Check 'the guard constant still excludes pre-0.2.17 placeholders' `
+    ($patterns['cn_id_card'] -match '^\(\?!0\{4\}\)') 'historical chunk rows may still hold numeric masks; dropping the guard would report them as unfixable leaks'
 
 # ── 2. Every rule class with a nameable raw shape has a pattern ───────────────
 #
@@ -88,6 +94,15 @@ $mustHavePattern = [ordered]@{
     'bank_account'   = '银行账号'
     'cn_plate'       = '车牌'
     'cn_tax_id'      = '纳税人识别号'
+    # Added 2026-11-03. Two of these were measured still plaintext in already-indexed
+    # chunks of a live matter, so the audit failing to see them is how the leak stayed
+    # in place through a remediation pass.
+    'hk_id'          = '香港身份证'
+    'sg_nric'        = '新加坡 NRIC'
+    'my_id'          = '马来西亚身份证'
+    'military_id'    = '军官证'
+    'th_tax_id'      = '泰国 TaxID'
+    'th_juristic'    = '泰国 Juristic ID'
 }
 foreach ($key in $mustHavePattern.Keys) {
     Check "a pattern exists for $($mustHavePattern[$key])" ($patterns.Contains($key)) "missing key: $key"
@@ -95,9 +110,17 @@ foreach ($key in $mustHavePattern.Keys) {
 
 # ── 3. The sanitizer's own output must match NOTHING ──────────────────────────
 #
-# Index values chosen to include the ones that broke a width-specific guard:
-# 10, 100, 1000. A `0{16}` guard passes 1..9 and fails at 10, which is exactly how
-# the 2026-11-02 drift got past every hand test.
+# Two generations, deliberately:
+#
+#   * the CURRENT tokens, `[CODE_<hex>]`. These are what 0.2.17 mints, and the
+#     assertion is that no raw-value pattern can match one. It is a weaker check than
+#     it looks - a bracketed uppercase token could not match these patterns anyway -
+#     and it is here so that a future pattern that loses its anchor is caught.
+#   * the LEGACY numeric masks, from 0.2.16 and earlier. These must stay excluded from
+#     the audit forever, because chunk rows minted by those versions are still in the
+#     database on a live deployment and no remediation can rewrite a value it cannot
+#     see. Index values include the ones that broke a width-specific guard: 10, 100,
+#     1000.
 function ConvertTo-DotNet([string]$p) { $p -replace '\[\[:space:\]\]', '\s' }
 
 function Test-AnyPattern([string]$text) {
@@ -109,11 +132,15 @@ function Test-AnyPattern([string]$text) {
 }
 
 $placeholders = @(
-    '000000000000000010',   # index 1, 16 leading zeros
-    '000000000000000100',   # index 10, 15 leading zeros - the one that broke
-    '000000000000001000',   # index 100
-    '000000000000010000',   # index 1000
-    '00000000X000000X20'    # a USCC shape with letters
+    '[CN_ID_2D8BF002A1C4E6F0]',        # current token
+    '[USCC_0D0948B887EDD824]',
+    '[BANK_CARD_53C82EF1C9807E78]',
+    '[TH_JURISTIC_68B7B56AD411AC75]',
+    '000000000000000010',             # legacy mask, index 1
+    '000000000000000100',             # legacy mask, index 10 - the one that broke
+    '000000000000001000',             # legacy mask, index 100
+    '000000000000010000',             # legacy mask, index 1000
+    '00000000X000000X20'              # legacy USCC-shaped mask
 )
 foreach ($ph in $placeholders) {
     $hits = Test-AnyPattern $ph
@@ -135,6 +162,14 @@ $mustMatch = [ordered]@{
     # A country-coded mobile must be found without relying on Luhn, and a longer
     # foreign identifier that merely CONTAINS the digits must not be reported.
     '手机 +8613912345679'      = 'cn_mobile'
+    # The overseas set (2026-11-03), including the two values measured still plaintext
+    # in already-indexed chunks of a live matter.
+    '香港身份证 A123456(7)'    = 'hk_id'
+    '新加坡 NRIC S1234567D'    = 'sg_nric'
+    '马来西亚身份证 900101-14-5567' = 'my_id'
+    '军官证 军字第1234567号'   = 'military_id'
+    'TaxID 3101401176368'      = 'th_tax_id'
+    'Juristic ID No.0115565002108' = 'th_juristic'
 }
 foreach ($value in $mustMatch.Keys) {
     $hits = Test-AnyPattern $value
@@ -149,11 +184,23 @@ $mustNotMatch = @(
     'Contract No.PG-2026-0042',
     'Invoice Total USD 18,400.00',
     '参见 (2019)最高法民终1234号',
-    # A Thai juristic ID that CONTAINS a mobile-shaped substring. The Rust detector
-    # rejects it via is_bounded; SQL has no lookbehind, so the pattern carries an
-    # explicit `(^|[^0-9])` guard. Without it this document reported LEAK cn_mobile
-    # forever and no remediation could clear it.
-    'Juristic ID No.0115565002108'
+    # `Juristic ID No.0115565002108` USED to be listed here, as the fixture proving the
+    # `(^|[^0-9])` mobile guard worked on foreign text. It is no longer ordinary text:
+    # that exact value was measured still plaintext in an indexed chunk of a live
+    # matter, so the audit must now REPORT it (see `$mustMatch`), not stay silent. The
+    # mobile guard is still exercised by the pattern itself.
+    #
+    # A 12-digit run with a plausible date head must not be read as a 马来西亚身份证 -
+    # the run-together form was dropped from both layers for this reason.
+    #
+    # Only the `020` head is asserted here, not `010`. `编号010123456789` is a 12-digit
+    # run whose `010` head IS a real Beijing landline area code, so the landline pattern
+    # legitimately matches it. The Rust layer rejects it because the area-code rule stops
+    # after 8 subscriber digits and `is_bounded` sees a digit next; a single SQL regex has
+    # no second step, which is a known and documented limit of this mirror (see SCOPE in
+    # RawPiiPatterns.ps1). Asserting it here would encode a false expectation - the
+    # Malaysian-identity-card guard is what `020` proves.
+    '编号020123456789'
 )
 foreach ($text in $mustNotMatch) {
     $hits = Test-AnyPattern $text

@@ -8,87 +8,33 @@
 //!                                  merged, so the key is the exact original
 //!                                  string, never a normalised form.
 //!
-//! Allocation follows first-seen order, which is reproducible for a given
-//! input sequence without a random source or a seed.
+//! Section 9 is about not MERGING two subjects. It is not a licence to keep the
+//! original value around: the token is derived from a normalised copy so two
+//! spellings of one printed number agree, while the mapping key stays the exact
+//! original so two different numbers never collapse.
 
 use std::collections::HashMap;
 
 use crate::entity::{EntityType, PlaceholderPolicy};
 
-/// A format-preserving placeholder always begins with this many zeros.
+/// True when `value` is a token this crate minted.
 ///
-/// The SQL audit in `scripts/lib/RawPiiPatterns.ps1` excludes the redactor's own
-/// output with `(?!0{K})`, and this constant is the `K` it must use. Keeping the
-/// number here - next to the code that mints the value - is what stops the two
-/// from drifting; the alternative is a magic number in a second language that
-/// silently stops matching when this file changes.
-///
-/// Widths differ per entity (a 15-character legacy ID has 13 interior digits, an
-/// 18-character ID has 16), so the guard has to be the SAME expression applied to
-/// every length: "at least this many leading zeros". 4 is chosen because it is
-/// satisfied by every format-preserved width the crate produces (see the
-/// `MIN_LEADING_ZEROS` test) while still being four zeros a real identifier never
-/// starts with in practice.
-pub const MIN_LEADING_ZEROS: usize = 4;
-
-/// The largest index that can be stamped without eating into `MIN_LEADING_ZEROS`
-/// for the NARROWEST format-preserved width.
-///
-/// A stamped index consumes one leading zero per decimal digit. The narrowest
-/// format-preserved original is 12 characters (`width` is clamped to 12), giving
-/// `12 - 2 - MIN_LEADING_ZEROS = 6` usable interior positions - so up to six
-/// digits, i.e. 999,999 values. Past that the entity falls back to the opaque
-/// `[CODE_index]` form: uniqueness and privacy survive, shape preservation does
-/// not. A single job holding a million distinct values of ONE identifier type is
-/// not a law-firm document set.
-pub const MAX_STAMPED_INDEX: usize = 999_999;
-
-/// True when `value` is a format-preserving placeholder this crate minted.
-///
-/// The test is the invariant, not a guess: every format-preserved placeholder
-/// begins with at least `MIN_LEADING_ZEROS` zeros (see `MIN_LEADING_ZEROS`), and a
-/// real identifier does not. It is what lets a consumer that never saw the
-/// `AppliedRedaction` list - the SQL audit, and the rescan in `pacgate-api` - tell
-/// the redactor's own output from a leak.
-///
-/// MEASURED 2026-11-02: without this, the rescan reported
-/// `BANK_ACCOUNT '0000000000000000010'` as residue on an otherwise clean document,
-/// because the account rule is label-anchored and its placeholder keeps the label
-/// shape. A rescan that always says "dirty" is worse than no rescan.
-///
-/// Deliberately conservative on length (12..=24, the clamped widths) so a short
-/// numeric run that happens to start with zeros - an amount, a date fragment - is
-/// not excused.
-pub fn is_format_preserving_placeholder(value: &str) -> bool {
-    let zeros = value.chars().take_while(|c| *c == '0').count();
-    if zeros < MIN_LEADING_ZEROS {
-        return false;
-    }
-    (12..=24).contains(&value.chars().count())
-        && value
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == 'X')
-}
-
-/// True when `value` is any placeholder this crate mints: the opaque
-/// `[CODE_prefix_index]` form, or a format-preserved one.
+/// One shape now, `[CODE_<hex>]` - see `PlaceholderAllocator`. The predecessor of
+/// this function had to recognise a zeroed numeric run as well, because the
+/// redactor produced two kinds of output. It does not any more, and that is the
+/// point: a consumer (the SQL audit, the rescan in `pacgate-api`) can decide by
+/// bracket, not by guessing whether a numeric run is a real value or the
+/// redactor's own.
 pub fn is_placeholder(value: &str) -> bool {
-    let t = value.trim();
-    if is_format_preserving_placeholder(t) {
-        return true;
-    }
-    let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) else {
+    let Some(inner) = value.trim().strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+    else {
         return false;
     };
-    // Two minted shapes:
-    //   [CODE_prefix_index]  - `PlaceholderAllocator::allocate`
-    //   [CODE_index]         - the opaque fallback past MAX_STAMPED_INDEX
-    //
     // Prefix match against the known codes, not a split on '_': several codes
     // themselves contain an underscore (`CN_ID`, `BANK_CARD`, `HK_MO_PERMIT`,
     // `CN_MOBILE`, `CASE_NO`, `REG_NO`, `LAWYER_NO`, `LEGACY_ID`, `BANK_ACCOUNT`,
-    // `CN_TAX_ID`). Requiring `parts[0]` to be a code rejected `[CN_ID_1]` - caught
-    // by the test below on the first run.
+    // `CN_TAX_ID`, `TH_JURISTIC`). Requiring `parts[0]` to be a code rejected
+    // `[CN_ID_1]` when that was still a live shape.
     crate::entity::EntityType::ALL.iter().any(|e| {
         inner
             .strip_prefix(e.code())
@@ -96,26 +42,96 @@ pub fn is_placeholder(value: &str) -> bool {
     })
 }
 
-/// Maps exact original values to stable placeholders.
+/// Maps exact original values to stable tokens.
 ///
-/// One allocator is one job. Never share an allocator across matters
-/// (spec 6.2 映射隔离).
+/// ## One representation, derived from the value
+///
+/// Until 2026-11-03 there were two mechanisms in this file, and the split was
+/// the defect. Text-shaped classes got an opaque `[CODE_prefix_index]` token;
+/// number-shaped classes got `format_preserving`, which zeroed the value's
+/// middle and stamped the ALLOCATION INDEX into the remaining digits. The second
+/// mechanism failed four ways (all measured on 2026-11-03 against the values the
+/// second review listed):
+///
+/// | failure | measurement |
+/// |---|---|
+/// | position, not value | the same ID was `...001X` alone and `...0030` after two other identifiers, so two documents in one matter could not be joined |
+/// | shape disclosure | `91110105CA01ABCD26` -> `00000000XX00XXXX10`: length, letter positions and check character all survived |
+/// | collision | `91350100M000100Y43` and `91110105CA01ABCD26` both -> `00000000X000000X10` |
+/// | counter leak | the mask said which ordinal the identifier was in the document |
+///
+/// The replacement is the token form ONLY, with the tag derived from the value:
+///
+/// ```text
+/// [CN_ID_<16 uppercase hex>]
+/// ```
+///
+/// * Keyed by the value, so position cannot matter and a matter's documents
+///   correlate on the same subject. There is no counter left to leak.
+/// * Opaque, so no length, letter position or check character survives.
+/// * 64 bits from HMAC-SHA256, so a collision needs ~2^32 distinct values of one
+///   class inside one matter - not a document set. (`Mapping` also keeps the
+///   reverse table, so a collision would be visible rather than silent, but the
+///   bar here is that it does not happen.)
+/// * Matter-scoped: the key is the matter's, so two matters derive different tags
+///   from the same person even if their corpora are later merged.
+///
+/// Spec 6.1 (same value, same placeholder) and spec 6.2 (mapping isolation) both
+/// hold by construction rather than by a counter that has to be kept in order.
 #[derive(Debug, Default)]
 pub struct PlaceholderAllocator {
-    /// Job-scoped prefix, so two jobs never mint the same placeholder name.
-    prefix: String,
-    /// (entity, exact original) -> placeholder
+    /// Derivation key. Two allocators with different keys never mint the same
+    /// tag for the same value (spec 6.2 映射隔离).
+    key: TokenKey,
+    /// (entity, exact original) -> token
     assigned: HashMap<(EntityType, String), String>,
+    /// token -> normalised value, so a collision is detected instead of
+    /// silently handing two subjects the same token.
+    minted: HashMap<String, String>,
+}
+
+/// The key a tag is derived with.
+///
+/// Deliberately NOT stored in the sanitized text, the ledger or the mapping: only
+/// the tags are. Losing the key does not make a mapping unreadable (the mapping
+/// holds placeholder -> original in the clear, server-side); it only means new
+/// tags for the same value will not match old ones.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TokenKey(Vec<u8>);
+
+impl std::fmt::Debug for TokenKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the key material into a log line.
+        f.write_str("TokenKey(<redacted>)")
+    }
+}
+
+impl TokenKey {
+    pub fn from_secret(secret: &[u8]) -> Self {
+        Self(secret.to_vec())
+    }
+
+    /// A fresh random key, for a caller that has no matter key to offer.
+    pub fn random() -> Self {
+        Self(uuid::Uuid::new_v4().as_bytes().to_vec())
+    }
+}
+
+impl Default for TokenKey {
+    fn default() -> Self {
+        Self::random()
+    }
 }
 
 impl PlaceholderAllocator {
-    /// `prefix` makes placeholder names globally unambiguous: two jobs
-    /// sanitizing the same value mint different tokens, so one job's mapping
-    /// can never silently resolve another job's text (spec 6.2).
-    pub fn new(prefix: &str) -> Self {
+    /// `key` makes token names unambiguous per matter: two matters sanitizing
+    /// the same value mint different tags, so one matter's mapping can never
+    /// silently resolve another matter's text (spec 6.2).
+    pub fn new(key: TokenKey) -> Self {
         Self {
-            prefix: prefix.to_string(),
+            key,
             assigned: HashMap::new(),
+            minted: HashMap::new(),
         }
     }
 
@@ -127,24 +143,59 @@ impl PlaceholderAllocator {
         self.assigned.is_empty()
     }
 
-    /// Allocate, or return the existing placeholder for this exact value.
+    /// Allocate, or return the existing token for this exact value.
     pub fn allocate(&mut self, entity: EntityType, original: &str) -> String {
         let key = (entity, original.to_string());
         if let Some(existing) = self.assigned.get(&key) {
             return existing.clone();
         }
 
-        let index = self.assigned.len() + 1;
         let placeholder = match entity.policy() {
-            PlaceholderPolicy::Opaque => {
-                format!("[{}_{}_{}]", entity.code(), self.prefix, index)
-            }
-            PlaceholderPolicy::FormatPreserving => format_preserving(entity, original, index),
             PlaceholderPolicy::Remove => String::new(),
+            PlaceholderPolicy::Opaque => self.token(entity, original),
         };
 
         self.assigned.insert(key, placeholder.clone());
         placeholder
+    }
+
+    /// `[CODE_<tag>]`, where the tag is HMAC(key, "CODE|normalised value").
+    ///
+    /// The code is inside the MAC input as well as around it: two classes that
+    /// normalise to the same string (a 13-digit Thai tax id and a 13-digit
+    /// juristic id are both digits) must not collide on a shared digest domain.
+    fn token(&mut self, entity: EntityType, original: &str) -> String {
+        let normalized = normalize_for_token(original, entity.folds_case());
+        let digest = hmac_sha256(&self.key, entity.code(), &normalized);
+        let tag: String = digest[..TOKEN_TAG_BYTES]
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect();
+
+        self.detect_collision(&tag, &normalized);
+        format!("[{}]", join_token(entity.code(), &tag))
+    }
+
+    /// Refuse to hand two different normalised values one token.
+    ///
+    /// 64 bits makes this a theoretical path, which is exactly why it is worth
+    /// ten lines: the old mechanism hit a REAL collision at two values
+    /// (`00000000X000000X10` for two different USCCs), and a silent one corrupts
+    /// `Mapping::restore` by resolving one subject to another's number.
+    ///
+    /// This is a detector, not a repair. Widening the tag would hide the fact
+    /// that the derivation is wrong; the assertion fires in tests and the record
+    /// makes the collision visible in a debug build. Reaching this path means the
+    /// input was not what `normalize_for_token` assumed.
+    fn detect_collision(&mut self, tag: &str, normalized: &str) {
+        if let Some(previous) = self.minted.get(tag) {
+            debug_assert_eq!(
+                previous, normalized,
+                "token collision at 64 bits: this needs investigating, not widening"
+            );
+        } else {
+            self.minted.insert(tag.to_string(), normalized.to_string());
+        }
     }
 
     /// Read-only view of the mapping, for the audit ledger. Sorted by
@@ -160,125 +211,106 @@ impl PlaceholderAllocator {
     }
 }
 
-/// Build a placeholder with the same shape as the original, so a downstream
-/// parser still works. For Luhn-checked card numbers the placeholder is made
-/// to pass Luhn, so downstream validation does not reject it.
-fn format_preserving(entity: EntityType, original: &str, index: usize) -> String {
-    let width = original.chars().count().clamp(12, 24);
+/// Bytes of HMAC output kept as the tag. 8 bytes = 16 uppercase hex chars.
+///
+/// The review's prototype used 48 bits and measured zero collisions over 100k
+/// distinct IDs. 64 bits is the same trade with a wider margin and no extra cost
+/// beyond eight characters in the token, and the token is not read by a human.
+pub const TOKEN_TAG_BYTES: usize = 8;
 
-    match entity {
-        EntityType::BankCard => {
-            let body_w = width.saturating_sub(1);
-            let seed = format!("{:0>body_w$}", index, body_w = body_w);
-            let body: String = seed
-                .chars()
-                .map(|c| if c.is_ascii_digit() { c } else { '0' })
-                .collect();
-            let check = luhn_check_digit(&body);
-            format!("{body}{check}")
-        }
-        _ => {
-            // Keep the first and last characters so format sniffers still
-            // recognise the shape; neutralise the middle - then stamp `index`
-            // into the digits so two different values never collide.
-            //
-            // The collision was real and measured 2026-11-02: neutralising the
-            // middle alone mapped BOTH `110105199003074512` and
-            // `310104198507121234` to `000000000000000000`. One placeholder for
-            // two people is a spec 9 violation (名称相似的不同主体 must not be
-            // merged) and it corrupts `Mapping::restore`, which can only return
-            // one of the two originals.
-            //
-            // ## The invariant the audit depends on
-            //
-            // A format-preserving placeholder must ALWAYS start with at least
-            // `MIN_LEADING_ZEROS` zeros, because the SQL audit
-            // (`scripts/lib/RawPiiPatterns.ps1`) excludes the redactor's own
-            // output with `(?!0{K})`. That guard is the only thing stopping the
-            // audit from reporting a clean machine's placeholders as raw PII
-            // leaks - measured 2026-10-25 as 37 false "leaks" per pattern.
-            //
-            // Stamping a decimal index from the right eats one leading zero per
-            // digit, so index 10 broke a `0{16}` guard and index 1000 would break
-            // `0{14}`. Rather than let the guard drift with the counter, the
-            // index is capped: past `MAX_STAMPED_INDEX` the entity falls back to
-            // the opaque `[CODE_index]` form, which no SQL pattern can mistake
-            // for an identifier. A job with more than this many distinct values
-            // of one type loses shape preservation, not uniqueness or privacy.
-            let chars: Vec<char> = original
-                .chars()
-                .map(|c| if c.is_ascii_digit() { '0' } else { 'X' })
-                .collect();
-            if chars.len() <= 2 {
-                return chars.into_iter().collect();
-            }
-            if index > MAX_STAMPED_INDEX {
-                return format!("[{}_{}]", entity.code(), index);
-            }
-
-            let stamp: Vec<char> = index.to_string().chars().collect();
-            // Digit positions strictly before the retained final character,
-            // rightmost first. A non-digit position is the `X` left by a letter
-            // and is skipped, not overwritten: turning an `X` into a digit would
-            // change the value's character class and could make the placeholder
-            // look like a different kind of identifier.
-            let mut digit_positions: Vec<usize> = (1..chars.len() - 1)
-                .rev()
-                .filter(|i| chars[*i].is_ascii_digit())
-                .collect();
-
-            if stamp.len() > digit_positions.len() {
-                // Not enough digit positions to carry the index. Opaque rather
-                // than a duplicate placeholder.
-                return format!("[{}_{}]", entity.code(), index);
-            }
-            // Right-align: write the most significant index digit furthest left.
-            digit_positions.truncate(stamp.len());
-            let start = *digit_positions.last().unwrap_or(&0);
-            // The invariant: never consume into the zero region the audit guard
-            // relies on.
-            if start < MIN_LEADING_ZEROS {
-                return format!("[{}_{}]", entity.code(), index);
-            }
-
-            let mut out = chars;
-            for (offset, pos) in digit_positions.iter().enumerate() {
-                out[*pos] = stamp[offset];
-            }
-            out.into_iter().collect()
-        }
-    }
+/// Hex characters in a tag. Derived, so the two cannot drift.
+pub const TOKEN_TAG_HEX: usize = TOKEN_TAG_BYTES * 2;
+/// Lowercase `CODE_TAG`, the inner text of the bracketed token.
+pub fn join_token(code: &str, tag: &str) -> String {
+    format!("{code}_{tag}")
 }
 
-/// Compute the Luhn check digit for a digit body.
-fn luhn_check_digit(body: &str) -> char {
-    let mut sum: u32 = 0;
-    let mut double = true;
-    for c in body.chars().rev() {
-        let Some(mut d) = c.to_digit(10) else {
+/// Canonical form a tag is derived from.
+///
+/// Two spellings of one printed number must reach one token, or an OCR'd document
+/// fragments the same person into one token per spacing. The rules, all measured
+/// against the review's variant list (`44030119800101123X`, `...123x`,
+/// `440301 1980 0101 123X`, `440301-1980-0101-123X` -> one token):
+///
+///   * separators that only group digits are dropped (space, tab, hyphen, the
+///     dash family, ideographic space, middle dot) - the same closed set the
+///     detector's normaliser uses, so the two cannot disagree;
+///   * full-width digits and letters are folded to ASCII;
+///   * when `fold_case` is set, letters are upper-cased, so a check character `x`
+///     is `X`.
+///
+/// `fold_case` is the ENTITY's call, not a constant, because the two directions
+/// have opposite costs. A resident ID's `x` and `X` are one person, so folding is
+/// required for correlation. A WeChat handle's `ZhangSan` and `zhangsan` are two
+/// accounts, so folding would merge two subjects - the spec-9 failure that
+/// `Mapping::restore` cannot undo.
+pub fn normalize_for_token(value: &str, fold_case: bool) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.trim().chars() {
+        if matches!(
+            ch,
+            ' ' | '\t' | '-' | '\u{FF0D}' | '\u{2013}' | '\u{2014}' | '\u{3000}' | '\u{00B7}'
+        ) {
             continue;
-        };
-        if double {
-            d *= 2;
-            if d > 9 {
-                d -= 9;
-            }
         }
-        sum += d;
-        double = !double;
+        let folded = match ch {
+            '\u{FF10}'..='\u{FF19}' => char::from_u32(ch as u32 - 0xFF10 + '0' as u32).unwrap_or(ch),
+            '\u{FF21}'..='\u{FF3A}' => char::from_u32(ch as u32 - 0xFF21 + 'A' as u32).unwrap_or(ch),
+            '\u{FF41}'..='\u{FF5A}' => char::from_u32(ch as u32 - 0xFF41 + 'a' as u32).unwrap_or(ch),
+            _ => ch,
+        };
+        if fold_case {
+            out.extend(folded.to_uppercase());
+        } else {
+            out.push(folded);
+        }
     }
-    let check = if sum.is_multiple_of(10) { 0 } else { 10 - (sum % 10) };
-    std::char::from_digit(check, 10).unwrap_or('0')
+    out
 }
+
+/// HMAC-SHA256 over `code + '\0' + value`.
+///
+/// A real MAC, not a bare digest: the tag of a 18-digit ID is derivable from the
+/// value alone if the key is absent, and an unkeyed digest of a national ID space
+/// is a rainbow table away from being reversible. The NUL separator is what stops
+/// `("CN_ID", "X9")` and `("CN_", "IDX9")` from sharing an input.
+fn hmac_sha256(key: &TokenKey, code: &str, value: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+
+    // RFC 2104 with SHA-256: block size is 64 bytes.
+    const BLOCK: usize = 64;
+    let mut k = [0u8; BLOCK];
+    if key.0.len() > BLOCK {
+        k[..32].copy_from_slice(&Sha256::digest(&key.0));
+    } else {
+        k[..key.0.len()].copy_from_slice(&key.0);
+    }
+    let mut inner = Sha256::new();
+    inner.update(k.map(|b| b ^ 0x36));
+    inner.update(code.as_bytes());
+    inner.update([0u8]);
+    inner.update(value.as_bytes());
+    let inner = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(k.map(|b| b ^ 0x5c));
+    outer.update(inner);
+    outer.finalize().into()
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::EntityType;
 
+    fn allocator() -> PlaceholderAllocator {
+        PlaceholderAllocator::new(TokenKey::from_secret(b"unit-test-matter-key"))
+    }
+
     #[test]
-    fn same_value_gets_the_same_placeholder() {
-        let mut a = PlaceholderAllocator::new("JOB1");
+    fn same_value_gets_the_same_token() {
+        let mut a = allocator();
         let first = a.allocate(EntityType::PersonName, "张三");
         let second = a.allocate(EntityType::PersonName, "张三");
         assert_eq!(first, second, "spec 6.1 requires consistent placeholders");
@@ -287,7 +319,7 @@ mod tests {
     #[test]
     fn similar_but_distinct_values_do_not_merge() {
         // Spec 9: 名称相似的不同主体 must not be merged.
-        let mut a = PlaceholderAllocator::new("JOB1");
+        let mut a = allocator();
         let one = a.allocate(EntityType::PersonName, "张三");
         let two = a.allocate(EntityType::PersonName, "张峰");
         assert_ne!(one, two);
@@ -295,7 +327,7 @@ mod tests {
 
     #[test]
     fn different_entities_get_distinct_placeholder_namespaces() {
-        let mut a = PlaceholderAllocator::new("JOB1");
+        let mut a = allocator();
         let person = a.allocate(EntityType::PersonName, "甲");
         let org = a.allocate(EntityType::OrgName, "甲");
         assert_ne!(person, org);
@@ -303,67 +335,89 @@ mod tests {
         assert!(org.contains("ORG"));
     }
 
-    #[test]
-    fn opaque_placeholders_do_not_leak_length_or_script() {
-        let mut a = PlaceholderAllocator::new("JOB1");
-        let p = a.allocate(EntityType::PersonName, "张三丰");
-        assert!(!p.contains('3'));
-        assert!(!p.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
-    }
-
-    #[test]
-    fn format_preserving_placeholder_keeps_shape_and_validates() {
-        let mut a = PlaceholderAllocator::new("JOB1");
-        let p = a.allocate(EntityType::BankCard, "4111111111111111");
-        assert_eq!(p.len(), 16, "a downstream parser must still see 16 digits");
-        assert!(p.chars().all(|c| c.is_ascii_digit()));
-        assert!(
-            crate::checksum::validate_luhn(&p),
-            "a format-preserving card placeholder should itself pass Luhn"
-        );
-    }
-
-    /// Two different format-preserved values must never share a placeholder.
+    /// A token must not leak the value's length or script.
     ///
-    /// Measured 2026-11-02: neutralising the middle collapsed BOTH
-    /// `110105199003074512` and `310104198507121234` to
-    /// `000000000000000000`. Spec 9 forbids merging similar-but-distinct
-    /// subjects, and `Mapping::restore` can only return one original for a
-    /// shared placeholder - so the other subject silently resolves to the wrong
-    /// person's number.
+    /// The predecessor asserted "no `3` in the placeholder", which only made sense
+    /// while the mask ended in a decimal counter. The real invariant is that the
+    /// token's width is INDEPENDENT of the original's: a 9-character passport and
+    /// an 18-character ID must produce tokens of the same size, or the token
+    /// discloses how long the value was.
     #[test]
-    fn two_different_ids_never_share_a_placeholder() {
-        let mut a = PlaceholderAllocator::new("JOB1");
-        let first = a.allocate(EntityType::CnResidentId, "110105199003074512");
-        let second = a.allocate(EntityType::CnResidentId, "310104198507121234");
-        assert_ne!(
-            first, second,
-            "two people must never collapse onto one placeholder"
-        );
-        assert_eq!(first.len(), 18, "the ID shape must survive: {first}");
-        assert_eq!(second.len(), 18, "the ID shape must survive: {second}");
-        assert!(
-            first.chars().all(|c| c.is_ascii_digit())
-                && second.chars().all(|c| c.is_ascii_digit()),
-            "a digit-shaped value must keep a digit-shaped placeholder"
+    fn tokens_do_not_leak_length_or_script() {
+        let mut a = allocator();
+        let short = a.allocate(EntityType::PersonName, "张三丰");
+        assert!(!short.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+
+        let mut b = allocator();
+        let narrow = b.allocate(EntityType::Uscc, "91350100M000100Y43");
+        let mut c = allocator();
+        let wide = c.allocate(EntityType::Uscc, "91350100M000100Y43000");
+        assert_eq!(
+            narrow.len(),
+            wide.len(),
+            "the token's width must not follow the value's: {narrow} vs {wide}"
         );
     }
 
-    /// The same collision, for an entity whose value contains letters.
+    /// The defect the whole rewrite is about: the token is derived from the
+    /// VALUE, so allocation order cannot change it.
+    ///
+    /// MEASURED 2026-11-03, before the fix: the same ID rendered as
+    /// `00000000000000001X` alone and `000000000000000030` after two other
+    /// identifiers, because the stamp was the allocation index.
     #[test]
-    fn two_different_credit_codes_never_share_a_placeholder() {
-        let mut a = PlaceholderAllocator::new("JOB1");
+    fn a_token_does_not_depend_on_allocation_order() {
+        let mut a = allocator();
+        let mut b = allocator();
+        let alone = b.allocate(EntityType::CnResidentId, "44030119800101123X");
+
+        a.allocate(EntityType::CnMobile, "13812345678");
+        a.allocate(EntityType::BankCard, "6222021234567890128");
+        let late = a.allocate(EntityType::CnResidentId, "44030119800101123X");
+
+        assert_eq!(alone, late, "position must not reach the token");
+    }
+
+    /// No length, letter layout or check character may survive.
+    #[test]
+    fn a_token_reveals_nothing_about_the_value_shape() {
+        let mut a = allocator();
+        for (entity, original) in [
+            (EntityType::CnResidentId, "44030119800101123X"),
+            (EntityType::Uscc, "91110105CA01ABCD26"),
+            (EntityType::BankCard, "6222021234567890128"),
+            (EntityType::BankAccount, "6222020200112345678"),
+        ] {
+            let p = a.allocate(entity, original);
+            assert!(is_placeholder(&p), "must be recognisable: {p}");
+            let inner = p.trim_start_matches('[').trim_end_matches(']');
+            assert_eq!(
+                inner.len(),
+                entity.code().len() + 1 + TOKEN_TAG_HEX,
+                "{entity:?}: a token is CODE_TAG and nothing else: {p}"
+            );
+            assert!(
+                !p.contains("XXXX"),
+                "{entity:?}: the letter layout must not survive: {p}"
+            );
+        }
+    }
+
+    /// Two different values must never share a token.
+    ///
+    /// MEASURED 2026-11-03, before the fix: these two USCCs both produced
+    /// `00000000X000000X10`.
+    #[test]
+    fn distinct_values_never_share_a_token() {
+        let mut a = allocator();
         let first = a.allocate(EntityType::Uscc, "91350100M000100Y43");
-        let second = a.allocate(EntityType::Uscc, "91110000100000000X");
+        let second = a.allocate(EntityType::Uscc, "91110105CA01ABCD26");
         assert_ne!(first, second);
-        assert_eq!(first.len(), 18);
-        assert_eq!(second.len(), 18);
     }
 
-    /// Placeholder uniqueness across a realistic job, not just two values.
     #[test]
-    fn every_allocated_placeholder_in_a_job_is_distinct() {
-        let mut a = PlaceholderAllocator::new("JOB1");
+    fn uniqueness_holds_across_a_realistic_matter() {
+        let mut a = allocator();
         let ids = [
             "110105199003074512",
             "110105199003074513",
@@ -374,104 +428,147 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for id in ids {
             let p = a.allocate(EntityType::CnResidentId, id);
-            assert!(seen.insert(p.clone()), "duplicate placeholder {p} for {id}");
+            assert!(seen.insert(p.clone()), "duplicate token {p} for {id}");
         }
         assert_eq!(seen.len(), ids.len());
     }
 
-    /// The invariant the SQL audit depends on: every format-preserving
-    /// placeholder starts with at least `MIN_LEADING_ZEROS` zeros.
-    ///
-    /// This is not decoration. `scripts/lib/RawPiiPatterns.ps1` excludes the
-    /// redactor's own output from the "raw PII still in a sanitized chunk" audit
-    /// using `(?!0{K})`. Measured 2026-11-02: a decimal index stamped from the
-    /// right ate one leading zero per digit, so from index 10 onward the
-    /// placeholder no longer satisfied a `0{16}` guard and the audit would have
-    /// reported the sanitizer's own clean output as leaks. The guard has to hold
-    /// for ARBITRARY index values, not just the small ones a test happens to try.
+    /// The same number printed four ways is one subject, so it must be one token.
     #[test]
-    fn every_format_preserving_placeholder_keeps_the_audit_guard_satisfiable() {
-        for entity in [
-            EntityType::CnResidentId,
-            EntityType::Uscc,
-            EntityType::BankCard,
-            EntityType::BankAccount,
-        ] {
-            for index in [1usize, 9, 10, 99, 100, 1000, MAX_STAMPED_INDEX] {
-                let original = match entity {
-                    EntityType::CnResidentId => "110105199003074512".to_string(),
-                    EntityType::Uscc => "91350100M000100Y43".to_string(),
-                    EntityType::BankCard => "4111111111111111".to_string(),
-                    // A 12-character account: the narrowest format-preserved width.
-                    _ => "020000123456".to_string(),
-                };
-                let p = format_preserving(entity, &original, index);
-                if p.starts_with('[') {
-                    // The opaque fallback no SQL pattern can mistake for a value.
-                    continue;
-                }
-                let lead = p.chars().take_while(|c| *c == '0').count();
-                assert!(
-                    lead >= MIN_LEADING_ZEROS,
-                    "{entity:?} index {index} produced {p} with only {lead} leading \
-                     zero(s); the audit guard `(?!0{{{MIN_LEADING_ZEROS}}})` would stop \
-                     excluding the redactor's own output"
-                );
-                assert_eq!(p.len(), original.len(), "shape lost for {entity:?}: {p}");
-            }
+    fn printed_variants_of_one_value_share_a_token() {
+        let mut a = allocator();
+        let variants = [
+            "44030119800101123X",
+            "44030119800101123x",
+            "440301 1980 0101 123X",
+            "440301-1980-0101-123X",
+        ];
+        let mut tokens = Vec::new();
+        for v in variants {
+            // A fresh allocator per spelling, because the mapping key is the
+            // exact original - the token is what has to agree.
+            tokens.push(allocator().allocate(EntityType::CnResidentId, v));
+        }
+        assert!(tokens.windows(2).all(|w| w[0] == w[1]), "{tokens:?}");
+        // And the same allocator still answers per spelling without drifting.
+        for v in variants {
+            assert!(is_placeholder(&a.allocate(EntityType::CnResidentId, v)));
         }
     }
 
-    /// Past the stamping ceiling the placeholder degrades to opaque, and it must
-    /// still be unique - the ceiling exists to protect the guard, not to allow a
-    /// collision.
     #[test]
-    fn past_the_stamp_ceiling_placeholders_stay_unique_and_opaque() {
-        // Allocate enough to cross the ceiling would need a million entries, so
-        // assert on the function directly at the boundary.
-        let just_under = format_preserving(EntityType::CnResidentId, "110105199003074512", MAX_STAMPED_INDEX);
-        let just_over =
-            format_preserving(EntityType::CnResidentId, "110105199003074512", MAX_STAMPED_INDEX + 1);
-        assert_ne!(just_under, just_over);
-        assert!(
-            just_over.starts_with('['),
-            "past the ceiling the form must be opaque, got {just_over}"
+    fn the_tag_is_upper_hex_of_the_documented_width() {
+        let mut a = allocator();
+        let p = a.allocate(EntityType::CnResidentId, "44030119800101123X");
+        let tag = p
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .strip_prefix("CN_ID_")
+            .expect("the code is the prefix");
+        assert_eq!(tag.len(), TOKEN_TAG_HEX);
+        assert!(tag.chars().all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c)));
+    }
+
+    /// Matter isolation by construction: a different key, a different tag.
+    #[test]
+    fn a_different_key_mints_a_different_token() {
+        let mut a = PlaceholderAllocator::new(TokenKey::from_secret(b"matter-a"));
+        let mut b = PlaceholderAllocator::new(TokenKey::from_secret(b"matter-b"));
+        assert_ne!(
+            a.allocate(EntityType::CnResidentId, "44030119800101123X"),
+            b.allocate(EntityType::CnResidentId, "44030119800101123X"),
+            "spec 6.2: two matters must not share a tag for the same person"
         );
     }
 
-    /// A consumer with no access to `AppliedRedaction` must still be able to tell
-    /// the redactor's output from a real identifier.
+    /// A consumer with no access to `AppliedRedaction` must be able to tell the
+    /// redactor's output from a real identifier.
     ///
-    /// MEASURED 2026-11-02: the rescan reported `BANK_ACCOUNT
-    /// '0000000000000000010'` as residue on an otherwise clean document, because
-    /// the account rule is label-anchored and its placeholder keeps the label
-    /// shape. The sanitize job excludes minted spans by offset; a standalone rescan
-    /// has no such list, so it needs this predicate.
+    /// This used to have to recognise a zeroed numeric run as well, which is
+    /// exactly how the rescan reported clean text as dirty (2 documented
+    /// episodes). One shape means one test.
     #[test]
-    fn a_placeholder_is_recognisable_without_the_applied_redaction_list() {
-        assert!(is_format_preserving_placeholder("0000000000000000010"));
-        assert!(is_format_preserving_placeholder("00000000X000000X30"));
-        assert!(is_format_preserving_placeholder("00000000000000002X"));
-
-        // Every opaque form this crate mints.
-        assert!(is_placeholder("[CN_ID_1]"));
-        assert!(is_placeholder("[LAWYER_NO_C723AAD5_4]"));
-        assert!(is_placeholder("[PLATE_ABC123_7]"));
+    fn a_token_is_recognisable_without_the_applied_redaction_list() {
+        assert!(is_placeholder("[CN_ID_2D8BF002A1C4E6F0]"));
+        assert!(is_placeholder("[LAWYER_NO_C723AAD5B19E2F40]"));
+        assert!(is_placeholder("[PLATE_ABC123D4E5F60718]"));
+        assert!(is_placeholder("[TH_JURISTIC_0A1B2C3D4E5F6071]"));
 
         // Real values must NOT be excused.
         assert!(!is_placeholder("110105199003074512"));
         assert!(!is_placeholder("6222020200112345678"));
         assert!(!is_placeholder("91350100M000100Y43"));
-        assert!(!is_placeholder("1,250,000.00"));
-        // A short zero-padded number is not a placeholder: excusing it would hide
-        // a real leak whose value happens to start with zeros.
+        assert!(!is_placeholder("000000000000000010"), "no numeric mask is minted any more");
         assert!(!is_placeholder("00000000"));
-        assert!(!is_format_preserving_placeholder("00001234"));
+    }
+
+    /// Normalisation is the reason an OCR'd document does not fragment its own
+    /// subject into one token per spacing. It also must not be so eager that it
+    /// merges two different numbers.
+    #[test]
+    fn normalisation_folds_grouping_but_not_digits() {
+        assert_eq!(
+            normalize_for_token("440301 1980 0101 123X", true),
+            "44030119800101123X"
+        );
+        assert_eq!(
+            normalize_for_token("440301-1980-0101-123x", true),
+            "44030119800101123X"
+        );
+        assert_eq!(
+            normalize_for_token(" 440301\u{3000}0101 ", true),
+            "4403010101"
+        );
+        assert_ne!(
+            normalize_for_token("44030119800101123X", true),
+            normalize_for_token("44030119800101124X", true),
+            "normalisation must not blur a real difference"
+        );
+    }
+
+    /// A case-significant handle must keep its case: `ZhangSan` and `zhangsan`
+    /// are two different WeChat accounts on the wire.
+    #[test]
+    fn a_case_significant_handle_keeps_its_identity() {
+        assert_ne!(
+            normalize_for_token("ZhangSan", false),
+            normalize_for_token("zhangsan", false)
+        );
+        // And the entity decides, so the allocator cannot get it wrong.
+        assert!(!EntityType::WeChatId.folds_case());
+        assert!(EntityType::CnResidentId.folds_case());
+    }
+
+    /// The HMAC must be a real MAC: same key and value agree, different keys do
+    /// not, and the entity code participates in the input.
+    #[test]
+    fn the_mac_is_keyed_and_domain_separated() {
+        let k = TokenKey::from_secret(b"k");
+        assert_eq!(
+            hmac_sha256(&k, "CN_ID", "44030119800101123X"),
+            hmac_sha256(&k, "CN_ID", "44030119800101123X")
+        );
+        assert_ne!(
+            hmac_sha256(&k, "CN_ID", "44030119800101123X"),
+            hmac_sha256(&TokenKey::from_secret(b"other"), "CN_ID", "44030119800101123X")
+        );
+        assert_ne!(
+            hmac_sha256(&k, "CN_ID", "0115565002108"),
+            hmac_sha256(&k, "TH_TAXID", "0115565002108"),
+            "the same digits in two classes must not share a digest input"
+        );
+    }
+
+    #[test]
+    fn the_key_never_prints_its_material() {
+        let k = TokenKey::from_secret(b"super-secret-matter-key");
+        let printed = format!("{k:?}");
+        assert!(!printed.contains("super-secret"), "{printed}");
     }
 
     /// The exact round trip that failed: sanitize an account, then re-detect it.
     #[test]
-    fn a_bank_account_placeholder_does_not_survive_as_residue() {
+    fn a_bank_account_token_does_not_survive_as_residue() {
         use crate::detect::tier_one_detectors;
         let mut s = crate::Sanitizer::new(
             tier_one_detectors(),
@@ -504,21 +601,17 @@ mod tests {
     }
 
     #[test]
-    fn allocator_is_deterministic_across_instances_for_the_same_order() {
-        let mut a = PlaceholderAllocator::new("JOB1");
-        let mut b = PlaceholderAllocator::new("JOB1");
-        assert_eq!(
-            a.allocate(EntityType::PersonName, "甲"),
-            b.allocate(EntityType::PersonName, "甲")
-        );
-    }
-
-    #[test]
     fn entries_reports_the_mapping_for_the_ledger() {
-        let mut a = PlaceholderAllocator::new("JOB1");
+        let mut a = allocator();
         a.allocate(EntityType::PersonName, "甲");
         a.allocate(EntityType::OrgName, "乙");
         assert_eq!(a.len(), 2);
         assert_eq!(a.entries().len(), 2);
+    }
+
+    #[test]
+    fn a_removed_entity_yields_no_token() {
+        let mut a = allocator();
+        assert_eq!(a.allocate(EntityType::Credential, "hunter2-secret"), "");
     }
 }

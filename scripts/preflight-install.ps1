@@ -136,7 +136,7 @@ if (-not (Test-Path $envPath)) {
 } else {
     Ok '.env exists'
     $envText = Get-Content $envPath -Raw
-    $required = @('PACGATE_DB_PASSWORD', 'PACGATE_JWT_SECRET', 'PACGATE_API_PASSWORD')
+    $required = @('PACGATE_DB_PASSWORD', 'PACGATE_JWT_SECRET', 'PACGATE_API_PASSWORD', 'PACGATE_SANITIZER_KEY')
     foreach ($k in $required) {
         $m = [regex]::Match($envText, "(?m)^\s*$k\s*=\s*(.*)$")
         if (-not $m.Success) { Bad "$k is missing from .env" }

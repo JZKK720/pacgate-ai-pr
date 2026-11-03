@@ -13,6 +13,7 @@ use pacgate_core::DataLevel;
 use crate::detect::{noise::NoiseFilter, Detector};
 use crate::ledger::RedactionLedger;
 use crate::mapping::{JobId, Mapping, MappingVersion};
+use crate::placeholder::TokenKey;
 use crate::policy::{decide, PolicyDecision};
 use crate::replace::Redactor;
 use crate::RedactResult;
@@ -34,17 +35,36 @@ pub struct Sanitizer {
 
 impl Sanitizer {
     pub fn new(detectors: Vec<Box<dyn Detector>>, version: MappingVersion) -> Self {
-        // One Sanitizer = one job (design 3.1 note). The token is random and
-        // minted once, so no two Sanitizer instances can ever mint the same
-        // placeholder name.
-        let job_token = uuid::Uuid::new_v4().simple().to_string()[..8].to_uppercase();
+        // A fresh random key. The token is minted once per sanitizer, so no two
+        // Sanitizer instances can mint the same tag for the same value - which is
+        // the isolation spec 6.2 asks for.
+        //
+        // This constructor is the one-shot path: one document, one process, no
+        // correlation wanted or possible. A caller that needs a matter's documents
+        // to agree on a subject's token must use `with_key` and pass the same key
+        // for every document in the matter - a per-job random key reproduces the
+        // 2026-11-03 defect (same person, token per document, corpus unjoinable).
+        Self::with_key(detectors, version, TokenKey::random())
+    }
+
+    /// Build a sanitizer whose tokens are derived from `key`.
+    ///
+    /// The key is the MATTER's. Every document in a matter must be sanitized with
+    /// the same key, or two documents holding the same person will not agree on a
+    /// token and the corpus cannot be joined on the identifier.
+    ///
+    /// Two matters must use different keys: that is what stops their corpora
+    /// being joined on a person if the data is ever merged.
+    pub fn with_key(
+        detectors: Vec<Box<dyn Detector>>,
+        version: MappingVersion,
+        key: TokenKey,
+    ) -> Self {
         Self {
             detectors,
             version,
             noise: NoiseFilter::new(),
-            // The token is embedded in every placeholder this job mints, so
-            // two jobs can never mint the same name (spec 6.2).
-            redactor: Redactor::new(&job_token),
+            redactor: Redactor::new(key),
         }
     }
 

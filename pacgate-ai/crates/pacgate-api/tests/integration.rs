@@ -124,6 +124,7 @@ mod tests {
             // that does not exist - a false claim of coverage is worse than a
             // known gap, because it stops anyone from looking.
             allow_registration: true,
+            sanitizer_key: Some("integration-test-key".to_string()),
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -1496,6 +1497,7 @@ mod tests {
             ocr_service_url: None,
             ner_model_dir: None,
             allow_registration: true,
+            sanitizer_key: Some("integration-test-key".to_string()),
         });
 
         // Build minimal state (stubs for everything)
@@ -1705,6 +1707,7 @@ mod tests {
             ocr_service_url: None,
             ner_model_dir: None,
             allow_registration: true,
+            sanitizer_key: Some("integration-test-key".to_string()),
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(

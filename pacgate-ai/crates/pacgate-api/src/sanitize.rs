@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::error::ApiError;
-use crate::state::AppState;
+use crate::state::{AppConfig, AppState};
 
 /// A Block verdict writes 'blocked' so the row can never be promoted by a
 /// later run on a different document (the pending-only guard in 005/ingest).
@@ -112,6 +112,19 @@ pub struct JobOutcome {
     /// The verifier's own explanation of the verdict.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verification_notes: Vec<String>,
+    /// Identifiers that were removed on SHAPE because their check digit did not
+    /// pass - an OCR-misread or hand-typed value.
+    ///
+    /// This is the label the review asked for: the check digit used to decide
+    /// whether a value was redacted at all, so a card one digit off was published
+    /// while its valid neighbour was removed. It now records the fact instead of
+    /// gating on it. A reviewer sees that four identifiers were removed on shape
+    /// alone and can check the extraction, which is the legitimate use of a
+    /// checksum.
+    ///
+    /// Empty when every redaction validated, so a clean response is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suspect: Vec<pacgate_redact::ledger::SuspectEntry>,
     pub sanitized_text: String,
     pub ledger: serde_json::Value,
 }
@@ -128,6 +141,43 @@ fn build_detectors(model_dir: Option<&str>) -> Result<Vec<Box<dyn detect::Detect
             Ok(detect::tier_one_detectors())
         }
     }
+}
+
+/// Derive the sanitizer's token key for one matter.
+///
+/// The tag a value becomes is `HMAC-SHA256(key, class | value)`, so the key is what
+/// decides whether two documents agree on a person. Three requirements, all three
+/// satisfied by construction here rather than by a convention someone has to keep:
+///
+///   1. Every job in a matter uses the same key - the input is
+///      `(deployment secret, tenant, matter)`, none of which vary per job.
+///   2. Two matters use different keys - the matter id is in the input, so
+///      `matter A` can never derive what `matter B` derived, even though both read
+///      one configured secret.
+///   3. The key is stable across restarts and across documents in one matter, so a
+///      re-run of the same document reproduces the same tags. That is what makes
+///      the mapping in the vault still line up after a restart.
+///
+/// When no secret is configured the crate's random key is used. That is a real
+/// downgrade (correlation is lost, and the SAME document re-run in a new process
+/// gets new tags) so it is logged loudly rather than assumed.
+fn sanitizer_key_for(
+    config: &AppConfig,
+    tenant_id: &TenantId,
+    matter_id: &MatterId,
+) -> pacgate_redact::TokenKey {
+    let Some(secret) = config.sanitizer_key.as_deref() else {
+        tracing::warn!(
+            "PACGATE_SANITIZER_KEY unset: identifier tokens are derived from a \
+             per-process random key, so the same person gets a different token in \
+             every job and cross-document correlation is lost. Set it to a stable \
+             per-deployment secret."
+        );
+        return pacgate_redact::TokenKey::random();
+    };
+    pacgate_redact::TokenKey::from_secret(
+        format!("{secret}\u{0}{}\u{0}{}", tenant_id.0, matter_id.0).as_bytes(),
+    )
 }
 
 async fn audit_row(
@@ -263,9 +313,23 @@ async fn run_job_inner(
     })?;
 
     // 2-4. DETECT / DECIDE / REPLACE / VERIFY inside the crate.
-    let mut sanitizer = pacgate_redact::Sanitizer::new(
+    //
+    // The token key is the MATTER's, derived from the deployment secret plus the
+    // matter id. Two properties follow, and both are the point:
+    //
+    //   * every job in one matter derives the same tag for the same person, so a
+    //     matter's documents can be joined on the identifier - which they could
+    //     not be while the tag carried the job's allocation counter;
+    //   * two matters derive DIFFERENT tags, so merging their corpora cannot
+    //     assemble one person's full picture.
+    //
+    // Deriving per matter, rather than using the deployment secret directly, is
+    // what keeps the second property while still having one configuration value.
+    let token_key = sanitizer_key_for(&state.config, tenant_id, matter_id);
+    let mut sanitizer = pacgate_redact::Sanitizer::with_key(
         build_detectors(state.config.ner_model_dir.as_deref())?,
         MappingVersion::CURRENT,
+        token_key,
     );
     let outcome = sanitizer
         .sanitize(&extracted.text, data_level)
@@ -427,6 +491,7 @@ async fn run_job_inner(
         reason: outcome.decision.reason,
         residue: outcome.ledger.residue.clone(),
         verification_notes: outcome.ledger.verification_notes.clone(),
+        suspect: outcome.ledger.suspect.clone(),
         sanitized_text: outcome.text,
         ledger: ledger_json,
     })
@@ -1574,6 +1639,62 @@ mod gate_tests {
         assert!(
             prod.contains("let _slot = state.try_acquire_sanitize_slot()"),
             "expected the permit bound as `_slot`"
+        );
+    }
+
+    fn config_with(key: Option<&str>) -> AppConfig {
+        AppConfig {
+            sanitizer_key: key.map(str::to_string),
+            ..AppConfig::default()
+        }
+    }
+
+    /// The same matter must derive the same key, or a re-run of one document
+    /// mints new tokens and the mapping already in the vault stops matching.
+    #[test]
+    fn the_key_is_stable_within_a_matter() {
+        let config = config_with(Some("deployment-secret"));
+        let tenant = TenantId::new();
+        let matter = MatterId::new();
+        let a = sanitizer_key_for(&config, &tenant, &matter);
+        let b = sanitizer_key_for(&config, &tenant, &matter);
+        assert_eq!(a, b);
+    }
+
+    /// Two matters must derive different keys even though they share one
+    /// configured secret. This is what stops their corpora being joined on a
+    /// person if the data is ever merged (spec 6.2 映射隔离).
+    #[test]
+    fn two_matters_derive_different_keys_from_one_secret() {
+        let config = config_with(Some("deployment-secret"));
+        let tenant = TenantId::new();
+        assert_ne!(
+            sanitizer_key_for(&config, &tenant, &MatterId::new()),
+            sanitizer_key_for(&config, &tenant, &MatterId::new()),
+        );
+    }
+
+    /// Two tenants on the SAME matter id must also differ: matter ids are
+    /// per-tenant, so keying on the matter alone would collide across firms.
+    #[test]
+    fn two_tenants_derive_different_keys_for_the_same_matter_id() {
+        let config = config_with(Some("deployment-secret"));
+        let matter = MatterId::new();
+        assert_ne!(
+            sanitizer_key_for(&config, &TenantId::new(), &matter),
+            sanitizer_key_for(&config, &TenantId::new(), &matter),
+        );
+    }
+
+    /// Rotation changes every derived key. That is the documented cost, not a
+    /// bug, but it must be a visible consequence rather than a silent one.
+    #[test]
+    fn a_different_secret_derives_a_different_key() {
+        let tenant = TenantId::new();
+        let matter = MatterId::new();
+        assert_ne!(
+            sanitizer_key_for(&config_with(Some("secret-a")), &tenant, &matter),
+            sanitizer_key_for(&config_with(Some("secret-b")), &tenant, &matter),
         );
     }
 }
