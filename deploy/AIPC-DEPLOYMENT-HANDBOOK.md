@@ -102,11 +102,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.16` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.16` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.16` | Unchanged this release. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.16` | Unchanged this release. |
-| `ghcr.io/jzkk720/ocr-service:0.2.16` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.17` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.17` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.17` | Unchanged this release. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.17` | Unchanged this release. |
+| `ghcr.io/jzkk720/ocr-service:0.2.17` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > **0.2.14 is a correctness fix, not a feature release.** A client scan of a real
@@ -199,6 +199,15 @@ Three things make this harder than it looks, and the script exists because of th
   and needs a token with `read:packages` **and** `delete:packages`. An ordinary `repo`
   token gets `403`. A `200` from `ghcr.io/token?...:delete` is **not** evidence of
   permission — it is returned regardless of what the token may do.
+  - **A GitHub Actions workflow cannot do this either, and that is structural.** `jzkk720`
+    is a **user** account, not an organisation, so the packages it owns live under
+    `/user/packages/...`. The automatic `GITHUB_TOKEN` is an *installation* token: it can
+    never act as the user, and its `/repos/{owner}/{repo}/packages` path only sees packages
+    **linked** to the repo. Measured 2026-11-03 from inside Actions with
+    `permissions: packages: write` — the repo list, the single package, its versions, and
+    the `/orgs/jzkk720/...` variant all returned **404**. An earlier version of this
+    handbook suggested a workflow; it was removed because it could never succeed. A
+    user-scoped token with `delete:packages` is the only route.
 - **`latest` and a release tag can share one digest.** Deleting the version behind an old
   tag can take `latest` with it. The plan protects every digest that a kept tag or
   `latest` points at, and says so instead of deleting.

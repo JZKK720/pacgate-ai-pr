@@ -108,11 +108,11 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.16` | **脱敏修复版本。** 修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.16` | 向 deer-flow 暴露 24 个 MCP 工具；新增 `pacgate_rescan_residue` 与 `pacgate_reset_sanitization` 供补救流程使用。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 即可获得这些工具，无需新镜像。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.16` | 本版本未变更。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.16` | 本版本未变更。 |
-| `ghcr.io/jzkk720/ocr-service:0.2.16` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
+| `ghcr.io/jzkk720/pacgate-api:0.2.17` | **脱敏修复版本。** 修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.17` | 向 deer-flow 暴露 24 个 MCP 工具；新增 `pacgate_rescan_residue` 与 `pacgate_reset_sanitization` 供补救流程使用。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 即可获得这些工具，无需新镜像。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.17` | 本版本未变更。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.17` | 本版本未变更。 |
+| `ghcr.io/jzkk720/ocr-service:0.2.17` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > **0.2.14 是正确性修复，不是功能版本。** 客户扫描真实扫描件时返回
@@ -190,6 +190,13 @@ $env:GHCR_PRUNE_TOKEN = '<token>'
   都返回 **405**。删除必须走 GitHub Packages REST API，且令牌需同时具备 `read:packages`
   与 `delete:packages`；普通 `repo` 权限的令牌会得到 `403`。注意：`ghcr.io/token?...:delete`
   返回 `200` **不能**证明有删除权限——它无论令牌能否删除都会返回 200。
+- **GitHub Actions 工作流同样做不到，而且这是结构性的。** `jzkk720` 是**用户**账号，
+  不是组织，因此它拥有的包位于 `/user/packages/...` 下。自动的 `GITHUB_TOKEN` 是
+  *安装*令牌：它永远无法以用户身份行事，其 `/repos/{owner}/{repo}/packages` 路径只能
+  看到**已关联**到该仓库的包。2026-11-03 在 Actions 中以 `permissions: packages: write`
+  实测：仓库包列表、单个包、包版本、以及 `/orgs/jzkk720/...` 变体**全部返回 404**。
+  本手册早先版本的说明曾建议用工作流，因它永远不可能成功而删除。唯一可行路径是
+  具备 `delete:packages` 的**用户级**令牌。
 - **`latest` 可能与某个发布标签共享同一摘要。** 删除旧标签背后的版本会把 `latest` 一起删掉。
   计划会保护所有被保留标签或 `latest` 指向的摘要，并明确列出而不删除。
 - **一个摘要可能挂多个标签。** 实测 `0.2.13` 与遗留的 `tmp-del` 指向同一清单，计划会将
