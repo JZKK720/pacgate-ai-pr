@@ -171,6 +171,37 @@ GitHub → 你的个人资料 → Packages → `pacgate-api` → Package setting
 编译后的二进制文件和 SQL 迁移，所有密钥都在运行时通过 `.env` 注入，且安装程序
 已拥有对相同代码的完整源码访问权限。
 
+### 清理历史镜像版本
+
+六个包累积了约 210 个标签，绝大多数早已被取代。客户端安装或回滚只需要最新的三个发布版本。
+
+```powershell
+# 先看计划。这是默认行为，不会删除任何内容。
+.\scripts\prune-ghcr-versions.ps1
+
+# 确认无误后，使用具备 read:packages + delete:packages 的令牌执行：
+$env:GHCR_PRUNE_TOKEN = '<token>'
+.\scripts\prune-ghcr-versions.ps1 -Execute
+```
+
+有三点比表面看起来复杂，脚本正是为解决它们而存在：
+
+- **registry API 无法删除 GHCR 清单。** `DELETE /v2/<repo>/manifests/<digest>` 对任何凭据
+  都返回 **405**。删除必须走 GitHub Packages REST API，且令牌需同时具备 `read:packages`
+  与 `delete:packages`；普通 `repo` 权限的令牌会得到 `403`。注意：`ghcr.io/token?...:delete`
+  返回 `200` **不能**证明有删除权限——它无论令牌能否删除都会返回 200。
+- **`latest` 可能与某个发布标签共享同一摘要。** 删除旧标签背后的版本会把 `latest` 一起删掉。
+  计划会保护所有被保留标签或 `latest` 指向的摘要，并明确列出而不删除。
+- **一个摘要可能挂多个标签。** 实测 `0.2.13` 与遗留的 `tmp-del` 指向同一清单，计划会将
+  它们合并为一次删除。若分开列出，第二次 DELETE 会返回 404，把一次完全成功的执行
+  报告成失败。
+
+删除不可逆，因此脚本默认试运行，需要 `-Execute` 加手动确认，并由
+`scripts/test-prune-ghcr-versions.ps1`（离线夹具、无需凭据）覆盖，断言它不会删除
+本应保留的版本，也不会误报自身结果。
+
+请至少保留你要回滚到的那个版本：运行 `0.2.16` 的客户端需要退回时，`0.2.15` 应当仍可拉取。
+
 仅当 Rust 源码变更时，才在开发机上重建并推送。**标签值应从 compose 固定值中读取，
 而不要手写版本号**——此处硬编码的标签已两次过期，其中一次还把健康系统误报为故障：
 

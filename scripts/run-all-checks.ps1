@@ -197,6 +197,11 @@ $gates = @(    'scripts/test-install-render.ps1'
     # (a clean machine reported as leaking, or a leak reported as clean). Offline:
     # no docker, no database.
     'scripts/test-sanitize-pattern-mirror.ps1'
+    # Asserts the GHCR pruner cannot delete a release it means to keep, and cannot
+    # misreport its own result. Deletion is irreversible and a digest can carry
+    # several tags, so a bug here either destroys a shipped image or reports a
+    # clean run as failed. Offline: fixtures only, no credential, no network.
+    'scripts/test-prune-ghcr-versions.ps1'
     'scripts/test-version-marker.ps1'
     'scripts/test-version-marker-against-image.ps1'
     # Asserts the release TAG still identifies the PUBLISHED artifacts - that the

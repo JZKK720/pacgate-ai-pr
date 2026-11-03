@@ -178,6 +178,41 @@ GitHub → your profile → Packages → `pacgate-api` → Package settings → 
 the compiled binary and SQL migrations, every secret is injected at runtime via `.env`,
 and the installer already has full source access to the same code.
 
+### Pruning old image versions
+
+Six packages have accumulated roughly 210 tags, most of them long superseded. Only the
+newest three releases need to exist for a client to install or roll back.
+
+```powershell
+# Show the plan first. This is the default and deletes nothing.
+.\scripts\prune-ghcr-versions.ps1
+
+# Then, with a token that has read:packages + delete:packages:
+$env:GHCR_PRUNE_TOKEN = '<token>'
+.\scripts\prune-ghcr-versions.ps1 -Execute
+```
+
+Three things make this harder than it looks, and the script exists because of them:
+
+- **The registry API cannot delete GHCR manifests.** `DELETE /v2/<repo>/manifests/<digest>`
+  answers **405** for every credential. Deletion goes through the GitHub Packages REST API
+  and needs a token with `read:packages` **and** `delete:packages`. An ordinary `repo`
+  token gets `403`. A `200` from `ghcr.io/token?...:delete` is **not** evidence of
+  permission — it is returned regardless of what the token may do.
+- **`latest` and a release tag can share one digest.** Deleting the version behind an old
+  tag can take `latest` with it. The plan protects every digest that a kept tag or
+  `latest` points at, and says so instead of deleting.
+- **One digest can carry several tags.** `0.2.13` and the leftover `tmp-del` tag point at
+  the same manifest, so the plan collapses them into one delete. Listing them separately
+  would make the second DELETE answer 404 and report a successful run as a failure.
+
+Deletion is irreversible, so the script is dry-run by default, needs `-Execute` plus a
+typed confirmation, and is covered by `scripts/test-prune-ghcr-versions.ps1` (offline
+fixtures, no credential) which asserts it cannot drop a kept release or misreport itself.
+
+Keep at least the version you are rolling back to. A client on `0.2.16` that needs to
+revert should find `0.2.15` still pullable.
+
 Only rebuild and push if the Rust source changes, from the dev machine. **Take the
 tag from the compose pin rather than typing a version** — a hard-coded tag here
 has gone stale twice, and one stale copy already reported a healthy system as
