@@ -60,6 +60,11 @@ param(
     # Offline mode: directory of <package>.json version listings.
     [string]$FixturePath = '',
 
+    # Packages API base. Overridable so this can run inside GitHub Actions, where
+    # GITHUB_TOKEN may only reach the /repos/{owner}/{repo} form and cannot use the
+    # /user form that a personal token uses.
+    [string]$ApiBase = 'https://api.github.com/user/packages/container',
+
     [switch]$Execute,
     [switch]$Force
 )
@@ -95,7 +100,7 @@ No token. Set GHCR_PRUNE_TOKEN to a token with read:packages + delete:packages.
 "@
 }
 
-$apiBase = 'https://api.github.com/user/packages/container'
+$apiBase = $ApiBase.TrimEnd('/')
 
 function Invoke-GitHub([string]$uri, [string]$method = 'GET') {
     $curlArgs = @('--noproxy', '*', '-s', '-w', "`n%{http_code}", '-X', $method, '-m', '60',

@@ -1,0 +1,85 @@
+# Prune old GHCR image versions.
+#
+# WHY THIS RUNS IN ACTIONS AND NOT ON A LAPTOP
+# --------------------------------------------
+# Deleting a GHCR version needs `delete:packages`. Measured 2026-11-03, no
+# credential on the build machine has it:
+#   * the machine's git PAT carries `gist, repo, workflow` -> the packages API
+#     answers 403;
+#   * the registry API cannot delete at all - DELETE /v2/<repo>/manifests/<digest>
+#     returns 405 for every credential;
+#   * ghcr.io/token?...:delete returns 200 regardless of what the token may do, so
+#     a 200 there is not evidence of permission.
+#
+# The repository's own GITHUB_TOKEN DOES have `packages: write`, and the pinned
+# namespace (jzkk720) matches this repo's owner, so the token can act on these
+# packages. That is the same guarantee build-ghcr.yml already relies on to publish
+# them. Running here also removes the need to hand a delete-capable personal token
+# to a workstation.
+#
+# SAFETY
+#   Default is a dry run: the plan is printed to the job summary and nothing is
+#   deleted. Deletion requires dispatching with `execute` checked, which the plan
+#   step surfaces first. See scripts/prune-ghcr-versions.ps1 for the digest guards
+#   (a kept release or `latest` can never be deleted) and
+#   scripts/test-prune-ghcr-versions.ps1 for the offline assertions.
+
+name: Prune old GHCR image versions
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_releases:
+        description: "How many of the newest releases to keep (3 = newest + the two before it)."
+        required: true
+        default: "3"
+      execute:
+        description: "Actually delete. Leave false to print the plan only."
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show the plan
+        id: plan
+        shell: pwsh
+        env:
+          GHCR_PRUNE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GITHUB_TOKEN can reach packages only through the repo-scoped path, so
+          # the /user form a personal token uses is not available here.
+          $base = "https://api.github.com/repos/${{ github.repository }}/packages/container"
+          ./scripts/prune-ghcr-versions.ps1 `
+            -KeepReleases ${{ inputs.keep_releases }} `
+            -ApiBase $base
+
+      - name: Prune
+        if: ${{ inputs.execute }}
+        shell: pwsh
+        env:
+          GHCR_PRUNE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $base = "https://api.github.com/repos/${{ github.repository }}/packages/container"
+          # -Force skips the interactive confirmation: in CI the deliberate opt-in
+          # is the `execute` input above, and there is no terminal to type into.
+          ./scripts/prune-ghcr-versions.ps1 `
+            -KeepReleases ${{ inputs.keep_releases }} `
+            -ApiBase $base `
+            -Execute -Force
+
+      - name: Explain a dry run
+        if: ${{ !inputs.execute }}
+        run: |
+          echo "DRY RUN - nothing was deleted." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Re-run this workflow with \`execute\` checked to apply the plan above." >> "$GITHUB_STEP_SUMMARY"
