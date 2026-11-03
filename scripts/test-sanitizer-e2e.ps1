@@ -305,7 +305,25 @@ Check "no raw id card anywhere in kb_chunks" ([int](($rawLeft | Select-Object -F
 $dl = Invoke-WebRequest -Uri "http://127.0.0.1:8097/api/documents/$docId/download" -Headers $hdr -UseBasicParsing
 Check "download allowed post-sanitize" ($dl.StatusCode -eq 200)
 
-$body = [System.Text.Encoding]::UTF8.GetString([byte[]]$dl.Content)
+# `-UseBasicParsing` gives `.Content` as a STRING on PS 5.1 but as a byte array
+# when the response is not text/*. Casting a string to byte[] re-encodes each
+# CHARACTER, which is not the same bytes, so the token pattern then misses
+# against multi-byte content. Handle both shapes and fail the gate loudly if
+# neither works - a null `$body` used to raise InvokeMethodOnNull on the
+# Substring below and let the gate print PASS anyway, which is the exact
+# "the gate says green" problem this suite exists to prevent.
+$body = if ($dl.Content -is [byte[]]) {
+    [System.Text.Encoding]::UTF8.GetString($dl.Content)
+} elseif ($dl.RawContentStream) {
+    $dl.RawContentStream.Position = 0
+    (New-Object System.IO.StreamReader($dl.RawContentStream, [System.Text.Encoding]::UTF8)).ReadToEnd()
+} else {
+    [string]$dl.Content
+}
+if ([string]::IsNullOrEmpty($body)) {
+    throw "download returned an empty body for a 'sanitized' document at $docId - the token assertion below cannot run, and a silently skipped assertion must never report PASS"
+}
+
 $leakedRaw = @('110105199003074512', '9131000060728345XG', '6222020200112345678') |
     Where-Object { $body -like "*$_*" }
 Check "download body carries NO raw identifier" ($leakedRaw.Count -eq 0) `
