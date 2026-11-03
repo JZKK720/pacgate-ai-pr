@@ -12,6 +12,22 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
+# Neutralise the ambient proxy.
+#
+# MEASURED 2026-11-03: this gate PASSED alone and FAILED inside run-all-checks.ps1.
+# The difference was the environment: curl.exe honours HTTP_PROXY/HTTPS_PROXY, and
+# this machine carries `http://127.0.0.1:7892` with nothing listening on that port.
+# Alone the variable happened to be unset; under the suite it was inherited, so every
+# probe failed as a transport error and five published images were reported as
+# unreachable.
+#
+# A gate whose result depends on whether it was invoked directly is not a gate.
+# Same treatment as scripts/lib/Release-ImageState.ps1 and prune-ghcr-versions.ps1.
+$env:HTTP_PROXY = ''
+$env:HTTPS_PROXY = ''
+$env:http_proxy = ''
+$env:https_proxy = ''
+
 $ok = $true
 function Line($label, $value, $good) {
     $c = if ($good) { 'Green' } else { 'Red' }
