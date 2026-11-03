@@ -288,9 +288,30 @@ $rawLeft = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""
 Check "no raw id card anywhere in kb_chunks" ([int](($rawLeft | Select-Object -First 1).ToString().Trim()) -eq 0)
 
 # 9. Download gate: BEFORE sanitize the doc was pending; now sanitized, so
-#    download must be ALLOWED. Refusal path is asserted by the status above.
+#    download must be ALLOWED - AND ITS BODY MUST BE THE SANITISED TEXT.
+#
+# WHY THE BODY CHECK IS NOT OPTIONAL (measured 2026-11-03)
+#
+# This assertion used to be `Check ... ($dl.StatusCode -eq 200)` and nothing
+# else. It passed for months while 36 of 37 documents labelled `sanitized`
+# served their FULL ORIGINAL TEXT through this endpoint: the gate refused
+# `pending` but never replaced the bytes. A status-code check cannot tell the
+# difference between "the redacted artifact" and "the original" - both are 200.
+#
+# The user-facing consequence was severe: `pacgate_read_document` (MCP) wraps
+# this endpoint, so the agent read raw client identifiers, reported that
+# sanitisation had not worked, and was CORRECT - while the database and every
+# other gate said clean.
 $dl = Invoke-WebRequest -Uri "http://127.0.0.1:8097/api/documents/$docId/download" -Headers $hdr -UseBasicParsing
 Check "download allowed post-sanitize" ($dl.StatusCode -eq 200)
+
+$body = [System.Text.Encoding]::UTF8.GetString([byte[]]$dl.Content)
+$leakedRaw = @('110105199003074512', '9131000060728345XG', '6222020200112345678') |
+    Where-Object { $body -like "*$_*" }
+Check "download body carries NO raw identifier" ($leakedRaw.Count -eq 0) `
+    ("returned raw: " + ($leakedRaw -join ', '))
+Check "download body carries a minted token" ($body -match '\[[A-Z_]+_[0-9A-F]{8,}\]') `
+    ("body was: " + $body.Substring(0, [Math]::Min(120, $body.Length)))
 
 # 10. Restore: role gate. Attorney token must be refused.
 $restoreBody = @{ job_id = $job.job_id; text = $job.sanitized_text } | ConvertTo-Json -Compress
