@@ -54,10 +54,13 @@ jobs:
         id: plan
         shell: pwsh
         env:
-          GHCR_PRUNE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `secrets.GITHUB_TOKEN` is not a secret expression on Actions; it errors.
+          # The automatic token is exposed to every step as GITHUB_TOKEN, so it is
+          # mapped explicitly into the variable the script reads.
+          GHCR_PRUNE_TOKEN: ${{ github.token }}
         run: |
-          # GITHUB_TOKEN can reach packages only through the repo-scoped path, so
-          # the /user form a personal token uses is not available here.
+          # GITHUB_TOKEN reaches packages only through the repo-scoped path, so the
+          # /user form a personal token uses is not available here.
           $base = "https://api.github.com/repos/${{ github.repository }}/packages/container"
           ./scripts/prune-ghcr-versions.ps1 `
             -KeepReleases ${{ inputs.keep_releases }} `
@@ -67,7 +70,7 @@ jobs:
         if: ${{ inputs.execute }}
         shell: pwsh
         env:
-          GHCR_PRUNE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_PRUNE_TOKEN: ${{ github.token }}
         run: |
           $base = "https://api.github.com/repos/${{ github.repository }}/packages/container"
           # -Force skips the interactive confirmation: in CI the deliberate opt-in

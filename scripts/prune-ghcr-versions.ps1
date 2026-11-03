@@ -103,20 +103,29 @@ No token. Set GHCR_PRUNE_TOKEN to a token with read:packages + delete:packages.
 $apiBase = $ApiBase.TrimEnd('/')
 
 function Invoke-GitHub([string]$uri, [string]$method = 'GET') {
-    $curlArgs = @('--noproxy', '*', '-s', '-w', "`n%{http_code}", '-X', $method, '-m', '60',
-        '-H', "Authorization: Bearer $token",
-        '-H', 'Accept: application/vnd.github+json',
-        '-H', 'X-GitHub-Api-Version: 2022-11-28')
-    if ($method -eq 'DELETE') { $curlArgs += @('-o', 'NUL') }
-    $raw = & curl.exe @curlArgs $uri 2>&1
-    $text = ($raw | Out-String).TrimEnd()
-    $code = 0
-    $body = $text
-    if ($text -match '(?s)^(.*)\n(\d{3})$') {
-        $body = $Matches[1]
-        $code = [int]$Matches[2]
+    # Invoke-WebRequest, NOT curl.exe.
+    #
+    # MEASURED 2026-11-03 on the first Actions run: this was written against
+    # `curl.exe`, which exists on Windows but has no equivalent executable on the
+    # ubuntu-latest runner, so the pruner died with "The term 'curl.exe' is not
+    # recognized" before it listed a single version. .NET is the only HTTP client
+    # guaranteed on both, and -SkipHttpErrorCheck returns the status code for 4xx/5xx
+    # instead of throwing, which is what the curl -w "%{http_code}" form existed for.
+    $headers = @{
+        Authorization          = "Bearer $token"
+        Accept                 = 'application/vnd.github+json'
+        'X-GitHub-Api-Version' = '2022-11-28'
     }
-    return [pscustomobject]@{ Code = $code; Body = $body }
+    try {
+        $resp = Invoke-WebRequest -Uri $uri -Method $method -Headers $headers `
+            -UseBasicParsing -TimeoutSec 60 -SkipHttpErrorCheck
+        return [pscustomobject]@{ Code = [int]$resp.StatusCode; Body = [string]$resp.Content }
+    }
+    catch {
+        # Transport failure, not an HTTP answer. Code 0 so the caller reads it as
+        # "cannot check" rather than as a permissions problem.
+        return [pscustomobject]@{ Code = 0; Body = $_.Exception.Message }
+    }
 }
 
 function Get-SortKey([string]$tag) {
