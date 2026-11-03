@@ -175,7 +175,7 @@ fn a_span_inside_a_bracketed_token_is_recognised() {
 /// `纳税人识别号 CN_TAX_ID_[CN_TAX_ID_949F3E55A690184A]`.
 ///
 /// The reviewer's conclusion was exactly right: "触发条件是关键字前缀，不是括号"
-/// - the trigger is the keyword prefix, not the bracket. `is_token_span` therefore
+/// (the trigger is the keyword prefix, not the bracket). `is_token_span` therefore
 /// had to recognise the PAYLOAD of an un-bracketed `<CODE>_` token, which the
 /// first draft missed because it only walked back to a `[`.
 #[test]
