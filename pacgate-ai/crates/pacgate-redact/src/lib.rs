@@ -21,7 +21,7 @@ pub use ledger::RedactionLedger;
 pub use verify::{verify, verify_raw, Verification, VerifyScope, Verdict};
 pub use replace::{AppliedRedaction, Redaction, Redactor};
 pub use mapping::{JobId, Mapping, MappingVersion};
-pub use placeholder::{is_placeholder, normalize_for_token, PlaceholderAllocator, TokenKey};
+pub use placeholder::{is_placeholder, is_token_span, normalize_for_token, PlaceholderAllocator, TokenKey};
 pub use placeholder::{join_token, TOKEN_TAG_BYTES, TOKEN_TAG_HEX};
 pub use entity::{EntityType, PlaceholderPolicy, Tier};
 
@@ -112,3 +112,4 @@ mod tests {
         assert!(RedactError::Internal("x".into()).is_fatal());
     }
 }
+

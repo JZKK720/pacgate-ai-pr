@@ -35,11 +35,115 @@ pub fn is_placeholder(value: &str) -> bool {
     // `CN_MOBILE`, `CASE_NO`, `REG_NO`, `LAWYER_NO`, `LEGACY_ID`, `BANK_ACCOUNT`,
     // `CN_TAX_ID`, `TH_JURISTIC`). Requiring `parts[0]` to be a code rejected
     // `[CN_ID_1]` when that was still a live shape.
+    is_code_underscore_rest(inner)
+}
+
+/// True when `inner` (no brackets) is `<known code>_<payload>`.
+fn is_code_underscore_rest(inner: &str) -> bool {
     crate::entity::EntityType::ALL.iter().any(|e| {
         inner
             .strip_prefix(e.code())
             .is_some_and(|rest| rest.starts_with('_') && rest.len() > 1)
     })
+}
+
+/// True when `value` is a BARE token - `<code>_<hex>` with no brackets.
+///
+/// MEASURED 2026-11-03, and this is the other half of a P0. Only the bracketed
+/// form was protected, so a document that had already been tokenised and then
+/// lost its brackets (`CN_TAX_ID_ABCDEF0123456789`) was re-hashed as if the hex
+/// tail were a live tax number, producing
+/// `[CN_TAX_ID_[CN_TAX_ID_B8CB56A6908EE5A5]]`.
+///
+/// The payload must look like hex to qualify. That is deliberately stricter than
+/// "anything after the code": a bare `CN_ID_` prefix with non-hex text is not a
+/// token this crate mints, and treating it as one would blind the detector to a
+/// real value that merely sat next to a code name.
+fn is_bare_token(value: &str) -> bool {
+    let value = value.trim();
+    crate::entity::EntityType::ALL.iter().any(|e| {
+        value.strip_prefix(e.code()).is_some_and(|rest| {
+            rest.strip_prefix('_')
+                .is_some_and(|hex| hex.len() >= 8 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        })
+    })
+}
+
+/// True when `[start, end)` of `text` is a minted token, or LIES INSIDE one.
+///
+/// This is the form the detectors need, because they match SUB-SPANS. The
+/// exact-string `is_placeholder` is not enough: on
+/// `纳税人识别号 [CN_TAX_ID_A9FA1A090A96E294]` the tax-id rule returns
+/// `A9FA1A090A96E294` - the token's own payload - and
+/// `is_placeholder("A9FA1A090A96E294")` is false, so the guard let it through.
+///
+/// That single miss produced BOTH 2026-11-03 P0s:
+///   * the rescan reported the token payload as residue (P0-2), and
+///   * a second sanitize pass re-hashed it into a nested token (P0-1), because
+///     the applied-redaction list that shields tokens during a single run is
+///     empty when the input is ALREADY the output.
+///
+/// Checks four shapes, in order of likelihood:
+///   1. the span is exactly a bracketed token,
+///   2. the span is a bare token,
+///   3. the span sits inside `[...]` that together form a bracketed token,
+///   4. the span is the PAYLOAD of a bare token - `<CODE>_` immediately to its
+///      left, no brackets.
+///
+/// Shape 4 was missed on the first attempt and is not hypothetical. The second
+/// audit round measured that the trigger is the KEYWORD, not the bracket:
+/// `纳税人识别号 [CN_TAX_ID_ABCDEF0123456789]` was already clean, while
+/// `纳税人识别号 CN_TAX_ID_ABCDEF0123456789` (no brackets) still produced
+/// `纳税人识别号 CN_TAX_ID_[CN_TAX_ID_949F3E55A690184A]`. Shape 3 could not see it
+/// because there is no `[` to walk back to, and shape 2 could not either because
+/// the span is only the hex tail.
+pub fn is_token_span(text: &str, start: usize, end: usize) -> bool {
+    if start > end || end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end)
+    {
+        return false;
+    }
+    let span = &text[start..end];
+    if is_placeholder(span) || is_bare_token(span) {
+        return true;
+    }
+
+    let before = &text[..start];
+
+    // Shape 4: the span is the payload of an un-bracketed `<CODE>_` token.
+    for e in crate::entity::EntityType::ALL {
+        let prefix = format!("{}_", e.code());
+        if !before.ends_with(&prefix) {
+            continue;
+        }
+        let token_start = start - prefix.len();
+        // Only a real token if the payload is hex of a plausible length; otherwise
+        // the text merely happens to end with something that looks like a code.
+        if span.len() >= 8 && span.chars().all(|c| c.is_ascii_hexdigit()) {
+            let full = &text[token_start..end];
+            if is_bare_token(full) {
+                return true;
+            }
+        }
+    }
+
+    // Shape 3: enclosed by brackets that wrap a token.
+    let Some(open) = before.rfind('[') else {
+        return false;
+    };
+    // A `]` between the bracket and the span means the bracket is already closed,
+    // so the span is outside any token.
+    if before[open + 1..].contains(']') {
+        return false;
+    }
+    let Some(close_off) = text[end..].find(']') else {
+        return false;
+    };
+    // An `[` opening a new token before the closing bracket means the span is not
+    // inside the one we found.
+    if text[end..end + close_off].contains('[') {
+        return false;
+    }
+    is_placeholder(&text[open..=end + close_off])
 }
 
 /// Maps exact original values to stable tokens.

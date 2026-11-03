@@ -411,6 +411,31 @@ const MAX_MATCHES: usize = 4096;
 ///
 /// Offsets come from `regex::Match` on the same `text`, so they are char
 /// boundaries by construction.
+/// Preference order when two rules claim the SAME span with different entities.
+///
+/// Lower is preferred. A `Context` match read a label from the document itself
+/// (`账号`, `纳税人识别号`); a `Pattern` match only inferred from the characters.
+/// When they disagree about the same bytes, the document has already said which
+/// one it is, so the labelled claim wins.
+///
+/// `Checksum` outranks `Pattern` for the same reason it always has: a passing
+/// validator is stronger evidence than a shape test.
+///
+/// MEASURED 2026-11-03, before this existed: `账号 6217900123456789010` produced a
+/// `BankCard` AND a `BankAccount` match on the identical span. Both reached the
+/// allocator, both minted a token, and the one written second won - so the same
+/// account number was `[BANK_CARD_...]` alone and `[BANK_ACCOUNT_...]` after the
+/// word 账号. Same for `纳税人识别号 91440300MA5FL8XY3K`, which is why one legal
+/// entity got two tokens under the USCC and TIN keywords.
+fn source_rank(s: &MatchSource) -> u8 {
+    match s {
+        MatchSource::Checksum => 0,
+        MatchSource::Context => 1,
+        MatchSource::Pattern => 2,
+        MatchSource::Model => 3,
+    }
+}
+
 fn is_bounded(text: &str, start: usize, end: usize) -> bool {
     let before_ok = text[..start]
         .chars()
@@ -1074,6 +1099,53 @@ impl Detector for TierOneDetector {
         }
 
         out.sort_by_key(|m| (m.start, m.end));
+
+        // One match per span.
+        //
+        // Two rules can claim the SAME span with DIFFERENT entities, and both then
+        // reach the allocator, which mints a token for each. Whichever is written
+        // second wins, so the value's token depends on rule ordering - and a
+        // document holding the same account got `BANK_CARD_...` or `BANK_ACCOUNT_...`
+        // depending only on whether the word 账号 preceded it. MEASURED 2026-11-03:
+        //
+        //   6217900123456789010        -> BankCard,  BankAccount? no - BankCard only
+        //   账号 6217900123456789010    -> BankCard + BankAccount  (same span)
+        //   纳税人识别号 91440300MA5FL8XY3K -> Uscc + CnTaxId      (same span)
+        //
+        // The second case is why the same value produced different tokens in
+        // different contexts: two entities, two HMAC domains, two tags.
+        //
+        // Preference is CONTEXT over shape. A labelled rule read the document's own
+        // words; a shape rule guessed from the digits. When they disagree about the
+        // same characters, the document has told us which it is.
+        let mut deduped: Vec<Match> = Vec::with_capacity(out.len());
+        for m in out {
+            match deduped.last_mut() {
+                Some(prev) if prev.start == m.start && prev.end == m.end => {
+                    // `Context` (label read from the document) beats `Pattern`
+                    // (shape guessed from the characters); on a tie keep the first.
+                    if source_rank(&m.source) < source_rank(&prev.source) {
+                        *prev = m;
+                    }
+                }
+                _ => deduped.push(m),
+            }
+        }
+        let mut out = deduped;
+
+        // A token this crate minted is never a value to redact.
+        //
+        // ROOT fix for both 2026-11-03 P0s, and it belongs here rather than in
+        // either consumer. The consumers each tried to re-derive "is this the
+        // redactor's own output" from a SUB-SPAN:
+        //   * the pipeline passes the applied-redaction list, which is EMPTY when
+        //     the input is already the pipeline's output - so a second pass
+        //     re-hashed the token payload into `[CN_TAX_ID_[CN_TAX_ID_...]]`;
+        //   * the rescan has no list at all and called `is_placeholder` on the bare
+        //     hex tail, which is false, so it reported the token as live residue.
+        out.retain(|m| !crate::placeholder::is_token_span(text, m.start, m.end));
+
+        out.sort_by_key(|m| (m.start, m.end));
         Ok(out)
     }
 }
@@ -1732,3 +1804,6 @@ mod tests {
         );
     }
 }
+
+
+
