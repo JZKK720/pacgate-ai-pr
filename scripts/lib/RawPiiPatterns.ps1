@@ -78,10 +78,10 @@ $PacgateRawPiiPatterns = [ordered]@{
     #
     # `86` is part of the pattern for the same reason it is in the rule layer: a
     # country-coded mobile must not depend on its Luhn checksum to be found.
-    'cn_mobile'     = '(^|[^0-9])(86)?1[3-9][0-9]{9}'
+    'cn_mobile'     = '(^|[^0-9])(?:86)?1[3-9][0-9]{9}'
 
     # A PRC landline with an area code, hyphen optional.
-    'cn_landline'   = '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}'
+    'cn_landline'   = '0(?:10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}'
 
     # ── Added 2026-11-02, mirroring the rule-layer classes that were missing ──
     #
@@ -169,6 +169,7 @@ $PacgateRawPiiPatterns = [ordered]@{
 function Get-PacgateRawPiiPredicate {
     param([string]$Column = 'c.content')
 
+
     # Exclude matches that fall INSIDE a token this redactor minted.
     #
     # The Rust rescan already does this with `is_token_span`; the SQL audit did not,
@@ -191,12 +192,29 @@ function Get-PacgateRawPiiPredicate {
     $parts = @()
     foreach ($name in $PacgateRawPiiPatterns.Keys) {
         $p = $PacgateRawPiiPatterns[$name]
-        # `regexp_matches` with 'g' yields one row per match; requiring at least one
-        # match whose surrounding text is NOT inside a token is the test.
-        $parts += @"
+            # The mask-shape rejection is the second half of the same idea, one layer out.
+            #
+            # MEASURED 2026-11-03: `X10000000000000000`, `000000000000000010`,
+            # `00000000XX00XXXX40` and `X07000000060000044` are the redactor's OWN historical
+            # format-preserving masks, and every one of them matched. The `(?!0{4})` guard only
+            # anchors on LEADING ZEROS, so a mask that kept its original first character
+            # (`X1`, `X0`) or that zeroes the MIDDLE (`00000000XX00XXXX40`) sailed through.
+            #
+            # The invariant is a LAYOUT property, not a prefix: three identical characters in a
+            # row cannot occur in a real PRC ID, USCC, mobile, landline or bank account. That
+            # holds whatever an old masker happened to preserve, and it does not need to be
+            # revisited when the mask format changes again - which is precisely how the two
+            # previous guards (`0{17}`, then `0{16}`) became wrong.
+            #
+            # BACKREFERENCES: PostgreSQL ARE supports them but the sibling SQL dialects in
+            # this repo's docs do not, so the three-way alternation is written out rather than
+            # expressed as `([0-9A-Za-z_])\1{2}`.
+            $maskReject = '000|111|222|333|444|555|666|777|888|999|XXX'
+            $parts += @"
 EXISTS (
-    SELECT 1 FROM regexp_matches($Column, '$p', 'g') AS m(tok)
-    WHERE NOT EXISTS (
+        SELECT 1 FROM regexp_matches($Column, '$p', 'g') AS m(tok)
+        WHERE m.tok[1] !~ '$maskReject'
+          AND NOT EXISTS (
         SELECT 1 FROM regexp_matches($Column, '\[?[A-Z][A-Z0-9_]*_[0-9A-F]{8,}\]?', 'g') AS t(tok)
         WHERE strpos(t.tok[1], m.tok[1]) > 0
     )

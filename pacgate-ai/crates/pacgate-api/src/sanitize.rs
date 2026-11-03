@@ -276,8 +276,16 @@ async fn run_job_inner(
         crate::extract::extract_document(state, tenant_id, matter_id, document_id).await?;
     if extracted.incomplete {
         // Fail closed: never sanitize against an incomplete extraction.
-        return Err(ApiError::internal(
-            "extraction incomplete; document stays pending",
+        //
+        // 409, not 500. Measured 2026-11-03: a scanned PDF whose OCR read only 18
+        // characters produced `internal_error`, which reads as "the server broke"
+        // in the UI and in every log. The server is fine - the document is not
+        // ready, and the caller must know the difference to act correctly: a 500
+        // invites a retry of the same call forever, a 409 says what to fix.
+        return Err(ApiError::conflict(
+            "extraction is incomplete (the scan could not be read in full), so the \
+             document cannot be sanitized. Re-run extraction with the OCR engine, or \
+             upload a clearer scan.",
         ));
     }
 

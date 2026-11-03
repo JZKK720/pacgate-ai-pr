@@ -1,4 +1,4 @@
-﻿# Audit: do `sanitized` chunks in kb_chunks still carry RAW identifiers?
+# Audit: do `sanitized` chunks in kb_chunks still carry RAW identifiers?
 #
 # READ-ONLY. Issues SELECT statements only; never writes, never deletes.
 #
@@ -125,15 +125,26 @@ Write-Output ''
 $totalLeak = 0
 foreach ($name in $patterns.Keys) {
     $rx = $patterns[$name]
+    # Delegates to the SHARED exclusion, but stays PER-PATTERN.
+    #
+    # Two copies of the exclusion logic existed (here, and the affected-document
+    # query) and each had to be fixed separately. MEASURED 2026-11-03: the zero-run
+    # guard was added to the shared file, this count still had a local copy, and the
+    # audit kept reporting 7 historical format-preserving masks as leaks.
+    #
+    # Note `$rx` is still bound per iteration: substituting the whole-pattern union
+    # here made every class report the same total (measured: 15 classes x 5 = 75),
+    # which is a different wrong answer, not a fix.
     $row = Invoke-Psql @"
-SELECT count(*) FROM kb_chunks
-WHERE sanitization_state = 'sanitized'
+SELECT count(*) FROM kb_chunks c
+WHERE c.sanitization_state = 'sanitized'
   AND EXISTS (
-      SELECT 1 FROM regexp_matches(content, '$rx', 'g') AS m(tok)
-      WHERE NOT EXISTS (
-          SELECT 1 FROM regexp_matches(content, '\[?[A-Z][A-Z0-9_]*_[0-9A-F]{8,}\]?', 'g') AS t(tok)
-          WHERE strpos(t.tok[1], m.tok[1]) > 0
-      )
+      SELECT 1 FROM regexp_matches(c.content, '$rx', 'g') AS m(tok)
+      WHERE m.tok[1] !~ '000|111|222|333|444|555|666|777|888|999|XXX'
+        AND NOT EXISTS (
+            SELECT 1 FROM regexp_matches(c.content, '\[?[A-Z][A-Z0-9_]*_[0-9A-F]{8,}\]?', 'g') AS t(tok)
+            WHERE strpos(t.tok[1], m.tok[1]) > 0
+        )
   )
 "@
     $n = 0
@@ -224,7 +235,7 @@ SELECT left(document_id::text,8) || '|' || chunk_index || '|' ||
        (content ~ '$idCardPattern')::text || '|' ||
        (content ~ '$usccPattern')::text || '|' ||
        (content ~ '1[3-9][0-9]{9}')::text || '|' ||
-       (content ~ '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}')::text
+       (content ~ '0(?:10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}')::text
 FROM m
 "@
 $classify = @($classify | Where-Object { $_ -and $_.Trim() })

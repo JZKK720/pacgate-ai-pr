@@ -1,4 +1,4 @@
-﻿//! Deterministic Tier-1 detectors.
+//! Deterministic Tier-1 detectors.
 //!
 //! Ordering inside this module mirrors the spec's priority: checksum-backed
 //! validators first, then labelled patterns, then plain patterns. A plain
@@ -453,15 +453,61 @@ static RE_MILITARY_ID: Lazy<Regex> = Lazy::new(|| {
 /// itself rather than by a lookback, so a label on a previous line cannot reach
 /// forward past its own value.
 static RE_TH_TAXID: Lazy<Regex> = Lazy::new(|| {
+    // `Tax\s*ID` collapses to `TaxID` in running text, and the label also appears in
+    // Chinese. MEASURED 2026-11-03: `买方TaxID3101401176368` in a real chunk matched
+    // nothing, so the buyer's tax id stayed in plaintext beside a correctly-tokenised
+    // seller registration number.
     Regex::new(
-        r"(?:Tax\s*ID|TaxID)(?:\s*No\.?)?[:：\s]*([0-9]{13})",
+        r"(?:Tax\s*ID|纳税人识别号)(?:\s*No\.?)?[\s:：|()（）\[\]【】`]*([0-9]{13})",
     )
     .expect("thai tax id regex is valid")
 });
 
+/// The label may be PRINTED IN CHINESE with the English form in parentheses, and the
+/// two words of the English label may be collapsed together:
+///
+/// ```text
+/// 法人登记号 (Juristic ID)
+/// 0115565002108
+/// 卖方JuristicID0115565002108
+/// ```
+///
+/// MEASURED 2026-11-03 on a live `sanitized` chunk: the English-only pattern missed
+/// both layouts, so the seller's juristic registration number stayed in plaintext and
+/// stayed searchable - while the BUYER's number two fields later was correctly
+/// tokenised. Half a document redacted is the worst outcome, because the leftover
+/// value looks like a deliberate exception rather than a miss.
 static RE_TH_JURISTIC: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"Juristic\s*ID(?:\s*No\.?)?[:：\s]*([0-9]{13})")
-        .expect("thai juristic id regex is valid")
+    // An explicit separator class, NOT `[:punct:]`.
+    //
+    // MEASURED 2026-11-03: the same document printed `法人登记号（Juristic ID）` with
+    // FULL-WIDTH parentheses and `法人登记号 (Juristic ID)` with half-width ones. An
+    // explicit `[:：\s)]` class caught the second and silently missed the first, so the
+    // seller's registration number survived in one chunk of a document whose other
+    // chunk was correctly tokenised. The class therefore lists both bracket widths and
+    // the table pipe, rather than assuming one style.
+    Regex::new(
+        r"(?:Juristic\s*ID|法人登记号|法人登記號)(?:\s*No\.?)?[\s:：|()（）\[\]【】`]*([0-9]{13})",
+    )
+    .expect("thai juristic id regex is valid")
+});
+
+/// The same Thai TaxID printed with a CHINESE label and no English form at all.
+///
+/// Two live layouts, both measured 2026-11-03 in `sanitized` chunks of a real matter:
+///
+/// ```text
+/// 泰国税号    0115565002108
+/// | 泰国企业税号 | 0115565002108 |
+/// ```
+///
+/// The separator is restricted to whitespace and table pipes, so this cannot reach
+/// across a sentence the way a general "N characters after the label" window would.
+static RE_TH_TAXID_CN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?:泰国(?:企业)?(?:纳税人识别号|识别号|税号)|泰国(?:企業)?(?:納稅人識別號|識別號|稅號))[\s:：|()（）\[\]【】`]*([0-9]{13})",
+    )
+    .expect("chinese-labelled thai tax id regex is valid")
 });
 
 
@@ -593,11 +639,20 @@ fn is_digit_bounded(text: &str, start: usize, end: usize) -> bool {
         .chars()
         .next_back()
         .is_none_or(|c| !c.is_ascii_alphanumeric());
-    let after_ok = text[end..]
+    before_ok && ends_at_digit_boundary(text, end)
+}
+
+/// The right-hand half of `is_digit_bounded`, exposed separately for the rules whose
+/// LEFT boundary is a printed label.
+///
+/// A label like `JuristicID` or `TaxID` already establishes that the digit run starts
+/// here, so testing the character before it only rejects layouts where the label and
+/// the value are flush - which is exactly how bilingual summaries print them.
+fn ends_at_digit_boundary(text: &str, end: usize) -> bool {
+    !text[end..]
         .chars()
         .next()
-        .is_none_or(|c| !c.is_ascii_digit());
-    before_ok && after_ok
+        .is_some_and(|c| c.is_ascii_digit())
 }
 
 /// Finds the Tier-1 identifier set. Every rule is checksum- or shape-anchored;
@@ -707,9 +762,15 @@ impl Detector for TierOneDetector {
         //
         // A label is stronger evidence than a shape, so it decides the class when
         // both are present. Later rules skip a span that is already claimed.
+        // The label is the LEFT boundary, so only the right side is bounded here.
+        //
+        // MEASURED 2026-11-03: `卖方JuristicID0115565002108` puts the letter `D`
+        // immediately before the digits, so the two-sided `is_digit_bounded` rejected a
+        // layout that bilingual summaries produce in ordinary running text. The right
+        // side still matters - it stops the rule claiming a PREFIX of a longer number.
         for c in RE_TH_JURISTIC.captures_iter(text) {
             let Some(value) = c.get(1) else { continue };
-            if !is_digit_bounded(text, value.start(), value.end()) {
+            if !ends_at_digit_boundary(text, value.end()) {
                 continue;
             }
             self.push_span(
@@ -723,7 +784,23 @@ impl Detector for TierOneDetector {
         }
         for c in RE_TH_TAXID.captures_iter(text) {
             let Some(value) = c.get(1) else { continue };
-            if !is_digit_bounded(text, value.start(), value.end()) {
+            if !ends_at_digit_boundary(text, value.end()) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                value.start(),
+                value.end(),
+                &text[value.start()..value.end()],
+                EntityType::ThTaxId,
+                MatchSource::Context,
+            );
+        }
+        // The Chinese-labelled form. Runs after the English one; `push_span` collapses
+        // the two spans if a document carries both.
+        for c in RE_TH_TAXID_CN.captures_iter(text) {
+            let Some(value) = c.get(1) else { continue };
+            if !ends_at_digit_boundary(text, value.end()) {
                 continue;
             }
             self.push_span(
