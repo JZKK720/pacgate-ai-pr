@@ -124,6 +124,53 @@ pub struct ToolDispatcher {
 }
 
 impl ToolDispatcher {
+    /// Case-insensitive `(line_number, context)` for each match, capped at 40.
+    ///
+    /// Local to the dispatcher so the agent never has to call the docx store's
+    /// `find_in`, which reads the unredacted original.
+    fn find_matches(haystack: &str, needle: &str) -> Vec<(usize, String)> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let needle_lower = needle.to_lowercase();
+        let mut out = Vec::new();
+        for (idx, line) in haystack.lines().enumerate() {
+            if line.to_lowercase().contains(&needle_lower) {
+                out.push((idx + 1, line.trim().to_string()));
+                if out.len() >= 40 {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// The document text the AGENT is allowed to see.
+    ///
+    /// `docs.read()` returns the stored ORIGINAL - the redaction lives in
+    /// `kb_chunks`. MEASURED 2026-11-03: `fetch_documents`, `read_document` and
+    /// `find_in_document` all went through it, so the agent read raw client
+    /// identifiers while the database and every gate said `sanitized`. The agent
+    /// then reported that sanitisation had done nothing, and it was right.
+    ///
+    /// That is the same defect as the HTTP `/download` endpoint, on a second path.
+    /// Both had to be fixed; fixing only one would have left the agent reading
+    /// originals through the tool surface.
+    ///
+    /// Refuses rather than silently falling back to the original: a tool that hands
+    /// back unredacted text under a `sanitized` label is worse than one that errors.
+    async fn sanitised_or_refuse(&self, id: &DocumentId) -> Result<String> {
+        match self.kb.sanitised_text(id).await? {
+            Some(text) => Ok(text),
+            None => Err(PacgateError::ValidationError(
+                "this document has no sanitised text available; it is either still \
+                 pending or its format cannot be rebuilt from chunks. Refusing to \
+                 return the unredacted original."
+                    .to_string(),
+            )),
+        }
+    }
+
     pub fn new(
         docs: Arc<dyn DocumentStore>,
         workflows: Arc<dyn WorkflowStore>,
@@ -186,9 +233,12 @@ impl ToolDispatcher {
             .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
+        // Versioned reads keep the historical behaviour: a specific version is a
+        // deliberate request for that artifact. The default read must be the
+        // redaction - see `sanitised_or_refuse`.
         let text = match args.version {
             Some(v) => self.docs.read_version(&id, v).await?,
-            None => self.docs.read(&id).await?,
+            None => self.sanitised_or_refuse(&id).await?,
         };
         Ok(serde_json::json!({ "document_id": args.document_id, "content": text }))
     }
@@ -201,7 +251,23 @@ impl ToolDispatcher {
             .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
-        let results = self.docs.find_in(&id, &args.query).await?;
+        // Search the REDACTED text, not the stored original. `docs.find_in` reads
+        // `storage_path`, which is the client document - the same leak as
+        // `read_document`, and it would happily return a match on a raw identifier.
+        //
+        // Done here rather than via `docs.find_in` because that helper lives in
+        // `pacgate-docx` and reads the original by construction.
+        let Some(haystack) = self.kb.sanitised_text(&id).await? else {
+            return Err(PacgateError::ValidationError(
+                "this document has no sanitised text available; refusing to search \
+                 the unredacted original."
+                    .to_string(),
+            ));
+        };
+        let results: Vec<serde_json::Value> = Self::find_matches(&haystack, &args.query)
+            .into_iter()
+            .map(|(line, snippet)| serde_json::json!({ "line": line, "context": snippet }))
+            .collect();
         Ok(serde_json::json!({ "document_id": args.document_id, "results": results }))
     }
 
@@ -214,7 +280,7 @@ impl ToolDispatcher {
             let id: DocumentId = raw_id
                 .parse()
                 .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
-            let content = self.docs.read(&id).await?;
+            let content = self.sanitised_or_refuse(&id).await?;
             docs.push(serde_json::json!({ "document_id": raw_id, "content": content }));
         }
         Ok(serde_json::json!({ "documents": docs }))
@@ -1069,6 +1135,13 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl pacgate_core::KbStore for NoStore {
+            async fn sanitised_text(
+                &self,
+                _: &pacgate_core::DocumentId,
+            ) -> Result<Option<String>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+
             async fn search(
                 &self,
                 _: &MatterId,
@@ -1267,3 +1340,4 @@ mod tests {
         assert!(turn.tool_calls_made.is_empty());
     }
 }
+

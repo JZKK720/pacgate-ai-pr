@@ -1405,6 +1405,14 @@ pub trait WorkflowStore: Send + Sync {
 #[async_trait]
 pub trait KbStore: Send + Sync {
     async fn search(&self, matter_id: &MatterId, query: &str, top_k: u32) -> Result<Vec<KbChunk>>;
+
+    /// The full SANITISED text of one document, or `None` when there is none.
+    ///
+    /// Added 2026-11-03 because the agent tools were reading `documents.storage_path`
+    /// (the client original) while `kb_chunks` held the redaction. Returning `None`
+    /// rather than the original is deliberate: the caller must decide to refuse, so
+    /// an unredacted body can never be served by accident.
+    async fn sanitised_text(&self, document_id: &DocumentId) -> Result<Option<String>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
