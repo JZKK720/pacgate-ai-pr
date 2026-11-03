@@ -222,8 +222,29 @@ foreach ($script in @('scripts/audit-sanitized-chunk-egress.ps1',
     $code = ($src -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
     Check "$script carries no inline placeholder guard in code" `
         (-not ($code -match '\(\?!0\{\d+\}\)')) 'inline `(?!0{N})` found in code - use the shared pattern'
-}
 
+    # The audit must not count a match that sits INSIDE a token it minted.
+    #
+    # MEASURED 2026-11-03: plain `content ~ '<pattern>'` reported cn_landline 2 and
+    # sg_nric 1 on clean documents, because those patterns matched hex payloads
+    # inside [CN_ID_BF05012917050DF0] and [CN_MOBILE_C1F3732998EFA823]. Same class
+    # as the Rust rescan's P0-2.
+    #
+    # The remediation reaches this through Get-PacgateRawPiiPredicate, so for THAT
+    # script the shared predicate is the requirement. The audit carries the count
+    # inline and must keep doing so: it also dot-sources the predicate file (for the
+    # patterns), so a check that accepted either one passed even after the inline
+    # exclusion was removed - measured, and that is why this branches by script
+    # rather than accepting a disjunction.
+    $expectation = if ($script -match 'remediate-sanitized') {
+        $src -match 'Get-PacgateRawPiiPredicate'
+    }
+    else {
+        $src -match 'strpos\(t\.tok\[1\], m\.tok\[1\]\)'
+    }
+    Check "$script excludes matches inside a minted token" $expectation `
+        'no token exclusion: token payloads would be counted as leaks'
+}
 Write-Host ''
 if ($failures -eq 0) {
     Write-Host "RESULT: the audit mirror agrees with the rule layer. ($($patterns.Count) patterns)" -ForegroundColor Green

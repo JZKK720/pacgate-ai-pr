@@ -111,12 +111,30 @@ $totals | ForEach-Object { Write-Output "  $($_.Trim())" }
 Write-Output ''
 
 # 2. The finding: rows LABELLED sanitized whose content matches a raw pattern.
+#
+# The count must EXCLUDE matches that sit inside a token this redactor minted.
+# MEASURED 2026-11-03: counting `content ~ '$rx'` alone reported `cn_landline` 2 and
+# `sg_nric` 1 on documents that were clean - the patterns matched hex payloads
+# inside `[CN_ID_BF05012917050DF0]` and `[CN_MOBILE_C1F3732998EFA823]`. That is the
+# same false-positive class as the Rust rescan's P0-2, one layer further out, and it
+# made the audit unusable in the same way: an alert an operator learns to ignore.
+#
+# SQL ERE has no lookbehind, so the exclusion is expressed as "at least one match
+# whose text is not contained in any token". A row holding BOTH a token and a real
+# leak still counts, because the real match is outside the token.
 $totalLeak = 0
 foreach ($name in $patterns.Keys) {
     $rx = $patterns[$name]
     $row = Invoke-Psql @"
 SELECT count(*) FROM kb_chunks
-WHERE sanitization_state = 'sanitized' AND content ~ '$rx'
+WHERE sanitization_state = 'sanitized'
+  AND EXISTS (
+      SELECT 1 FROM regexp_matches(content, '$rx', 'g') AS m(tok)
+      WHERE NOT EXISTS (
+          SELECT 1 FROM regexp_matches(content, '\[?[A-Z][A-Z0-9_]*_[0-9A-F]{8,}\]?', 'g') AS t(tok)
+          WHERE strpos(t.tok[1], m.tok[1]) > 0
+      )
+  )
 "@
     $n = 0
     if ($row -and ($row | Select-Object -First 1).Trim() -match '^\d+$') {

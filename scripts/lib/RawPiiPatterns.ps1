@@ -169,9 +169,39 @@ $PacgateRawPiiPatterns = [ordered]@{
 function Get-PacgateRawPiiPredicate {
     param([string]$Column = 'c.content')
 
+    # Exclude matches that fall INSIDE a token this redactor minted.
+    #
+    # The Rust rescan already does this with `is_token_span`; the SQL audit did not,
+    # so it reported the payload of a token as raw PII. MEASURED 2026-11-03 on the
+    # live DB: `cn_landline` matched inside `[CN_ID_BF05012917050DF0]` (the digits
+    # `0`+`501`+`2917050` sit in that hex tail) and `sg_nric` matched `F3732998E`
+    # inside `[CN_MOBILE_C1F3732998EFA823]`. Both were counted as leaks in documents
+    # that were in fact clean - the same class of false positive as P0-2, one layer
+    # further out.
+    #
+    # SQL ERE has no lookbehind, so a token cannot be excluded INLINE per pattern.
+    # Instead the whole row is rejected when every match it has lies inside a token:
+    # the caller gets `false` for such a row. `[A-Z_]+_[0-9A-F]{8,}` with optional
+    # brackets is the token grammar from `PlaceholderAllocator`.
+    #
+    # This is deliberately conservative: a document that contains BOTH a token and a
+    # real leak still reports, because the real leak's match is outside the token and
+    # the row-level test below only suppresses rows where the ONLY evidence is
+    # token-internal.
     $parts = @()
     foreach ($name in $PacgateRawPiiPatterns.Keys) {
-        $parts += "$Column ~ '$($PacgateRawPiiPatterns[$name])'"
+        $p = $PacgateRawPiiPatterns[$name]
+        # `regexp_matches` with 'g' yields one row per match; requiring at least one
+        # match whose surrounding text is NOT inside a token is the test.
+        $parts += @"
+EXISTS (
+    SELECT 1 FROM regexp_matches($Column, '$p', 'g') AS m(tok)
+    WHERE NOT EXISTS (
+        SELECT 1 FROM regexp_matches($Column, '\[?[A-Z][A-Z0-9_]*_[0-9A-F]{8,}\]?', 'g') AS t(tok)
+        WHERE strpos(t.tok[1], m.tok[1]) > 0
+    )
+)
+"@
     }
     return ($parts -join ' OR ')
 }
