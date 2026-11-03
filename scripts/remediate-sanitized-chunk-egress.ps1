@@ -60,8 +60,14 @@ function Invoke-Psql([string]$Sql) {
     # STDIN, never `cmd /c "... -c ""$sql"""`. The -c form silently dropped the
     # WHERE clause in an earlier version of the audit script and reported leaks for
     # patterns that cannot exist. STDIN has no quoting layer to lose.
-    $out = $Sql | docker exec -i pacgate-db psql -U pacgate -d pacgate -t -A 2>&1
-    return ($out | Where-Object { $_ -notmatch '^(INFO|NOTICE|WARNING)' })
+    #
+    # Encoding and error handling live in the SHARED helper, because this script and
+    # the audit both need them and both got them wrong the same way: the pipe used the
+    # console code page (936 here), which mangled the full-width colon in five patterns
+    # and made Postgres reject the whole query. The error text was then returned as if
+    # it were a result set, so this script printed "0 affected - nothing to remediate"
+    # on a database that demonstrably held the leak. Measured 2026-11-03.
+    return Invoke-PacgatePsql -Sql $Sql
 }
 
 # ── credentials ─────────────────────────────────────────────────────────────────

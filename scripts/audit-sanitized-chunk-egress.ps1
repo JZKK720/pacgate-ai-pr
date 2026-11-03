@@ -73,7 +73,14 @@ function Invoke-Psql([string]$sql) {
     # 2026-11-02: the audit reported "10 raw match(es)" while printing the exception
     # above the count. Cast to string first, then filter on CONTENT, so a diagnostic
     # can never be counted as a leak again.
-    return @($out | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_.Trim() })
+    #
+    # Encoding + hard-fail on a rejected query live in the SHARED helper. This script
+    # had the same console-code-page bug as the remediation (see
+    # `Invoke-PacgatePsql`): five patterns carry the full-width colon, which the pipe
+    # replaced with `?` on code page 936, and `[:?]?` is a Postgres syntax error. Two
+    # scripts reading the same patterns must not each own their own psql plumbing -
+    # that is how they drifted apart twice before.
+    return @(Invoke-PacgatePsql -Sql $sql -Container $DbContainer)
 }
 
 # 0. Reachability. Exit 2 rather than reporting a clean bill of health for a

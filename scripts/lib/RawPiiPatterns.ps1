@@ -175,3 +175,60 @@ function Get-PacgateRawPiiPredicate {
     }
     return ($parts -join ' OR ')
 }
+
+# Send SQL to psql over STDIN as UTF-8, whatever the console code page is.
+#
+# WHY THIS EXISTS (measured 2026-11-03)
+#
+# Five of the patterns above contain the FULL-WIDTH COLON inside a character class
+# (`[:：]`) - lawyer_license, bank_account, cn_tax_id, th_tax_id, th_juristic. They
+# are correct SQL, and each one works on its own. But `$sql | docker exec -i ...`
+# encodes the pipe with `$OutputEncoding`, and on a Chinese Windows console the code
+# page is 936. In that state the full-width colon is not representable, becomes `?`,
+# and `[:：]?` turns into `[:?]?` - which Postgres rejects with
+#     ERROR: invalid regular expression: quantifier operand invalid
+#
+# The visible symptom was silent and inverted: `remediate-sanitized-chunk-egress.ps1`
+# reported "documents: 0 affected - no raw match" while `audit-sanitized-chunk-egress.ps1`
+# reported 2 leaks in `invoice-ganjong`. The audit ran its predicate through the same
+# pipe, but a single failing `~` inside an `OR` only nulls that term as long as at
+# least one other term is valid - so the audit still found the leak through a pattern
+# that happened to contain no wide colon, and the remediation, whose SELECT had no such
+# fallback to succeed on, matched nothing at all.
+#
+# A remediation that reports "nothing to do" whenever its own query fails is the worst
+# possible failure direction: it is indistinguishable from a clean machine, and it was
+# reported as clean twice before this was found. So the fix is not "quote better" - it
+# is to stop relying on ambient encoding, and to FAIL LOUDLY when psql rejects the SQL
+# rather than returning the error text as if it were a row set.
+function Invoke-PacgatePsql {
+    param(
+        [Parameter(Mandatory = $true)][string]$Sql,
+        [string]$Container = 'pacgate-db',
+        [string]$Database = 'pacgate',
+        [string]$DbUser = 'pacgate'
+    )
+
+    $prev = $OutputEncoding
+    try {
+        $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $out = $Sql | docker exec -i $Container psql -U $DbUser -d $Database -t -A -v ON_ERROR_STOP=1 2>&1
+    } finally {
+        $OutputEncoding = $prev
+    }
+
+    $lines = @($out | ForEach-Object { "$_" })
+    $errors = @($lines | Where-Object { $_ -match '^ERROR:|^psql: error' })
+    if ($errors.Count -gt 0) {
+        # A failed query is NOT "no matches". Returning the error text here is how
+        # "nothing to remediate" got printed on a database with a known leak.
+        throw ("psql rejected the query, so the result is UNKNOWN, not empty:`n  " +
+            ($errors -join "`n  "))
+    }
+
+    # `CREATE FUNCTION` and friends emit a status line on the same stream as rows;
+    # with `-q` they are suppressed, but ON_ERROR_STOP plus the filter above keeps
+    # this correct even if a future psql is stricter about that flag.
+    return @($lines | Where-Object { $_ -and $_ -notmatch '^(INFO|NOTICE|WARNING|CREATE |DROP |DO|SET)' })
+}
+

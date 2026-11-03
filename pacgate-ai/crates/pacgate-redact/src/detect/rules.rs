@@ -355,8 +355,10 @@ static RE_MILITARY_ID: Lazy<Regex> = Lazy::new(|| {
 /// itself rather than by a lookback, so a label on a previous line cannot reach
 /// forward past its own value.
 static RE_TH_TAXID: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:Tax\s*ID|TaxID|เลขประจำตัวผู้เสียภาษี)[:：\s]*([0-9]{13})")
-        .expect("thai tax id regex is valid")
+    Regex::new(
+        r"(?:Tax\s*ID|TaxID)(?:\s*No\.?)?[:：\s]*([0-9]{13})",
+    )
+    .expect("thai tax id regex is valid")
 });
 
 static RE_TH_JURISTIC: Lazy<Regex> = Lazy::new(|| {
@@ -418,6 +420,40 @@ fn is_bounded(text: &str, start: usize, end: usize) -> bool {
         .chars()
         .next()
         .is_none_or(|c| !c.is_ascii_alphanumeric());
+    before_ok && after_ok
+}
+
+/// True when the span is not continued by another DIGIT.
+///
+/// Used only by rules that are anchored on a document LABEL and whose value has a
+/// published fixed length (a Thai TaxID is exactly 13 digits, a Thai Juristic ID is
+/// exactly 13). For those, a trailing ASCII LETTER is not a continuation of the
+/// number - it is the next field starting immediately.
+///
+/// MEASURED 2026-11-03 on the live `invoice-ganjong` OCR text:
+///
+/// ```text
+/// Juristic IDNo.0115565002108Tel（02）0332333Fax.020332391
+/// ```
+///
+/// `is_bounded` saw `T` of `Tel` directly after the 13th digit and rejected the
+/// match, so the juristic id stayed in an already-`sanitized`, searchable chunk.
+/// OCR output routinely runs fields together like this; requiring a non-alphanumeric
+/// character after a fixed-width field means the value is only found when the
+/// extractor happened to insert a space.
+///
+/// The precision this gives up is confined to label-anchored rules: a longer DIGIT
+/// run is still rejected, which is the case that matters (an order number that
+/// starts with the same digits). A trailing letter cannot extend a numeric value.
+fn is_digit_bounded(text: &str, start: usize, end: usize) -> bool {
+    let before_ok = text[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !c.is_ascii_alphanumeric());
+    let after_ok = text[end..]
+        .chars()
+        .next()
+        .is_none_or(|c| !c.is_ascii_digit());
     before_ok && after_ok
 }
 
@@ -530,7 +566,7 @@ impl Detector for TierOneDetector {
         // both are present. Later rules skip a span that is already claimed.
         for c in RE_TH_JURISTIC.captures_iter(text) {
             let Some(value) = c.get(1) else { continue };
-            if !is_bounded(text, value.start(), value.end()) {
+            if !is_digit_bounded(text, value.start(), value.end()) {
                 continue;
             }
             self.push_span(
@@ -544,7 +580,7 @@ impl Detector for TierOneDetector {
         }
         for c in RE_TH_TAXID.captures_iter(text) {
             let Some(value) = c.get(1) else { continue };
-            if !is_bounded(text, value.start(), value.end()) {
+            if !is_digit_bounded(text, value.start(), value.end()) {
                 continue;
             }
             self.push_span(

@@ -303,6 +303,48 @@ fn a_thai_tax_id_is_labeled_and_replaced_as_itself() {
     );
 }
 
+/// The exact OCR line from the live `invoice-ganjong` chunk, where the value was
+/// still plaintext after a `sanitized` label and two remediation passes.
+///
+/// `Juristic IDNo.0115565002108Tel（02）...` - the trailing `Tel` is the next field
+/// starting immediately, which OCR produces constantly. `is_bounded` required a
+/// NON-ALPHANUMERIC character after the value, so it rejected the match and the
+/// identifier stayed in a searchable chunk. A published fixed-width numeric field
+/// cannot be extended by a letter, so `is_digit_bounded` is the correct test here.
+#[test]
+fn a_thai_id_run_together_with_the_next_field_is_still_redacted() {
+    for (text, marker) in [
+        (
+            "Juristic IDNo.0115565002108Tel（02）0332333Fax.020332391",
+            "[TH_JURISTIC_",
+        ),
+        ("TaxIDNo.3101401176368Tel.02", "[TH_TAXID_"),
+        ("Tax ID 3101401176368Fax", "[TH_TAXID_"),
+    ] {
+        let mut s = sanitizer();
+        let out = out_of(&mut s, text);
+        assert!(
+            out.contains(marker),
+            "a fixed-width labelled id followed by the next field must be redacted: \
+             {text:?} -> {out:?} (expected {marker})"
+        );
+    }
+}
+
+/// The relaxation above must not become "any 13-digit run": a LONGER digit run
+/// still refuses the match, which is the case that matters (an order number whose
+/// head matches the same digits).
+#[test]
+fn a_longer_digit_run_is_not_mistaken_for_a_thai_id() {
+    let mut s = sanitizer();
+    let text = "Juristic IDNo.011556500210811Tel";
+    let out = out_of(&mut s, text);
+    assert_eq!(
+        out, text,
+        "a digit run longer than the published 13 must not match: {out:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 7. Precision: none of this may touch ordinary contract text.
 // ---------------------------------------------------------------------------
