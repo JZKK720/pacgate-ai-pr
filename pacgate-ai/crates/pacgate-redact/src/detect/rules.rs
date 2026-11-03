@@ -493,19 +493,39 @@ const MAX_MATCHES: usize = 4096;
 /// When they disagree about the same bytes, the document has already said which
 /// one it is, so the labelled claim wins.
 ///
-/// `Checksum` outranks `Pattern` for the same reason it always has: a passing
-/// validator is stronger evidence than a shape test.
-///
 /// MEASURED 2026-11-03, before this existed: `账号 6217900123456789010` produced a
 /// `BankCard` AND a `BankAccount` match on the identical span. Both reached the
 /// allocator, both minted a token, and the one written second won - so the same
 /// account number was `[BANK_CARD_...]` alone and `[BANK_ACCOUNT_...]` after the
 /// word 账号. Same for `纳税人识别号 91440300MA5FL8XY3K`, which is why one legal
 /// entity got two tokens under the USCC and TIN keywords.
+///
+/// ## Why the LABEL outranks the CHECKSUM here
+///
+/// A passing validator is strong evidence about the VALUE, but the class is a
+/// claim about what the value IS - and no checksum can settle that for these
+/// pairs. Luhn is a mod-10 checksum over 13-19 digits, so roughly one in ten
+/// 19-digit bank ACCOUNTS satisfies it by chance; a USCC's MOD-31 and a TIN's
+/// digits are unrelated to each other. The label is the only evidence that
+/// distinguishes them, and it is the one the document itself supplied.
+///
+/// MEASURED 2026-11-03, and this is why the ordering was corrected: ranking
+/// `Checksum` above `Context` made
+///
+/// ```text
+/// 账号 6217900123456789010      -> [BANK_CARD_...]      WRONG CLASS
+/// 账号 6222020200112345678      -> [BANK_ACCOUNT_...]   correct (Luhn happened to fail)
+/// ```
+///
+/// so whether a labelled account was filed as a card or an account depended on
+/// the tenth digit of the number. The value was redacted either way, but the
+/// class decides which downstream control applies, and it flipped on a coin toss.
+/// `Pattern` still loses to both: a shape guess never beats a label or a
+/// validator.
 fn source_rank(s: &MatchSource) -> u8 {
     match s {
-        MatchSource::Checksum => 0,
-        MatchSource::Context => 1,
+        MatchSource::Context => 0,
+        MatchSource::Checksum => 1,
         MatchSource::Pattern => 2,
         MatchSource::Model => 3,
     }

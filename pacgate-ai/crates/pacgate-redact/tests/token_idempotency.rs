@@ -12,7 +12,7 @@
 //! more harm than one who did nothing.
 
 use pacgate_core::DataLevel;
-use pacgate_redact::detect::{tier_one_detectors, Detector};
+use pacgate_redact::detect::tier_one_detectors;
 use pacgate_redact::{is_placeholder, is_token_span, MappingVersion, Sanitizer};
 
 fn sanitize(text: &str) -> String {
@@ -257,15 +257,25 @@ fn one_account_number_yields_one_token_in_every_context() {
         tokens.push(out[start..end].to_string());
     }
     let first = &tokens[0];
-    for (i, t) in tokens.iter().enumerate() {
+    let _ = first;
+    // The BARE form is expected to differ, and that is the honest outcome: with no
+    // label, a 19-digit Luhn-valid run is indistinguishable from a card. Only the
+    // LABELLED forms are required to agree - the document said 账号, so all four
+    // labelled spellings must file it the same way.
+    let labelled = &tokens[1];
+    for (i, t) in tokens.iter().enumerate().skip(1) {
         assert_eq!(
-            t, first,
-            "context changed the token: form #{i} gave {t}, expected {first}"
+            t, labelled,
+            "context changed the token: labelled form #{i} gave {t}, expected {labelled}"
         );
     }
     assert!(
-        first.starts_with("[BANK_CARD_"),
-        "unexpected entity: {first}"
+        tokens[1].starts_with("[BANK_ACCOUNT_"),
+        "a labelled account must be filed as an account, not a card - Luhn is a \
+         mod-10 checksum over 13-19 digits, so this 19-digit ACCOUNT satisfies it \
+         by chance and the card rule claims the same span. The label is the only \
+         evidence that distinguishes the two classes: {}",
+        tokens[1]
     );
 }
 
@@ -291,5 +301,74 @@ fn the_bracket_walk_does_not_over_excuse() {
     assert!(
         !is_token_span(text, start, end),
         "a malformed bracket must not be treated as a token"
+    );
+}
+
+/// A LABELLED account must be filed as an account, not a card.
+///
+/// The bare form cannot also be an account: with no label there is nothing to
+/// distinguish a 19-digit account from a card, and `BANK_CARD` is the honest
+/// answer for an unlabelled Luhn-valid run. That is why this test asserts the
+/// LABEL wins - not that both forms agree. They cannot, and pretending otherwise
+/// would hide which one the document actually said.
+#[test]
+fn a_labelled_account_is_never_filed_as_a_bank_card() {
+    let out = sanitize("账号 6217900123456789010");
+    assert!(
+        out.contains("[BANK_ACCOUNT_"),
+        "a value the document labels 账号 must be filed as an account, \
+         whatever its check digit happens to say: {out}"
+    );
+    assert!(
+        !out.contains("[BANK_CARD_"),
+        "a labelled account must never be reported as a card: {out}"
+    );
+}
+
+/// The same rule in the other direction: a BARE card-shaped run is still a card,
+/// so the fix above cannot pass by relabelling everything.
+#[test]
+fn a_bare_card_number_is_still_a_bank_card() {
+    let out = sanitize("6222020200112345678");
+    assert!(
+        out.contains("[BANK_CARD_"),
+        "with no label, a card-shaped Luhn-valid run is a card: {out}"
+    );
+}
+
+/// Every PRINTED LABEL FORM of one account yields one token.
+///
+/// The class is settled by the label in every one of these, so the token must not
+/// move. Only the bare form is excluded: with no label it is indistinguishable
+/// from a card, which is a property of the evidence, not a defect here.
+#[test]
+fn every_label_form_of_one_account_yields_one_token() {
+    let forms = [
+        "账号 6217900123456789010",
+        "账号：6217900123456789010",
+        "银行账号 6217900123456789010",
+        "账号号码 6217900123456789010",
+    ];
+    // ONE key for every form. `sanitize()` builds a fresh `Sanitizer`, which mints
+    // a fresh random key, so every token would differ for a reason unrelated to the
+    // question being asked.
+    let key = pacgate_redact::TokenKey::from_secret(b"label-form-test-key");
+    let mut tokens = Vec::new();
+    for form in forms {
+        let mut s = Sanitizer::with_key(tier_one_detectors(), MappingVersion::CURRENT, key.clone());
+        let out = s
+            .sanitize(form, DataLevel::T3ProjectSpecific)
+            .expect("sanitize must not error")
+            .text;
+        let start = out.find('[').unwrap_or_else(|| panic!("no token in {out:?}"));
+        let end = out[start..]
+            .find(']')
+            .map(|i| start + i + 1)
+            .unwrap_or_else(|| panic!("unterminated token in {out:?}"));
+        tokens.push(out[start..end].to_string());
+    }
+    assert!(
+        tokens.windows(2).all(|w| w[0] == w[1]),
+        "one account number, one token, whatever the label form: {tokens:?}"
     );
 }
