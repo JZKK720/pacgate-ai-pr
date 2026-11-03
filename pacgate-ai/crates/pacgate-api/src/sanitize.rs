@@ -18,12 +18,25 @@ use sqlx::Row;
 use crate::error::ApiError;
 use crate::state::{AppConfig, AppState};
 
-/// A Block verdict writes 'blocked' so the row can never be promoted by a
-/// later run on a different document (the pending-only guard in 005/ingest).
+/// A Block verdict revokes EVERY retrievable chunk of the document, whatever its
+/// current label.
+///
+/// The original statement matched `sanitization_state = 'pending'` only, which is the
+/// wrong population: by the time a verdict is reached, a previously-passing document
+/// has ALREADY been rewritten and its chunks are labelled `sanitized`. MEASURED
+/// 2026-11-03 on a live matter: `presented-泰国发票与送货单_中文总结报告` moved to
+/// `document_state = blocked` while three of its `sanitized` chunks stayed in
+/// `kb_chunks` - and retrieval filters on the CHUNK label
+/// (`c.sanitization_state IN ('sanitized','never')`), not the document's. So a blocked
+/// document kept answering `kb_search` and kept reaching the model, which is the exact
+/// "the mask hid the name but the number stayed in the vector store" failure.
+///
+/// `never` is deliberately NOT revoked: it is an owner-authored publication state, not
+/// a sanitization verdict, and a re-scan must not silently unpublish it.
 const MARK_BLOCKED_SQL: &str = "\
     UPDATE kb_chunks SET sanitization_state = 'blocked' \
     WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
-      AND sanitization_state = 'pending'";
+      AND sanitization_state IN ('pending', 'sanitized')";
 
 /// Reopen a blocked document so a re-sanitize can actually re-examine it.
 ///
@@ -53,9 +66,16 @@ const MARK_SANITIZED_DOCUMENT_SQL: &str = "\
     UPDATE documents SET sanitization_state = 'sanitized' \
     WHERE id = $1 AND tenant_id = $2 AND sanitization_state = 'pending'";
 
+/// A Block verdict must also demote a document that a previous pass had published.
+///
+/// Same population error as `MARK_BLOCKED_SQL`, on the document row. MEASURED 2026-11-03:
+/// a re-sanitize returned `verdict=block` with `chunks_promoted=4`, and the document row
+/// stayed `sanitized` because the demotion only matched `'pending'` - so the UI reported
+/// a passing document whose chunks were all revoked. Retrieval was safe, the OPERATOR
+/// view was not, and the two disagreed about the same document.
 const MARK_BLOCKED_DOCUMENT_SQL: &str = "\
     UPDATE documents SET sanitization_state = 'blocked' \
-    WHERE id = $1 AND tenant_id = $2 AND sanitization_state = 'pending'";
+    WHERE id = $1 AND tenant_id = $2 AND sanitization_state IN ('pending', 'sanitized')";
 
 /// Un-publish a document that was labelled `sanitized` but still carries an
 /// identifier (see `reset_sanitized_handler`).
@@ -95,6 +115,14 @@ pub struct JobOutcome {
     pub redaction_count: usize,
     pub mapping_count: usize,
     pub chunks_promoted: u64,
+    /// Chunks a BLOCK verdict took back from a previous, passing run.
+    ///
+    /// Always 0 on a pass. Present because a block that revokes previously-published
+    /// chunks has to say so somewhere: the old code reported the revocation count under
+    /// `chunks_promoted`, so a re-sanitize answered `verdict: block` together with
+    /// `chunks_promoted: 4`, which reads as "published 4 chunks" next to a block.
+    #[serde(default)]
+    pub chunks_revoked: u64,
     pub allow_auto_pass: bool,
     pub require_human_review: bool,
     pub reason: String,
@@ -417,23 +445,37 @@ async fn run_job_inner(
     // redaction safe.
     let held_for_review =
         !verdict_is_block && !outcome.decision.allow_auto_pass && approved_job_id.is_none();
-    let promoted: u64 = if verdict_is_block {
-        sqlx::query(MARK_BLOCKED_SQL)
+    // `promoted` and `revoked` answer DIFFERENT questions and were conflated.
+    //
+    // MEASURED 2026-11-03: a re-sanitize returned `verdict: block` together with
+    // `chunks_promoted: 4`. Both statements were true - four chunks had been promoted by
+    // the PREVIOUS, passing run and the block had just revoked them - but the field name
+    // says the opposite of what happened. Anyone reading `chunks_promoted: 4` alongside
+    // `verdict: block` reasonably concludes the block was ignored and the document was
+    // published anyway.
+    let (promoted, revoked): (u64, u64) = if verdict_is_block {
+        let n = sqlx::query(MARK_BLOCKED_SQL)
             .bind(tenant_id.0)
             .bind(matter_id.0)
             .bind(document_id.0)
             .execute(&state.db)
             .await
             .map_err(|e| ApiError::internal(format!("block write failed: {e}")))?
-            .rows_affected()
+            .rows_affected();
+        (0, n)
     } else if held_for_review {
-        0
+        (0, 0)
     } else {
         let ingestor = pacgate_rag::ChunkIngestor::new(state.db.clone(), state.embedding.clone());
-        ingestor
-            .reingest_sanitized_chunks(tenant_id, matter_id, document_id, &outcome.text)
-            .await
-            .map_err(|e| ApiError::internal(format!("sanitized chunk rewrite failed: {e}")))?
+        (
+            ingestor
+                .reingest_sanitized_chunks(tenant_id, matter_id, document_id, &outcome.text)
+                .await
+                .map_err(|e| {
+                    ApiError::internal(format!("sanitized chunk rewrite failed: {e}"))
+                })?,
+            0,
+        )
     };
     let _ = if verdict_is_block {
         sqlx::query(MARK_BLOCKED_DOCUMENT_SQL)
@@ -494,6 +536,9 @@ async fn run_job_inner(
         redaction_count: outcome.ledger.redaction_count,
         mapping_count: outcome.mapping.entry_count(),
         chunks_promoted: promoted,
+        // Non-zero only on a block verdict that took back chunks a previous pass had
+        // published. Kept separate from `chunks_promoted` so the two never contradict.
+        chunks_revoked: revoked,
         allow_auto_pass: outcome.decision.allow_auto_pass,
         require_human_review: outcome.decision.require_human_review,
         reason: outcome.decision.reason,
@@ -1285,11 +1330,64 @@ mod gate_tests {
         assert!(MARK_SANITIZED_DOCUMENT_SQL.contains("id = $1"));
     }
 
+    /// A blocked document must not keep answering as `sanitized`.
+    ///
+    /// MEASURED 2026-11-03: a re-sanitize returned `verdict: block` while the document
+    /// row stayed `sanitized`, because the demotion only matched `'pending'`. Retrieval
+    /// was already safe (the chunks had been revoked) but the operator view and the
+    /// retrieval view disagreed about the same document, and the operator view is what
+    /// anyone reads before delivering.
+    #[test]
+    fn a_block_demotes_an_already_published_document() {
+        let pop = MARK_BLOCKED_DOCUMENT_SQL
+            .split("sanitization_state IN")
+            .nth(1)
+            .expect("MARK_BLOCKED_DOCUMENT_SQL must name the population it demotes");
+        assert!(
+            pop.contains("'sanitized'"),
+            "a previously-published document stays reported as passing: \
+             {MARK_BLOCKED_DOCUMENT_SQL}"
+        );
+        assert!(
+            pop.contains("'pending'"),
+            "the first-pass case must stay covered too: {MARK_BLOCKED_DOCUMENT_SQL}"
+        );
+    }
+
     #[test]
     fn a_block_never_promotes() {
         // Block verdict -> documents + kb_chunks go to 'blocked', never 'sanitized'.
         assert!(MARK_BLOCKED_SQL.contains("SET sanitization_state = 'blocked'"));
-        assert!(!MARK_BLOCKED_SQL.contains("'sanitized'"));
+        assert!(!MARK_BLOCKED_SQL.contains("SET sanitization_state = 'sanitized'"));
+    }
+
+    /// A block must revoke chunks that were ALREADY published, not only pending ones.
+    ///
+    /// MEASURED 2026-11-03 on the live matter: a document was blocked, its document row
+    /// said `blocked`, and three of its chunks stayed `sanitized` and stayed retrievable,
+    /// because the statement only matched `'pending'` and retrieval filters on the CHUNK
+    /// label. The `!contains("'sanitized'")` assertion above could not catch it - it
+    /// passes on a statement that never mentions the population at all.
+    #[test]
+    fn a_block_revokes_already_published_chunks() {
+        let pop = MARK_BLOCKED_SQL
+            .split("sanitization_state IN")
+            .nth(1)
+            .expect("MARK_BLOCKED_SQL must name the population it revokes");
+        assert!(
+            pop.contains("'sanitized'"),
+            "a previously-passing document's chunks are labelled 'sanitized'; a block \
+             that does not name them leaves them retrievable: {MARK_BLOCKED_SQL}"
+        );
+        assert!(
+            pop.contains("'pending'"),
+            "the first-pass case must stay covered too: {MARK_BLOCKED_SQL}"
+        );
+        assert!(
+            !pop.contains("'never'"),
+            "'never' is an owner-authored publication state, not a sanitization verdict; \
+             a re-scan must not silently unpublish it: {MARK_BLOCKED_SQL}"
+        );
     }
 
     #[test]
