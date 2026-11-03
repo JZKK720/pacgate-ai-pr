@@ -270,7 +270,7 @@ impl PlaceholderAllocator {
     /// juristic id are both digits) must not collide on a shared digest domain.
     fn token(&mut self, entity: EntityType, original: &str) -> String {
         let normalized = normalize_for_token(original, entity.folds_case());
-        let digest = hmac_sha256(&self.key, entity.code(), &normalized);
+        let digest = hmac_sha256(&self.key, entity.hash_family(), &normalized);
         let tag: String = digest[..TOKEN_TAG_BYTES]
             .iter()
             .map(|b| format!("{b:02X}"))

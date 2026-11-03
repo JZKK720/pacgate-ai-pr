@@ -188,7 +188,42 @@ static PUBLIC_ENTITIES: Lazy<Vec<&'static str>> = Lazy::new(|| {
         "泰国",
         "越南",
         "印度尼西亚",
-        "菲律宾",
+        // The short forms. MEASURED 2026-11-03: `印尼` was NOT in this list while
+        // 印度尼西亚 was, so `印尼客商在雅加达签约` redacted the country and left
+        // `马来西亚 / 越南 / 菲律宾` untouched in the same paragraph - the audit read
+        // that as inconsistent, and it was. A country name is public geography in
+        // either spelling; a list that knows the long form and not the short one is
+        // a gap, not a policy.
+        "印尼",
+        "马来",
+        // Capitals and major cities. The list already carried 北京 / 上海 / 天津 /
+        // 重庆, so the asymmetry here was the same defect: a jurisdiction name is
+        // not client identity.
+        "雅加达",
+        "东京",
+        "首尔",
+        "大阪",
+        "新加坡市",
+        "吉隆坡",
+        "曼谷",
+        "河内",
+        "胡志明市",
+        "马尼拉",
+        "纽约",
+        "伦敦",
+        "巴黎",
+        "法兰克福",
+        "苏黎世",
+        "迪拜",
+        "悉尼",
+        "墨尔本",
+        "多伦多",
+        "洛杉矶",
+        "旧金山",
+        "华盛顿",
+        "莫斯科",
+        "孟买",
+        "新德里",        "菲律宾",
         "巴西",
         "墨西哥",
         "阿根廷",

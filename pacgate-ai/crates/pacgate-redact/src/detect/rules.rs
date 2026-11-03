@@ -1,4 +1,4 @@
-//! Deterministic Tier-1 detectors.
+﻿//! Deterministic Tier-1 detectors.
 //!
 //! Ordering inside this module mirrors the spec's priority: checksum-backed
 //! validators first, then labelled patterns, then plain patterns. A plain
@@ -250,6 +250,29 @@ static RE_TRAVEL_PERMIT_ANCHOR: Lazy<Regex> =
 /// this safe: an unlabelled `[HM]` + 7 digits is still never claimed.
 static RE_TRAVEL_PERMIT_NUMBER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[CHM][0-9]{7,10}").expect("travel permit number regex is valid"));
+
+/// A complete PRC street address, claimed as ONE span.
+///
+/// The NER model emits addresses but splits one address into several disjoint
+/// spans. MEASURED 2026-11-03: `北京市朝阳区建国路88号` became
+/// `[LOCATION_9BC6…][LOCATION_BF56…][LOCATION_CE8B…]88号` - three tokens and the
+/// house number left in clear text. That is worse than either extreme: the address
+/// is unreadable, the sensitive part is disclosed, and a single place becomes three
+/// tokens so it cannot be correlated across documents.
+///
+/// Rules run before the model and the noise filter keeps the longer, structurally
+/// anchored span, so claiming the whole address here also collapses the fragments:
+/// the three model spans fall inside this one and are dropped as overlaps.
+///
+/// The shape is anchored on 省/市/区/路/街/巷/弄 and must end at a house number,
+/// which is what makes it a complete address rather than "any sentence containing
+/// 市". `号` is required: without it this would swallow ordinary prose.
+static RE_CN_ADDRESS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?:[\u4e00-\u9fff]{2,8}(?:省|自治区|特别行政区))?(?:[\u4e00-\u9fff]{2,10}(?:市|自治州))[\u4e00-\u9fff0-9]{0,20}?(?:[\u4e00-\u9fff]{2,10}(?:区|县|市))?[\u4e00-\u9fff0-9]{0,24}?(?:路|街|道|巷|弄|大道)[\u4e00-\u9fff0-9]{0,20}?[0-9]{1,5}号",
+    )
+    .expect("cn address regex is valid")
+});
 
 /// 台胞证 / 台湾居民来往大陆通行证 requires a label; this anchor finds the label
 /// itself so the digit run right after it can be promoted to a Tier-1 match.
@@ -987,6 +1010,22 @@ impl Detector for TierOneDetector {
                     );
                 }
             }
+        }
+
+        // A complete street address, claimed whole. See RE_CN_ADDRESS - the model
+        // splits one address into fragments and leaves the house number behind.
+        for m in RE_CN_ADDRESS.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                m.start(),
+                m.end(),
+                &text[m.start()..m.end()],
+                EntityType::PostalAddress,
+                MatchSource::Pattern,
+            );
         }
 
         // 澳门居民身份证 `5123456(7)`: a closed shape, so no label is needed.

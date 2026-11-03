@@ -145,6 +145,33 @@ impl EntityType {
         EntityType::IpAddress,
     ];
 
+    /// The HMAC domain for this type: which types are DIFFERENT LABELS FOR THE SAME
+    /// THING, and must therefore share one token.
+    ///
+    /// The code is a display label and an audit field; it must not decide identity.
+    /// MEASURED 2026-11-03: `91440300MA5FL8XY3K` under 统一社会信用代码 became
+    /// `[USCC_...]` while the SAME string under 纳税人识别号 became `[CN_TAX_ID_...]`.
+    /// Since the three-in-one registration reform a USCC *is* the tax id, so one
+    /// legal entity received two tokens and cross-document correlation - the whole
+    /// point of value-derived tokens - failed in exactly the case it was built for.
+    ///
+    /// Same for BANK_CARD / BANK_ACCOUNT: `6217900123456789010` is one account
+    /// whether or not the document happens to print 账号 in front of it.
+    ///
+    /// Everything else keeps its own domain, deliberately. A 13-digit Thai TaxID and
+    /// a 13-digit juristic id are both digits; collapsing them would merge two
+    /// unrelated registries into one tag space. The rule is "same real-world
+    /// identifier", not "same shape".
+    pub fn hash_family(&self) -> &'static str {
+        match self {
+            EntityType::Uscc => "ORG_REG",
+            EntityType::CnTaxId => "ORG_REG",
+            EntityType::BankCard => "BANK_ACCOUNT",
+            EntityType::BankAccount => "BANK_ACCOUNT",
+            other => other.code(),
+        }
+    }
+
     /// Stable string code used in the placeholder, the audit log and the ledger.
     pub fn code(&self) -> &'static str {
         match self {
