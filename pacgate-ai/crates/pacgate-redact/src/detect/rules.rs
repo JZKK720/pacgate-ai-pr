@@ -150,6 +150,81 @@ static RE_PASSPORT_NUMBER: Lazy<Regex> = Lazy::new(|| {
 static RE_HK_MO_PERMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[HM][0-9]{10}").expect("hk/mo permit regex is valid"));
 
+/// 香港入境许可 (entry permit) and 澳门非本地劳工证 (non-resident worker permit):
+/// `HK` / `M` + 7 digits.
+///
+/// MEASURED 2026-11-03, and this is a REAL LEAK, not a coverage nicety:
+/// `probe-0217-regression` carries the line
+/// `香港入境许可 HK1234567；澳门非本地劳工证 M1234567` verbatim, is marked
+/// `sanitized`, and is retrievable through kb_search. Both were invisible because
+/// `RE_HK_MO_PERMIT` above demands exactly TEN digits after the prefix - these are
+/// seven. The 0.2.16 notes listed both classes as supported; they were not.
+///
+/// The label is required. An unlabelled `HK` + 7 digits would collide with order
+/// numbers and flight codes, and this repo's rule is that a bare digit run is never
+/// claimed. `(?:香港)?入境许可`, `(?:澳门)?非本地劳工证` and the shorter `劳工证`
+/// cover the spellings that appear in practice.
+static RE_HK_ENTRY_PERMIT_LABEL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:香港)?入境许可(?:证)?|(?:澳门)?非本地劳工证|劳工证")
+        .expect("hk entry permit label regex is valid")
+});
+
+static RE_HK_ENTRY_PERMIT_NUMBER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:HK|M)[0-9]{7}").expect("hk entry permit number regex is valid"));
+
+/// 澳门居民身份证: 7 digits with a parenthesised check digit, e.g. `5123456(7)`.
+///
+/// MEASURED 2026-11-03: returned 0 redactions and `verdict: pass`. The shape is
+/// closed enough to claim unlabelled - the parentheses are not ambiguous - but the
+/// label form is also accepted because the check digit is sometimes printed
+/// separately.
+static RE_MO_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b[1-9][0-9]{6}\([0-9]\)").expect("macau id regex is valid"));
+
+/// 澳门车牌: `澳` + authority letter + 4 digits. One of 31 province ideographs is
+/// replaced by a jurisdiction ideograph, so the shape stays closed.
+///
+/// MEASURED 2026-11-03: `澳A1234` returned 0 redactions, `verdict: pass`.
+static RE_MO_PLATE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"澳[A-Za-z][0-9]{4}").expect("macau plate regex is valid"));
+
+/// Vietnam MST (mã số thuế) and Philippines TIN.
+///
+/// Both are LABEL-ONLY, deliberately. Their bare shapes are 10 digits and
+/// `3-3-3-000`, and a bare 10-digit run is exactly what this repo refuses to claim
+/// (`RE_DIGIT_RUN` exists for the labelled case only). `0101243150` is the value
+/// the audit saw misclassified as a LANDFILE - see the priority note in the detect
+/// loop.
+static RE_VN_MST_LABEL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:越南)?(?:MST|Mã\s*số\s*thuế|税号)\s*[:：]?\s*").expect("vn mst label valid")
+});
+
+static RE_VN_MST: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9]{10}(?:-[0-9]{3})?").expect("vn mst regex is valid"));
+
+static RE_PH_TIN_LABEL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:菲律宾)?(?:TIN|Taxpayer\s*Identification\s*Number)\s*[:：]?\s*")
+        .expect("ph tin label valid")
+});
+
+/// Philippines TIN is printed `123-456-789-000` (or `123-456-789`). The dashes are
+/// part of the printed form, so the pattern owns them rather than relying on
+/// normalisation.
+static RE_PH_TIN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9]{3}-[0-9]{3}-[0-9]{3}(?:-[0-9]{3})?").expect("ph tin valid"));
+
+/// Indonesia NPWP, printed dotted: `01.234.567.8-901.000`.
+///
+/// MEASURED 2026-11-03: the `NPWP：` prefix was consumed by the LOCATION rule and
+/// the number body survived verbatim - the worst of both, a redaction that hides
+/// the label and leaves the value.
+static RE_ID_NPWP_LABEL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:印尼)?NPWP\s*[:：]?\s*").expect("npwp label valid"));
+
+static RE_ID_NPWP: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[0-9]{2}\.[0-9]{3}\.[0-9]{3}\.[0-9]-[0-9]{3}\.[0-9]{3}")
+        .expect("npwp regex is valid"));
+
 /// 往来港澳通行证 (electronic card, mainland residents): `C` + 8 digits =
 /// 9 chars. Gap found by client testing 2026-10-08: `C12345678` sailed
 /// through sanitize untouched because the 回乡证 rule only claims `H`/`M`
@@ -856,6 +931,95 @@ impl Detector for TierOneDetector {
                 continue;
             }
             self.push(&mut out, m, EntityType::HkMoPermit, MatchSource::Pattern);
+        }
+
+        // 香港入境许可 / 澳门非本地劳工证: label first, then the 7-digit number.
+        // See RE_HK_ENTRY_PERMIT_LABEL - `HK1234567` and `M1234567` were a live
+        // leak in a document marked `sanitized` and retrievable through kb_search.
+        let entry_label_ends: Vec<usize> = RE_HK_ENTRY_PERMIT_LABEL
+            .find_iter(text)
+            .map(|a| a.end())
+            .collect();
+        for label_end in entry_label_ends {
+            let Some(rest) = text.get(label_end..) else {
+                continue;
+            };
+            // Skip the separator between label and number.
+            let skip = rest
+                .char_indices()
+                .find(|(_, c)| !matches!(c, ':' | '：' | ' ' | '\t' | '\u{3000}'))
+                .map(|(i, _)| i)
+                .unwrap_or(rest.len());
+            let Some(tail) = rest.get(skip..) else {
+                continue;
+            };
+            if let Some(m) = RE_HK_ENTRY_PERMIT_NUMBER.find(tail) {
+                let start = label_end + skip + m.start();
+                let end = label_end + skip + m.end();
+                if is_bounded(text, start, end) {
+                    self.push_span(
+                        &mut out,
+                        start,
+                        end,
+                        &text[start..end],
+                        EntityType::HkMoPermit,
+                        MatchSource::Context,
+                    );
+                }
+            }
+        }
+
+        // 澳门居民身份证 `5123456(7)`: a closed shape, so no label is needed.
+        for m in RE_MO_ID.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push(&mut out, m, EntityType::HkMoPermit, MatchSource::Pattern);
+        }
+
+        // 澳门车牌 `澳A1234`: closed shape, no label needed.
+        for m in RE_MO_PLATE.find_iter(text) {
+            if !is_bounded(text, m.start(), m.end()) {
+                continue;
+            }
+            self.push_span(
+                &mut out,
+                m.start(),
+                m.end(),
+                &text[m.start()..m.end()],
+                EntityType::VehiclePlate,
+                MatchSource::Pattern,
+            );
+        }
+
+        // Labelled regional tax identifiers. `Context`, so the same-span collapse
+        // prefers them over the shape rules that used to steal the digits:
+        // MEASURED 2026-11-03, `越南 MST 0101243150` came out as
+        // `[LANDLINE_...]` because a bare-10-digit rule claimed it first.
+        for (label_re, num_re, entity) in [
+            (&*RE_VN_MST_LABEL, &*RE_VN_MST, EntityType::CnTaxId),
+            (&*RE_PH_TIN_LABEL, &*RE_PH_TIN, EntityType::CnTaxId),
+            (&*RE_ID_NPWP_LABEL, &*RE_ID_NPWP, EntityType::CnTaxId),
+        ] {
+            for label in label_re.find_iter(text) {
+                let Some(rest) = text.get(label.end()..) else {
+                    continue;
+                };
+                if let Some(m) = num_re.find(rest) {
+                    let start = label.end() + m.start();
+                    let end = label.end() + m.end();
+                    if is_bounded(text, start, end) {
+                        self.push_span(
+                            &mut out,
+                            start,
+                            end,
+                            &text[start..end],
+                            entity,
+                            MatchSource::Context,
+                        );
+                    }
+                }
+            }
         }
 
         // 往来港澳通行证 card number: `C` + 8 digits, bounded like the
