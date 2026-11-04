@@ -14,13 +14,18 @@
 # egress as a side effect of prompt size, upload, or not touching the picker.
 # `scripts/test-chat-no-auto-egress.ps1` enforces that distinction.
 #
-# Default (first) model = gemma4:12b-it-qat (schema-valid structured/tool calls,
-# benchmarked end-to-end). ornith-1.5:9b is listed after it as a fast fallback.
+# Default (first) model = nemotron-3.5-bolt:e4b-q8_0 (schema-valid structured/tool
+# calls, benchmarked end-to-end). ornith-1.5:9b is listed after it as a fast
+# fallback.
 #
 # IMPORTANT: the deep-research "Generate follow-up questions" step uses structured
 # output (json_schema -> Ollama grammar). Some local models (e.g. ornith-1.5:9b)
 # fail with "Failed to initialize samplers: failed to parse grammar" on that
-# step. gemma4:12b-it-qat handles the grammar reliably, so it must be the default.
+# step. gemma4:12b-it-qat handled the grammar reliably and was the default for
+# that reason until 2026-11-04; nemotron-3.5-bolt:e4b-q8_0 was verified to return
+# valid JSON on the same json_schema request (2892 ms vs gemma4's 4899 ms), so the
+# requirement still holds. `scripts/probe-thinking-suppression.ps1` re-checks it
+# for any candidate - a model that cannot satisfy it must not be the default.
 #
 # MODEL TAG CONSISTENCY: every LOCAL tag named below must also be listed in
 # ollama-models.txt (the pre-pull list install.ps1 reads), or a fresh machine will
@@ -50,7 +55,7 @@ models:
   #
   # WITHDRAWING IT ALSO MOVED models[0]. The first ACTIVE entry is what an
   # unpinned lane falls back to; that was this 30B, which is the 2026-10-17
-  # defect (every new thread loaded 25 GB). It is now gemma4-12b-local (7.2 GB).
+  # defect (every new thread loaded 25 GB). It is now nemotron-bolt-7b-local (7.2 GB).
   # Do not re-order the list without checking what sits first.
   # - name: nemotron-3.5-lightning-30b-local
   #   display_name: Nemotron 3.5 Lightning 30B (Local)
@@ -66,32 +71,51 @@ models:
   #   # timeout so the gateway does not drop the connection mid-thought.
   #   stream_chunk_timeout: 300
 
-  - name: gemma4-12b-local
-    display_name: Gemma 4 12B (Local)
-    description: Fast local model. Reliable structured/tool calls. Used for background memory updates.
+  # ── LOCAL: nemotron-3.5-bolt (2026-11-04) ─────────────────────────────────
+  # Replaces the retired nemotron-bolt-7b-local as the local default. Measured, with
+  # scripts/bench-local-models.ps1 and scripts/probe-thinking-suppression.ps1:
+  #
+  #   e4b-q8_0   9.8 GB on disk   decode 97.2 tok/s   prefill 1162 tok/s
+  #   gemma4     7.2 GB on disk   decode 31.5 tok/s   prefill  526 tok/s
+  #
+  # It also passes json_schema structured output (valid JSON, 2892 ms), which is
+  # the single property that previously forced gemma4 to be the default. That
+  # constraint is now satisfied and the note at the top of this file reflects it.
+  #
+  # TRADE-OFF, deliberate: context ceiling is 65536 and a larger request is
+  # silently clamped. The stack ships 65536, so nothing changes today; a run that
+  # needs more must not use this entry.
+  #
+  # `when_thinking_disabled: reasoning_effort: none` is NOT optional here. Without
+  # it this model spends the whole budget on invisible reasoning and returns
+  # EMPTY content with finish_reason=length - measured: 0 content chars, 1060
+  # reasoning chars, 300/300 tokens. With it: 43 chars, 11 tokens, finish=stop.
+  - name: nemotron-bolt-7b-local
+    display_name: Nemotron 3.5 Bolt 7.5B (Local)
+    description: LOCAL default. 9.8 GB, fits a 16 GB AIPC card. 3x faster than the 12B it replaces.
     use: langchain_openai:ChatOpenAI
-    model: gemma4:12b-it-qat
+    model: nemotron-3.5-bolt:e4b-q8_0
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
-    # Pacgate 2026-10-20: SUPPRESS THE REASONING CHANNEL on local models too.
+    # Pacgate 2026-10-20: SUPPRESS THE REASONING CHANNEL on local models.
     #
-    # The two cloud entries below have carried this fix since 2026-10-09; the
-    # local ones never did, and the omission was expensive. gemma4 is a
-    # thinking-capable model, so when the caller builds it with
-    # thinking_enabled=False and the config sets NO when_thinking_disabled,
-    # `deer-flow-model-factory.py` matches none of its disable branches and
-    # sends nothing - the model then spends the whole max_tokens budget on
-    # invisible `reasoning` and returns EMPTY content.
+    # Applies to nemotron-3.5-bolt exactly as it did to gemma4. The two cloud
+    # entries below have carried this fix since 2026-10-09; the local ones never
+    # did, and the omission was expensive. Both are thinking-capable, so when the
+    # caller builds them with thinking_enabled=False and the config sets NO
+    # when_thinking_disabled, `deer-flow-model-factory.py` matches none of its
+    # disable branches and sends nothing - the model then spends the whole
+    # max_tokens budget on invisible `reasoning` and returns EMPTY content.
     #
-    # Measured live 2026-10-20 against the local Ollama /v1 endpoint with a
-    # title-shaped prompt (max_tokens 200):
-    #   without reasoning_effort=none -> 7.7 s, 200/200 tokens, 809 chars of
-    #                                    reasoning, content = "" (finish=length)
-    #   with    reasoning_effort=none -> 0.48 s, 9 tokens, clean title
-    # That is 16x the latency for zero output on EVERY title, memory and
-    # summarization call, and it also holds the Ollama server slot open that
+    # Measured 2026-10-20 (gemma4) and re-confirmed 2026-11-04 (both models,
+    # scripts/probe-thinking-suppression.ps1) against the local /v1 endpoint:
+    #   without reasoning_effort=none -> 805-1060 chars of reasoning,
+    #                                    content = "" (finish=length)
+    #   with    reasoning_effort=none -> 11 tokens, clean content (finish=stop)
+    # On the 12B that was 20.9 s vs 2.5 s for zero output on EVERY title, memory
+    # and summarization call, and it also holds the Ollama server slot open that
     # much longer - which is exactly what makes concurrent utility lanes look
     # like a hang. `supports_reasoning_effort` must be true as well or the
     # factory strips the key again (see the pop at the end of the merge).
@@ -105,16 +129,16 @@ models:
   # generation here hogs the single Ollama runner slot and stalls every chat
   # (observed 2026-10-07: 43k+ token loop). Memory facts are short JSON - a hard
   # 2048 cap is generous and cannot loop meaningfully.
-  - name: gemma4-12b-memory
-    display_name: Gemma 4 12B (Memory, capped)
+  - name: nemotron-bolt-7b-memory
+    display_name: Nemotron 3.5 Bolt 7.5B (Memory, capped)
     description: Internal model for background memory updates. Hard 2048-token cap. Safe to pick for short tasks.
     use: langchain_openai:ChatOpenAI
-    model: gemma4:12b-it-qat
+    model: nemotron-3.5-bolt:e4b-q8_0
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 2048
     temperature: 0.1
-    # Same reasoning-channel fix as gemma4-12b-local above (2026-10-20). This
+    # Same reasoning-channel fix as nemotron-bolt-7b-local above. This
     # entry matters MOST: memory updates are unattended and fire on every turn,
     # so an unbudgeted reasoning burn here is invisible but constant.
     supports_thinking: true
@@ -122,7 +146,42 @@ models:
     when_thinking_disabled:
       reasoning_effort: none
 
-  # Pacgate 2026-10-07 (rev 2): qwen3.8:27b DEMOTED from the picker. Benchmark
+  # ── OPTIONAL: heavier local option (2026-11-04) ────────────────────────────
+  # COMMENTED OUT, deliberately - not withdrawn, and not deleted.
+  #
+  # 74B total / 8.1B active MoE at IQ2_XXS = 24.8 GB, which is over a 16 GB AIPC
+  # card. Measured on a card that cannot hold it: Ollama keeps only ~3.1 GB
+  # resident and pages the remaining ~20 GB from disk on every token. It WORKS and
+  # the output is good - it is simply not fast:
+  #   tool chain (25 tools, 3 calls):  278.0 s   vs 22.3 s on the 7.5B (12.5x)
+  #   decode 23.8 tok/s, prefill 230 tok/s vs 97.2 / 1162 on the 7.5B
+  #
+  # WHY COMMENTED. `audit-model-tags.ps1` fails any ACTIVE picker entry that
+  # `ollama-models.txt` does not pre-pull, because selecting it returns HTTP 404
+  # with no fallback. The only ways to activate this entry are to pre-pull 24.8 GB
+  # onto every client (unacceptable on a 16 GB AIPC) or to accept that 404.
+  #
+  # TO ENABLE on a machine that can hold it:
+  #   1. ollama pull nemotron-3.5-bolt:74b-a9b-iq2
+  #   2. add that tag to deploy/client-bundle/ollama-models.txt
+  #   3. uncomment this block
+  # On a 32 GB client the weights do fit, which is why this is offered at all -
+  # but it must never become the FIRST entry or an escalation target, or every
+  # unpinned run inherits a 12x slowdown without anyone choosing it.
+  # - name: nemotron-bolt-74b-local
+  #   display_name: Nemotron 3.5 Bolt 74B (Optional, slow)
+  #   description: 8.1B-active MoE, deeper reasoning. 24.8 GB - needs a large machine and patience.
+  #   use: langchain_openai:ChatOpenAI
+  #   model: nemotron-3.5-bolt:74b-a9b-iq2
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
+  #   stream_chunk_timeout: 600
+  #   supports_thinking: true
+  #   supports_reasoning_effort: true
+  #   when_thinking_disabled:
+  #     reasoning_effort: none
   # on the 8060S iGPU (warm, ~3k ctx): dense 27B = 26 t/s gen / 225 t/s
   # ingestion, vs nemotron MOE 81/1080 and ornith MOE 64/1263. The dense model
   # is 3-5x slower on BOTH axes and strictly dominated by the two MOEs. It
@@ -285,7 +344,7 @@ models:
 # chooses it explicitly. Only the AUTOMATIC path changed.
 model_routing:
   enabled: true
-  # Pacgate 2026-10-19: the escalation target is gemma4-12b-local (7.2 GB). It was
+  # Pacgate 2026-10-19: the escalation target is nemotron-bolt-7b-local (7.2 GB). It was
   # nemotron-3.5-lightning-30b-local until that entry was withdrawn for not fitting
   # a 16 GB AIPC card - and leaving it here would have been worse than the picker
   # bug it came from: escalation fires AUTOMATICALLY, so a 25 GB target would load
@@ -298,8 +357,8 @@ model_routing:
   # when the conversation is genuinely large, and it stays on the same resident
   # model rather than swapping in a bigger one. deer-flow's schema keeps the key
   # name `cloud_model`; read it as "the escalation target".
-  local_model: gemma4-12b-local
-  cloud_model: gemma4-12b-local
+  local_model: nemotron-bolt-7b-local
+  cloud_model: nemotron-bolt-7b-local
   message_token_threshold: 40000
   # Pacgate 2026-10-17: DEAD SIGNAL, left at the schema default on purpose.
   # Measured live on 0.1.31: the bound surface is 44 tools (7 sandbox + 2
@@ -315,11 +374,11 @@ model_routing:
 # The memory updater runs OUTSIDE user-visible runs; without a pin it used the
 # first config model with no generation cap, and a confused run looped 43k+
 # tokens on the single Ollama runner slot, stalling every chat in the session.
-# gemma4-12b-memory carries a hard 2048 max_tokens so this class of loop cannot
+# nemotron-bolt-7b-memory carries a hard 2048 max_tokens so this class of loop cannot
 # recur. (MemoryConfig.model_name, deerflow/agents/memory/updater.py.)
 memory:
   storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
-  model_name: gemma4-12b-memory
+  model_name: nemotron-bolt-7b-memory
 
 # Pacgate 2026-10-30: SKILLS + AGENT-MANAGED SKILL EVOLUTION.
 #
@@ -349,7 +408,7 @@ skills:
 # SAFETY: `skill_manage` routes every write through `skills/security_scanner.py`,
 # which asks a chat model to classify the content allow/warn/block and fails
 # CLOSED (an unreachable moderation model yields `block`, not `allow`).
-# Verified live under the default local model (gemma4-12b-local): a sample
+# Verified live under the default local model (nemotron-bolt-7b-local): a sample
 # Chinese-law NDA skill was correctly allowed. `executable=True` content (a
 # skill carrying `scripts/`) is blocked unless the decision is exactly `allow`.
 #
@@ -373,10 +432,10 @@ skill_evolution:
 #
 # The title prompt asks for <=6 words / <=60 chars and is already bounded by
 # DEERFLOW_TITLE_INVOKE_TIMEOUT_S=8 in compose, so it needs no 30B model.
-# gemma4-12b-local shares its Ollama tag with the memory pin above, so title and
+# nemotron-bolt-7b-local shares its Ollama tag with the memory pin above, so title and
 # memory work converge on ONE resident model instead of adding a third.
 title:
-  model_name: gemma4-12b-local
+  model_name: nemotron-bolt-7b-local
 
 # Pacgate 2026-10-09: ENABLE conversation summarization. Root cause this
 # fixes: summarization was UNCONFIGURED (null -> disabled by default), so
@@ -424,11 +483,11 @@ summarization:
   # user's chat, and on a different, oversized model. That is the "hang while
   # another lane works" signature.
   #
-  # gemma4-12b-local shares the Ollama tag `gemma4:12b-it-qat` with the memory pin,
-  # so chat, title, memory and summarization now all converge on ONE resident
+  # nemotron-bolt-7b-local shares the Ollama tag `nemotron-3.5-bolt:e4b-q8_0` with
+  # the memory pin, so chat, title, memory and summarization now all converge on ONE resident
   # model. The 8192 cap is kept (not the 2048 memory cap) because summary length
   # is less predictable than a short fact block.
-  model_name: gemma4-12b-local
+  model_name: nemotron-bolt-7b-local
   # Pacgate 2026-10-23: trigger 12000 -> 36000. This is the fix for the
   # "42 steps and no report" hang. The old 12000 was BELOW the unremovable
   # per-call floor, which turned this lane into a treadmill.
@@ -551,7 +610,7 @@ summarization:
   # the tail of the conversation and the agent would lose the document.
   #
   # 36000 == the trigger, so the summarizer always sees the whole span it is
-  # replacing. The summarizer is gemma4-12b-local (pinned above) and Ollama
+  # replacing. The summarizer is nemotron-bolt-7b-local (pinned above) and Ollama
   # loads it at 262144 ctx, so a 36k prompt is well inside its window.
   trim_tokens_to_summarize: 36000
 

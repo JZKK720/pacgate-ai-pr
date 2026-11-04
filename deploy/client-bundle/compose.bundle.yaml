@@ -119,7 +119,7 @@ services:
       # is a machine artifact that cannot be pre-pulled from a registry, so the
       # installer writes it into .env instead of this default.
       PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
-      PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
+      PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-nemotron-3.5-bolt:e4b-q8_0}
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,

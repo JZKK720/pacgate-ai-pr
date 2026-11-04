@@ -118,7 +118,7 @@ impl ModelConfig {
     /// |------|-----------------------------|------------------------------------------------|
     /// | Main | deepseek-v4.1-flash:cloud   | Deep-think · contract review · generative agents |
     /// | Mid  | ornith-1.5:9b               | Agent automation · tabular review · core tasks   |
-    /// | Low  | gemma4:12b-it-qat           | Fast labels · short summaries · routing          |
+    /// | Low  | nemotron-3.5-bolt:e4b-q8_0  | Fast labels · short summaries · routing          |
     pub fn default_local() -> Vec<Self> {
         Self::default_local_with_base_url("http://localhost:11434")
     }
@@ -172,9 +172,18 @@ impl ModelConfig {
     /// card. `scripts/test-aipc-capacity-fit.ps1` measures both and now blocks the
     /// suite while any shipped tier or picker entry is over budget. A machine with
     /// the VRAM overrides PACGATE_MODEL_MID and gets the 27B back.
+    /// LOW changed 2026-11-04 from `gemma4:12b-it-qat` to `nemotron-3.5-bolt:e4b-q8_0`
+    /// (9.8 GB). Measured at the shipped 65536 context: decode 97.2 tok/s vs 31.5,
+    /// prefill 1162 tok/s vs 526. It also passes json_schema structured output,
+    /// which was the property that had forced gemma4 to hold the Low tier.
+    ///
+    /// TRADE-OFF, accepted: its context ceiling is 65536 and a larger request is
+    /// silently clamped, where gemma4 declared 262144. The stack ships 65536, so
+    /// nothing changes today; code that needs a larger window must override this
+    /// tier rather than assume it.
     pub const DEFAULT_MAIN_TAG: &'static str = "deepseek-v4.1-flash:cloud";
     pub const DEFAULT_MID_TAG: &'static str = "ornith-1.5:9b";
-    pub const DEFAULT_LOW_TAG: &'static str = "gemma4:12b-it-qat";
+    pub const DEFAULT_LOW_TAG: &'static str = "nemotron-3.5-bolt:e4b-q8_0";
 
     /// Environment variables that override each tier's model tag.
     pub const ENV_MAIN_TAG: &'static str = "PACGATE_MODEL_MAIN";

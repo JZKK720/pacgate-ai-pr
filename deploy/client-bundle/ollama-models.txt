@@ -7,13 +7,37 @@
 
 # --- pacgate-api workflow tiers (Appendix A model-overrides SQL) ---
 # Main + Low tier: fast legal execution, local GPU/NPU
-gemma4:12b-it-qat
+#
+# Low tier 2026-11-04: gemma4:12b-it-qat RETIRED, replaced by
+# nemotron-3.5-bolt:e4b-q8_0 (9.8 GB). Reasons, all measured:
+#   - 14B -> stays inside the 16 GB card. 9.8 GB on disk, 9.1 GiB resident.
+#   - Decode 97 tok/s vs 31.5; prefill 1162 tok/s vs 526, at the shipped 65536
+#     context. (scripts/bench-local-models.ps1)
+#   - It passes json_schema structured output - the one property that previously
+#     made gemma4 mandatory as the default. Verified: valid JSON, 2892 ms.
+#   - It reasons BRIEFLY. On a utility-shaped prompt the 12B burned 805 chars of
+#     hidden reasoning and returned empty content; this one burns 1060 chars of
+#     reasoning and still returns content, and with suppression returns in 11
+#     tokens. (scripts/probe-thinking-suppression.ps1)
+#   - TRADE-OFF, accepted deliberately: its context ceiling is 65536, and
+#     requesting more is silently clamped. gemma4 declared 262144. Nothing in the
+#     stack runs above 65536 today; anything that needs a larger window must not
+#     use this tag.
+nemotron-3.5-bolt:e4b-q8_0
 # Mid tier: pacgate-api now defaults to ornith-1.5:9b (6.6 GB) because
 # qwen3.8:27b-mtp-q4_K_M is 17.0 GB and cannot load on a 16 GB AIPC card - it
 # spilled to CPU and presented as a stall. Measured by
 # scripts/test-aipc-capacity-fit.ps1. Restore this line only on a machine with
 # the VRAM, and set PACGATE_MODEL_MID in .env to match.
 # qwen3.8:27b-mtp-q4_K_M
+
+# --- Optional heavier local model (picket option, NOT a tier default) ---
+# 24.8 GB. Over the 16 GB card budget: Ollama keeps only ~3.1 GB resident and
+# pages the rest from disk. Measured 3.3x slower than the 7.5B on an identical
+# tool chain (scripts/bench-tool-loop.ps1), so it is NOT a tier default and is
+# NOT pre-pulled. Listed here so an operator who wants the deeper-reasoning
+# option on a large machine knows the exact tag and its cost.
+# nemotron-3.5-bolt:74b-a9b-iq2
 
 # --- RAG embeddings (required by pacgate-api, no alternative) ---
 nomic-embed-text:latest
@@ -57,3 +81,10 @@ glm-5.3-flash:cloud
 # is 3-5x slower than the MOEs on both generation and context ingestion) and is
 # now withdrawn from the pre-pull entirely - see the Mid tier note above.
 ornith-1.5:9b
+
+# --- deer-flow picker: heavier local option (2026-11-04) ---
+# The local picker gained nemotron-3.5-bolt:e4b-q8_0, which is ALREADY pre-pulled
+# above as the Low tier - one tag serves both, so it costs nothing extra. The 74B
+# is offered as an opt-in picker entry only where an operator installs it by hand:
+# it is deliberately NOT in this pre-pull list, because 24.8 GB cannot fit a 16 GB
+# AIPC card and a client that pulled it would stall rather than error.

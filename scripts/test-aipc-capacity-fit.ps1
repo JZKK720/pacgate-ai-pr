@@ -100,6 +100,14 @@ $KnownSizesGB = @{
     'ornith-1.5:9b'                   = 6.6
     'glm-ocr:latest'                  = 2.2
     'qwen3.6:35b-a3b-mtp-q4_K_M'      = 22.0
+    # Measured 2026-11-04 on the dev box (Ollama 0.40.14), decimal GB from
+    # /api/tags, matching the convention of every row above.
+    #
+    # e4b-q8_0 is the only bolt variant that fits: 9.8 GB. Its sibling e4b-bf16
+    # was 16.8 GB - more than the whole card before a single KV page - and has
+    # been removed. These two are 7.5B, not the 4B the "e4b" label suggests.
+    'nemotron-3.5-bolt:e4b-q8_0'      = 9.8
+    'nemotron-3.5-bolt:e4b-bf16'      = 16.8
     # Cloud: no local weights.
     'deepseek-v4.1-flash:cloud'       = 0
     'glm-5.3-flash:cloud'             = 0
