@@ -1381,7 +1381,27 @@ if (-not $Update) {
 
 # 6. Pull Docker images
 Write-Host "`nPulling Docker images..." -ForegroundColor Cyan
-docker compose -f compose.prod.yaml pull
+
+# `laya` lives behind the opt-in `laya` profile, and a plain `compose pull`
+# SKIPS profiled services. That is why a machine which had started laya once
+# kept running an old laya-serve image through every later release (observed at
+# laya-serve:0.2.20 while the rest of the stack was on 0.2.22 on 2026-11-04):
+# the update path never pulled it and never recreated it.
+#
+# The profile is only passed when laya is ALREADY present. A machine that never
+# opted in must not start pulling a 1.2 GB checkpoint it does not run, and
+# `up -d` without the flag still leaves that service stopped - which is the
+# documented supported state.
+$layaPresent = (Invoke-WithNativeStderr { (docker compose -f compose.prod.yaml ps -a --format '{{.Service}}' 2>$null | Out-String) }) -split "`n" |
+    Where-Object { $_.Trim() -eq 'laya' }
+$composeProfileArgs = if ($layaPresent) {
+    Write-Host "  laya profile detected - including it in pull/recreate so it does not stay stale." -ForegroundColor Gray
+    @('--profile', 'laya')
+} else {
+    @()
+}
+
+docker compose -f compose.prod.yaml @composeProfileArgs pull
 # Capture WHY, not just the fact. `compose pull` writes progress to stderr, so it
 # must stay unredirected here (under Windows PowerShell 5.1 any 2>&1 / 2>$null
 # makes a native command's stderr TERMINATING). But leaving the exit code
@@ -1788,7 +1808,11 @@ else {
 
 # 7. Start stack
 Write-Host "`nStarting Pacgate-ai..." -ForegroundColor Cyan
-docker compose -f compose.prod.yaml up -d
+# Same profile decision as the pull in step 6: only recreate laya on a machine
+# that already runs it. Without the flag a stale laya container is left running
+# the old image while the rest of the stack moves on - the exact drift observed
+# on 2026-11-04, where laya sat at 0.2.20 and everything else at 0.2.22.
+docker compose -f compose.prod.yaml @composeProfileArgs up -d
 Write-Host "[OK] Stack running" -ForegroundColor Green
 
 # 7a. Prove deer-flow is on the SANITIZED lane, not the fallback. This is the
