@@ -6,7 +6,9 @@
 
 ## 版本：v0.2.24（2026年11月4日）
 
-- **代理修复（"转 36 步仍无回答" 的缺陷）。** `reqwest` 0.12 会继承操作系统代理，而本机群未设置 `NO_PROXY`，因此所有发往**本地**服务的调用都被送到运营商代理并返回 `502 Bad Gateway`，涉及 Ollama（`host.docker.internal:11434`）、OCR 服务与向量嵌入接口。模型调用根本无法到达 GPU，一轮对话只能等到重试预算耗尽才结束。现由 `pacgate_core::http::local_service_client` 清除平台代理，仍保留运维人员显式配置的 `HTTP(S)_PROXY`（用于远程模型供应商），并豁免 `localhost` / `127.0.0.0/8` / `::1` / `*.local` / `host.docker.internal`。2026-11-04 实测前后对比：`pacgate-agent` 由 12 个测试中 6 个因 `502 Bad Gateway` 失败，转为 12 个全部通过，且 `NO_PROXY` 始终未设置。
+- **本地服务代理修复。** 未设置 `*_PROXY` 时，`reqwest` 0.12 会采用操作系统代理，而该配置不带本机回环豁免。由此产生两个后果，现均由 `pacgate_core::http::local_service_client` 关闭（清除平台代理，同时保留运维显式配置的 `HTTP(S)_PROXY` 用于远程供应商）：
+  - **在 Windows 上，回环调用直接失效。** 平台设置不会绕过 `127.0.0.0/8`，因此发往 `http://127.0.0.1:<port>` 的调用被送到代理并返回 `502 Bad Gateway`。2026-11-04 实测：`pacgate-agent` 12 个测试中 6 个因此失败，设置 `NO_PROXY` 后 12 个全部通过。现豁免 `localhost`、`127.0.0.0/8`、`::1`、`*.local` 与 `host.docker.internal`。
+  - **已部署容器不会继承代理**（实测：运行中的 `pacgate-api` 无任何 `*_PROXY` 变量），因此客户端访问 Ollama、OCR 与向量嵌入的调用并未受影响。为避免某台机器或某个镜像设置了代理后把内部流量静默转走，这些客户端同样改用新的构造函数。
 - Rust 元数据核心：12 个 crate + 4 个 WASM crate，冒烟/智能体/工作流/集成测试全部通过
 - 15 个文件共 220 个 YAML 工作流模板
 - 30 个法律角色人格（20 个业务领域 + 10 个 SOUL）

@@ -111,6 +111,19 @@ services:
       # Set-but-MISSING is fatal by design: a deployment that intends NER must not
       # silently degrade. That is why this must match the image path exactly.
       PACGATE_NER_MODEL_DIR: /app/models/ner
+      # Internal calls must never be routed through a proxy, even if one is added
+      # to this file or inherited from the host later. The containers themselves
+      # do not set a proxy today (verified 2026-11-04: printenv shows no *_PROXY),
+      # but the Rust client exempts loopback rather than trusting that - this
+      # variable closes the other half, so a future edit cannot reintroduce the
+      # defect by exporting HTTP_PROXY for cloud egress.
+      #
+      # NO_PROXY covers the service names used on the compose network, the
+      # container loopback, and host.docker.internal (the native Ollama on the
+      # AIPC). Do not narrow it to loopback only: ocr-service and pacgate-mcp are
+      # reached by service name.
+      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,pacgate-db,pacgate-api,pacgate-mcp,ocr-service,deer-flow,deer-flow-frontend,openviking,laya,nginx"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,pacgate-db,pacgate-api,pacgate-mcp,ocr-service,deer-flow,deer-flow-frontend,openviking,laya,nginx"
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Plan 019/021: the extraction lane. pacgate-api POSTs multipart to
       # {url}/extract; extraction is cached per document version, so a warm
