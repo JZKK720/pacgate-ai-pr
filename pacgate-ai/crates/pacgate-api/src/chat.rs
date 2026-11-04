@@ -1,7 +1,7 @@
 use axum::{
     extract::{Extension, State},
     response::{
-        sse::{Event, Sse},
+        sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
     Json,
@@ -342,7 +342,20 @@ pub async fn chat_stream_handler(
     // location also sets `proxy_buffering off`, because a proxy that does neither
     // turns every progress frame into one flush at the end - measured 2026-11-03,
     // 22 frames arriving simultaneously after a 6.4s stall.
-    let mut response = Sse::new(event_stream).into_response();
+    //
+    // keep_alive closes the LAST gap in the "no feedback" complaint. The progress
+    // frames mark every tool boundary, but between a round start and the next tool
+    // the MODEL is generating and emits nothing - measured 2026-11-04, a long
+    // document-check turn went 24.7s with the connection silent, which reads as a
+    // hang even though work is happening. A 10s comment ping keeps the stream live
+    // (and stops an idle proxy from dropping a slow turn) without touching the event
+    // logic: it only fires when no real frame has gone out in the interval.
+    let sse = Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(10))
+            .text("keep-alive"),
+    );
+    let mut response = sse.into_response();
     response
         .headers_mut()
         .insert("x-accel-buffering", "no".parse().unwrap());
