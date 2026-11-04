@@ -185,7 +185,16 @@ if ($srvCount -ge 3) { Ok "$srvCount MCP servers enabled (openviking + pacgate +
 else { Skip "$srvCount enabled MCP server(s); expected 3" }
 $sp = Get-Code 'http://localhost:8089/api/v1/auth/setup-status'
 if ($sp -eq '200') { Ok 'deer-flow auth gateway reachable (setup-status 200)' } else { Bad "setup-status -> $sp" }
-Skip 'agent->MCP invocation NOT exercised: it needs a deer-flow session, and there is no committed agent-run E2E. Do not read this lane as fully verified.'
+# The tool loop itself is covered by a REAL committed E2E: scripts/test-agent-mcp-e2e.ps1
+# (asserts a run completes and that at least one advertised MCP tool was actually
+# CALLED). This lane does not drive a session, so say that precisely instead of
+# claiming no such test exists - that wording outlived the test it was written about
+# and sent readers looking for a gate that had already been built.
+if (Test-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/test-agent-mcp-e2e.ps1')) {
+    Skip 'agent->MCP invocation not exercised HERE (this lane checks config only). Covered by scripts/test-agent-mcp-e2e.ps1 - run it for the real tool-loop proof.'
+} else {
+    Skip 'agent->MCP invocation NOT exercised and scripts/test-agent-mcp-e2e.ps1 is MISSING - the tool loop is unverified.'
+}
 
 # ── Lane 4: deer-flow-frontend ──────────────────────────────────────────────
 Lane 'deer-flow-frontend'
@@ -205,12 +214,28 @@ if ($ov -eq '200') { Ok 'openviking /health -> 200' } else { Bad "openviking /he
 $ovh = (docker inspect --format '{{.State.Health.Status}}' openviking 2>&1 | Out-String).Trim()
 if ($ovh -eq 'healthy') { Ok 'container health = healthy' } else { Bad "container health = $ovh" }
 # The MCP lane is what deer-flow actually uses (root key + text/event-stream).
+#
+# The key is looked up in the shell env FIRST, then in deploy/client-bundle/.env.
+# Reading only the env was a real false-SKIP: the key exists in .env (the file
+# install.ps1 and compose actually read), and nothing exports it into the operator's
+# shell, so this lane reported "needs the root key in env" on a stack where the
+# endpoint answers 200 with 15 tools. Measured 2026-11-04 by calling it directly
+# with the .env value.
+$ovKey = $env:OPENVIKING_ROOT_API_KEY
+if (-not $ovKey) {
+    $envFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.env'
+    if (Test-Path $envFile) {
+        $ovLine = Get-Content $envFile | Where-Object { $_ -match '^\s*OPENVIKING_ROOT_API_KEY\s*=' } | Select-Object -First 1
+        if ($ovLine) { $ovKey = ($ovLine -replace '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*', '').Trim() }
+    }
+}
 $mcp = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 15 -X POST 'http://localhost:1933/mcp' `
         -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' `
-        -H "X-API-Key: $env:OPENVIKING_ROOT_API_KEY" `
+        -H "X-API-Key: $ovKey" `
         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1 | Out-String).Trim()
 if ($mcp -eq '200' -or $mcp -eq '202') { Ok "openviking MCP tools/list -> $mcp" }
-else { Skip "openviking MCP -> $mcp (needs the root key in env; covered by test-legal-journey lane 10)" }
+elseif (-not $ovKey) { Skip "openviking MCP -> $mcp (no OPENVIKING_ROOT_API_KEY in env or client-bundle/.env)" }
+else { Bad "openviking MCP -> $mcp (a key IS configured, so this is a real failure, not a skip)" }
 
 # ── Lane 6: ocr-service (the bake IS the weights tree) ──────────────────────
 Lane 'ocr-service'
