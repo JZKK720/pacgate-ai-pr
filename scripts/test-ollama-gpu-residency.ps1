@@ -15,19 +15,36 @@
 #   msg="inference compute" library=cpu compute="" name=cpu \
 #       total="61.6 GiB" available="17.9 GiB"
 #
-# So there was no GPU backend at all, and a 12B model on CPU generated at roughly
-# 1-2 tokens/second. One trivial run against the live stack took:
+# THE CAUSE WAS AN INSTALL-ORDER RACE, NOT A BROKEN GPU.
 #
-#   run started 07:27:36 -> first model call returned 07:32:41  (305 s)
-#   tool call issued + completed at 07:32:44
-#   no further model call completed for the next 15+ minutes
+# The RX 7600 XT (gfx1102) is fully supported by Ollama's bundled ROCm backend.
+# The problem was that Ollama enumerates devices ONCE at server start, and it
+# unpacks the ROCm backend into lib\ollama\rocm_v7_1 only AFTER it starts. Measured
+# on this box:
 #
-# while every existing gate stayed green. A direct prompt of "hi" took 377 s.
-# Nothing failed; the product was simply unusable, and no check said so.
+#   server start        09:12:46
+#   rocm_v7_1 unpacked  09:13:24   (38 s later)
+#   ggml-hip.dll        09:13:32
 #
-# A stack-level smoke test cannot catch this: pacgate-api, pacgate-mcp, OCR and
-# the frontends are all healthy, and the chat request is accepted. The GPU is the
-# only place the truth is visible.
+# So the server had already decided "CPU only" before the backend it needed existed,
+# and it stayed that way for its whole lifetime. A second instance started later on
+# a different port saw the backend and enumerated the card correctly:
+#
+#   msg="inference compute" library=ROCm compute=gfx1102 \
+#       description="AMD Radeon RX 7600 XT" total="16.0 GiB"
+#   msg="dropping integrated GPU; to enable, set OLLAMA_IGPU_ENABLE=1" \
+#       (the 890M iGPU, correctly skipped)
+#
+# After restarting the app: gemma4 "Reply with exactly: OK" went from 377 s on CPU
+# to 7.4 s at 100% GPU, and the agent->MCP end-to-end run went from failing at the
+# 120-300 s client timeout to 5/5 passing.
+#
+# Nothing was wrong with the stack, the models, ROCm, or the GPU driver. The
+# symptom was real, the diagnosis people would reach for (broken GPU support) was
+# wrong, and every existing gate stayed green the whole time.
+#
+# So this gate's job is: make "local inference is GPU-backed" an assertion, and
+# point at the install-order race as the FIRST thing to check.
 #
 # Exit: 0 = every resident runner is on a GPU (or none is loaded)
 #       1 = a runner is on CPU -> the stack will appear to hang
@@ -102,7 +119,16 @@ if ($computeLines.Count -eq 0) {
         Bad "ollama enumerated NO GPU device (libraries: $seen)"
         Write-Host "         Every local model will run on the CPU at ~1-2 tokens/second." -ForegroundColor Yellow
         Write-Host "         A chat turn then takes minutes per step and looks exactly like a hang." -ForegroundColor Yellow
-        Write-Host "         Fix the Ollama install / GPU driver for this vendor and restart the Ollama app." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "         CHECK INSTALL ORDER FIRST - this is the usual cause:" -ForegroundColor Yellow
+        Write-Host "         Ollama enumerates devices ONCE, at server start. It unpacks the" -ForegroundColor Yellow
+        Write-Host "         ROCm/Vulkan backend into lib\ollama\<vendor>_* shortly AFTER it" -ForegroundColor Yellow
+        Write-Host "         starts. A server that started before that unpack stays CPU-only" -ForegroundColor Yellow
+        Write-Host "         for its whole lifetime, with a healthy install on disk." -ForegroundColor Yellow
+        Write-Host "         Measured 2026-11-04 on the RX 7600 XT box: server pid started" -ForegroundColor Yellow
+        Write-Host "         09:12:46, rocm_v7_1 unpacked 09:13:32, so every model ran on CPU" -ForegroundColor Yellow
+        Write-Host "         for 3.5 hours until Ollama was restarted." -ForegroundColor Yellow
+        Write-Host "         FIX: restart the Ollama app (not the model), then re-run this gate." -ForegroundColor Yellow
     }
 } else {
     Ok ("ollama enumerated GPU device(s): " + (($gpuDevices | ForEach-Object { "$($_.Name) [$($_.Library)]" }) -join ', '))
@@ -148,10 +174,20 @@ $failed = @($rows | Where-Object {
     -not ($_.Processor -match 'GPU' -and $_.Processor -notmatch '^\s*100%\s*CPU')
 }).Count
 $noGpu = ($computeLines.Count -gt 0 -and $gpuDevices.Count -eq 0)
+$cpuOnly = $noGpu -or ($rows.Count -gt 0 -and $failed -gt 0)
 
-if (-not $WarnOnly -and ($noGpu -or ($rows.Count -gt 0 -and $failed -gt 0))) {
-    Write-Host "RESULT: FAIL - local inference is not on the GPU" -ForegroundColor Red
-    exit 1
+if (-not $cpuOnly) {
+    Write-Host "RESULT: local inference is GPU-backed" -ForegroundColor Green
+    exit 0
 }
-Write-Host "RESULT: local inference is GPU-backed" -ForegroundColor Green
-exit 0
+
+if ($WarnOnly) {
+    # NOT "GPU-backed". -WarnOnly suppresses the exit code, not the finding: a gate
+    # that answers "GPU-backed" while it has just detected CPU inference is the same
+    # false-green this whole script exists to remove.
+    Write-Host "RESULT: CPU-ONLY INFERENCE (exit softened by -WarnOnly, finding stands)" -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host "RESULT: FAIL - local inference is not on the GPU" -ForegroundColor Red
+exit 1

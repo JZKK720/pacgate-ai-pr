@@ -141,8 +141,26 @@ try {
         -WebSession $session -UseBasicParsing -TimeoutSec $TimeoutSec
 } catch {
     $code = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { 'no-response' }
+
+    # DIAGNOSE, do not guess. This path used to blame the prompt template
+    # unconditionally, and on 2026-11-04 that sent the investigation to the wrong
+    # place: the run had not raised KeyError at all, the model was simply running on
+    # the CPU at ~1-2 tokens/second, so /runs/wait never returned within the client
+    # timeout. A gate that names the wrong cause is worse than one that only says
+    # "failed", so the GPU state is checked before the message is chosen.
+    $hint = 'if the prompt template gained a stray brace, apply_prompt_template raises KeyError here'
+    $gpuNote = ''
+    try {
+        $gpu = & (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/test-ollama-gpu-residency.ps1') -WarnOnly 2>&1 | Out-String
+        if ($gpu -match 'NO GPU device|ONLY CPU|on the CPU') {
+            $hint = "the model is NOT on a GPU, so a single step takes minutes - this is the hang, not a template bug"
+            $gpuNote = 'ollama GPU gate: ' + (($gpu -split "`n" | Where-Object { $_ -match 'FAIL|SKIP|PASS' } | ForEach-Object { $_.Trim() }) -join ' | ')
+        }
+    } catch { }
+
     Check 'E2 an agent run completes (the KeyError-class defect)' $false `
-          "the run failed with HTTP $code - if the prompt template gained a stray brace, apply_prompt_template raises KeyError here"
+          "the run failed with HTTP $code after ~${TimeoutSec}s - $hint"
+    if ($gpuNote) { Write-Host "         $gpuNote" -ForegroundColor Yellow }
     Write-Host ''
     Write-Host "RESULT: $($script:passed) passed, $($script:failed) failed" -ForegroundColor Red
     exit 1
