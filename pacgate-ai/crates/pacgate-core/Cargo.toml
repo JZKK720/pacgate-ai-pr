@@ -11,3 +11,11 @@ chrono.workspace      = true
 thiserror.workspace   = true
 anyhow.workspace      = true
 async-trait.workspace = true
+# Needed at runtime (not just tests) so a client aimed at a LOCAL service can
+# exempt loopback from the machine proxy - see `src/http.rs` for the defect this
+# prevents. Only `pacgate-llm` is more universal, and that crate cannot host it
+# because `pacgate-llm` itself needs the helper.
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

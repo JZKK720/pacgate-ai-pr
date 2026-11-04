@@ -191,10 +191,13 @@ impl OpenAiCompatClient {
         // models; 10 minutes is a hard ceiling that converts an indefinite
         // hang into a clean, diagnosable error.
         Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(600))
-                .build()
-                .expect("reqwest client"),
+            // A local Ollama endpoint must bypass the machine proxy: inheriting it
+            // sent every completion to the operator's proxy, which cannot reach the
+            // GPU, and the turn only ended when the retry budget ran out. 10 minutes
+            // is a total-request ceiling so a wedged model is an error, not a hang.
+            http: pacgate_core::http::local_service_client(Some(
+                std::time::Duration::from_secs(600),
+            )),
             base_url:    base_url.into(),
             api_key:     api_key.into(),
             model:       model.into(),

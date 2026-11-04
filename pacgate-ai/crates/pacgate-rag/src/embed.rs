@@ -35,10 +35,12 @@ struct EmbedData {
 impl EmbeddingService {
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .expect("reqwest client"),
+            // Same loopback rule as the LLM client: an embedding request to a local
+            // Ollama that is sent to the machine proxy fails, and every RAG write
+            // silently loses its vector.
+            client: pacgate_core::http::local_service_client(Some(
+                std::time::Duration::from_secs(60),
+            )),
             base_url: base_url.into(),
             model: model.into(),
         }

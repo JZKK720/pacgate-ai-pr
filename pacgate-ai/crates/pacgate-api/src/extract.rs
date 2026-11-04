@@ -270,7 +270,9 @@ pub async fn extract_document(
     };
     let ocr_filename = format!("document.{ocr_ext}");
 
-    let client = reqwest::Client::new();
+    let client = pacgate_core::http::local_service_client(Some(
+        std::time::Duration::from_secs(300),
+    ));
     let part = reqwest::multipart::Part::bytes(bytes)
         .file_name(ocr_filename)
         .mime_str("application/octet-stream")

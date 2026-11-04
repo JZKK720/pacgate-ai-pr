@@ -2339,9 +2339,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
 ]
 

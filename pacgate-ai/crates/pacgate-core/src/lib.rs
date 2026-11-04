@@ -2,6 +2,8 @@
 //!
 //! Every other crate in the workspace depends on this crate. Keep it dependency-light.
 
+pub mod http;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
