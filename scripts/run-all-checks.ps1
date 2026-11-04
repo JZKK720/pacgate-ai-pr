@@ -102,6 +102,13 @@ $gates = @(    'scripts/test-install-render.ps1'
     # if the installer ever writes the app database again, and fails if the repo
     # defaults start naming a derived tag that no registry can serve.
     'scripts/test-ollama-context-scope.ps1'
+    # The "agent runs 36 steps and never answers" defect was NOT a loop bug: the
+    # model was on the CPU at ~1-2 tokens/s because Ollama enumerated devices once
+    # at start, before it unpacked its ROCm backend (measured 2026-11-04: server
+    # 09:12:46, rocm_v7_1 09:13:24). Every other gate stayed green while a single
+    # prompt took 377 s. This one asserts the GPU, and names the install-order race
+    # as the first thing to check. Restarting Ollama took it to 7.4 s at 100% GPU.
+    'scripts/test-ollama-gpu-residency.ps1'
     # tool_search deferral removes ~73% of the bound tool schema from EVERY prompt
     # (measured 10,645 -> 2,823 tokens). It was disabled because the middleware
     # told the model to call tool_search first and retry, which small local models
