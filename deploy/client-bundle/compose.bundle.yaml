@@ -83,6 +83,12 @@ services:
       # install still looking healthy. Gate: scripts/test-ner-enabled.ps1.
       # Must match the Dockerfile COPY target exactly - set-but-missing is fatal.
       PACGATE_NER_MODEL_DIR: /app/models/ner
+      # Internal calls must never go through a proxy. The Rust client already
+      # exempts loopback, but its bypass list cannot know the compose service
+      # names (ocr-service, pacgate-db, ...), so the guard is closed here as well.
+      # Do not narrow this to loopback only.
+      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,pacgate-db,pacgate-api,pacgate-mcp,ocr-service,deer-flow,deer-flow-frontend,openviking,laya,nginx"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,pacgate-db,pacgate-api,pacgate-mcp,ocr-service,deer-flow,deer-flow-frontend,openviking,laya,nginx"
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Plan 019/021: the extraction lane (cached per document version, fail-closed).
       OCR_SERVICE_URL: http://ocr-service:8100
