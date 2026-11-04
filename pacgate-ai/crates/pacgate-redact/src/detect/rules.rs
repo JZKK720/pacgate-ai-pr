@@ -625,29 +625,18 @@ fn is_bounded(text: &str, start: usize, end: usize) -> bool {
 /// Juristic IDNo.0115565002108Tel（02）0332333Fax.020332391
 /// ```
 ///
-/// `is_bounded` saw `T` of `Tel` directly after the 13th digit and rejected the
-/// match, so the juristic id stayed in an already-`sanitized`, searchable chunk.
-/// OCR output routinely runs fields together like this; requiring a non-alphanumeric
-/// character after a fixed-width field means the value is only found when the
-/// extractor happened to insert a space.
+/// Boundary test for a label-anchored numeric field: the digit run must not be
+/// followed by another digit.
+///
+/// Only the RIGHT side is tested. A label like `JuristicID` or `TaxID` already
+/// establishes that the value starts where the match does, so checking the
+/// character before it would only reject layouts where the label and the value
+/// are flush - which is exactly how a bilingual summary prints them
+/// (`卖方JuristicID0115565002108`). OCR routinely runs fields together like this.
 ///
 /// The precision this gives up is confined to label-anchored rules: a longer DIGIT
 /// run is still rejected, which is the case that matters (an order number that
 /// starts with the same digits). A trailing letter cannot extend a numeric value.
-fn is_digit_bounded(text: &str, start: usize, end: usize) -> bool {
-    let before_ok = text[..start]
-        .chars()
-        .next_back()
-        .is_none_or(|c| !c.is_ascii_alphanumeric());
-    before_ok && ends_at_digit_boundary(text, end)
-}
-
-/// The right-hand half of `is_digit_bounded`, exposed separately for the rules whose
-/// LEFT boundary is a printed label.
-///
-/// A label like `JuristicID` or `TaxID` already establishes that the digit run starts
-/// here, so testing the character before it only rejects layouts where the label and
-/// the value are flush - which is exactly how bilingual summaries print them.
 fn ends_at_digit_boundary(text: &str, end: usize) -> bool {
     !text[end..]
         .chars()
@@ -765,7 +754,7 @@ impl Detector for TierOneDetector {
         // The label is the LEFT boundary, so only the right side is bounded here.
         //
         // MEASURED 2026-11-03: `卖方JuristicID0115565002108` puts the letter `D`
-        // immediately before the digits, so the two-sided `is_digit_bounded` rejected a
+        // immediately before the digits, so the two-sided `is_bounded` rejected a
         // layout that bilingual summaries produce in ordinary running text. The right
         // side still matters - it stops the rule claiming a PREFIX of a longer number.
         for c in RE_TH_JURISTIC.captures_iter(text) {
