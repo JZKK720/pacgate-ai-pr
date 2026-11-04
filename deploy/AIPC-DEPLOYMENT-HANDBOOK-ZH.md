@@ -630,8 +630,41 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 ### Ollama
 
 - [ ] `ollama list` 显示所需模型
+- [ ] **`ollama ps` 的 PROCESSOR 列显示 GPU，而不是 `100% CPU`** - 运行 `scripts/test-ollama-gpu-residency.ps1`，退出码必须为 0
 - [ ] deer-flow 可以调用 Ollama 进行推理
 - [ ] qm 可以调用 Ollama 进行推理
+
+> **CPU-only 陷阱 - 在判定一台机器"慢"之前请先读这里。**
+>
+> Ollama 只在**服务启动时枚举一次**计算设备，而它是在启动*之后*才把 ROCm/Vulkan
+> 后端解包到 `lib\ollama\<vendor>_*` 的。若服务在后端解包完成前就已启动，它会把结论
+> 定为"仅 CPU"，并在整个生命周期内保持该结论 - 安装完全正常、GPU 受支持，且没有任何
+> 报错。
+>
+> 2026-11-04 在 RX 7600 XT 机器上的实测：
+>
+> | 事件 | 时间 |
+> |---|---|
+> | Ollama 服务启动 | 09:12:46 |
+> | `rocm_v7_1` 解包完成 | 09:13:24（+38 秒） |
+> | `ggml-hip.dll` 写入 | 09:13:32 |
+>
+> 该机器所有本地模型在 CPU 上跑了 3.5 小时。一次"Reply with exactly: OK"耗时
+> **377 秒**；重启 Ollama 后同一请求耗时 **7.4 秒**，`100% GPU`。期间对话轮次看起来
+> 像卡死，而 `smoke-full-stack` 仍报告全部绿灯。
+>
+> **若本地推理明显变慢或智能体看似停滞，第一个动作：**
+>
+> ```powershell
+> ollama ps                      # PROCESSOR 必须是 GPU，不能是 100% CPU
+> .\scripts\test-ollama-gpu-residency.ps1
+> ```
+>
+> 若显示 CPU，请**重启 Ollama 应用**（不是重启模型）后复检。不要重装 ROCm、不要更换
+> 模型、也不要改动技术栈 - 安装几乎肯定是正常的。
+>
+> 也正因如此，该项检查已纳入 `run-all-checks.ps1`：全新 AIPC 首次启动时可能触发同一
+> 竞争条件。
 
 ### 数据
 

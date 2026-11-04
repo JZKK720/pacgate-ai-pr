@@ -678,8 +678,44 @@ Run this checklist on each AIPC independently.
 ### Ollama
 
 - [ ] `ollama list` shows the required models
+- [ ] **`ollama ps` shows a GPU, not `100% CPU`** - run `scripts/test-ollama-gpu-residency.ps1`, it must exit 0
 - [ ] deer-flow can call Ollama for inference
 - [ ] qm can call Ollama for inference
+
+> **The CPU-only trap - read this before you conclude a machine is slow.**
+>
+> Ollama enumerates compute devices **once, at server start**, and it unpacks the
+> ROCm/Vulkan backend into `lib\ollama\<vendor>_*` only *after* that. A server
+> started before the unpack completes decides "CPU only" and keeps that decision
+> for its entire lifetime - with a perfectly healthy install, a supported GPU, and
+> no error anywhere.
+>
+> Measured 2026-11-04 on the RX 7600 XT box:
+>
+> | Event | Time |
+> |---|---|
+> | Ollama server started | 09:12:46 |
+> | `rocm_v7_1` unpacked | 09:13:24 (+38 s) |
+> | `ggml-hip.dll` written | 09:13:32 |
+>
+> That machine ran every local model on the CPU for 3.5 hours. One "Reply with
+> exactly: OK" took **377 s**; the same request after restarting Ollama took
+> **7.4 s** at `100% GPU`. A chat turn looked like a hang while
+> `smoke-full-stack` reported every lane green.
+>
+> **First action if local inference feels slow or the agent appears to stall:**
+>
+> ```powershell
+> ollama ps                      # PROCESSOR must say GPU, not 100% CPU
+> .\scripts\test-ollama-gpu-residency.ps1
+> ```
+>
+> If either says CPU, **restart the Ollama app** (not the model) and re-check. Do
+> not reinstall ROCm, do not replace the model, and do not touch the stack - the
+> install is almost certainly fine.
+>
+> This is also why the residency gate is part of `run-all-checks.ps1`: a fresh
+> AIPC can lose this same race on its very first start.
 
 ### Data
 
