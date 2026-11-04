@@ -14,6 +14,15 @@ use pacgate_core::{DataLevel, Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 
+/// Upper bound on the total chunk text one search may return to a caller.
+///
+/// Measured on the live corpus 2026-11-04: chunk length min 1 / avg 564 / max
+/// 6,006 chars. `top_k` alone is not a ceiling, so without this an 8-hit search
+/// can inject ~48k chars into a prompt. 12,000 chars is roughly 4k CJK tokens
+/// and about 8 average chunks - enough for a legal query to be grounded, small
+/// enough that prefill stays inside a 65536-token window on a 16 GB card.
+pub const MAX_CONTEXT_CHARS: usize = 12_000;
+
 pub mod identity;
 pub mod embed;
 pub mod ingest;
@@ -106,6 +115,21 @@ impl RagStore {
         top_k: u32,
         filter: &SearchFilter,
     ) -> Result<Vec<KbSearchResult>, RagError> {
+        self.search_capped(tenant_id, matter_id, query, top_k, filter, MAX_CONTEXT_CHARS)
+            .await
+    }
+
+    /// As [`search`], but with an explicit ceiling on the total characters of
+    /// chunk text returned. See `merge_results` for why the cap exists.
+    pub async fn search_capped(
+        &self,
+        tenant_id: &TenantId,
+        matter_id: &MatterId,
+        query: &str,
+        top_k: u32,
+        filter: &SearchFilter,
+        max_chars: usize,
+    ) -> Result<Vec<KbSearchResult>, RagError> {
         // Generate embedding for the query
         let query_embedding = self.embedding.embed(query).await?;
 
@@ -122,7 +146,7 @@ impl RagStore {
             .unwrap_or_default();
 
         // Merge and rank by combined score
-        let merged = self.merge_results(semantic_results, keyword_results, top_k);
+        let merged = self.merge_results(semantic_results, keyword_results, top_k, max_chars);
         Ok(merged)
     }
 
@@ -197,12 +221,15 @@ impl RagStore {
         filter: &SearchFilter,
     ) -> Result<Vec<KbSearchResult>, RagError> {
         let (sql, jur_param, sl_param) = Self::build_filtered_sql(
+            // CJK-aware keyword search. `cjk_tsquery($3)` mirrors the exact
+            // expression migration 009 indexes with, so index and query agree -
+            // a mismatch here is a silent zero-result search.
             "SELECT c.content, c.page, c.data_level, d.name as doc_name,
-                    ts_rank(c.content_tsv, plainto_tsquery('english', $3)) as score
+                    ts_rank(c.content_tsv, cjk_tsquery($3)) as score
              FROM kb_chunks c
              JOIN documents d ON c.document_id = d.id
              WHERE c.tenant_id = $1 AND c.matter_id = $2
-               AND c.content_tsv @@ plainto_tsquery('english', $3)",
+               AND c.content_tsv @@ cjk_tsquery($3)",
             filter,
             "$5",
             "$6",
@@ -333,6 +360,7 @@ impl RagStore {
         semantic: Vec<KbSearchResult>,
         keyword: Vec<KbSearchResult>,
         top_k: u32,
+        max_chars: usize,
     ) -> Vec<KbSearchResult> {
         // Use content hash as key for deduplication
         let mut merged: HashMap<String, KbSearchResult> = HashMap::new();
@@ -373,6 +401,33 @@ impl RagStore {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(top_k as usize);
+
+        // Cap what actually reaches the model.
+        //
+        // MEASURED 2026-11-04 on the live corpus: chunk length min 1 / avg 564 /
+        // max 6,006 chars. `top_k` alone therefore has no ceiling - 8 hits can
+        // inject ~48k chars into a prompt whose decode rate collapses as prefill
+        // grows, and the local models on a 16 GB card have 65536 tokens TOTAL.
+        //
+        // Whole hits are kept in rank order until the budget breaks, then
+        // truncated at a char boundary. Truncating is strictly better than
+        // dropping: the rank-1 chunk is the one the query matched, so its head is
+        // the part worth keeping. CJK characters are 3 bytes in UTF-8, so the cut
+        // is made on a char boundary, never a byte index.
+        let mut spent = 0usize;
+        for r in results.iter_mut() {
+            if spent >= max_chars {
+                r.content.clear();
+                continue;
+            }
+            let remaining = max_chars - spent;
+            if r.content.chars().count() > remaining {
+                r.content = r.content.chars().take(remaining).collect();
+            }
+            spent += r.content.chars().count();
+        }
+        results.retain(|r| !r.content.trim().is_empty());
+
         results
     }
 
@@ -450,6 +505,17 @@ impl RagStore {
                 .await
                 .map_err(|e| RagError::Migration(e.to_string()))?;
 
+            // Migration 009 makes keyword search work for Chinese. Before it, the
+            // tsvector used the 'english' parser, which does not segment Han text:
+            // an entire sentence became ONE lexeme, so the keyword half of the
+            // hybrid search matched 0 of 918 Chinese chunks. It rewrites the
+            // tsvector expression and its GIN index; embeddings are untouched.
+            let cjk_sql = include_str!("../../../migrations/009_cjk_fulltext.sql");
+            sqlx::raw_sql(cjk_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| RagError::Migration(e.to_string()))?;
+
             Ok::<(), RagError>(())
         }
         .await;
@@ -463,7 +529,7 @@ impl RagStore {
         result?;
 
         tracing::info!(
-            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans + 007_sanitizer_jobs + 008_document_extractions)"
+            "RAG migrations applied (002_schema + 003_enrichment + 004_data_level + 005_sanitization_state + 006_document_spans + 007_sanitizer_jobs + 008_document_extractions + 009_cjk_fulltext)"
         );
         Ok(())
     }
@@ -472,7 +538,6 @@ impl RagStore {
 // ─────────────────────────────────────────────────────────────────────────────
 // Error type
 // ─────────────────────────────────────────────────────────────────────────────
-
 #[derive(Debug, thiserror::Error)]
 pub enum RagError {
     #[error("embedding error: {0}")]

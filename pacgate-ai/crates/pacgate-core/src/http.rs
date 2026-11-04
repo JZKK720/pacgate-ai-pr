@@ -176,6 +176,21 @@ mod tests {
         std::env::set_var("HTTP_PROXY", &dead_url);
         std::env::set_var("http_proxy", &dead_url);
 
+        // The premise is "a default client ignores NO_PROXY for this host and
+        // therefore routes through the dead proxy". A developer box that exports
+        // `NO_PROXY=localhost,127.0.0.1,...` - an ordinary proxy setup, and the
+        // one measured here on 2026-11-04 - makes the claim false for a reason
+        // that has nothing to do with the guard. Clearing NO_PROXY for the
+        // duration makes the assertion test the CLIENT, which is what it is for,
+        // instead of testing the operator's shell.
+        //
+        // Restored afterwards so the process environment is unchanged for any
+        // later test in this binary.
+        let saved_no_proxy = std::env::var("NO_PROXY").ok();
+        let saved_no_proxy_lc = std::env::var("no_proxy").ok();
+        std::env::remove_var("NO_PROXY");
+        std::env::remove_var("no_proxy");
+
         let result = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
@@ -186,6 +201,12 @@ mod tests {
 
         std::env::remove_var("HTTP_PROXY");
         std::env::remove_var("http_proxy");
+        if let Some(v) = saved_no_proxy {
+            std::env::set_var("NO_PROXY", v);
+        }
+        if let Some(v) = saved_no_proxy_lc {
+            std::env::set_var("no_proxy", v);
+        }
 
         assert!(
             result.is_err(),

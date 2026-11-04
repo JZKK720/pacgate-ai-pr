@@ -270,26 +270,9 @@ impl LlmClient for OpenAiCompatClient {
             PacgateError::LlmError("empty choices".into())
         })?;
 
-        let msg = choice.message.unwrap_or(ChoiceMessage {
-            role:       None,
-            content:    None,
-            tool_calls: None,
-        });
-
-        let tool_calls = msg
-            .tool_calls
-            .unwrap_or_default()
-            .into_iter()
-            .map(|tc| ToolCall {
-                id:        tc.id,
-                tool_name: tc.function.name,
-                arguments: serde_json::from_str(&tc.function.arguments)
-                    .unwrap_or(serde_json::Value::Null),
-            })
-            .collect();
-
-        Ok((msg.content, tool_calls))
+        interpret_choice(choice)
     }
+
 
     #[instrument(skip_all, fields(model = %self.model))]
     async fn stream(
@@ -350,6 +333,85 @@ impl LlmClient for OpenAiCompatClient {
 
         Ok(Box::pin(event_stream))
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Response interpretation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Turn one `Choice` into `(content, tool_calls)`, or an error when the model
+/// produced nothing a caller can use.
+///
+/// WHY THIS IS AN ERROR AND NOT `Ok((None, vec![]))` (measured 2026-11-04):
+///
+/// A thinking-capable local model given an un-suppressed reasoning channel
+/// spends the entire `max_tokens` budget on hidden reasoning and returns:
+///
+/// ```text
+/// content:        ""      <- no visible output
+/// reasoning:      ~1000 chars
+/// finish_reason:  "length"
+/// HTTP:           200
+/// ```
+///
+/// Both models on this box do it (`gemma4:12b-it-qat`: 805 reasoning chars;
+/// `nemotron-3.5-bolt:e4b-q8_0`: 1060). Because every layer above treated that
+/// as success, a document workflow returned HTTP 200 with `final_content: ""`
+/// and no document - the "endless steps, no end-result" regression.
+///
+/// The distinction that matters:
+///
+///   * **tool calls present** -> valid. The model asked the harness to act; the
+///     narration arrives on a later turn. This is the normal multi-step path.
+///   * **non-blank content**  -> valid.
+///   * **anything else**      -> an error naming the cause, so the failure is
+///     loud and diagnosable instead of silently shipping an empty deliverable.
+fn interpret_choice(choice: Choice) -> Result<(Option<String>, Vec<ToolCall>)> {
+    let msg = choice.message.unwrap_or(ChoiceMessage {
+        role:       None,
+        content:    None,
+        tool_calls: None,
+    });
+
+    let tool_calls: Vec<ToolCall> = msg
+        .tool_calls
+        .unwrap_or_default()
+        .into_iter()
+        .map(|tc| ToolCall {
+            id:        tc.id,
+            tool_name: tc.function.name,
+            arguments: serde_json::from_str(&tc.function.arguments)
+                .unwrap_or(serde_json::Value::Null),
+        })
+        .collect();
+
+    let has_text = msg
+        .content
+        .as_deref()
+        .map(|c| !c.trim().is_empty())
+        .unwrap_or(false);
+
+    if has_text || !tool_calls.is_empty() {
+        return Ok((msg.content, tool_calls));
+    }
+
+    let finish = choice.finish_reason.as_deref().unwrap_or("unknown");
+    let err = if finish == "length" {
+        // The signature of a reasoning burn: a token budget spent on something
+        // the caller never sees. Say so, because the obvious next guess
+        // ("the workflow loop is broken") is wrong and costs a day.
+        PacgateError::LlmError(format!(
+            "model produced no visible content: the {finish} token budget was \
+             exhausted by hidden reasoning. The reply was truncated before any \
+             answer was emitted. Send reasoning_effort=\"none\", raise \
+             max_tokens, or use a model that reasons briefly."
+        ))
+    } else {
+        PacgateError::LlmError(format!(
+            "model returned an empty response (finish_reason={finish})"
+        ))
+    };
+    Err(err)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -490,6 +552,90 @@ mod wire_tests {
             !wire.contains("reasoning_effort"),
             "unexpected reasoning_effort in wire body: {wire}"
         );
+    }
+
+    // ── Empty / truncated completions must not read as success ───────────────
+    //
+    // MEASURED 2026-11-04 against the local Ollama /v1 endpoint, 300-token
+    // budget, utility-shaped prompt:
+    //
+    //   gemma4:12b-it-qat        content=0 chars, reasoning=805 chars, length
+    //   nemotron-3.5-bolt:e4b    content=0 chars, reasoning=1060 chars, length
+    //
+    // Both returned HTTP 200. Every layer above this crate forwarded that as a
+    // success, so a document workflow reported "done" with no document. The
+    // fix belongs HERE, where the transport semantics are still visible.
+
+    fn choice(content: Option<&str>, finish: &str, with_tool_call: bool) -> Choice {
+        let tool_calls = if with_tool_call {
+            Some(vec![OaiToolCall {
+                id: "call_1".into(),
+                kind: "function".into(),
+                function: OaiFunctionCall {
+                    name: "pacgate_list_documents".into(),
+                    arguments: r#"{"matter_id":"M-001"}"#.into(),
+                },
+            }])
+        } else {
+            None
+        };
+        Choice {
+            message: Some(ChoiceMessage {
+                role: Some("assistant".into()),
+                content: content.map(|s| s.to_string()),
+                tool_calls,
+            }),
+            delta: None,
+            finish_reason: Some(finish.to_string()),
+        }
+    }
+
+    /// The exact production failure: budget exhausted on hidden reasoning.
+    #[test]
+    fn truncated_empty_completion_is_an_error_not_an_empty_success() {
+        let err = interpret_choice(choice(None, "length", false))
+            .expect_err("finish_reason=length with no content must not be Ok(None)");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("reasoning") || msg.contains("truncated"),
+            "error must name the cause so the operator does not re-debug the loop: {msg}"
+        );
+    }
+
+    /// Whitespace-only content is the same defect wearing a costume.
+    #[test]
+    fn whitespace_only_completion_is_rejected() {
+        assert!(
+            interpret_choice(choice(Some("   \n\t "), "stop", false)).is_err(),
+            "a blank answer is not an answer"
+        );
+    }
+
+    /// A clean empty `stop` is also not a usable answer.
+    #[test]
+    fn empty_stop_completion_is_rejected() {
+        assert!(interpret_choice(choice(None, "stop", false)).is_err());
+        assert!(interpret_choice(choice(Some(""), "stop", false)).is_err());
+    }
+
+    /// A real answer must still pass through untouched.
+    #[test]
+    fn normal_completion_is_accepted() {
+        let (content, calls) = interpret_choice(choice(Some("项目概况表"), "stop", false))
+            .expect("a normal answer must be accepted");
+        assert_eq!(content.as_deref(), Some("项目概况表"));
+        assert!(calls.is_empty());
+    }
+
+    /// Tool calls are the legitimate case for empty content: the model asked the
+    /// harness to act and the narration comes later. Rejecting this would break
+    /// multi-step tool chains, which is the whole workflow surface.
+    #[test]
+    fn tool_call_with_empty_content_is_accepted() {
+        let (_, calls) = interpret_choice(choice(None, "tool_calls", true))
+            .expect("a tool call is a valid result even with no narration");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool_name, "pacgate_list_documents");
     }
 }
 

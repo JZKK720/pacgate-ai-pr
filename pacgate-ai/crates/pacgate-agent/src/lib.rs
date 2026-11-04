@@ -798,7 +798,38 @@ impl AgentLoop {
 
             if tool_calls.is_empty() {
                 // Final answer
-                let citations = extract_citations(content.as_deref().unwrap_or(""));
+                //
+                // DEFENSE IN DEPTH (2026-11-04). `pacgate-llm::interpret_choice`
+                // already rejects a blank completion, so reaching here with no
+                // text should be impossible. It is still asserted, because this
+                // is the exact line where the "empty document, HTTP 200" defect
+                // shipped: before the LLM-layer guard existed, an empty reply
+                // fell through this branch as a successful final answer and
+                // every layer above forwarded it. A silent empty success is the
+                // most expensive failure this product can produce, so the
+                // cheapest possible second check is worth keeping.
+                let text = content.as_deref().unwrap_or("");
+                if text.trim().is_empty() {
+                    // A turn that ran tools and then went quiet still has
+                    // something truthful to say - prefer that over an error.
+                    if let Some(ref prior) = last_model_text {
+                        let citations = extract_citations(prior.as_str());
+                        return Ok(AgentTurnResult {
+                            message_id: MessageId::new(),
+                            content: last_model_text.clone(),
+                            citations,
+                            tool_calls_made,
+                            max_rounds_reached: false,
+                        });
+                    }
+                    return Err(pacgate_core::PacgateError::LlmError(
+                        "the model returned an empty final answer and no tool call \
+                         produced any text; there is nothing to show the user"
+                            .into(),
+                    ));
+                }
+
+                let citations = extract_citations(text);
                 return Ok(AgentTurnResult {
                     message_id: MessageId::new(),
                     content,
