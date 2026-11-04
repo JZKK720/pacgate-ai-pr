@@ -75,12 +75,17 @@ foreach ($cf in $composeFiles) {
     Check "$cf parses" ($cfgExit -eq 0 -and $cfgJson)
     if ($cfgExit -ne 0 -or -not $cfgJson) { continue }
 
-    try { $cfg = $cfgJson | ConvertFrom-Json } catch {
+    # -AsHashtable: the rendered config carries BOTH `NO_PROXY` and `no_proxy`.
+    # PowerShell's default ConvertFrom-Json collapses case-insensitively and
+    # throws on the collision, so this gate reported "not JSON" for both compose
+    # files and never reached a single healthcheck assertion. A hashtable keeps
+    # the keys distinct.
+    try { $cfg = $cfgJson | ConvertFrom-Json -AsHashtable } catch {
         Write-Output "FAIL: $cf rendered config is not JSON: $($_.Exception.Message)"
         $script:fail++; continue
     }
 
-    $services = $cfg.services.PSObject.Properties.Name
+    $services = @($cfg['services'].Keys)
 
     # (2) Every first-party service must be present AND have a healthcheck.
     foreach ($svc in $mustHaveHealthcheck) {
@@ -88,7 +93,7 @@ foreach ($cf in $composeFiles) {
             Check "$cf has service $svc" $false
             continue
         }
-        $hc = $cfg.services.$svc.healthcheck
+        $hc = $cfg['services'][$svc]['healthcheck']
         Check "$cf gives $svc a healthcheck" ($null -ne $hc)
     }
 
@@ -97,7 +102,7 @@ foreach ($cf in $composeFiles) {
     # retry budget - not just a test command.
     foreach ($svc in $mustHaveHealthcheck) {
         if ($services -notcontains $svc) { continue }
-        $hc = $cfg.services.$svc.healthcheck
+        $hc = $cfg['services'][$svc]['healthcheck']
         if ($null -eq $hc) { continue }
         Check "$cf $svc healthcheck declares interval/timeout/retries" (
             $null -ne $hc.interval -and $null -ne $hc.timeout -and $null -ne $hc.retries
@@ -112,9 +117,9 @@ foreach ($cf in $composeFiles) {
     # blank .env line leaves a fresh install publicly claimable - which is exactly
     # how this shipped. Asserting on the rendered default catches that directly.
     if ($services -contains 'deer-flow') {
-        $dfEnv = $cfg.services.'deer-flow'.environment
-        $gen = "$($dfEnv.PACGATE_GENERATE_SETUP_TOKEN)"
-        $pin = "$($dfEnv.PACGATE_SETUP_TOKEN)"
+        $dfEnv = $cfg['services']['deer-flow']['environment']
+        $gen = "$($dfEnv['PACGATE_GENERATE_SETUP_TOKEN'])"
+        $pin = "$($dfEnv['PACGATE_SETUP_TOKEN'])"
         $armed = ($gen -match '^(1|true|yes)$') -or ($pin.Trim() -ne '' -and $pin -ne 'null')
         Check "$cf arms the /initialize setup-token gate by default" $armed
         if (-not $armed) {
@@ -145,7 +150,7 @@ if ($Live) {
     }
 
     Push-Location $bundle
-    try { $liveCfg = (& docker compose -f compose.prod.yaml config --format json 2>$null) | ConvertFrom-Json } finally { Pop-Location }
+    try { $liveCfg = (& docker compose -f compose.prod.yaml config --format json 2>$null) | ConvertFrom-Json -AsHashtable } finally { Pop-Location }
 
     if (-not $liveCfg) { Write-Output 'SKIP: rendered config unavailable'; $script:skip++ }
     else {
@@ -157,7 +162,7 @@ if ($Live) {
                 $script:skip++
                 continue
             }
-            $hc = $liveCfg.services.$svc.healthcheck
+            $hc = $liveCfg['services'][$svc]['healthcheck']
             if ($null -eq $hc) { Write-Output "FAIL: $svc has no rendered healthcheck"; $script:fail++; continue }
 
             $test = $hc.test
