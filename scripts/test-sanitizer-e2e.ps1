@@ -107,7 +107,8 @@ $nerDir = Join-Path $repoRoot '.e2e-ner-model'
 $nerMount = if (Test-Path $nerDir) { @("-e", "PACGATE_NER_MODEL_DIR=/models/ner", "-v", "${nerDir}:/models/ner") } else { @() }
 $nerMount = docker run --rm -v pacgate-ner-models:/ner alpine:3.20 sh -c 'ls /ner | head -1' 2>$null
 if (-not $nerMount) { $nerMount = @() } else { $nerMount = @('-v', 'pacgate-ner-models:/ner') }
-Write-Output "ner weights mounted: $($nerMount.Count -gt 0)"
+Write-Output "ner weights: baked into the image at /app/models/ner (legacy volume mount used only as a fallback)"
+if ($nerMount.Count -gt 0) { Write-Output "  legacy pacgate-ner-models volume is present and will be used instead" }
 
 # The API image. This used to be the locally-built `pacgate-api:plan020-test`,
 # which NOTHING builds - so the script could only ever run on the one checkout
