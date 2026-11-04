@@ -228,3 +228,7 @@ sync-fork-after.png
 laya-hf-cache/
 deploy/laya-serve/laya-weights/
 
+
+# Local dev-lane image override (see the file's own header for why).
+# A local build must never be tagged over a published ghcr artifact.
+deploy/client-bundle/compose.local-dev-override.yaml
