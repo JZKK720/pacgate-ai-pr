@@ -767,7 +767,7 @@ if ($Update -and -not $SkipRepoPull) {
                         }
 
                         if ($collisions.Count -gt 0) {
-                            Write-Host "[WARN] Refreshing anyway: $($collisions.Count) untracked file(s) would be overwritten." -ForegroundColor Yellow
+                            Write-Host "[WARN] Cannot refresh the repo: $($collisions.Count) untracked file(s) would be overwritten." -ForegroundColor Yellow
                             Write-Host "  The incoming update adds files with the same names. Git will not" -ForegroundColor Yellow
                             Write-Host "  destroy untracked work, and neither will this installer. Files:" -ForegroundColor Yellow
                             $collisions | Select-Object -First 10 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
