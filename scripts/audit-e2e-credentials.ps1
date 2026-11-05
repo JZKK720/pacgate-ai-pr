@@ -277,14 +277,33 @@ if (-not $ovKey) {
 Section 'A8  connector keys (optional by design)'
 
 # key -> connector name as pacgate-api reports it in /api/search/connectors
+#
+# ANSVAR IS DELIBERATELY ABSENT. `pacgate-search` reads ANSVAR_API_KEY, but that
+# catalog entry is `implemented: false` (a self-hosted MCP server not deployed in
+# this stack) and compose no longer forwards the var in either lane. Setting the
+# key cannot enable anything, so listing it here would imply otherwise.
 $connectorKeys = [ordered]@{
-    'PKULAW_API_KEY'        = 'pkulaw'
-    'VAQUILL_API_KEY'       = 'vaquill'
+    'PKULAW_API_KEY'         = 'pkulaw'
+    'VAQUILL_API_KEY'        = 'vaquill'
     'OPENCORPORATES_API_KEY' = 'opencorporates'
-    'FIRECRAWL_API_KEY'     = 'firecrawl'
-    'ANSVAR_API_KEY'        = 'ansvar'
+    'FIRECRAWL_API_KEY'      = 'firecrawl'
 }
 
+# WHAT `available` ACTUALLY MEANS, and why this block is written around it:
+#
+#   Every keyed connector reports availability as `self.api_key.is_some()`, and no
+#   route calls `health_check()` - /api/search/connectors and /api/search/health
+#   both read the presence flag. So:
+#
+#     available=false -> no key. Deterministic; fixing it here is the whole job.
+#     available=true  -> a NON-EMPTY key exists. It may still be rejected upstream.
+#
+#   That makes "set but available=false" almost unreachable, and "set and
+#   available=true" only proof of presence. Reporting the latter as a pass would be
+#   the same vacuous-green failure this repo has been bitten by before, so the
+#   wording below says which claim each case actually supports. A real per-key
+#   validation needs a network call per connector, which is why it is NOT asserted
+#   here; the legal-journey e2e exercises search for real.
 $live = @{}
 if ($token) {
     try {
@@ -301,9 +320,10 @@ foreach ($k in $connectorKeys.Keys) {
         $suffix = if ($up -eq $false) { "connector '$conn' reports available=false" } else { "connector '$conn' not reported live" }
         Warn "$k ABSENT -> $suffix"
     } elseif ($up -eq $false) {
-        Fail "$k is set (tag $(Get-Tag $envVars[$k])) but connector '$conn' reports available=false - the key was rejected or not picked up by a restarted container"
+        Fail "$k is set (tag $(Get-Tag $envVars[$k])) but connector '$conn' reports available=false - the api container is not seeing the var; restart pacgate-api after editing .env"
     } else {
-        Pass "$k set (tag $(Get-Tag $envVars[$k])) -> connector '$conn' available"
+        # Presence only. Say so, so nobody reads this as proof the key is valid.
+        Pass "$k set (tag $(Get-Tag $envVars[$k])) -> connector '$conn' reports available (PRESENCE only - a rejected key also reports available=true; a search is what proves it)"
     }
 }
 
