@@ -759,7 +759,7 @@ if ($Update -and -not $SkipRepoPull) {
                         # hypothetical. ls-files is used instead of status
                         # because status COLLAPSES whole untracked directories to
                         # "dir/" and the names would never match.
-                        $untracked = Invoke-WithNativeStderr { @(git ls-files --others --exclude-standard 2>$null | Where-Object { $_ }) }
+                        $untracked = Invoke-WithNativeStderr { @(git -c core.quotepath=false ls-files --others --exclude-standard 2>$null | Where-Object { $_ }) }
                         $collisions = @()
                         if ($untracked.Count -gt 0) {
                             $incoming = Invoke-WithNativeStderr { @(git -c core.quotepath=false diff --name-only --diff-filter=A "$before" "$remoteRef" 2>$null | Where-Object { $_ }) }
