@@ -28,6 +28,28 @@ disk per token (278.0 s vs 22.3 s, 12.5x).
 Uncommenting in the tracked file is therefore how you break clients, not how you enable a
 machine.
 
+## The hard constraint: this model only fits a Ryzen AI MAX+ 395 class machine
+
+The two hardware classes in this project are **not both capable**, and the difference is not
+RAM - it is where the weights can live:
+
+| | Client AIPC (the shipped class) | This machine |
+|---|---|---|
+| CPU | Ryzen AI **HX370** | Ryzen AI **MAX+ 395** |
+| GPU | Radeon **RX 7600 XT**, discrete | Radeon **8060S**, unified-memory iGPU |
+| VRAM | **16 GB dedicated** (the gate budgets raw 16) | **96 GiB UMA carve-out** (`qwMemorySize`) |
+| 74B at 24.0 GB | **150% over-cap** -> spills, ~278 s per tool chain | fits in the carve-out; 2.8 GB resident as `ollama ps` reports it |
+
+`test-aipc-capacity-fit.ps1` budgets the **client** class at `$AipcVramGB = 16`; 24.0 GB is over
+1.0x, i.e. `OVER_CAP`. So this entry must never be active in the shipped config: on an HX370 it
+loads, spills roughly 20 GB to disk, and evicts whatever chat was already warm.
+
+Do not read "32 GB of RAM" as the qualification. OS-visible RAM is not the binding resource for
+a unified-memory APU - on this box Windows reports **31.6 GiB** while the iGPU holds a 96 GiB
+carve-out taken before the OS boots. The accurate statement is the machine class: **Ryzen AI
+MAX+ 395 with a Radeon 8060S iGPU**. A dedicated-VRAM card of similar size would qualify too;
+an HX370 / RX 7600 XT client would not, whatever its DIMM count.
+
 ## What is on this box
 
 | File | Tracked? | Purpose |
@@ -68,14 +90,22 @@ on the box changes.
 
 ## Measured on this machine (2026-11-05)
 
+Hardware: `COLORFIRE LinC K16`, Ryzen AI MAX+ 395 / Radeon 8060S, 96 GiB iGPU carve-out, 31.6 GiB
+OS-visible RAM.
+
 | | |
 |---|---|
-| Picker roster | `/api/models` lists `nemotron-bolt-74b-local` → `nemotron-3.5-bolt:74b-a9b-iq2` |
-| Cold load | **42.8 s** (`load_duration` 41.4 s) for a trivial prompt |
-| Generation | replied `READY` in **0.4 s** warm with the reasoning channel off |
-| Residency | `ollama ps` reports **2.8 GB**, `100% GPU` |
-| Host visible RAM | 31.6 GiB - the same bucket the repo measured as a 32 GB box |
-| Free RAM before load | ~2-3 GiB, which is why the model is unloaded between uses |
+| Picker roster | `/api/models` lists `nemotron-bolt-74b-local` -> `nemotron-3.5-bolt:74b-a9b-iq2` |
+| Cold load | **42.8 s** / **46.2 s** (`load_duration`) for a trivial prompt |
+| Raw model | replied `READY` in **0.4 s** warm with the reasoning channel off |
+| **Full e2e through nginx** | **HTTP 200 in 67.5 s**, assistant reply **`PONG`**, no `deerflow_error_fallback` |
+| Residency | `ollama ps` reports **2.8 GB**, `100% GPU`, context 131072 |
+| Free RAM before load | ~3 GiB, which is why the model is unloaded between uses |
+
+The 67.5 s e2e figure is the honest number to quote: it is request -> agent -> Ollama -> reply
+through the nginx path a client actually uses, on a warm model, with the 74B selected by
+`context.model_name`. It is a *correctness* result, not a latency result - see the 278 s vs
+22.3 s comparison above for why this model is not a default.
 
 Reasoning burns the whole `num_predict` budget before producing content if you cap it low: with
 `num_predict: 24` the reply came back with `content: ""` and `done_reason: "length"` because all
