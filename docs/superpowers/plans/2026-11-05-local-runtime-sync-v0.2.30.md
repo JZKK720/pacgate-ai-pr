@@ -323,6 +323,18 @@ layers is hours of transfer. Nothing about the tag, the registry, or the release
 GHCR pulls hit the same class of fault (`TLS handshake timeout`, one `lookup ghcr.io: no such host`) and
 only succeeded on retry.
 
+Measured at the end of the session with a bounded ranged GET against the registry:
+
+```
+curl -s -L -r 0-5242879 (5 MiB range), 60 s cap
+  -> http=206, got=647,168 B, speed=10,781 B/s
+```
+
+**10.7 KB/s.** The two missing layers total 1,648 MB, which is ~42 hours at that rate. No proxy is
+involved (`ProxyEnable=0`, no `HTTP(S)_PROXY`), and TCP 443 to `registry.ollama.ai` connects, so this is
+plain end-to-end degradation on this host's uplink - not the proxy trap `preflight-docker-egress.ps1`
+documents, and not something a retry loop fixes.
+
 **Consequence:** the deer-flow default agent model and the `PACGATE_MODEL_LOW` tier both 404 on this box
 until those two layers land. Every other lane is verified. To finish:
 
@@ -331,9 +343,11 @@ ollama pull nemotron-3.5-bolt:e4b-q8_0     # resume; already-complete layers are
 pwsh -NoProfile -File scripts/test-agent-mcp-e2e.ps1   # must show 0 failed
 ```
 
-Do **not** work around this by pointing the tier at `ornith-1.5:9b` or `gemma4:12b-it-qat`. The roster gate
-asserts Main and Mid are distinct models for a reason, and quietly re-pointing LOW would hide the gap
-instead of closing it.
+Do **not** work around this by pointing the tier at `ornith-1.5:9b`, `gemma4:12b-it-qat`, or the 24 GB
+`nemotron-3.5-bolt:74b-a9b-iq2` that is already on disk. The roster gate asserts Main and Mid are distinct
+models for a reason, and quietly re-pointing LOW would hide the gap instead of closing it. If the transfer
+cannot be completed on this host, the correct move is to stage the model from a machine with usable
+bandwidth (`ollama push`/`pull` between hosts, or copy `~/.ollama/models`), not to change the roster.
 
 ---
 
