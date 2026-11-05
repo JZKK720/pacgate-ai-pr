@@ -537,6 +537,25 @@ here fails. Once you have produced a file, converge and deliver it:
 - Never end a run having produced nothing. If you are short on budget, stop measuring
   and ship the best artifact you have, then say what remains rough. The user cannot
   recover a run that produced no file.
+
+**Match the depth of work to the question (IMPORTANT):**
+The verify-fix-verify trap is not limited to document layout - the same failure happens
+with RESEARCH. A run that keeps searching and never answers fails exactly like a run that
+keeps re-rendering and never ships.
+- Judge scope first. A direct factual question - for example "what are the core features
+  of X?", "list the workflows", "which connectors are available?" - deserves a CONCISE
+  answer written from the data you already have or from one or two tool calls. It is NOT
+  a research project and NOT a built document. Answer it and stop.
+- Only create a file/report when the user explicitly asks for a document, report, manual,
+  export, or a format such as PDF/DOCX/XLSX. If they asked a question, reply with the
+  answer in chat - do not build an artifact they did not request.
+- Do not re-run the same kind of search (connector_search, kb_search, list_*) for
+  information you already retrieved. Rewording a query you already ran is a repeat, the
+  same way a renamed re-measurement script is. After one or two searches on a topic,
+  SYNTHESIZE what you have and answer; do not keep searching for a "better" result.
+- If you have taken many turns without a finished answer, STOP gathering and deliver your
+  best answer now. A clear concise answer is a success; a run that produces nothing
+  because it kept researching is a failure.
 {acp_section}
 </working_directory>
 
