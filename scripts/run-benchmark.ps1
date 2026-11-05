@@ -141,11 +141,11 @@ catch { $sw.Stop(); $llm += [pscustomobject]@{ Lane = 'nomic-embed-text embeddin
 $sw = Now-Ms
 try {
     $null = Invoke-WebRequest -Uri "$OllamaUrl/v1/chat/completions" -Method Post -TimeoutSec 600 `
-        -Body (@{ model = 'gemma4:12b-it-qat'; messages = @(@{ role = 'user'; content = 'Reply with exactly: PONG' }); max_tokens = 8 } | ConvertTo-Json -Depth 6 -Compress) `
+        -Body (@{ model = 'nemotron-3.5-bolt:e4b-q8_0'; messages = @(@{ role = 'user'; content = 'Reply with exactly: PONG' }); max_tokens = 8 } | ConvertTo-Json -Depth 6 -Compress) `
         -ContentType 'application/json' -UseBasicParsing
-    $sw.Stop(); $llm += [pscustomobject]@{ Lane = 'gemma4:12b local chat (short, warm)'; Ms = [math]::Round($sw.Elapsed.TotalMilliseconds, 0) }
+    $sw.Stop(); $llm += [pscustomobject]@{ Lane = 'nemotron-bolt local chat (short, warm)'; Ms = [math]::Round($sw.Elapsed.TotalMilliseconds, 0) }
 }
-catch { $sw.Stop(); $llm += [pscustomobject]@{ Lane = 'gemma4:12b local chat'; Ms = "ERR" } }
+catch { $sw.Stop(); $llm += [pscustomobject]@{ Lane = 'nemotron-bolt local chat'; Ms = "ERR" } }
 
 # deer-flow end-to-end generation, delivered through nginx. This is the lane the
 # 2026-10-13 proxyTimeout defect broke, so it is the one worth timing.

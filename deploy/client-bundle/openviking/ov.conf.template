@@ -17,7 +17,7 @@
   },
   "vlm": {
     "provider": "ollama",
-    "model": "gemma4:12b-it-qat",
+    "model": "nemotron-3.5-bolt:e4b-q8_0",
     "api_base": "http://host.docker.internal:11434",
     "api_key": "ollama",
     "max_tokens": 8192,

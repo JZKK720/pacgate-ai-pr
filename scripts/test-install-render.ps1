@@ -185,16 +185,16 @@ if (`$d -notlike '*_stubs*') {
     Check 'OPENVIKING_CONF_CONTENT present before the change' ($null -ne $ovBefore)
     Check '...and is a single line (not appended twice)' ((Get-WorkEnvKeyCount 'OPENVIKING_CONF_CONTENT') -eq 1)
 
-    # Rewrite the template's VLM tag, exactly as e180fc8 did.
+    # Rewrite the template's VLM tag to simulate a VLM change reaching the machine.
     $ovTplPath = Join-Path $work 'openviking/ov.conf.template'
     $ovTpl = Get-Content $ovTplPath -Raw -Encoding UTF8
-    $ovTpl = $ovTpl.Replace('gemma4:12b-it-qat', 'gemma4:12b-it-q8_0')
+    $ovTpl = $ovTpl.Replace('nemotron-3.5-bolt:e4b-q8_0', 'nemotron-3.5-bolt:74b-a9b-iq2')
     [System.IO.File]::WriteAllText($ovTplPath, $ovTpl, [System.Text.UTF8Encoding]::new($false))
 
     $out4 = & $run $work
     $out4txt = $out4 -join "`n"
     $ovAfter = Get-WorkEnvKey 'OPENVIKING_CONF_CONTENT'
-    Check 'template change WAS applied to .env (the defect was that it was not)' ($ovAfter -match 'q8_0')
+    Check 'template change WAS applied to .env (the defect was that it was not)' ($ovAfter -match '74b-a9b-iq2')
     Check 'stale value is GONE (no duplicate line left above)' ((Get-WorkEnvKeyCount 'OPENVIKING_CONF_CONTENT') -eq 1)
     Check 'CHANGE IS REPORTED (not silent)' ($out4txt -match 'from template')
     Check 'named the VLM model' ($out4txt -match 'OpenViking VLM now')
@@ -213,6 +213,31 @@ if (`$d -notlike '*_stubs*') {
         ($null -ne (Get-WorkEnvKey 'OPENVIKING_API_KEY')) -and
         ($null -ne (Get-WorkEnvKey 'OPENVIKING_ROOT_API_KEY'))
     )
+    Write-Host ''
+
+    # ── Case 5: the ov.conf FILE VLM tag is propagated (the file OpenViking reads) ──
+    #
+    # OpenViking reads ./openviking/ov.conf, NOT OPENVIKING_CONF_CONTENT - the env
+    # only seeds the file on FIRST boot. Block 4b-i-2 swaps the vlm model tag in the
+    # file in place. The container-generated ov.conf holds a root_api_key that
+    # DIFFERS from .env's; the swap must preserve it (rewriting the whole file from
+    # the render would rotate the key and break auth). Measured 2026-11-05: the VLM
+    # stayed stale across every -Update and 404'd once the old tag left Ollama.
+    Write-Host 'CASE 5: ov.conf file VLM tag swapped in place, container key preserved'
+    $ovTplNow = Get-Content (Join-Path $work 'openviking/ov.conf.template') -Raw
+    $tplVlmNow = if ($ovTplNow -match '"vlm"\s*:\s*\{[^}]*?"model"\s*:\s*"([^"]+)"') { $Matches[1] } else { '' }
+    $ovConfPath = Join-Path $work 'openviking/ov.conf'
+    $containerKey = 'CONTAINER_BAKED_KEY_ffffffffffffffff'
+    $ovConfBody = '{ "server": { "root_api_key": "' + $containerKey + '" }, "embedding": { "dense": { "model": "nomic-embed-text" } }, "vlm": { "provider": "ollama", "model": "gemma4:12b-it-qat", "api_base": "http://host.docker.internal:11434" } }'
+    [System.IO.File]::WriteAllText($ovConfPath, $ovConfBody, [System.Text.UTF8Encoding]::new($false))
+    $out6 = & $run $work
+    $out6txt = $out6 -join "`n"
+    $ovConfAfter = Get-Content $ovConfPath -Raw
+    Check 'ov.conf VLM swapped to the template tag' ($tplVlmNow -and ($ovConfAfter -match ([regex]::Escape('"model": "' + $tplVlmNow + '"'))))
+    Check 'ov.conf no longer names the stale VLM' (-not ($ovConfAfter -match 'gemma4:12b-it-qat'))
+    Check 'container root_api_key PRESERVED (not rotated to the .env key)' ($ovConfAfter -match ([regex]::Escape($containerKey)))
+    Check 'ov.conf change REPORTED (not silent)' ($out6txt -match 'ov.conf VLM')
+    Check 'a timestamped .bak of ov.conf was written (matches .gitignore ov.conf.bak.*)' (@(Get-ChildItem "$ovConfPath.bak.*" -ErrorAction SilentlyContinue).Count -ge 1)
     Write-Host ''
 
     Write-Host "RESULT: $pass passed, $fail failed" -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

@@ -23,6 +23,10 @@
 #     requesting more is silently clamped. gemma4 declared 262144. Nothing in the
 #     stack runs above 65536 today; anything that needs a larger window must not
 #     use this tag.
+#   - 2026-11-05: ALSO the OpenViking VLM and the deer-flow local default - one
+#     resident model now serves the Low tier, document extraction, and research,
+#     which removes the gemma4:12b VLM and its VRAM co-residency. The tag is
+#     vision-capable (gemma4 architecture + CLIP encoder; verified via ollama show).
 nemotron-3.5-bolt:e4b-q8_0
 # Mid tier: pacgate-api now defaults to ornith-1.5:9b (6.6 GB) because
 # qwen3.8:27b-mtp-q4_K_M is 17.0 GB and cannot load on a 16 GB AIPC card - it
@@ -46,8 +50,9 @@ nomic-embed-text:latest
 # Pacgate 2026-10-07 (rev 2): cloud roster = the TWO FLASH models per user
 # choice (deepseek-v4.1-flash, glm-5.3-flash) - fast and cheap. The heavier
 # tags (deepseek-v4-pro:cloud, glm-5.3:cloud) were dropped from the picker.
-# Cloud entries are picker OPTIONS only - the deer-flow default is gemma4-12b
-# (local, 7.2 GB) and auto-escalation stays local. It was nemotron-3.5-lightning
+# Cloud entries are picker OPTIONS only - the deer-flow default is
+# nemotron-3.5-bolt:e4b-q8_0 (local, 9.8 GB; also the OpenViking VLM) and
+# auto-escalation stays local. It was nemotron-3.5-lightning
 # until 2026-10-19, when that 25 GB entry was withdrawn because it cannot fit a
 # 16 GB AIPC card. Cloud
 # tags have no weight layers on disk (size "-"); they appear in `ollama list`

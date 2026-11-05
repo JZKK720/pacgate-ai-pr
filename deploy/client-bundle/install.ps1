@@ -972,13 +972,13 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
             foreach ($ovM in [regex]::Matches($minified, '"model":\s*"([^"]+)"')) {
                 $ovModels[$ovM.Groups[1].Value] = $true
             }
-            foreach ($ovName in @('gemma4:12b-it-q8_0', 'gemma4:12b-it-qat')) {
-                if ($ovModels.ContainsKey($ovName)) {
+            foreach ($ovName in $ovModels.Keys) {
+                if ($ovName -notmatch 'nomic-embed') {
                     Write-Host "     OpenViking VLM now: $ovName" -ForegroundColor Yellow
                 }
             }
-            if ($minified -match '"model":\s*"gemma4:12b-it-q8_0"') {
-                Write-Host "     NOTE: the template still names q8_0 (13 GB). qat is 7.2 GB and shares one resident model with the other utility lanes." -ForegroundColor Yellow
+            if ($ovModels.ContainsKey('nemotron-3.5-bolt:e4b-q8_0')) {
+                Write-Host "     NOTE: the VLM shares the Low-tier model - one resident model serves both roles, so it adds no VRAM." -ForegroundColor DarkGray
             }
 
             # Same-run visibility: docker compose reads ${OPENVIKING_CONF_CONTENT}
@@ -986,6 +986,37 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
             $envVars['OPENVIKING_CONF_CONTENT'] = $minified
             $env:OPENVIKING_CONF_CONTENT = $minified
         }
+    }
+}
+
+# 4b-i-2. Propagate the VLM tag into the ov.conf FILE OpenViking actually reads.
+#
+# OpenViking reads ./openviking/ov.conf (bind-mounted to /app/.openviking/ov.conf),
+# NOT the OPENVIKING_CONF_CONTENT env var - the env only SEEDS that file on FIRST
+# boot. So the .env render above reaches a fresh install but NEVER the running VLM
+# on a machine that already has an ov.conf. Measured 2026-11-05: the VLM stayed on
+# the stale tag across every -Update; once that tag was removed from Ollama the VLM
+# failed with HTTP 404 'model not found' while PaddleOCR kept working, so the break
+# was invisible. Section 7c restarts openviking when this changes.
+#
+# Swap ONLY the vlm model tag, in place. The container-generated ov.conf holds a
+# root_api_key that DIFFERS from .env's OPENVIKING_ROOT_API_KEY; rewriting the whole
+# file with the rendered content would rotate that key and break auth. A surgical
+# tag swap preserves every other byte.
+$script:ovConfVlmChanged = $false
+$ovConfFile = ".\openviking\ov.conf"
+$ovConfTpl = ".\openviking\ov.conf.template"
+if ((Test-Path $ovConfFile) -and (Test-Path $ovConfTpl)) {
+    $ovTplRaw = Get-Content $ovConfTpl -Raw
+    $ovConfRaw = Get-Content $ovConfFile -Raw
+    $tplVlm = if ($ovTplRaw -match '"vlm"\s*:\s*\{[^}]*?"model"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+    $fileVlm = if ($ovConfRaw -match '"vlm"\s*:\s*\{[^}]*?"model"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+    if ($tplVlm -and $fileVlm -and ($tplVlm -ne $fileVlm)) {
+        Copy-Item $ovConfFile ("$ovConfFile.bak." + (Get-Date -Format 'yyyyMMddHHmmss')) -Force
+        $ovConfNew = $ovConfRaw.Replace($fileVlm, $tplVlm)
+        [System.IO.File]::WriteAllText((Resolve-Path $ovConfFile), $ovConfNew, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "[OK] OpenViking ov.conf VLM: $fileVlm -> $tplVlm (openviking restart applies it)" -ForegroundColor Green
+        $script:ovConfVlmChanged = $true
     }
 }
 
@@ -1964,6 +1995,22 @@ if ($Update) {
         Write-Host "[OK] pacgate-mcp restarted (bind-mounted server.py now in effect)" -ForegroundColor Green
     } else {
         Write-Host "[WARN] pacgate-mcp is not running; skipped restart" -ForegroundColor Yellow
+    }
+
+    # openviking: ov.conf is bind-mounted (./openviking) and read ONLY at process
+    # start. Section 4b-i-2 swaps the VLM model tag in place when it drifts from the
+    # template; without this restart the running VLM stays on the old tag and 404s
+    # once that tag is removed from Ollama (PaddleOCR still works, so it is silent).
+    # Guarded by the change flag so an unrelated -Update does not bounce the RAG
+    # engine - a restart drops in-flight OpenViking work.
+    if ($script:ovConfVlmChanged) {
+        $ovRunning = docker compose -f compose.prod.yaml ps -q openviking
+        if ($ovRunning) {
+            docker compose -f compose.prod.yaml restart openviking
+            Write-Host "[OK] openviking restarted (ov.conf VLM tag now in effect)" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] openviking is not running; skipped restart" -ForegroundColor Yellow
+        }
     }
 
     # 7c-bis. PROVE the restarted deer-flow actually loaded the bind-mounted code.
