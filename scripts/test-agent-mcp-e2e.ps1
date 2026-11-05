@@ -109,6 +109,50 @@ try {
 }
 Check 'E1 authenticated to deer-flow' ($null -ne (Get-Csrf))
 
+# ── E1b: the model the picker DEFAULTs to must actually be installed ────────
+# WHY THIS EXISTS (measured 2026-11-05, this box)
+#
+# A run that omits `context.model_name` resolves to `models[0]` in the
+# deer-flow-config `models:` list. On this machine models[0] is
+# `nemotron-bolt-7b-local` -> `nemotron-3.5-bolt:e4b-q8_0`, and that tag was
+# NEVER PULLED. Every such run returned in 0.7 s with:
+#
+#   status=error, deerflow_error_fallback=true,
+#   "LLM request failed: Error code: 404 - model 'nemotron-3.5-bolt:e4b-q8_0'
+#    not found"
+#
+# Meanwhile a run that explicitly selected an installed model succeeded, so the
+# stack looked half-working and the model picked in the UI got blamed. The
+# failure is entirely avoidable: it is a missing `ollama pull`, and the roster
+# already declares which tags must exist. Nothing checked the DEFAULT one.
+#
+# This asserts the roster's first entry by TAG, against Ollama directly, so the
+# cause is named here instead of being discovered from a UI screenshot.
+try {
+    $roster = (Invoke-WebRequest -Uri "$NginxUrl/api/models" -WebSession $session -UseBasicParsing -TimeoutSec 25).Content | ConvertFrom-Json
+    $defaultEntry = @($roster.models) | Select-Object -First 1
+    $defaultTag = if ($defaultEntry) { [string]$defaultEntry.model } else { '' }
+    Check 'E1b the picker roster names a default model tag' ([bool]$defaultTag) 'models[0] carried no model tag'
+
+    if ($defaultTag) {
+        $installed = @()
+        try {
+            $tags = (Invoke-WebRequest -Uri 'http://localhost:11434/api/tags' -UseBasicParsing -TimeoutSec 15).Content | ConvertFrom-Json
+            $installed = @($tags.models | ForEach-Object { $_.name })
+        } catch { }
+
+        if ($installed.Count -eq 0) {
+            Write-Host "  [SKIP] E1b could not read ollama /api/tags; cannot confirm '$defaultTag'" -ForegroundColor Yellow
+        } else {
+            $have = $installed -contains $defaultTag
+            Check "E1b the DEFAULT picker model '$defaultTag' is installed" $have `
+                "models[0] is '$($defaultEntry.name)' -> '$defaultTag', which is NOT in ollama. Any run that omits context.model_name resolves to it and fails in <1 s with a 404 'model not found' - pull it: ollama pull $defaultTag"
+        }
+    }
+} catch {
+    Write-Host "  [SKIP] E1b could not read the picker roster ($($_.Exception.Message))" -ForegroundColor Yellow
+}
+
 # ── E2: an agent run completes ────────────────────────────────────────────────
 try {
     $thread = (Invoke-WebRequest -Uri "$NginxUrl/api/threads" -Method Post -Body '{}' `
