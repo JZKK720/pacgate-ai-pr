@@ -875,6 +875,13 @@ $measurements = @(
 # It exits 2 (CANNOT CHECK) on a fresh clone where neither .env exists - those
 # files are gitignored and per-machine by design.
 $gates += 'scripts/test-cross-stack-credentials.ps1'
+# E2E CREDENTIAL VALIDITY, registered 2026-11-05.
+#
+# The gate above answers "do the two env files AGREE?"; this one answers "is each
+# credential this lane depends on still VALID right now?". Different failure
+# shapes: disagreement 401s one side, staleness 401s every side at once.
+# Exits 2 when the stack is down, so it is a normal skip on a dev box.
+$gates += 'scripts/audit-e2e-credentials.ps1'
 # CROSS-MACHINE TRANSFER, registered 2026-10-19.
 #
 # The question "how do Matters, skills, tools, templates and recorded matters
