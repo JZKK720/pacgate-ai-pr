@@ -167,7 +167,13 @@ try {
 }
 Check 'E2 an agent run completes (the KeyError-class defect)' ($r.StatusCode -eq 200) "got HTTP $($r.StatusCode)"
 
-# ── E3/E4: it actually called an MCP tool ─────────────────────────────────────
+# ── E2b: the run did not degrade into an error fallback ──────────────────────
+# MEASURED 2026-11-05: with the LOW-tier model absent, deer-flow still returns
+# HTTP 200 for `/runs/wait`. It swallows the upstream 404 into an `ai` message whose
+# content is "LLM request failed: Error code: 404 ... model 'x' not found", marked
+# `deerflow_error_fallback: true`. E2 alone therefore cannot tell a real answer from
+# a total model outage. The marker is explicit and worth asserting directly.
+#
 # Accept both payload shapes: `messages` at the top level of a runs/wait response, or
 # nested under `.values` from /state. Assuming one is how the sibling gate first
 # reported a false FAIL on a healthy stack.
@@ -178,25 +184,57 @@ if ($json) {
     if ($json.messages) { $msgs = @($json.messages) }
     elseif ($json.values -and $json.values.messages) { $msgs = @($json.values.messages) }
 }
-$serialized = if ($msgs.Count -gt 0) { ($msgs | ConvertTo-Json -Depth 20) } else { [string]$r.Content }
 
-# A text reply alone does NOT count. Look for an advertised tool name appearing in a
-# tool-call record.
+$fallback = @($msgs | Where-Object { $_.additional_kwargs -and $_.additional_kwargs.deerflow_error_fallback })
+$why = if ($fallback.Count -gt 0) { ($fallback | ForEach-Object { $_.additional_kwargs.error_detail } | Select-Object -First 1) } else { $null }
+Check 'E2b the run produced an answer, not an LLM error fallback' ($fallback.Count -eq 0) `
+    "deer-flow returned an error fallback instead of a reply: $why"
+
+# ── E3/E4: it actually called an MCP tool ─────────────────────────────────────
+# STRUCTURED RECORDS ONLY. WHY (measured 2026-11-05, this box):
+#   The previous version scanned the WHOLE serialized payload for an advertised tool
+#   name. But the gate's own prompt says "Call the pacgate_list_connectors tool", and
+#   that prompt is echoed back inside the human message - so the check matched ITS OWN
+#   PROMPT and reported `called: pacgate_list_connectors` on a run where the model had
+#   404'd and no tool ran at all. It was green on a totally broken agent lane, and it
+#   was green for the same reason it was green during the 0.1.33 era: the assertion
+#   could not distinguish "the agent called a tool" from "the word appears somewhere".
+#   A tool call must therefore be read from a `tool_calls` field on an ASSISTANT
+#   message, or from a tool-role message that answers one - never from free text, and
+#   never from a human turn.
 $called = @()
-foreach ($tn in $mcpTools) {
-    if ($serialized -match [regex]::Escape($tn)) { $called += $tn }
+$toolRecord = $false
+foreach ($m in $msgs) {
+    # A human turn is the PROMPT. It can name every tool and prove nothing.
+    if ($m.type -in @('human', 'user')) { continue }
+
+    if ($m.tool_calls) {
+        foreach ($tc in @($m.tool_calls)) {
+            $name = if ($tc.name) { $tc.name } elseif ($tc.function -and $tc.function.name) { $tc.function.name } else { $null }
+            if ($name -and $mcpTools -contains $name) { $called += $name; $toolRecord = $true }
+        }
+    }
+    if ($m.additional_kwargs -and $m.additional_kwargs.tool_calls) {
+        foreach ($tc in @($m.additional_kwargs.tool_calls)) {
+            $name = if ($tc.name) { $tc.name } elseif ($tc.function -and $tc.function.name) { $tc.function.name } else { $null }
+            if ($name -and $mcpTools -contains $name) { $called += $name; $toolRecord = $true }
+        }
+    }
+    if ($m.additional_kwargs -and $m.additional_kwargs.tool_call_id) { $toolRecord = $true }
+    if ($m.tool_call_id) { $toolRecord = $true }
+    if ($m.type -in @('tool', 'tool_result')) { $toolRecord = $true }
 }
 $called = @($called | Sort-Object -Unique)
 
 Check 'E3 the run invoked at least one real MCP tool' `
       ($called.Count -ge 1) `
-      'none of the advertised tool names appear in the run payload - the agent replied without calling a tool'
+      'no assistant tool_calls record names an advertised MCP tool - the agent replied without calling one (a tool name appearing only in the prompt does not count)'
 if ($called.Count -ge 1) {
     Write-Host ("         called: {0}" -f ($called -join ', ')) -ForegroundColor DarkGray
 }
 
 Check 'E4 a tool-call record came back (the call did not fail after issuance)' `
-      ($serialized -match 'tool_call_id|tool_calls|ToolMessage|tool_result') `
+      $toolRecord `
       'a tool was named but no tool-call record is present - the call was issued and produced nothing'
 
 Write-Host ''
