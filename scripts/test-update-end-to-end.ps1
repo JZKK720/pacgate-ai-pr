@@ -387,6 +387,61 @@ try {
     $r5 = Invoke-Child -Dir $cb -InstallerArgs @('-Update', '-SkipRepoPull')
     Assert-True ($r5.Exit -eq 0) '-SkipRepoPull exits 0'
     Assert-True ((Invoke-Git $aipc @('rev-parse', 'HEAD')).Out -eq $headAfter3) 'repo NOT advanced (as instructed)'
+
+    # ── STEP 6: a model ADDED by an update is pulled on -Update ──────────────
+    #
+    # Added 2026-11-05. The model pull used to live inside `if (-not $Update)`,
+    # so a tag added to ollama-models.txt by a later release was never fetched on
+    # an already-installed AIPC. 0.2.25 promoted nemotron-3.5-bolt:e4b-q8_0 to the
+    # LOW tier, so every client would have received the new pin and roster with
+    # the weights absent - HTTP 404 on every LOW-tier call, with the stack green.
+    #
+    # The dev box cannot catch this (the tag was pulled by hand there) and
+    # audit-aipc-update-coverage.ps1 did not catch it either: it had no
+    # Ollama-models row. This assertion is the only thing that would have.
+    Write-Host 'STEP 6: a model added to the pre-pull list is fetched on -Update' -ForegroundColor White
+
+    # The update adds a NEW tag to the pre-pull list. The stub ollama records
+    # what it was asked for, so we can assert the pull happened during -Update.
+    $modelLog = Join-Path $stubs 'ollama-pulls.txt'
+    Remove-Item -LiteralPath $modelLog -Force -ErrorAction SilentlyContinue
+
+    # Record `ollama pull <tag>` calls. `ollama list` reports model-a as ALREADY
+    # installed (so the reconciler must skip it) and does not mention model-b-new
+    # (so the reconciler must fetch it). Both halves matter: pulling everything
+    # every time would be correct-but-wasteful, and reporting nothing installed
+    # is what a naive stub does - it would make the idempotency assertion fail
+    # for the right reason.
+    Set-Content -LiteralPath (Join-Path $stubs 'ollama.cmd') -Encoding ASCII -Value @(
+        '@echo off'
+        'if "%~1"=="pull" ('
+        '  echo %~2>>"%OLLAMA_PULL_LOG%"'
+        '  exit /b 0'
+        ')'
+        'if "%~1"=="list" ('
+        '  echo NAME  ID  SIZE  MODIFIED'
+        '  echo model-a  aaaaaaaa  1 GB  now'
+        '  exit /b 0'
+        ')'
+        'exit /b 0'
+    )
+    "model-a`nmodel-b-new" | Set-Content -LiteralPath (Join-Path $cb 'ollama-models.txt')
+    Invoke-Git $author @('add', '-A') | Out-Null
+    Invoke-Git $author @('commit', '-q', '-m', 'v5: pre-pull a NEW model tag') | Out-Null
+    Invoke-Git $author @('push', '-q', 'origin', 'main') | Out-Null
+
+    $env:OLLAMA_PULL_LOG = $modelLog
+    $r6 = Invoke-Child -Dir $cb -InstallerArgs @('-Update')
+    Remove-Item Env:\OLLAMA_PULL_LOG -ErrorAction SilentlyContinue
+
+    $pulled = @(if (Test-Path $modelLog) { Get-Content $modelLog | Where-Object { $_ } } else { @() })
+    Assert-True ($r6.Exit -eq 0) '-Update with a new model tag exits 0'
+    Assert-True ($pulled -contains 'model-b-new') `
+        '-Update PULLED the newly-required model (not only on first install)' `
+        ("pulls observed: [{0}]" -f ($pulled -join ', '))
+    Assert-True (-not ($pulled -contains 'model-a')) `
+        'an already-present model is NOT re-pulled (the reconcile is idempotent)' `
+        ("pulls observed: [{0}]" -f ($pulled -join ', '))
 }
 catch {
     Write-Host ("  [FAIL] harness error: {0}" -f $_.Exception.Message) -ForegroundColor Red

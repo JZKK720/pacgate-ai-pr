@@ -53,6 +53,16 @@ $checks = @(
     [pscustomobject]@{ Component = 'GHCR images (4)';           Needs = 'pull + recreate';                     Any = @('compose.prod.yaml pull') }
     [pscustomobject]@{ Component = 'nginx/default.conf';        Needs = 'config reload';                       Any = @('nginx -s reload') }
     [pscustomobject]@{ Component = 'workflows/*.yaml (15)';     Needs = 'nothing (read per request)';          Any = @('__noop__') }
+    # Added 2026-11-05. This row was MISSING, and its absence is why the audit
+    # certified "13 of 13 covered, 0 needing a human" while `install.ps1 -Update`
+    # never pulled an Ollama model at all: the pull lived inside `if (-not
+    # $Update)`. 0.2.25 promoted nemotron-3.5-bolt:e4b-q8_0 to the LOW tier, so
+    # every already-installed AIPC would have received the new compose pin and
+    # roster with the weights still absent - HTTP 404 on every LOW-tier call.
+    #
+    # A coverage table that omits a component is the same failure class as one
+    # with hardcoded verdicts: it reads green because it never looked.
+    [pscustomobject]@{ Component = 'ollama-models.txt';         Needs = 'pull MISSING tags on update';         Any = @('Reconciling Ollama models against ollama-models.txt') }
     [pscustomobject]@{ Component = 'personas/, patches/*.py';   Needs = 'container restart';                   Any = @('restart deer-flow') }
     [pscustomobject]@{ Component = 'deer-flow-config.yaml';     Needs = 'container restart';                   Any = @('restart deer-flow') }
     # Added 2026-10-13 with deploy/frontend-patches/files/next.config.js. That file

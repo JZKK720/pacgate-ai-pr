@@ -1367,16 +1367,72 @@ else {
     }
 }
 
-# 5. Pull models (first install only)
-if (-not $Update) {
-    Write-Host "`nPulling Ollama models (this takes a while on first run)..." -ForegroundColor Cyan
-    foreach ($model in Get-Content ollama-models.txt -Encoding UTF8) {
-        if ($model -and -not $model.StartsWith("#")) {
-            Write-Host "  Pulling $model..." -ForegroundColor Yellow
-            ollama pull $model
+# 5. Reconcile Ollama models against ollama-models.txt
+#
+# FIXED 2026-11-05. This used to run ONLY on first install:
+#
+#     if (-not $Update) { ... ollama pull ... }
+#
+# That meant a model ADDED to ollama-models.txt by a later release was never
+# pulled on any machine that had already been installed - which is every client
+# AIPC. 0.2.25 promoted `nemotron-3.5-bolt:e4b-q8_0` to the LOW tier and retired
+# gemma4:12b, so an AIPC running `install.ps1 -Update` would get the new compose
+# pin and the new deer-flow roster while the weights were still absent: Ollama
+# returns HTTP 404 for an unknown tag with no fallback, so every LOW-tier call
+# fails. The dev box cannot catch this because the tag was pulled by hand there.
+#
+# `scripts/audit-aipc-update-coverage.ps1` did not report it either: its marker
+# table had no Ollama-models row, so it certified "13 of 13, 0 needing a human"
+# while this gap was live. A coverage tool that omits a component is the same
+# class of defect as one with hardcoded verdicts.
+#
+# Now: list what is installed, pull ONLY what is missing. Idempotent, so the
+# first-install path is unchanged in effect, and `-Update` converges.
+Write-Host "`nReconciling Ollama models against ollama-models.txt..." -ForegroundColor Cyan
+
+# One registry read, not N. `ollama list` is the authority for what this host
+# can serve; the pre-pull file is the authority for what the release requires.
+$installedTags = @()
+try {
+    $installedTags = @(& ollama list 2>$null | Select-Object -Skip 1 | ForEach-Object {
+        ($_ -split '\s+')[0]
+    } | Where-Object { $_ })
+} catch {
+    Write-Host "[WARN] could not read 'ollama list'; attempting every pull blind" -ForegroundColor Yellow
+}
+
+$requiredModels = @(Get-Content ollama-models.txt -Encoding UTF8 |
+    Where-Object { $_ -and -not $_.TrimStart().StartsWith('#') } |
+    ForEach-Object { $_.Trim() })
+
+# A bare name and its :latest form are the same model to Ollama.
+function Test-ModelInstalled([string]$tag) {
+    if ($installedTags -contains $tag) { return $true }
+    $bare = ($tag -replace ':[^:]+$', '')
+    if ($tag -notmatch ':' -and ($installedTags -contains "$tag`:latest")) { return $true }
+    return ($installedTags -contains "$bare`:latest")
+}
+
+$missingModels = @($requiredModels | Where-Object { -not (Test-ModelInstalled $_) })
+
+if ($missingModels.Count -eq 0) {
+    Write-Host "[OK] all $($requiredModels.Count) required model(s) already present" -ForegroundColor Green
+}
+else {
+    Write-Host "  $($missingModels.Count) of $($requiredModels.Count) required model(s) missing:" -ForegroundColor Yellow
+    foreach ($m in $missingModels) { Write-Host "    - $m" -ForegroundColor Yellow }
+    foreach ($model in $missingModels) {
+        Write-Host "  Pulling $model..." -ForegroundColor Yellow
+        & ollama pull $model
+        if ($LASTEXITCODE -ne 0) {
+            # A missing tier model is a hard failure, not a warning: the stack
+            # comes up healthy and then 404s on every call that uses that tier.
+            Write-Host "[FAIL] could not pull $model (exit $LASTEXITCODE)" -ForegroundColor Red
+            Write-Host "       The stack would start and then fail at call time with" -ForegroundColor Red
+            Write-Host "       \"model '$model' not found\". Fix the pull before continuing." -ForegroundColor Red
         }
     }
-    Write-Host "[OK] Models pulled" -ForegroundColor Green
+    Write-Host "[OK] model reconciliation complete" -ForegroundColor Green
 }
 
 # 6. Pull Docker images
