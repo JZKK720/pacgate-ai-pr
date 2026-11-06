@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.2.30
+    image: ghcr.io/jzkk720/pacgate-api:0.2.31
     healthcheck:
       # No curl and no wget in this image (measured 2026-10-14), so the probe
       # uses bash's /dev/tcp. /health is the one route that needs no auth
@@ -118,7 +118,7 @@ services:
       # uses IGNORES a per-request num_ctx - verified 2026-10-20), but that tag
       # is a machine artifact that cannot be pre-pulled from a registry, so the
       # installer writes it into .env instead of this default.
-      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
+      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-nemotron-3.5-bolt:e4b-q8_0}
       PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-nemotron-3.5-bolt:e4b-q8_0}
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
@@ -137,7 +137,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.30
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.31
     healthcheck:
       # :8001 is the gateway nginx proxies to; /health verified 200.
       test:
@@ -240,6 +240,10 @@ services:
       # multi-step research runs (cloud), instead of relying only on the constant
       # tool-schema count.
       - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
+      # Pacgate 2026-11-06: strip pymupdf4llm's inline HTML (<mark>/<br>) from
+      # heading titles before they reach the agent's "Document outline" prompt
+      # section. See the longer note in compose.prod.yaml.
+      - ./patches/deer-flow-file-conversion.py:/app/backend/packages/harness/deerflow/utils/file_conversion.py:ro
       # Pacgate (hang fix 2026-10-06): bound the non-streaming title ainvoke()
       # and make CancelledError fall back instead of freezing the pregel loop
       # (run df600939: no output for 11 minutes; only STOP recovered it).
@@ -336,7 +340,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.30
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.31
     healthcheck:
       # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
       # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
@@ -373,7 +377,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.2.30
+    image: ghcr.io/jzkk720/pacgate-mcp:0.2.31
     healthcheck:
       # A real MCP `initialize` handshake, not a TCP connect. The image has no
       # curl; it does have python3, so the probe speaks the protocol and
@@ -403,6 +407,17 @@ services:
       # a supported state: the clause tools then report available=false instead
       # of failing, so a machine without the 1.2 GB checkpoint still works.
       PACGATE_LAYA_URL: ${PACGATE_LAYA_URL:-http://laya:8000/v1/systemone}
+      # Firecrawl key for pacgate_web_search / pacgate_web_scrape. Same
+      # per-machine value the pacgate-search connector reads from env_file, so
+      # one paste in .env arms both the /api/search connector and the agent's
+      # web tools. Absent/empty is a supported state: both tools answer
+      # available=false and every other tool is unaffected.
+      #
+      # Deliberately NOT a fourth entry in deer-flow-extensions-config.json:
+      # deer-flow gathers all MCP servers with one asyncio.gather and returns []
+      # on any exception, so an unreachable remote MCP server would delete the
+      # pacgate, openviking and officecli tools along with it.
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
     volumes:
       # Fork patch (2026-10-09): SANITIZE_TIMEOUT_S=700 per-request override for
       # sanitize endpoints (BERT NER runs minutes; stock 0.1.24 timeout kills
@@ -439,7 +454,7 @@ services:
     # Models are pre-staged, never downloaded at runtime: HF_HUB_OFFLINE=1 plus a
     # mounted model directory. A client machine must not reach huggingface.co.
     profiles: ["laya"]
-    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.30}
+    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.31}
     healthcheck:
       # /health is documented by laya. start_period is long because with
       # LAYA_PRELOAD=1 the first boot loads a 1.2 GB checkpoint into memory, and a
@@ -487,7 +502,7 @@ services:
     restart: unless-stopped
 
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.2.30
+    image: ghcr.io/jzkk720/ocr-service:0.2.31
     healthcheck:
       # /health verified 200. python3, not curl - the image has no curl.
       # start_period is long on purpose: this service downloads its model on

@@ -93,7 +93,7 @@ function Get-OllamaResidencyProfile {
             return [pscustomobject]@{
                 Tier = 'high'; MaxLoaded = 3; ContextLength = 65536; NumParallel = 2
                 CacheRamMiB = 4096; SystemGiB = $sysGiB
-                MidTag = 'ornith-1.5:9b'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
+                MidTag = 'nemotron-3.5-bolt:e4b-q8_0'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
             }
         }
         return [pscustomobject]@{
@@ -101,7 +101,7 @@ function Get-OllamaResidencyProfile {
             # Generous host RAM, but a small card means the runner is the only
             # large consumer. 2 GiB of prompt cache is still ~30x one prompt.
             CacheRamMiB = 2048; SystemGiB = $sysGiB
-            MidTag = 'ornith-1.5:9b'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
+            MidTag = 'nemotron-3.5-bolt:e4b-q8_0'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
         }
     }
     if ($sysGiB -ge 24) {
@@ -115,14 +115,14 @@ function Get-OllamaResidencyProfile {
         return [pscustomobject]@{
             Tier = 'standard'; MaxLoaded = 2; ContextLength = 32768; NumParallel = 2
             CacheRamMiB = 1024; SystemGiB = $sysGiB
-            MidTag = 'ornith-1.5:9b'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
+            MidTag = 'nemotron-3.5-bolt:e4b-q8_0'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
         }
     }
     # Low-memory fallback: one resident model, minimum viable context.
     return [pscustomobject]@{
         Tier = 'constrained'; MaxLoaded = 1; ContextLength = 16384; NumParallel = 1
         CacheRamMiB = 512; SystemGiB = $sysGiB
-        MidTag = 'ornith-1.5:9b'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
+        MidTag = 'nemotron-3.5-bolt:e4b-q8_0'; LowTag = 'nemotron-3.5-bolt:e4b-q8_0'
     }
 }
 

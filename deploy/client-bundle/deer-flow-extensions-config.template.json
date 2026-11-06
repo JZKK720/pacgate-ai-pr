@@ -12,7 +12,7 @@
       "enabled": true,
       "type": "http",
       "url": "http://pacgate-mcp:8000/mcp",
-      "description": "Query pacgate's legal RAG knowledge base and external legal database connectors."
+      "description": "Query pacgate's legal RAG knowledge base and external legal database connectors, plus Firecrawl web search and page extraction (pacgate_web_search / pacgate_web_scrape). Settings > Tools lists MCP SERVERS, not individual tools - the web tools are on this server, not a separate one."
     },
     "officecli": {
       "enabled": true,

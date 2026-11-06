@@ -187,6 +187,75 @@ Assert-That ($huge -eq "$ceiling") "a runaway 1000000 request is clamped down to
 $ceilingDefault = '4000'
 Assert-That ($junk -eq $ceilingDefault) "a non-integer value keeps the default (the ceiling) instead of crashing (got '$junk')"
 
+# ── 4. the ceiling is ACTIONABLE when it is hit ─────────────────────────────
+# Clamping bounds a runaway run, but a bounded failure that tells the user
+# "You can increase the limit by setting the `recursion_limit` config key" is
+# still a dead end: no client can reach that key, and the message says nothing
+# about the work already on disk. Measured on thread b315a961, three runs died
+# at the ceiling (114-121 LLM calls, 3.2-3.5M tokens each) with partial
+# deliverables already written, and the only thing the user was told was the
+# raw LangGraph string.
+Write-Host ''
+Write-Host '4. the ceiling is actionable when it is hit' -ForegroundColor White
+$workerPatch = 'deploy/client-bundle/patches/deer-flow-worker.py'
+Assert-That (Test-Path $workerPatch) "the run worker patch exists at $workerPatch"
+$wsrc = if (Test-Path $workerPatch) { Get-Content -LiteralPath $workerPatch -Raw } else { '' }
+Assert-That ($wsrc -match '_is_recursion_exhaustion') 'the worker classifies a recursion kill instead of storing it verbatim'
+Assert-That ($wsrc -match '_recursion_exhaustion_message') 'the worker rewrites the message into something a client can act on'
+Assert-That ($wsrc -match 'original error:') 'the original diagnostic text is preserved (keeps GraphRecursionError greppable)'
+Assert-That ($wsrc -match 'raw_error') 'the raw text still reaches the log, separate from the client-facing message'
+
+# Defining the helpers is not the fix - CALLING them from the failure path is.
+# A gate that only greps for the helper names passes while the exception handler
+# still stores `f"{exc}"` verbatim, which is exactly the shipped defect. So the
+# dispatch is asserted structurally, as an ORDERED chain inside the handler.
+$handlerAt = $wsrc.IndexOf('except Exception as exc:')
+$dispatchAt = $wsrc.IndexOf('if _is_recursion_exhaustion(raw_error):')
+$rewriteAt = $wsrc.IndexOf('error_msg = _recursion_exhaustion_message(')
+# Anchor the persisted-status lookup to THIS handler. run_agent has several
+# set_status(error, ...) calls (idle watchdog, rollback, LLM fallback), so a bare
+# IndexOf finds whichever came first and the ordering assertion becomes
+# meaningless - it fails against correct code, as it did when this was written.
+$statusAt = $wsrc.IndexOf('set_status(run_id, RunStatus.error, error=error_msg)', $handlerAt)
+Assert-That ($handlerAt -ge 0) 'the run worker still has a terminal exception handler'
+Assert-That ($dispatchAt -gt $handlerAt) 'the handler DISPATCHES on the recursion classifier'
+Assert-That ($rewriteAt -gt $dispatchAt) 'the handler assigns the rewritten message to error_msg'
+Assert-That ($statusAt -gt $rewriteAt) 'the rewritten message is what gets persisted as the run error'
+# And the non-recursion branch must still store the original text, so an
+# unrelated failure keeps its real diagnostic instead of a generic sentence.
+Assert-That ($wsrc -match 'error_msg = raw_error') 'non-recursion failures still store their own text unchanged'
+$msgProbe = @'
+import io, sys
+src = io.open("/app/backend/packages/harness/deerflow/runtime/runs/worker.py", encoding="utf-8").read()
+start = src.index("_RECURSION_HINT_MARKERS")
+end = src.index("def _build_runtime_context")
+ns = {"os": __import__("os")}
+exec(src[start:end], ns)
+raw = ("Recursion limit of 1000 reached without hitting a stop condition. "
+       "You can increase the limit by setting the `recursion_limit` config key.")
+msg = ns["_recursion_exhaustion_message"](raw, "THREADID")
+print("KIND_RECURSION=%s" % ns["_is_recursion_exhaustion"](raw))
+print("KIND_OTHER=%s" % ns["_is_recursion_exhaustion"]("LLM provider failed after retries"))
+print("KEEPS_RAW=%s" % ("Recursion limit of 1000" in msg))
+print("SAYS_PARTIAL=%s" % ("partial" in msg.lower()))
+print("SAYS_THREAD=%s" % ("THREADID" in msg))
+print("LEADS_WITH_USER_TEXT=%s" % msg.startswith("This run stopped early"))
+'@
+$msgProbe | Out-File -Encoding ascii (Join-Path $env:TEMP 'rec_cap_msg_probe.py') -NoNewline
+Invoke-NativeCapture { docker cp (Join-Path $env:TEMP 'rec_cap_msg_probe.py') deer-flow:/tmp/rec_cap_msg_probe.py } | Out-Null
+$msgLive = Invoke-NativeCapture { docker exec deer-flow /app/backend/.venv/bin/python /tmp/rec_cap_msg_probe.py }
+Remove-Item (Join-Path $env:TEMP 'rec_cap_msg_probe.py') -ErrorAction SilentlyContinue
+
+function Get-MsgFlag($key) {
+    if ($msgLive -match "$key=(\w+)") { return $Matches[1] } else { return '' }
+}
+Assert-That ((Get-MsgFlag 'KIND_RECURSION') -eq 'True') 'a recursion kill is recognised'
+Assert-That ((Get-MsgFlag 'KIND_OTHER') -eq 'False') 'other failures are NOT rewritten (their text is stored as-is)'
+Assert-That ((Get-MsgFlag 'KEEPS_RAW') -eq 'True') 'the rewritten message still contains the original diagnostic'
+Assert-That ((Get-MsgFlag 'SAYS_PARTIAL') -eq 'True') 'the message tells the user the result is partial'
+Assert-That ((Get-MsgFlag 'SAYS_THREAD') -eq 'True') 'the message names the thread holding the saved output'
+Assert-That ((Get-MsgFlag 'LEADS_WITH_USER_TEXT') -eq 'True') 'the client-facing explanation comes first, not the config-key advice'
+
 Write-Host ''
 $colour = if ($script:Failed -gt 0) { 'Red' } else { 'Green' }
 Write-Host "RESULT: $($script:Passed) passed, $($script:Failed) failed" -ForegroundColor $colour

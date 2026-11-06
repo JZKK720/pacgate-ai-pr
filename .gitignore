@@ -5,6 +5,12 @@ __pycache__/
 *.pyc
 .venv/
 
+# Firecrawl CLI working directory. `firecrawl scrape/search ... -o <path>` and
+# `firecrawl init` write here, and the CLI stores its own session there. Scraped
+# page bodies are third-party content (whole articles, client-visible pages) and
+# have no place in a repo whose diff reviewers read.
+.firecrawl/
+
 # Rust build artifacts
 pacgate-ai/target/
 pacgate-ai/**/target/

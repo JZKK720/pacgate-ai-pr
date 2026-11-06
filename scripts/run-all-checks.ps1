@@ -134,6 +134,29 @@ $gates = @(    'scripts/test-install-render.ps1'
     # that until now, and the property is easy to lose: a mount change or a
     # listing-endpoint regression silently turns a bounded failure into lost work.
     'scripts/test-chat-artifact-durability.ps1'
+    # WHY THE DOCUMENT OUTLINE MATTERS ENOUGH TO GATE (measured 2026-11-06).
+    #
+    # deerflow/utils/file_conversion.py prefers pymupdf4llm and falls back to
+    # MarkItDown only when pymupdf4llm is absent or its output looks image-based.
+    # pymupdf4llm was NOT installed in the image, so every PDF upload silently took
+    # the fallback, and MarkItDown does not reproduce a PDF's typographic hierarchy:
+    # on the 65-page CJK tutorial PDF with a clean body-10.4pt / headings-at-11.2-
+    # 13.0-19.0-33.0pt structure it produced 0 heading lines and 0 outline entries,
+    # where pymupdf4llm produces 51.
+    #
+    # With no outline, UploadsMiddleware emits "No structural headings detected" and
+    # no section map, so the agent got a 141 KB document it could not navigate. On
+    # thread b315a961 that produced three consecutive runs of 87-104 bash calls
+    # re-reading the same file (103 / 42 / 52 re-touches), 3.2-3.5M tokens each, all
+    # three killed by GraphRecursionError with no deliverable. No prompt change can
+    # fix a task whose structure the model was never shown - which is why this is a
+    # dependency gate and not a copy edit.
+    #
+    # It asserts the converter imports, that a real structured PDF yields headings
+    # and outline entries through the same code path the uploads middleware uses, and
+    # it carries a control (>= 10 entries) so a near-empty outline cannot pass. The
+    # gate was proven to FAIL (3 assertions red, exit 1) with the package removed.
+    'scripts/test-pdf-outline-extraction.ps1'
     'scripts/test-scheduled-update.ps1'
     # The three install tests above all run the installer under `pwsh` with a
     # stub docker that prints NOTHING. A stub that never writes to stderr cannot
@@ -330,6 +353,21 @@ $gates = @(    'scripts/test-install-render.ps1'
     # inert without a key, and `search` never propagates an error into the router.
     # STATIC - reads the Rust source, two compose files and .env.example.
     'scripts/test-connector-registry.ps1'
+    # FIRECRAWL WIRING, registered 2026-11-05. The QM sandbox tool read the scrape
+    # body from the top level while the API returns it at `data.markdown`, so
+    # `firecrawl-qm scrape <url>` printed NOTHING and exited 0 - measured on the
+    # shipped image. The agent read the empty string as "this page has no content"
+    # and reported that to the client. Its `crawl` had the same shape of defect: it
+    # printed the job-creation ACK instead of the pages.
+    #
+    # This also pins the reason Firecrawl is NOT a fourth deer-flow MCP server:
+    # `get_mcp_tools()` gathers one load task per server WITHOUT
+    # return_exceptions, then returns [] on any exception. One unreachable remote
+    # server would silently delete pacgate, openviking and officecli too.
+    # STATIC - reads the three Firecrawl clients, the template and both compose
+    # files. Red-checked twice: restoring `result.get("markdown")` fails F2, and
+    # adding a firecrawl MCP entry fails F4.
+    'scripts/test-firecrawl-wiring.ps1'
     # THINKING DEFAULT, registered 2026-10-30. `thinking_enabled: mode !== "flash"`
     # is true for an unset mode, and the mode default is read from local storage on
     # mount - so a fresh profile ran every first turn with thinking on. The config's

@@ -109,6 +109,9 @@ $patchMap = [ordered]@{
     'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
     'deer-flow-run-recursion-cap.py' = 'backend/app/gateway/services.py'
     'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
+    # Pacgate 2026-11-06: heading titles rendered into the agent's prompt carried
+    # raw pymupdf4llm markup ("**<mark>1.1 ...</mark>**") on 59 of 241 headings.
+    'deer-flow-file-conversion.py' = 'backend/packages/harness/deerflow/utils/file_conversion.py'
 }
 
 # langchain-mcp-tools.py overrides a VENDORED package inside the image venv, not

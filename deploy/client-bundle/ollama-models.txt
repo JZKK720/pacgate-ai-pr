@@ -28,11 +28,16 @@
 #     which removes the gemma4:12b VLM and its VRAM co-residency. The tag is
 #     vision-capable (gemma4 architecture + CLIP encoder; verified via ollama show).
 nemotron-3.5-bolt:e4b-q8_0
-# Mid tier: pacgate-api now defaults to ornith-1.5:9b (6.6 GB) because
-# qwen3.8:27b-mtp-q4_K_M is 17.0 GB and cannot load on a 16 GB AIPC card - it
-# spilled to CPU and presented as a stall. Measured by
-# scripts/test-aipc-capacity-fit.ps1. Restore this line only on a machine with
-# the VRAM, and set PACGATE_MODEL_MID in .env to match.
+# Mid tier: pacgate-api NOW uses the same nemotron tag as Low (2026-11-07). One
+# ~9.1 GB resident model serves both tiers, so a 16 GB card never has to evict
+# one to load the other - .env.example records the measured eviction
+# ("evicted a resident ornith (5.6 GB) even with 100 GiB of GPU memory free").
+# The previously-default ornith-1.5:9b (6.6 GB) is no longer pre-pulled; see the
+# picker note further down for its recorded trade-off and how to restore it.
+# qwen3.8:27b-mtp-q4_K_M (17.0 GB) is withdrawn for the same capacity reason it
+# always was - it cannot load on a 16 GB AIPC card and presents as a stall.
+# Measured by scripts/test-aipc-capacity-fit.ps1. Restore any of these only on a
+# machine with the VRAM, and set PACGATE_MODEL_MID in .env to match.
 # qwen3.8:27b-mtp-q4_K_M
 
 # --- Optional heavier local model (picket option, NOT a tier default) ---
@@ -85,6 +90,20 @@ glm-5.3-flash:cloud
 # 2026-10-07: qwen3.8 was DEMOTED from the deer-flow picker (benchmark: dense 27B
 # is 3-5x slower than the MOEs on both generation and context ingestion) and is
 # now withdrawn from the pre-pull entirely - see the Mid tier note above.
+#
+# 2026-11-07: ornith is NO LONGER the pacgate-api Mid tier (Mid moved to
+# nemotron-3.5-bolt:e4b-q8_0 above). It IS still:
+#   - an ACTIVE deer-flow picker entry, which is why it stays PRE-PULLED here:
+#     audit-model-tags.ps1 fails any active picker entry whose tag this list does
+#     not fetch, because selecting it returns HTTP 404 with no fallback. Keeping
+#     the option means paying its 6.6 GB; removing it from this list means
+#     deleting or disabling the picker entry in the same change. Neither half
+#     alone is a valid state.
+#   - the documented PACGATE_MODEL_MID override for a machine that wants its
+#     ingestion profile: measured 1263 tok/s prefill vs nemotron's 1080, traded
+#     against generation 64 vs 81 tok/s.
+# The default Mid+Low share one tag so a 16 GB card never swaps models between a
+# Mid and a Low call (see .env.example).
 ornith-1.5:9b
 
 # --- deer-flow picker: heavier local option (2026-11-04) ---

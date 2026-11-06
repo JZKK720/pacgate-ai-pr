@@ -117,8 +117,18 @@ impl ModelConfig {
     /// | Tier | Fallback tag                | Use case                                       |
     /// |------|-----------------------------|------------------------------------------------|
     /// | Main | deepseek-v4.1-flash:cloud   | Deep-think · contract review · generative agents |
-    /// | Mid  | ornith-1.5:9b               | Agent automation · tabular review · core tasks   |
+    /// | Mid  | nemotron-3.5-bolt:e4b-q8_0  | Agent automation · tabular review · core tasks   |
     /// | Low  | nemotron-3.5-bolt:e4b-q8_0  | Fast labels · short summaries · routing          |
+    ///
+    /// MID and LOW currently resolve to the same tag, deliberately. One ~9.1 GB
+    /// resident model serves both, so an AIPC never has to hold two and evict
+    /// between turns - the same reasoning that retired gemma4:12b in favour of a
+    /// single model (commit a78073a). Mid and Low remain SEPARATE fields because
+    /// they are separate intents: an operator with a 24 GB card can point Mid at
+    /// `ornith-1.5:9b` (ingestion 1263 tok/s vs 1080) without touching Low, and
+    /// that override is read from PACGATE_MODEL_MID. What A4 in
+    /// scripts/test-model-roster-consistency.ps1 actually protects is Mid != Main,
+    /// and Main is a cloud tag, so that property holds.
     pub fn default_local() -> Vec<Self> {
         Self::default_local_with_base_url("http://localhost:11434")
     }
@@ -172,6 +182,19 @@ impl ModelConfig {
     /// card. `scripts/test-aipc-capacity-fit.ps1` measures both and now blocks the
     /// suite while any shipped tier or picker entry is over budget. A machine with
     /// the VRAM overrides PACGATE_MODEL_MID and gets the 27B back.
+    /// MID changed AGAIN 2026-11-07 from `ornith-1.5:9b` to
+    /// `nemotron-3.5-bolt:e4b-q8_0`, aligning it with LOW. Both tags fit a 16 GB
+    /// card, so this is not a capacity fix - the reason is residency. Mid and Low
+    /// are both used on ordinary turns, and holding two distinct local models on a
+    /// 16 GB card means the runner evicts one to load the other; .env.example
+    /// already records that defect ("evicted a resident ornith (5.6 GB) even with
+    /// 100 GiB of GPU memory free"). One tag means one resident model and no
+    /// eviction between tier call. The recorded trade-off is ingestion-heavy work:
+    /// ornith measured 1263 tok/s prefill vs nemotron's 1080, while nemotron wins
+    /// generation 81 vs 64 tok/s. A machine that wants ornith's ingestion profile
+    /// back overrides PACGATE_MODEL_MID - that is exactly what the per-tier
+    /// override exists for, and A4 in test-model-roster-consistency.ps1 only
+    /// requires Mid != Main (a cloud tag), so the invariant still holds.
     /// LOW changed 2026-11-04 from `gemma4:12b-it-qat` to `nemotron-3.5-bolt:e4b-q8_0`
     /// (9.8 GB). Measured at the shipped 65536 context: decode 97.2 tok/s vs 31.5,
     /// prefill 1162 tok/s vs 526. It also passes json_schema structured output,
@@ -182,7 +205,9 @@ impl ModelConfig {
     /// nothing changes today; code that needs a larger window must override this
     /// tier rather than assume it.
     pub const DEFAULT_MAIN_TAG: &'static str = "deepseek-v4.1-flash:cloud";
-    pub const DEFAULT_MID_TAG: &'static str = "ornith-1.5:9b";
+    // MID and LOW are the same tag on purpose - see the MID note above. They stay
+    // separate constants so PACGATE_MODEL_MID can diverge per machine.
+    pub const DEFAULT_MID_TAG: &'static str = "nemotron-3.5-bolt:e4b-q8_0";
     pub const DEFAULT_LOW_TAG: &'static str = "nemotron-3.5-bolt:e4b-q8_0";
 
     /// Environment variables that override each tier's model tag.

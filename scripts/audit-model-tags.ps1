@@ -26,6 +26,19 @@
 param(
     [string[]]$Configs = @(
         'deploy/client-bundle/deer-flow-config.yaml',
+        # Pacgate 2026-11-06: the IMAGE-BAKED config was not audited, and that is
+        # exactly where a stale tag survived unnoticed. Commit a78073a moved the
+        # client config, install.ps1 and this pre-pull list onto
+        # nemotron-3.5-bolt:e4b-q8_0 but left deploy/deer-flow-pacgate/config.yaml
+        # on gemma4:12b-it-qat in 6 active places - including models[0], the
+        # default for a bare `docker run` of the published image. No client pulls
+        # that tag any more, so such a run would 404 with no fallback.
+        #
+        # It looked safe because that file is bind-mounted OVER on every client
+        # lane; the defect only bites the one path nothing exercised. Auditing it
+        # here makes the two configs answer to the same list, which is the only
+        # thing that keeps them from drifting again.
+        'deploy/deer-flow-pacgate/config.yaml',
         'deploy/client-bundle/openviking/ov.conf.template'
     ),
     [string]$PrePullList = 'deploy/client-bundle/ollama-models.txt',

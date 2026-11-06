@@ -656,6 +656,23 @@ tools:
 # schema class (uploads.py reads it via getattr with a False default).
 uploads:
   auto_convert_documents: true
+  # Pacgate 2026-11-06: name the converter explicitly instead of relying on "auto".
+  #
+  # The code path is: try pymupdf4llm -> if the module is missing OR its output looks
+  # image-based, fall back to MarkItDown. "auto" is therefore correct ONLY if
+  # pymupdf4llm is actually installed. It was not (see the pymupdf4llm layer in
+  # deploy/deer-flow-pacgate/Dockerfile), so every PDF silently took the fallback and
+  # lost its heading structure: 0 outline entries vs 51 with pymupdf4llm on the same
+  # 65-page CJK PDF. With no outline, UploadsMiddleware tells the agent "No structural
+  # headings detected" and gives it no section map, so a large document becomes
+  # unnavigable - measured cause of three 87-104-call, 3.2-3.5M-token runs on thread
+  # b315a961 that all ended in GraphRecursionError with nothing delivered.
+  #
+  # Keep "auto" (not "pymupdf4llm") so image-only scans still fall back to MarkItDown
+  # via _pymupdf_output_too_sparse(). The Dockerfile layer is what makes the first
+  # branch reachable; scripts/test-pdf-outline-extraction.ps1 is what proves it stayed
+  # reachable after a rebuild.
+  pdf_converter: auto
 
 # Pacgate 2026-10-27: size the per-tool loop guard so it can tell productive work
 # from a loop.
