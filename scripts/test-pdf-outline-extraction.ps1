@@ -59,7 +59,21 @@ param(
     # A tracked, structured, multi-level PDF already in the repo's scope assets.
     # Overridable so the gate can be pointed at whatever the client last uploaded.
     [string]$PdfPath = '/tmp/outline-gate/input.pdf',
-    [string]$RepoPdf = 'scope-assets/Harvey 2026年4月全景调研.pdf'
+    # WHY A DIRECTORY AND A LENGTH FILTER, NOT A FILE NAME.
+    #   This was a hardcoded literal: 'scope-assets/Harvey 2026??4??????????.pdf'.
+    #   The script is UTF-8 with NO BOM (true of every script in this repo), so
+    #   Windows PowerShell 5.1 decodes it as ANSI and mangles the Chinese
+    #   characters. Test-Path then fails, staging fails, and the script exits 2.
+    #   Exit 2 means "CANNOT CHECK", which run-all-checks.ps1 correctly reports as
+    #   SKIP - so on a 5.1 machine this gate never actually ran; it passed only
+    #   when a stale /tmp/outline-gate/input.pdf happened to survive in the
+    #   container. Measured 2026-11-06 after recreating deer-flow: pwsh 7 -> 7/7
+    #   PASS, powershell 5.1 -> SKIP. Selecting by directory + size keeps the
+    #   gate ASCII-only, so it behaves identically under both hosts.
+    [string]$RepoPdfDir = 'scope-assets',
+    # Any of the scope PDFs is structured enough (>=10 outline entries) to prove
+    # the converter works; the largest is used for a stable, deterministic pick.
+    [int]$MinRepoPdfBytes = 500000
 )
 
 $ErrorActionPreference = 'Continue'
@@ -122,6 +136,16 @@ if ($importOk) {
 # over it whenever that PDF existed, so `-PdfPath /tmp/incident.pdf` silently
 # tested a different document and reported green. A gate that ignores its own
 # parameter is worse than no parameter.
+# Resolve the repo test PDF without embedding any non-ASCII literal - see the
+# -RepoPdfDir param comment for the 5.1/ANSI failure this replaces.
+$RepoPdf = $null
+if (Test-Path $RepoPdfDir) {
+    $RepoPdf = Get-ChildItem -Path $RepoPdfDir -Filter *.pdf -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Length -ge $MinRepoPdfBytes } |
+        Sort-Object Length -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+
 $pathExplicit = $PSBoundParameters.ContainsKey('PdfPath')
 $staged = $false
 
@@ -136,7 +160,7 @@ if ($pathExplicit -and $PdfPath -ne '/tmp/outline-gate/input.pdf') {
         (& docker cp $PdfPath "${Container}:$destPath" 2>&1) | Out-Null
         if ($LASTEXITCODE -eq 0) { $PdfPath = $destPath; $staged = $true }
     }
-} elseif (Test-Path $RepoPdf) {
+} elseif ($RepoPdf) {
     $probeDir = ($PdfPath -replace '/[^/]+$', '')
     (& docker exec $Container sh -c "mkdir -p '$probeDir'" 2>$null) | Out-Null
     (& docker cp $RepoPdf "${Container}:$PdfPath" 2>&1) | Out-Null
@@ -147,7 +171,7 @@ if ($pathExplicit -and $PdfPath -ne '/tmp/outline-gate/input.pdf') {
 }
 
 if (-not $staged) {
-    Write-Host "SKIP: could not stage a test PDF (looked for '$RepoPdf' and '$PdfPath')." -ForegroundColor Yellow
+    Write-Host "SKIP: could not stage a test PDF (looked for a >=${MinRepoPdfBytes}-byte PDF under '$RepoPdfDir' and '$PdfPath')." -ForegroundColor Yellow
     if ($script:failed -gt 0) { exit 1 } else { exit 2 }
 }
 
