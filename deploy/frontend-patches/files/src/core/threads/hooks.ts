@@ -965,9 +965,23 @@ export function useThreadStream({
             threadId: threadId,
             streamSubgraphs: true,
             streamResumable: true,
-            config: {
-              recursion_limit: 1000,
-            },
+            // Pacgate 2026-11-07: do NOT pin a recursion budget from the client.
+            //
+            // This used to send `recursion_limit: 1000` on every run (upstream's
+            // large-budget default for deep research). That constant became a wall:
+            // measured across 333 runs on this box, 22 died with
+            // GraphRecursionError and every one carrying a client budget died at
+            // exactly 1000. The deepest SUCCESS whose checkpoints were retained used
+            // 937 of its 1000 - 63 steps of headroom - so this was not a budget, it
+            // was the next ceiling, and it cut runs mid-work with real deliverables
+            // already on disk.
+            //
+            // The budget belongs to the server, which knows the graph's depth:
+            // app/gateway/services.py build_run_config() now applies a floor
+            // (DEERFLOW_MIN_RECURSION_LIMIT, default 2000) and a ceiling
+            // (DEERFLOW_MAX_RECURSION_LIMIT, default 4000). Omitting the key lets
+            // the server's own budget apply; the floor there still protects us if
+            // some other client ships a stale constant.
             context: {
               ...extraContext,
               ...context,

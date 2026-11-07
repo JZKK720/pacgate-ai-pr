@@ -325,6 +325,7 @@ services:
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
       - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
       # Pacgate 2026-10-28: clamp the lead-agent recursion budget.
+      # Pacgate 2026-11-07: and FLOOR it - the clamp alone did not save anyone.
       #
       # The chat UI sends recursion_limit: 1000 on every run, and
       # build_run_config() overwrote its own 100 default with whatever the client
@@ -333,11 +334,23 @@ services:
       # GraphRecursionError - 12 of 16 failed runs on this box were this error, at
       # BOTH 100 and 1000. The patch clamps client values to a ceiling (default
       # 4000, override with DEERFLOW_MAX_RECURSION_LIMIT) while still honouring a
-      # lower request. 4000 is the measured runaway bound, not a comfort budget:
-      # the deepest successful non-looping runs on this stack reached 5767, 3154
-      # and 1589 super-steps, and super-steps per LLM call reaches 5.45. A caller
-      # that sends no config now gets this ceiling as its default instead of a
-      # hardcoded 100, which was ~10 model calls.
+      # request between the floor and the ceiling.
+      #
+      # The clamp was only half the fix, and the half that was missing is the one
+      # that cost the most. Measured 2026-11-07 across 333 recorded runs: 22 died
+      # with GraphRecursionError and EVERY one that carried a client budget died at
+      # exactly 1000 (114-136 LLM calls); four checkpoint walks consumed exactly
+      # 1001 super-steps, which is the wall itself. Meanwhile the deepest SUCCESS
+      # whose checkpoints were retained used 937 of its 1000 - only 63 super-steps of
+      # headroom - and the deepest success on record (138 LLM calls; checkpoints
+      # pruned) extrapolates to ~1150-1200 at the 8.24-8.88 ratio every other deep
+      # success shows. A budget a good run exhausts to 94% is not a budget. Those
+      # runs were not thrashing either: one made 111 model calls for 15 distinct tool
+      # payloads and left a real memo on disk. Hence a floor (default 2000, override
+      # with DEERFLOW_MIN_RECURSION_LIMIT): a client may ask for more, never less. The
+      # floor yields to a lower explicit ceiling so the env var still means what it
+      # says. Do not "tidy" the floor away as redundant - it is the only thing
+      # standing between a stale client constant and a truncated deliverable.
       - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which

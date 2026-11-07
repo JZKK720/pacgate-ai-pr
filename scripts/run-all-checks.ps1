@@ -123,11 +123,14 @@ $gates = @(    'scripts/test-install-render.ps1'
     # gives it headroom. Both halves are asserted here, plus live replay against
     # the mounted module so a silent un-mount fails loudly.
     'scripts/test-loop-detection-window.ps1'
-    # The chat UI sends recursion_limit: 1000 per run and build_run_config()
+    # The chat UI sent recursion_limit: 1000 per run and build_run_config()
     # overwrote its own 100 default with it. LangGraph counts super-steps against
-    # that number, so a thrashing run spent all 1000 over ~16 minutes and 3M+
-    # tokens before failing. The cap is the fix; this gate asserts a client cannot
-    # raise it, using the module mounted into the RUNNING container.
+    # that number, and 1000 turned out to sit BELOW this graph's legitimate working
+    # depth: measured 2026-11-07, 22 runs died with GraphRecursionError, every one
+    # carrying a client budget died at exactly 1000, while the deepest SUCCESSFUL run
+    # needed 138 LLM calls (~1250-1350 super-steps). The cap bounds an upper request;
+    # the FLOOR is what stops a client pinning the stack below what the graph needs.
+    # This gate asserts both, using the module mounted into the RUNNING container.
     'scripts/test-run-recursion-cap.ps1'
     # A run killed at the recursion ceiling is RECOVERABLE only because thread
     # outputs land on the /data bind mount and stay downloadable. Nothing asserted

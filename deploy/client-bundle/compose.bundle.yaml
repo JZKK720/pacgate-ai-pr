@@ -229,6 +229,12 @@ services:
       # Pacgate 2026-10-28: clamp the lead-agent recursion budget so a thrashing
       # run stops early instead of burning 1000 supersteps and ~3M tokens. See
       # the longer note in compose.prod.yaml.
+      # Pacgate 2026-11-07: the clamp is only half of it - measured 22
+      # GraphRecursionErrors, every client-budgeted one at exactly 1000, while the
+      # deepest SUCCESS whose checkpoints were retained used 937 of its 1000. 1000 was
+      # not a budget but the next ceiling, so the patch now also applies a FLOOR
+      # (default 2000, DEERFLOW_MIN_RECURSION_LIMIT) that a client cannot undercut.
+      # Details and measurements are in compose.prod.yaml beside the same mount.
       - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's
