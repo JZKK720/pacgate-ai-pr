@@ -37,7 +37,14 @@ param(
         'deploy/AIPC-DEPLOYMENT-HANDBOOK.md',
         'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md',
         'deploy/SETUP-AND-OPERATIONS.md',
-        'deploy/SETUP-AND-OPERATIONS-ZH.md'
+        'deploy/SETUP-AND-OPERATIONS-ZH.md',
+        # The CLIENT front page. It states its own release in the H1
+        # ("# Pacgate-ai Client Bundle vX.Y.Z") and was in neither this list nor
+        # bump-release-version.ps1's targets, so nothing could ever fail on it.
+        # MEASURED 2026-11-07: it read v0.1.14 against a 0.2.32 release - wrong
+        # for eighteen consecutive tags. That is the exact "a guard that cannot
+        # see a file cannot fail on it" failure this param's own comment names.
+        'deploy/client-bundle/README-client.md'
     ),
     [string]$Compose = 'deploy/client-bundle/compose.prod.yaml',
     [switch]$SkipRemote

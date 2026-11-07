@@ -156,6 +156,20 @@ try {
             '(?m)^([-|]\s[^\r\n]*?ghcr\.io/jzkk720/[a-z0-9\-]+:)(?<v>\d+\.\d+\.\d+)'
         )
 
+        # The CLIENT-facing front page. It carries its own release header
+        # ("# Pacgate-ai Client Bundle vX.Y.Z") which is a claim about which
+        # release the bundle is - exactly the class of stale front matter this
+        # script exists to prevent - but it was never in this list.
+        #
+        # MEASURED 2026-11-07: the heading read v0.1.14 while the release was
+        # 0.2.32, so it had been wrong for eighteen consecutive tags. Every
+        # other README heading was kept honest by this script; this file was
+        # simply invisible to it. The heading is an H1 and carries no date, so
+        # it needs its own shape: `# <anything> vX.Y.Z`.
+        'deploy/client-bundle/README-client.md' = @(
+            '(?m)^(#\s[^\r\n]*?v)(?<v>\d+\.\d+\.\d+)'
+        )
+
         # The five client-facing docs. These were the LOOP: none of them was in
         # this list, so every bump left all five carrying the previous release,
         # the freshness audit failed on the same five, and they were corrected by

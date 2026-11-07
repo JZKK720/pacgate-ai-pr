@@ -1,4 +1,4 @@
-# Pacgate-ai Client Bundle v0.1.14
+# Pacgate-ai Client Bundle v0.2.32
 
 ## Quick start
 
