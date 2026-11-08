@@ -102,7 +102,7 @@ Phase A is done (`fd23be0`). This task exists so the executor does not re-merge,
 - Consumes: commit `fd23be0` on `main`
 - Produces: confidence that `_request()` bounded retry, `audit-e2e-credentials`, and the 74B picker docs all survived
 
-- [ ] **Step 1: Confirm the merge commit is HEAD's parent line**
+- [x] **Step 1: Confirm the merge commit is HEAD's parent line**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -111,7 +111,7 @@ git --no-pager log --oneline -3
 
 Expected: `fd23be0` at HEAD, then `17a498e`, `f19b8c1`.
 
-- [ ] **Step 2: Confirm the tree is at 0.2.32 and nothing is behind**
+- [x] **Step 2: Confirm the tree is at 0.2.32 and nothing is behind**
 
 ```powershell
 git --no-pager status -sb
@@ -120,7 +120,7 @@ Select-String -Path pacgate-ai\Cargo.toml -Pattern '^version'
 
 Expected: `## main...origin/main [ahead 10]` with **no** `behind`, and `version = "0.2.32"`.
 
-- [ ] **Step 3: Confirm the bounded 401 retry is the merged version, not upstream's recursion**
+- [x] **Step 3: Confirm the bounded 401 retry is the merged version, not upstream's recursion**
 
 ```powershell
 Select-String -Path deploy\client-bundle\patches\pacgate-adapter-client.py -Pattern 'for attempt in range\(2\)'
@@ -128,7 +128,7 @@ Select-String -Path deploy\client-bundle\patches\pacgate-adapter-client.py -Patt
 
 Expected: exactly one match. Zero matches means the merge silently took upstream's recursive `if self._relogin_if_401(resp) is None: return self.get(...)` and the login-storm defect is back.
 
-- [ ] **Step 4: Confirm both local gates are still registered**
+- [x] **Step 4: Confirm both local gates are still registered**
 
 ```powershell
 foreach ($g in @('audit-e2e-credentials','test-pdf-outline-extraction','test-firecrawl-wiring')) {
@@ -138,7 +138,7 @@ foreach ($g in @('audit-e2e-credentials','test-pdf-outline-extraction','test-fir
 
 Expected: `1` for each. `0` means upstream's rewrite of `run-all-checks.ps1` dropped the registration.
 
-- [ ] **Step 5: No commit needed**
+- [x] **Step 5: No commit needed**
 
 Phase A is already committed. If any step above fails, that is a merge defect: fix it, re-run the four static gates listed in "Verified starting state", and commit with `fix(sync): ...` before proceeding to Task 2.
 
@@ -161,7 +161,7 @@ Upstream now ships `PACGATE_MODEL_MID=nemotron-3.5-bolt:e4b-q8_0` (the same tag 
 - Consumes: the measurements in "Verified starting state"
 - Produces: an adopted `.env` MID value, and a decision record; no code
 
-- [ ] **Step 1: Re-read the upstream rationale verbatim before overriding it**
+- [x] **Step 1: Re-read the upstream rationale verbatim before overriding it**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -170,7 +170,7 @@ Select-String -Path deploy\client-bundle\.env.example -Pattern 'MID changed 2026
 
 The claim to test is: *"One tag means one resident model and no reload between a Mid and a Low call. The recorded trade-off is ingestion: ornith measured 1263 tok/s prefill vs 1080 here, while this tag wins generation 81 vs 64 tok/s."*
 
-- [ ] **Step 2: Confirm residency is size-one on this box**
+- [x] **Step 2: Confirm residency is size-one on this box**
 
 ```powershell
 # Load the 74B, then load the e4b, and watch the 74B disappear.
@@ -184,7 +184,7 @@ ollama ps
 
 Expected: one row each time, and it is a different row the second time. Two rows would invalidate the premise and you should stop and re-measure rather than continue.
 
-- [ ] **Step 3: Re-measure the two candidates, warm, on this box**
+- [x] **Step 3: Re-measure the two candidates, warm, on this box**
 
 ```powershell
 $ctx = ('The matter concerns a cross-border supply agreement. ' * 120)
@@ -202,7 +202,7 @@ Measure-Model 'ornith-1.5:9b'
 
 Expected on this box (recorded 2026-11-08): e4b ~1274 prefill / ~34-59 decode; ornith ~992 prefill / ~34 decode. If ornith wins prefill decisively on your run, that is grounds to keep ornith - the point is that the decision rests on a number from this machine.
 
-- [ ] **Step 4: Write the decision record**
+- [x] **Step 4: Write the decision record**
 
 ```powershell
 New-Item -ItemType Directory -Force docs\superpowers\decisions | Out-Null
@@ -210,7 +210,7 @@ New-Item -ItemType Directory -Force docs\superpowers\decisions | Out-Null
 
 Create `docs/superpowers/decisions/2026-11-08-local-model-posture.md`. It must state, with the measured numbers: this machine's hardware class (MAX+ 395 / 8060S, **not** the HX370 client class); that residency is size-one; the two MID options and their measured throughput here; that the 74B is a working option on this box **and must never enter `ollama-models.txt`** (that list is the client pre-pull contract and the 74B is 150% over the 16 GB client budget per `test-aipc-capacity-fit.ps1`); and the chosen MID value with its reason.
 
-- [ ] **Step 5: Adopt the MID value in `.env`, one line**
+- [x] **Step 5: Adopt the MID value in `.env`, one line**
 
 ```powershell
 cd deploy\client-bundle
@@ -222,7 +222,7 @@ Select-String -Path .env -Pattern '^PACGATE_MODEL_(MAIN|MID|LOW)='
 
 Expected: MID and LOW both `nemotron-3.5-bolt:e4b-q8_0`, MAIN still `deepseek-v4.1-flash:cloud` (cloud is intentional per the 2026-08-30 decision - do not "fix" it).
 
-- [ ] **Step 6: Verify the roster gate still accepts the pair**
+- [x] **Step 6: Verify the roster gate still accepts the pair**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -231,7 +231,7 @@ pwsh -NoProfile -File scripts\test-model-roster-consistency.ps1
 
 Expected: `RESULT: 14 of 14 checks passed`, exit 0. A4 asserts Main and Mid are DISTINCT - this passes because MAIN is the cloud model. If you had set MID equal to MAIN it would fail, correctly.
 
-- [ ] **Step 7: Commit the decision record**
+- [x] **Step 7: Commit the decision record**
 
 ```powershell
 git add docs/superpowers/decisions/2026-11-08-local-model-posture.md
@@ -254,7 +254,7 @@ git commit -m "docs(decision): record this box's local-model posture and the Mid
 - Consumes: `deploy/client-bundle/deer-flow-config.yaml` at the merged HEAD (now contains `pdf_converter: auto`)
 - Produces: a local variant that is the tracked config plus exactly the 74B uncomment
 
-- [ ] **Step 1: Prove the drift exists before regenerating**
+- [x] **Step 1: Prove the drift exists before regenerating**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr\deploy\client-bundle
@@ -265,7 +265,7 @@ Select-String -Path deer-flow-config.local.yaml -Pattern 'pdf_converter'
 
 Expected before the fix: a non-trivial line count AND **no** `pdf_converter` match. An absent setting is the drift: the code defaults to `auto`, so behaviour is correct, but the shipped rationale is gone from the file the container actually mounts.
 
-- [ ] **Step 2: Regenerate from the new tracked config, bounded explicitly**
+- [x] **Step 2: Regenerate from the new tracked config, bounded explicitly**
 
 The naive `^  #   ` rule is a **trap**: it also matches the next commented block (`qwen3.8-27b-local`), which would silently activate a model that is deliberately retired from the picker. Bound the block by the entry line and stop at the first non-continuation line.
 
@@ -288,7 +288,7 @@ $out | Set-Content deer-flow-config.local.yaml -Encoding utf8NoBOM
 "lines: $($out.Count)"
 ```
 
-- [ ] **Step 3: Verify exactly ONE picker entry became active**
+- [x] **Step 3: Verify exactly ONE picker entry became active**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr\deploy\client-bundle
@@ -297,7 +297,7 @@ Select-String -Path deer-flow-config.local.yaml -Pattern '^\s*- name:' | ForEach
 
 Expected (verified 2026-11-08): six model entries - `nemotron-bolt-7b-local`, `nemotron-bolt-7b-memory`, `nemotron-bolt-74b-local`, `ornith-1.5-9b-local`, `deepseek-v4.1-flash-cloud`, `glm-5.3-flash-cloud`. **`qwen3.8-27b-local` must NOT appear** - if it does, the loop over-ran and you activated a deliberately disabled model.
 
-- [ ] **Step 4: Verify the diff is exactly one hunk and touches nothing in `uploads:`**
+- [x] **Step 4: Verify the diff is exactly one hunk and touches nothing in `uploads:`**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr\deploy\client-bundle
@@ -308,7 +308,7 @@ $d = git --no-pager diff --no-index -U0 -- deer-flow-config.yaml deer-flow-confi
 
 Expected: `hunks: 1` and `uploads drift: 0`. A second hunk means the 74B boundary is wrong. Non-zero uploads drift means the new tracked `pdf_converter: auto` block was dropped or mangled - that is the config half of the release's headline fix.
 
-- [ ] **Step 5: Verify it is valid YAML and the 74B is not first**
+- [x] **Step 5: Verify it is valid YAML and the 74B is not first**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr\deploy\client-bundle
@@ -317,7 +317,7 @@ python -c "import yaml; d=yaml.safe_load(open('deer-flow-config.local.yaml',enco
 
 Expected: `models: [...]`, then `OK`, exit 0. The "never first" assertion is the one that matters commercially: the first entry is what an unpinned run inherits, and the 74B is ~12x slower per token than the e4b on a run that did not ask for it.
 
-- [ ] **Step 6: Confirm the mount override still points at this file**
+- [x] **Step 6: Confirm the mount override still points at this file**
 
 ```powershell
 Select-String -Path compose.local-model-override.yaml -Pattern 'deer-flow-config.local.yaml'
@@ -325,11 +325,11 @@ Select-String -Path compose.local-model-override.yaml -Pattern 'deer-flow-config
 
 Expected: one match binding `./deer-flow-config.local.yaml:/app/backend/config.yaml:ro`. A changed bind-mounted file does not recreate a container - Task 4's `--force-recreate` is what makes this take effect.
 
-- [ ] **Step 7: Note what this step is NOT gated by**
+- [x] **Step 7: Note what this step is NOT gated by**
 
 `scripts/test-model-picker-e2e.ps1` reads only the **tracked** `deer-flow-config.yaml` (`$cfg`, line 128). Nothing in the repo validates the local variant. Steps 3-5 above are therefore the entire verification of this file, and they are manual on purpose - do not skip them on the assumption that a gate covers it.
 
-- [ ] **Step 8: No commit needed**
+- [x] **Step 8: No commit needed**
 
 The file is gitignored by design. `.gitignore:247`.
 
@@ -347,7 +347,7 @@ The one gate that is red is red for exactly one reason: the containers are old. 
 - Consumes: the 0.2.32 images already proven pullable and partially pulled
 - Produces: a stack whose every container matches its pin; `test-stack-version-coherence.ps1` exit 0
 
-- [ ] **Step 1: Pull every pinned image, tolerating the documented network class**
+- [x] **Step 1: Pull every pinned image, tolerating the documented network class**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -363,7 +363,7 @@ foreach ($i in @('pacgate-api','pacgate-mcp','ocr-service','deer-flow-pacgate','
 
 A `lookup ghcr.io: no such host` or `short read: unexpected EOF` here is the network class the 2026-11-05 plan already recorded - **retry, do not conclude the release is broken**. A `denied` or `manifest unknown` is different: stop and treat it as a real publish defect.
 
-- [ ] **Step 2: Prove all five images are now local at the right tag**
+- [x] **Step 2: Prove all five images are now local at the right tag**
 
 ```powershell
 foreach ($i in @('pacgate-api','pacgate-mcp','ocr-service','deer-flow-pacgate','deer-flow-frontend-pacgate')) {
@@ -374,7 +374,7 @@ foreach ($i in @('pacgate-api','pacgate-mcp','ocr-service','deer-flow-pacgate','
 
 Expected: five `PRESENT`.
 
-- [ ] **Step 3: Recreate the five release services, including the local override**
+- [x] **Step 3: Recreate the five release services, including the local override**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -384,7 +384,7 @@ docker compose -f deploy/client-bundle/compose.prod.yaml -f deploy/client-bundle
 
 `--force-recreate` is required: a changed bind-mounted config does not recreate a container, and Task 3 changed exactly such a file. Omitting the second `-f` drops the 74B picker entry - the stack still runs, which is what makes that mistake easy to miss.
 
-- [ ] **Step 4: Wait for health, and read it rather than assuming**
+- [x] **Step 4: Wait for health, and read it rather than assuming**
 
 ```powershell
 Start-Sleep -Seconds 25
@@ -394,7 +394,7 @@ docker ps --filter 'name=~^(pacgate-api|pacgate-mcp|ocr-service|deer-flow|deer-f
 
 Expected: all five running their `:0.2.32` image, `(healthy)` where a healthcheck exists. `deer-flow` takes longest; if it is `starting`, wait and re-read rather than recreating again.
 
-- [ ] **Step 5: Run the acceptance gate**
+- [x] **Step 5: Run the acceptance gate**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-stack-version-coherence.ps1
@@ -402,7 +402,7 @@ pwsh -NoProfile -File scripts\test-stack-version-coherence.ps1
 
 Expected: **exit 0**, `14 passed`. This is the task's definition of done. Exit 1 with the same five "MIXED STACK" lines means the recreate did not take - check `docker ps` for a container that never restarted.
 
-- [ ] **Step 6: Commit nothing**
+- [x] **Step 6: Commit nothing**
 
 Images and running containers are environment state, not repository content. The tree was already committed in Task 1/2.
 
@@ -420,7 +420,7 @@ This is the whole point of the upgrade. Both gates are run **inside the recreate
 - Consumes: the recreated `deer-flow` container from Task 4
 - Produces: exit 0 from both gates; the recorded before/after counts for the plan outcome
 
-- [ ] **Step 1: Prove the converter is now installed**
+- [x] **Step 1: Prove the converter is now installed**
 
 ```powershell
 docker exec deer-flow /app/backend/.venv/bin/python -c "import pymupdf4llm, pymupdf; print('present', pymupdf.__version__)"
@@ -428,7 +428,7 @@ docker exec deer-flow /app/backend/.venv/bin/python -c "import pymupdf4llm, pymu
 
 Expected: `present 2.1`. `ModuleNotFoundError` means you are still looking at a 0.2.30 container - re-check `docker inspect deer-flow --format '{{.Config.Image}}'`.
 
-- [ ] **Step 2: Run the PDF outline gate**
+- [x] **Step 2: Run the PDF outline gate**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -437,7 +437,7 @@ pwsh -NoProfile -File scripts\test-pdf-outline-extraction.ps1
 
 Expected: **exit 0**, all 7 assertions pass. The red baseline to compare against is recorded in this plan's "Verified starting state": `2 passed, 5 failed`, `headings=0 outline=0`, and 7 control failures on the HTML-stripping unit tests. In particular O4 (`>= 10 entries`) and O6 (no raw HTML in titles) must flip to PASS.
 
-- [ ] **Step 3: Run the recursion gate**
+- [x] **Step 3: Run the recursion gate**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-run-recursion-cap.ps1
@@ -445,7 +445,7 @@ pwsh -NoProfile -File scripts\test-run-recursion-cap.ps1
 
 Expected: exit 0. It asserts **both** halves: a client cannot raise the budget above `DEERFLOW_MAX_RECURSION_LIMIT` (4000 default) **and** cannot pin it below `DEERFLOW_MIN_RECURSION_LIMIT` (2000 default). A gate that only checks the ceiling is the pre-0.2.32 half-fix.
 
-- [ ] **Step 4: Confirm the floor is what the container actually runs**
+- [x] **Step 4: Confirm the floor is what the container actually runs**
 
 ```powershell
 docker exec deer-flow sh -c 'grep -n "_PACGATE_MIN_RECURSION_LIMIT" /app/backend/app/gateway/services.py | head -5'
@@ -453,7 +453,7 @@ docker exec deer-flow sh -c 'grep -n "_PACGATE_MIN_RECURSION_LIMIT" /app/backend
 
 Expected: non-empty. The patch is bind-mounted from the tree, so this also proves the mount survived the recreate.
 
-- [ ] **Step 5: Confirm no patch regressed under the new image**
+- [x] **Step 5: Confirm no patch regressed under the new image**
 
 ```powershell
 pwsh -NoProfile -File scripts\audit-deer-flow-patches.ps1
@@ -462,7 +462,7 @@ pwsh -NoProfile -File scripts\audit-recursion-regressions.ps1
 
 Expected: patch audit `=== OK: every patched upstream path still exists at the target ===`; recursion audit `RESULT: fix EVIDENCED`. The recursion audit's `[INFO] deepest successful run since baseline` is informational - a quiet result is not evidence either way, and it says so.
 
-- [ ] **Step 6: Commit nothing, but record the numbers**
+- [x] **Step 6: Commit nothing, but record the numbers**
 
 Note the PDF gate's before (`2 passed, 5 failed`) and after counts, and the recursion gate's result. They go into this plan's outcome section in Task 7.
 
@@ -481,7 +481,7 @@ A green version gate proves the images are the right ones. It does not prove the
 - Consumes: the running 0.2.32 stack
 - Produces: exit 0 from the credential audit and the legal journey; the smoke result
 
-- [ ] **Step 1: Check credential VALIDITY, not presence**
+- [x] **Step 1: Check credential VALIDITY, not presence**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -490,7 +490,7 @@ pwsh -NoProfile -File scripts\audit-e2e-credentials.ps1
 
 Exit 2 (`CANNOT CHECK`) means the stack is down - that is a normal skip on a dev box and **not** a pass. Exit 1 means a credential the lane depends on is genuinely invalid: fix it with `scripts/set-connector-key.ps1` for a connector key, or re-provision the app credential.
 
-- [ ] **Step 2: Run the full-stack smoke**
+- [x] **Step 2: Run the full-stack smoke**
 
 ```powershell
 pwsh -NoProfile -File scripts/smoke-full-stack.ps1
@@ -498,7 +498,7 @@ pwsh -NoProfile -File scripts/smoke-full-stack.ps1
 
 Expected: exit 0. Note any lane it reports as skipped, and why - a skipped lane is not a verified lane.
 
-- [ ] **Step 3: Run the legal journey**
+- [x] **Step 3: Run the legal journey**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-legal-journey.ps1
@@ -506,7 +506,7 @@ pwsh -NoProfile -File scripts\test-legal-journey.ps1
 
 This is the end-to-end evidence: matter -> upload -> OCR -> sanitize -> review -> search -> qm -> recall. It now also names the failing step when it dies (`275037b`), so a failure is actionable rather than a bare trace.
 
-- [ ] **Step 4: Confirm cross-stack credentials still agree**
+- [x] **Step 4: Confirm cross-stack credentials still agree**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-cross-stack-credentials.ps1
@@ -514,7 +514,7 @@ pwsh -NoProfile -File scripts\test-cross-stack-credentials.ps1
 
 Expected: exit 0, or exit 2 if one of the two `.env` files is absent (normal on a fresh clone). This answers "do the two env files AGREE", which is a different question from Step 1's "is each credential VALID".
 
-- [ ] **Step 5: Run the whole gate suite once**
+- [x] **Step 5: Run the whole gate suite once**
 
 ```powershell
 pwsh -NoProfile -File scripts/run-all-checks.ps1
@@ -522,7 +522,7 @@ pwsh -NoProfile -File scripts/run-all-checks.ps1
 
 Expected: no exit 1. Exit 2 entries are CANNOT CHECK and need to be listed explicitly in the outcome, not waved through. This is the slowest step; give it 20+ minutes.
 
-- [ ] **Step 6: Commit nothing**
+- [x] **Step 6: Commit nothing**
 
 ---
 
@@ -535,11 +535,11 @@ Expected: no exit 1. Exit 2 entries are CANNOT CHECK and need to be listed expli
 - Consumes: the gate results from Tasks 4-6
 - Produces: a plan an auditor can read without re-running anything
 
-- [ ] **Step 1: Append a measured outcome section**
+- [x] **Step 1: Append a measured outcome section**
 
 Add a `## Outcome` section recording, with real numbers: the coherence gate's pass/fail count, the PDF gate's before and after, the recursion gate result, the smoke/legal/credential/suite results, and any lane left CANNOT CHECK with its reason. Mark the checkboxes above that actually ran. Do not record an unrun gate as passed.
 
-- [ ] **Step 2: State the rollback explicitly**
+- [x] **Step 2: State the rollback explicitly**
 
 ```powershell
 # Runtime: one command back to 0.2.30, images still local
@@ -551,7 +551,7 @@ git log --oneline -1 backup/pre-sync-2026-11-08
 ```
 
 - No migrations were added between 0.2.30 and 0.2.32, so the rollback needs no SQL. Record that fact, because it is the reason the rollback is cheap.
-- [ ] **Step 3: Commit the outcome**
+- [x] **Step 3: Commit the outcome**
 
 ```powershell
 git add docs/superpowers/plans/2026-11-08-upstream-sync-v0.2.32-runtime-upgrade.md
@@ -677,3 +677,4 @@ proxy variables before concluding anything about the release.
 | Pushing `main` to `origin` or `fork` | `main` is now 10 ahead of `origin/main`. Whether the local-only commits get published is a maintainer decision, not an upgrade step - and `fork` shares no history with `origin` at all, so it is a separate operation |
 | Committing the 13 untracked files | They are the LOCAL-FIRST legal AI stack reference plus its diagrams and renderers. Unrelated to this upgrade; verified to carry no secret-shaped content and to collide with nothing upstream |
 | Fixing `gemma4:12b-it-qat` showing as resident | It is retired from the roster but still pulled on this box. Harmless while nothing routes to it; cleaning it up is hygiene, not this upgrade |
+
