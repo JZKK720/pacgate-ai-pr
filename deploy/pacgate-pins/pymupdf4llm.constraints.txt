@@ -1,0 +1,17 @@
+# Pin the PDF -> Markdown converter that the deer-flow image installs.
+#
+# WHY A CONSTRAINT FILE AND NOT `pymupdf4llm==2.1` IN THE RUN LINE.
+#
+# pymupdf4llm and pymupdf resolve their versions INDEPENDENTLY but are built
+# against each other: pymupdf4llm 2.1 declares `pymupdf>=1.27`, and an
+# unconstrained resolve can land pymupdf at a release pymupdf4llm's parser
+# internals do not match. The image is reproducible only if both move together,
+# so both are named here and the install is pinned by constraint rather than by
+# a single `==` on the top-level package.
+#
+# 2.1 / 2.1 is the pair VERIFIED against the 65-page Pacgate CJK tutorial PDF on
+# 2026-11-06: 51 outline entries recovered where MarkItDown produced 0. Raise
+# both numbers together, and re-run scripts/test-pdf-outline-extraction.ps1 -
+# that gate is what makes a silent regression in this pair visible.
+pymupdf4llm==2.1
+pymupdf==2.1

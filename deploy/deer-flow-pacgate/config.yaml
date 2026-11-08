@@ -3,9 +3,8 @@
 # STANDALONE / image-baked config. The CLIENT stack does not use this file: both
 # `compose.prod.yaml` and `compose.bundle.yaml` bind-mount
 # `deploy/client-bundle/deer-flow-config.yaml` over `/app/backend/config.yaml`.
-# Nothing mounts this one, and no script reads it.
 #
-# It still matters twice over, so do not leave it as a trap:
+# It still matters three ways, so do not leave it as a trap:
 #   1. `deploy/deer-flow-pacgate/Dockerfile` bakes it into the published
 #      deer-flow image, so any run that starts that image WITHOUT the client
 #      mount gets this behaviour.
@@ -14,6 +13,12 @@
 #      therefore sent every prompt to ollama.com by default - the same defect the
 #      client config was fixed for on 2026-09-25. A local model is now first, so
 #      the default is on-device and cloud models are explicit choices only.
+#   3. `scripts/test-chat-no-auto-egress.ps1` (A9/A10) READS THIS FILE. An earlier
+#      revision of this header claimed "no script reads it", which was false and
+#      is how the gemma4:12b entries below survived commit a78073a for a day: the
+#      client config was migrated, this file was not, and nothing compared them.
+#      Any model change MUST land in both files - the tag here is the one a bare
+#      image start will actually request.
 #
 # The client's authoritative config lives in `deploy/client-bundle/`. Edit that
 # one for anything client-facing; edit this one only for the standalone image.
@@ -38,15 +43,42 @@ models:
   #   max_tokens: 8192
   #   temperature: 0.1
 
-  - name: gemma4-12b-local
-    display_name: Gemma 4 12B (Local GPU)
-    description: LOCAL default. 7.2 GB, fits a 16 GB AIPC card with headroom.
+  # ── LOCAL: nemotron-3.5-bolt (2026-11-05) ─────────────────────────────────
+  # Replaces the retired gemma4-12b-local as models[0], and therefore as the
+  # default for an image started WITHOUT the client bind-mount.
+  #
+  # WHY THIS CHANGED. commit a78073a ("retire gemma4:12b") moved the client
+  # config, install.ps1, ollama-models.txt and ov.conf.template onto
+  # nemotron-3.5-bolt:e4b-q8_0 - but NOT this file, which is the one baked into
+  # the published image. A bare `docker run` of that image therefore defaulted to
+  # a tag no longer on any client's `ollama list`, i.e. HTTP 404 with no fallback.
+  # Measured 2026-11-06 while auditing 0.2.31: this file still read
+  # gemma4:12b-it-qat in 6 active places while the mounted client config had 0.
+  #
+  # The tag is vision-capable (gemma4 architecture + CLIP encoder) and passes
+  # json_schema structured output, so one resident model covers the default,
+  # memory updates and image extraction - the property that previously forced
+  # gemma4 to be the default.
+  #
+  # TRADE-OFF, deliberate: context ceiling is 65536 and a larger request is
+  # silently clamped. The stack ships 65536, so nothing changes today.
+  - name: nemotron-bolt-7b-local
+    display_name: Nemotron 3.5 Bolt 7.5B (Local GPU)
+    description: LOCAL default. 9.8 GB, fits a 16 GB AIPC card with headroom.
     use: langchain_openai:ChatOpenAI
-    model: gemma4:12b-it-qat
+    model: nemotron-3.5-bolt:e4b-q8_0
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 8192
     temperature: 0.1
+    # WITHOUT THIS the model spends the whole budget on invisible reasoning and
+    # returns EMPTY content with finish_reason=length - measured: 0 content
+    # chars, 1060 reasoning chars, 300/300 tokens. With it: 43 chars, 11 tokens,
+    # finish=stop. (scripts/probe-thinking-suppression.ps1)
+    supports_thinking: true
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
 
   # Pacgate 2026-10-07: qwen3.8 DEMOTED from the picker. Benchmark on the 8060S
   # iGPU (warm, ~3k ctx): dense 27B = 26 t/s gen / 225 t/s ingestion, vs
@@ -65,15 +97,22 @@ models:
   # Dedicated memory-update model (referenced by memory.model_name above).
   # Background memory updates run OUTSIDE user-visible runs; a hard 2048 cap
   # means a confused run cannot loop meaningfully. Memory facts are short JSON.
-  - name: gemma4-12b-memory
-    display_name: Gemma 4 12B (Memory, capped)
+  - name: nemotron-bolt-7b-memory
+    display_name: Nemotron 3.5 Bolt 7.5B (Memory, capped)
     description: Internal model for background memory updates. Hard 2048-token cap.
     use: langchain_openai:ChatOpenAI
-    model: gemma4:12b-it-qat
+    model: nemotron-3.5-bolt:e4b-q8_0
     api_key: ollama
     base_url: http://host.docker.internal:11434/v1
     max_tokens: 2048
     temperature: 0.1
+    # Same reasoning-channel fix as nemotron-bolt-7b-local above. This entry
+    # matters MOST: memory updates are unattended and fire on every turn, so an
+    # unbudgeted reasoning burn here is invisible but constant.
+    supports_thinking: true
+    supports_reasoning_effort: true
+    when_thinking_disabled:
+      reasoning_effort: none
 
   # ── CLOUD: reachable only by EXPLICIT selection ───────────────────────────
   # These have no weight layers on disk; inference routes to ollama.com. Auth
@@ -192,8 +231,8 @@ memory:
   # memory updater runs OUTSIDE user-visible runs; without a pin it uses the
   # first config model with no generation cap, and a confused run can loop tens
   # of thousands of tokens on the single Ollama runner slot, stalling every
-  # chat. gemma4-12b-memory carries a hard 2048 max_tokens (entry below).
-  model_name: gemma4-12b-memory
+  # chat. nemotron-bolt-7b-memory carries a hard 2048 max_tokens (entry above).
+  model_name: nemotron-bolt-7b-memory
 
 # Pacgate 2026-10-17: PIN the title-generation model.
 #
@@ -203,7 +242,7 @@ memory:
 # EVERY new thread, loading or evicting a 25 GB model on the single Ollama
 # runner slot for a six-word title. This file is baked into the standalone
 # image, so an image started without the client bind-mount has no other pin.
-# gemma4-12b-memory is the only 12B entry here, so title and memory converge on
-# one resident model.
+# nemotron-bolt-7b-memory is the capped entry here, so title and memory converge
+# on one resident model.
 title:
-  model_name: gemma4-12b-memory
+  model_name: nemotron-bolt-7b-memory

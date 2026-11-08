@@ -269,7 +269,15 @@ $contextPrefixes = @(
     # stayed green. Derived from the Dockerfile, not guessed: re-check L51/L58 if
     # the bake moves.
     'deploy/client-bundle/patches/deer-flow-loop-detection.py',
-    'deploy/client-bundle/patches/deer-flow-run-recursion-cap.py'
+    'deploy/client-bundle/patches/deer-flow-run-recursion-cap.py',
+    # ADDED 2026-11-06 for the 0.2.31 PDF-outline fix. Both are COPY sources in
+    # deploy/deer-flow-pacgate/Dockerfile (L91 and L124) and have no bind mount
+    # shadowing them, so their content reaches clients ONLY through the image.
+    # That makes them the most dangerous kind of build input to leave untracked:
+    # the gate's own failure message named them, which is the correct direction
+    # for this gate to err in.
+    'deploy/client-bundle/patches/deer-flow-file-conversion.py',
+    'deploy/pacgate-pins/pymupdf4llm.constraints.txt'
 )
 
 # A Dockerfile is itself a build input even though it is not a COPY source.

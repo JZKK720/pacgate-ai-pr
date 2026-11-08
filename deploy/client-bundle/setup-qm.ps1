@@ -438,6 +438,47 @@ try {
             Write-Host "       docker compose -f compose.qm.yaml up -d --force-recreate portal auth web-ui admin core" -ForegroundColor Gray
         }
 
+        # Additive repair of FIRECRAWL_API_KEY (fix 2026-11-05).
+        #
+        # The sandbox tool `firecrawl-qm` and the qm agent's web SKILL both read
+        # FIRECRAWL_API_KEY from the sandbox secretEnv, which compose.qm.yaml
+        # forwards from this .env. The generator below only writes it on a FIRST
+        # bootstrap, so every machine installed before the key existed had no
+        # web lane - and because the tool exits non-zero rather than degrading,
+        # the agent just saw "FIRECRAWL_API_KEY is required" with no hint that a
+        # one-line paste would fix it.
+        #
+        # Read from the main bundle's .env, exactly like the first-run path: the
+        # key is per-machine, so the operator pastes it once there. Like
+        # QM_PUBLIC_URL this is not a secret that is pinned to data, so it can be
+        # added in place without disturbing the generated secrets.
+        $fcMainEnv = Join-Path $PSScriptRoot '.env'
+        $fcRepairKey = ''
+        if (Test-Path -LiteralPath $fcMainEnv) {
+            foreach ($line in (Get-Content -LiteralPath $fcMainEnv)) {
+                if ($line -match '^\s*FIRECRAWL_API_KEY\s*=\s*(.*)$') { $fcRepairKey = $Matches[1].Trim() }
+            }
+        }
+        if ($qmEnvRaw -match '(?m)^\s*FIRECRAWL_API_KEY\s*=') {
+            Write-Host "[OK] FIRECRAWL_API_KEY already present in the qm .env" -ForegroundColor Green
+        }
+        elseif (-not $fcRepairKey) {
+            Write-Host "[WARN] FIRECRAWL_API_KEY is not set in $fcMainEnv" -ForegroundColor Yellow
+            Write-Host "  The qm agent's firecrawl-qm tool will report 'FIRECRAWL_API_KEY is required'" -ForegroundColor Yellow
+            Write-Host "  and web search/scrape will be unavailable. Set it in the bundle .env and re-run." -ForegroundColor Yellow
+        }
+        else {
+            $fcPrefix = if ($qmEnvRaw.Length -eq 0 -or $qmEnvRaw.EndsWith("`n")) { '' } else { "`r`n" }
+            [System.IO.File]::AppendAllText(
+                $qmEnvPath,
+                "$fcPrefix" + "FIRECRAWL_API_KEY=$fcRepairKey`r`n",
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            Write-Host "[OK] Added FIRECRAWL_API_KEY to the qm .env (web search/scrape lane)." -ForegroundColor Green
+            Write-Host "     Recreate the core so the sandbox picks it up:" -ForegroundColor Gray
+            Write-Host "       docker compose -f compose.qm.yaml up -d --force-recreate core" -ForegroundColor Gray
+        }
+
         npm exec qm -- check
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: qm check failed against the EXISTING .env - the file needs review." -ForegroundColor Red

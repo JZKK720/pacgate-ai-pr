@@ -55,6 +55,67 @@ _VALID_LG_MODES = {"values", "updates", "checkpoints", "tasks", "debug", "messag
 _STREAM_IDLE_TIMEOUT_SECONDS = float(os.environ.get("DEERFLOW_STREAM_IDLE_TIMEOUT_S", "420") or 420)
 
 
+# Pacgate 2026-11-06: tell the user WHAT happened when the recursion ceiling is
+# what ended the run, and what they can still recover.
+#
+# WHY THIS EXISTS. LangGraph raises
+#     GraphRecursionError: Recursion limit of 1000 reached without hitting a
+#     stop condition. You can increase the limit by setting the `recursion_limit`
+#     config key.
+# and the worker stored that string verbatim as the run's `error`. That message
+# is written for the person editing the graph, not for the lawyer looking at the
+# run - it names a config key no client can reach, and it says nothing about the
+# work that was already produced.
+#
+# MEASURED (this box, 2026-11-06, thread b315a961). Three consecutive runs were
+# killed this way at 114-121 LLM calls and 3.2-3.5M tokens each. All three had
+# already written partial deliverables into the thread's outputs directory, and
+# that directory outlives the run - scripts/test-chat-artifact-durability.ps1
+# asserts exactly that. The user was told only "Recursion limit of 1000 reached",
+# so the honest next step ("your partial file is still there, ask me to continue
+# from it") was invisible.
+#
+# WHAT THIS DOES NOT DO. It does not change the ceiling, and it does not swallow
+# the exception - the run still ends in RunStatus.error, which is correct: it did
+# not finish. Only the human-readable message changes. The original LangGraph text
+# and exception type are preserved in the same string and in the log, so anything
+# grepping for GraphRecursionError still matches.
+_RECURSION_HINT_MARKERS = (
+    "recursion limit",
+    "graphrecursionerror",
+)
+
+
+def _is_recursion_exhaustion(error_msg: str) -> bool:
+    """Return True when *error_msg* is LangGraph's recursion-limit failure."""
+    lowered = error_msg.lower()
+    return any(marker in lowered for marker in _RECURSION_HINT_MARKERS)
+
+
+def _recursion_exhaustion_message(error_msg: str, thread_id: str) -> str:
+    """Wrap a recursion-limit failure in an actionable, client-safe message.
+
+    Args:
+        error_msg: The raw exception text from LangGraph.
+        thread_id: Thread that owns the run, used only to name the artifacts dir.
+
+    Returns:
+        A message that keeps the original diagnostic text (so the failure stays
+        greppable) while explaining, in user terms, that the run stopped early,
+        that earlier output is still on disk, and how to continue.
+    """
+    return (
+        "This run stopped early: it reached the agent's step ceiling before "
+        "producing a final answer, so the result above (if any) is partial. "
+        "Nothing was discarded - any file the agent already produced is still "
+        f"saved in this thread (thread {thread_id}), and you can download it and "
+        "ask the agent to continue from that file in a new message. Retrying the "
+        "same request unchanged will usually hit the same ceiling; narrow the "
+        "request, or ask for the work in stages, to finish it. "
+        f"[original error: {error_msg}]"
+    )
+
+
 def _build_runtime_context(
     thread_id: str,
     run_id: str,
@@ -441,8 +502,16 @@ async def run_agent(
             logger.info("Run %s was cancelled", run_id)
 
     except Exception as exc:
-        error_msg = f"{exc}"
-        logger.exception("Run %s failed: %s", run_id, error_msg)
+        raw_error = f"{exc}"
+        # Pacgate 2026-11-06: a recursion kill is a bounded, recoverable stop, not
+        # an opaque crash. Keep the raw text for logs/greps, but hand the client a
+        # message that says the run stopped early, that partial output survives on
+        # disk, and how to continue. Any other exception is stored verbatim.
+        if _is_recursion_exhaustion(raw_error):
+            error_msg = _recursion_exhaustion_message(raw_error, thread_id)
+        else:
+            error_msg = raw_error
+        logger.exception("Run %s failed: %s", run_id, raw_error)
         await run_manager.set_status(run_id, RunStatus.error, error=error_msg)
         await bridge.publish(
             run_id,

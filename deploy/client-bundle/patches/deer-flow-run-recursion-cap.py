@@ -244,6 +244,47 @@ def resolve_agent_factory(assistant_id: str | None):
 # be raised without editing the image, matching DEERFLOW_STREAM_IDLE_TIMEOUT_S.
 _PACGATE_MAX_RECURSION_LIMIT = int(os.environ.get("DEERFLOW_MAX_RECURSION_LIMIT", "4000") or 4000)
 
+# Pacgate 2026-11-07: a FLOOR, because a ceiling alone does not stop the kill.
+#
+# The clamp above only bounds an upper request. It never rescued a caller whose own
+# budget was too small, and the one such caller is the chat UI, which sends
+# `recursion_limit: 1000` unconditionally. So every UI run ran at exactly 1000 while
+# the server's 4000 ceiling sat unused, and 1000 is provably below what this graph
+# needs.
+#
+# MEASURED on this box, 2026-11-07, from `runs` joined to langgraph's own per-run
+# `step` counter, across 333 recorded runs:
+#   - 22 runs died with GraphRecursionError. Every one that carried a client budget
+#     died at exactly 1000 (reported limit 1000, 114-136 LLM calls); the rest died at
+#     the old 100 default with 14-15 calls.
+#   - 4 checkpoint walks consumed EXACTLY 1001 super-steps - the wall, not a
+#     coincidence: a run's last step index is ceiling+1 when it is killed.
+#   - the deepest SUCCESSFUL run whose checkpoints were retained used 937 super-steps
+#     for 109 LLM calls (ratio 8.60) - only 63 super-steps below the wall it was
+#     allowed. Deeper successes exist (up to 138 LLM calls) but their checkpoints were
+#     pruned; at the 8.24-8.88 ratio measured on every other deep success, 138 calls
+#     extrapolates to ~1150-1200 super-steps, i.e. past 1000. That last figure is an
+#     EXTRAPOLATION, not a measurement - the directly measured fact is the 937.
+#   - the failed runs were NOT thrashing: bcb69ff8's killed run made 111 model calls
+#     for 15 distinct tool-call payloads and produced a real memo on disk. Its
+#     step/call ratio was 9.0, in line with the healthy runs.
+#
+# So 1000 is not a safe budget that a runaway exceeded. Successful runs get within
+# ~6% of it, the runs killed by it have the same per-call ratio as the runs that
+# survived, and the runs that needed the most are exactly the ones it cut. The floor
+# makes the server, not the client, own that number. A caller may still ask for MORE
+# than the floor (up to the ceiling) - a genuinely deeper workload stays possible - but
+# a caller can no longer pin the stack below it by shipping a stale constant.
+#
+# Why the floor is 2000: it is ~2.1x the deepest DIRECTLY MEASURED successful run
+# (937 super-steps) and ~1.7x the extrapolated depth of the deepest success on record
+# (~1150-1200). It stays well under the 4000 ceiling, so the ceiling still binds and
+# DEERFLOW_MAX_RECURSION_LIMIT keeps its meaning. Raising the floor to the ceiling
+# would make that env var pointless (a lower ceiling would then be silently
+# overridden upward), so the floor is deliberately clamped under the ceiling at use
+# time.
+_PACGATE_MIN_RECURSION_LIMIT = int(os.environ.get("DEERFLOW_MIN_RECURSION_LIMIT", "2000") or 2000)
+
 def build_run_config(
     thread_id: str,
     request_config: dict[str, Any] | None,
@@ -293,6 +334,9 @@ def build_run_config(
     # go through build_run_config and is therefore clamped - but a caller of
     # deerflow.client directly is not. Patching both is a separate change with its
     # own blast radius; recorded here so the gap is not mistaken for coverage.
+    # NOTE 2026-11-07: these two are now the ONLY remaining 100 floors. The UI's
+    # 1000 is no longer one of them - build_run_config() raises anything below
+    # _PACGATE_MIN_RECURSION_LIMIT, so a UI-supplied 1000 arrives as 2000.
     config: dict[str, Any] = {"recursion_limit": _PACGATE_MAX_RECURSION_LIMIT}
     if request_config:
         # LangGraph >= 0.6.0 introduced ``context`` as the preferred way to
@@ -325,7 +369,10 @@ def build_run_config(
                 # ceiling. Before this, the chat UI's hardcoded 1000 replaced the
                 # 100 default outright, so one thrashing run consumed every
                 # superstep it had. Clamp instead of overwrite; an explicit lower
-                # value from a caller is still honoured.
+                # value from a caller is still honoured - but only down to the
+                # FLOOR, because a lower value is not "a conservative choice", it is
+                # a budget below this graph's measured working depth (see the
+                # _PACGATE_MIN_RECURSION_LIMIT note above).
                 if k == "recursion_limit":
                     try:
                         requested = max(1, int(v))
@@ -336,6 +383,17 @@ def build_run_config(
                             config.get("recursion_limit"),
                         )
                         continue
+                    # The floor is clamped under the ceiling at use time so that a
+                    # DEERFLOW_MAX_RECURSION_LIMIT below the default floor still
+                    # means what it says instead of being silently overridden up.
+                    floor = min(_PACGATE_MIN_RECURSION_LIMIT, _PACGATE_MAX_RECURSION_LIMIT)
+                    if requested < floor:
+                        logger.info(
+                            "build_run_config: caller asked recursion_limit=%s, below the measured floor; raising to %s (set DEERFLOW_MIN_RECURSION_LIMIT to change)",
+                            requested,
+                            floor,
+                        )
+                        requested = floor
                     if requested > _PACGATE_MAX_RECURSION_LIMIT:
                         logger.warning(
                             "build_run_config: caller asked recursion_limit=%s; clamping to %s (set DEERFLOW_MAX_RECURSION_LIMIT to raise)",

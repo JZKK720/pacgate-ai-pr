@@ -91,6 +91,18 @@ Assert-That ($src -match '"4000"') 'the default ceiling is 4000 - the measured r
 Assert-That ($src -notmatch '"500"') 'the unsound 500 default has not come back'
 Assert-That ($src -match 'if k == "recursion_limit":') 'the merge special-cases recursion_limit'
 
+# The floor must exist, be named, be env-tunable, and sit above the 1000 wall.
+# Static-only checks would pass while the constant was defined and never used, so
+# section 3 also proves the behaviour live in the container.
+Assert-That ($src -match '(?m)^_PACGATE_MIN_RECURSION_LIMIT\s*=\s*int\(') 'the floor is a named, env-tunable constant'
+Assert-That ($src -match 'DEERFLOW_MIN_RECURSION_LIMIT') 'the floor can be changed without editing the image'
+Assert-That ($src -match '"2000"') 'the default floor is 2000 - above the measured 1000 wall, ~2.1x the deepest measured success'
+# The floor must be clamped under the ceiling at use time. Otherwise a deliberately
+# low DEERFLOW_MAX_RECURSION_LIMIT would be silently overridden UPWARD by the floor,
+# which would make the ceiling env var mean the opposite of what it says.
+Assert-That ($src -match 'min\(_PACGATE_MIN_RECURSION_LIMIT,\s*_PACGATE_MAX_RECURSION_LIMIT\)') `
+    'the floor yields to a lower explicit ceiling instead of overriding it'
+
 # The specific defect: recursion_limit was assigned straight through. Assert the
 # clamp branch runs FIRST and `continue`s, so the plain `config[k] = v` on the last
 # line can never be reached for recursion_limit. Checking for the mere absence of
@@ -136,15 +148,21 @@ if (-not $healthy) {
 $probe = @'
 import sys
 sys.path.insert(0, "/app/backend")
-from app.gateway.services import build_run_config, _PACGATE_MAX_RECURSION_LIMIT
+from app.gateway.services import (
+    build_run_config,
+    _PACGATE_MAX_RECURSION_LIMIT,
+    _PACGATE_MIN_RECURSION_LIMIT,
+)
 out = []
 out.append("CEILING=%d" % _PACGATE_MAX_RECURSION_LIMIT)
+out.append("FLOOR=%d" % _PACGATE_MIN_RECURSION_LIMIT)
 def probe(label, req):
     out.append("%s=%s" % (label, build_run_config("gate", req, None).get("recursion_limit")))
 probe("UI1000", {"recursion_limit": 1000})
 probe("NONE", None)
 probe("LOW50", {"recursion_limit": 50})
 probe("STR900", {"recursion_limit": "900"})
+probe("JUST_ABOVE", {"recursion_limit": _PACGATE_MIN_RECURSION_LIMIT + 1})
 probe("HUGE", {"recursion_limit": 1000000})
 probe("JUNK", {"recursion_limit": "nonsense"})
 print("\n".join(out))
@@ -161,17 +179,39 @@ $low     = if ($live -match 'LOW50=(\S+)')     { $Matches[1] } else { '' }
 $str     = if ($live -match 'STR900=(\S+)')    { $Matches[1] } else { '' }
 $huge    = if ($live -match 'HUGE=(\S+)')      { $Matches[1] } else { '' }
 $junk    = if ($live -match 'JUNK=(\S+)')      { $Matches[1] } else { '' }
-
+$justAbove = if ($live -match 'JUST_ABOVE=(\S+)') { $Matches[1] } else { '' }
 Assert-That ($ceiling -ge 200) "the deployed ceiling is a real budget ($ceiling), not a stub"
 
-# The clamp semantics, stated honestly:
-#  - the UI's hardcoded 1000 is now UNDER the ceiling, so it passes through
-#    unchanged. That is the correct outcome: 1000 is a proven-safe budget (runs
-#    have succeeded inside it) and the ceiling exists to stop a caller asking for
-#    an unbounded or runaway budget, not to shrink a working one.
-#  - the ceiling must still BIND above itself, which is what stops a thrashing
-#    run from being handed an arbitrarily large budget.
-Assert-That ($ui -eq '1000') "the UI's 1000 sits under the $ceiling ceiling and passes through (got '$ui')"
+# The clamp semantics, restated 2026-11-07 after the 1000 wall was measured.
+#
+# The earlier comment here argued that "1000 is a proven-safe budget (runs have
+# succeeded inside it)". That was backwards: runs succeeded inside it only because
+# the run that would have exceeded it was killed at 1000. Measured on this box
+# across 333 recorded runs:
+#
+#   - 22 runs died with GraphRecursionError; every one that carried a client budget
+#     died at exactly 1000 (reported limit 1000, 114-136 LLM calls), the rest at the
+#     old 100 default with 14-15 calls;
+#   - 4 checkpoint walks consumed EXACTLY 1001 super-steps - a run's last step index
+#     is ceiling+1 when it is killed, so 1001 IS the wall;
+#   - the deepest SUCCESSFUL run whose checkpoints were retained used 937 super-steps
+#     for 109 LLM calls (ratio 8.60) - only 63 steps below the wall it was allowed.
+#     Deeper successes exist (up to 138 LLM calls) but their checkpoints were pruned;
+#     at the 8.24-8.88 ratio every other deep success shows, 138 calls extrapolates
+#     to ~1150-1200, past 1000. The 937 is the measurement; the 1150-1200 is an
+#     extrapolation and is labelled as one;
+#   - the killed runs were not thrashing: thread bcb69ff8's kill made 111 model calls
+#     for 15 distinct tool-call payloads (ratio 9.0, in line with healthy runs) and
+#     left a real memo on disk.
+#
+# So the client's 1000 must NOT pass through, and the floor is what stops it. The
+# ceiling still binds above itself, so a thrashing run still cannot be handed an
+# arbitrarily large budget.
+$floor = if ($live -match 'FLOOR=(\d+)') { [int]$Matches[1] } else { 0 }
+Assert-That ($floor -ge 1001) "the deployed floor ($floor) is above the measured 1000 wall"
+Assert-That ($floor -lt $ceiling) 'the floor is below the ceiling, so DEERFLOW_MAX_RECURSION_LIMIT still binds'
+
+Assert-That ($ui -eq "$floor") "the UI's 1000 is raised to the $floor floor, not honoured (got '$ui')"
 # Pacgate 2026-10-30: this assertion used to PIN the defect. The comment above it
 # called 100 "the documented server default" and treated a run that died at 100
 # as correct behaviour. It is not: 100 super-steps is ~10 model calls, because
@@ -181,11 +221,85 @@ Assert-That ($ui -eq '1000') "the UI's 1000 sits under the $ceiling ceiling and 
 # below all three as well. The default must therefore be the CEILING, so a caller
 # that sends no config gets the same budget as one that sends the UI's 1000.
 Assert-That ($none -eq '4000') "an API run with no config gets the ceiling, not a 100 floor (got '$none')"
-Assert-That ($low -eq '50') "a caller asking for LESS than the default is still honoured (got '$low')"
-Assert-That ($str -eq '900') "a string-typed 900 is coerced to an int, not dropped (got '$str')"
+# A caller asking for LESS is no longer honoured verbatim - it is raised to the
+# floor. Treating a low request as "conservative" is what produced the 1000 wall;
+# the floor is the server's assertion that this graph cannot do useful work below
+# it. A caller asking for MORE than the floor is still honoured (see $justAbove).
+Assert-That ($low -eq "$floor") "a caller asking for 50 is raised to the $floor floor (got '$low')"
+Assert-That ($str -eq "$floor") "a string-typed 900 is coerced then raised to the floor (got '$str')"
+Assert-That ($justAbove -eq "$($floor + 1)") "a request just above the floor is honoured verbatim (got '$justAbove')"
 Assert-That ($huge -eq "$ceiling") "a runaway 1000000 request is clamped down to the $ceiling ceiling (got '$huge')"
 $ceilingDefault = '4000'
 Assert-That ($junk -eq $ceilingDefault) "a non-integer value keeps the default (the ceiling) instead of crashing (got '$junk')"
+
+# ── 4. the ceiling is ACTIONABLE when it is hit ─────────────────────────────
+# Clamping bounds a runaway run, but a bounded failure that tells the user
+# "You can increase the limit by setting the `recursion_limit` config key" is
+# still a dead end: no client can reach that key, and the message says nothing
+# about the work already on disk. Measured on thread b315a961, three runs died
+# at the ceiling (114-121 LLM calls, 3.2-3.5M tokens each) with partial
+# deliverables already written, and the only thing the user was told was the
+# raw LangGraph string.
+Write-Host ''
+Write-Host '4. the ceiling is actionable when it is hit' -ForegroundColor White
+$workerPatch = 'deploy/client-bundle/patches/deer-flow-worker.py'
+Assert-That (Test-Path $workerPatch) "the run worker patch exists at $workerPatch"
+$wsrc = if (Test-Path $workerPatch) { Get-Content -LiteralPath $workerPatch -Raw } else { '' }
+Assert-That ($wsrc -match '_is_recursion_exhaustion') 'the worker classifies a recursion kill instead of storing it verbatim'
+Assert-That ($wsrc -match '_recursion_exhaustion_message') 'the worker rewrites the message into something a client can act on'
+Assert-That ($wsrc -match 'original error:') 'the original diagnostic text is preserved (keeps GraphRecursionError greppable)'
+Assert-That ($wsrc -match 'raw_error') 'the raw text still reaches the log, separate from the client-facing message'
+
+# Defining the helpers is not the fix - CALLING them from the failure path is.
+# A gate that only greps for the helper names passes while the exception handler
+# still stores `f"{exc}"` verbatim, which is exactly the shipped defect. So the
+# dispatch is asserted structurally, as an ORDERED chain inside the handler.
+$handlerAt = $wsrc.IndexOf('except Exception as exc:')
+$dispatchAt = $wsrc.IndexOf('if _is_recursion_exhaustion(raw_error):')
+$rewriteAt = $wsrc.IndexOf('error_msg = _recursion_exhaustion_message(')
+# Anchor the persisted-status lookup to THIS handler. run_agent has several
+# set_status(error, ...) calls (idle watchdog, rollback, LLM fallback), so a bare
+# IndexOf finds whichever came first and the ordering assertion becomes
+# meaningless - it fails against correct code, as it did when this was written.
+$statusAt = $wsrc.IndexOf('set_status(run_id, RunStatus.error, error=error_msg)', $handlerAt)
+Assert-That ($handlerAt -ge 0) 'the run worker still has a terminal exception handler'
+Assert-That ($dispatchAt -gt $handlerAt) 'the handler DISPATCHES on the recursion classifier'
+Assert-That ($rewriteAt -gt $dispatchAt) 'the handler assigns the rewritten message to error_msg'
+Assert-That ($statusAt -gt $rewriteAt) 'the rewritten message is what gets persisted as the run error'
+# And the non-recursion branch must still store the original text, so an
+# unrelated failure keeps its real diagnostic instead of a generic sentence.
+Assert-That ($wsrc -match 'error_msg = raw_error') 'non-recursion failures still store their own text unchanged'
+$msgProbe = @'
+import io, sys
+src = io.open("/app/backend/packages/harness/deerflow/runtime/runs/worker.py", encoding="utf-8").read()
+start = src.index("_RECURSION_HINT_MARKERS")
+end = src.index("def _build_runtime_context")
+ns = {"os": __import__("os")}
+exec(src[start:end], ns)
+raw = ("Recursion limit of 1000 reached without hitting a stop condition. "
+       "You can increase the limit by setting the `recursion_limit` config key.")
+msg = ns["_recursion_exhaustion_message"](raw, "THREADID")
+print("KIND_RECURSION=%s" % ns["_is_recursion_exhaustion"](raw))
+print("KIND_OTHER=%s" % ns["_is_recursion_exhaustion"]("LLM provider failed after retries"))
+print("KEEPS_RAW=%s" % ("Recursion limit of 1000" in msg))
+print("SAYS_PARTIAL=%s" % ("partial" in msg.lower()))
+print("SAYS_THREAD=%s" % ("THREADID" in msg))
+print("LEADS_WITH_USER_TEXT=%s" % msg.startswith("This run stopped early"))
+'@
+$msgProbe | Out-File -Encoding ascii (Join-Path $env:TEMP 'rec_cap_msg_probe.py') -NoNewline
+Invoke-NativeCapture { docker cp (Join-Path $env:TEMP 'rec_cap_msg_probe.py') deer-flow:/tmp/rec_cap_msg_probe.py } | Out-Null
+$msgLive = Invoke-NativeCapture { docker exec deer-flow /app/backend/.venv/bin/python /tmp/rec_cap_msg_probe.py }
+Remove-Item (Join-Path $env:TEMP 'rec_cap_msg_probe.py') -ErrorAction SilentlyContinue
+
+function Get-MsgFlag($key) {
+    if ($msgLive -match "$key=(\w+)") { return $Matches[1] } else { return '' }
+}
+Assert-That ((Get-MsgFlag 'KIND_RECURSION') -eq 'True') 'a recursion kill is recognised'
+Assert-That ((Get-MsgFlag 'KIND_OTHER') -eq 'False') 'other failures are NOT rewritten (their text is stored as-is)'
+Assert-That ((Get-MsgFlag 'KEEPS_RAW') -eq 'True') 'the rewritten message still contains the original diagnostic'
+Assert-That ((Get-MsgFlag 'SAYS_PARTIAL') -eq 'True') 'the message tells the user the result is partial'
+Assert-That ((Get-MsgFlag 'SAYS_THREAD') -eq 'True') 'the message names the thread holding the saved output'
+Assert-That ((Get-MsgFlag 'LEADS_WITH_USER_TEXT') -eq 'True') 'the client-facing explanation comes first, not the config-key advice'
 
 Write-Host ''
 $colour = if ($script:Failed -gt 0) { 'Red' } else { 'Green' }

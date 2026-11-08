@@ -232,12 +232,40 @@ leak credentials or fork a corpus that has its own repo.
 
 - `app/channels/manager.py:51` and `deerflow/client.py:218` each hardcode
   `recursion_limit: 100` independently of `build_run_config`. The IM path routes
-  through the gateway and is therefore clamped; a direct `deerflow.client` caller is not.
+  through the gateway and is therefore floored; a direct `deerflow.client` caller is not.
 - The frontend thinking fix is inert until the next frontend image build.
 - `compose.prod.yaml`'s seed-skills comment cites
   `sandbox/tools.py:validate_local_tool_path`, which does not exist in the pinned image
   (the real function is `validate_local_file_path`). The behaviour it describes is
   correct; the citation is wrong.
+
+### Superseded 2026-11-07: the recursion clamp needed a floor
+
+The clamp described above was adopted, and it was **not sufficient**. It bounded an
+upper request (`caller 1000 -> ceiling 4000`) but never raised a caller back up, so
+the chat UI's unconditional `recursion_limit: 1000` remained authoritative on every
+run and the 4000 ceiling was never binding.
+
+Measured across 333 runs: 22 `GraphRecursionError`s, every client-budgeted one at
+exactly 1000 (114-136 LLM calls), four checkpoint walks consuming exactly 1001
+super-steps (the wall: a killed run's last step index is `limit + 1`), while the
+deepest **successful** run whose checkpoints were retained used 937 of its 1000 - only
+63 steps of headroom - and the deepest success on record (138 LLM calls, checkpoints
+pruned) extrapolates to ~1150-1200 at the 8.24-8.88 ratio every other deep success
+shows. 1000 sat at the graph's working depth rather than above it, and the killed
+runs were not thrashing (one made 111 model calls for 15 distinct tool payloads and
+left a real memo on disk).
+
+`build_run_config()` now applies `_PACGATE_MIN_RECURSION_LIMIT` (default 2000,
+`DEERFLOW_MIN_RECURSION_LIMIT`) as a floor and the frontend no longer sends the key at
+all. The ceiling stays at 4000 and a caller may still ask for more, up to it. Full
+measurements are in `DEFECT-recursion-budget-floor.md`; the gate
+`scripts/test-run-recursion-cap.ps1` passes 43/43 including live checks against the
+running container. Note that this also **retired a gate assertion** that had pinned
+the defect: `test-run-recursion-cap.ps1` previously required "the UI's 1000 sits under
+the ceiling and passes through", and `audit-recursion-regressions.ps1` counted a kill
+at 1000 as "the cap working".
+
 ## 0.2.8 release verification (2026-10-30)
 
 Tag `v0.2.8` = `b970466`. Workflow run 41058079927 on `v0.2.8` completed; all five

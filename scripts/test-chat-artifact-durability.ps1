@@ -42,6 +42,18 @@
 param(
     [string]$BaseUrl   = 'http://localhost:8089',
     [string]$EnvFile   = 'deploy/client-bundle/.deer-flow-credentials',
+    # The deer-flow admin identity. Resolved the same way test-model-picker-e2e.ps1
+    # and test-agent-mcp-e2e.ps1 resolve it, with a default rather than a hard
+    # requirement.
+    #
+    # WHY THE DEFAULT. This gate used to require PACGATE_DEERFLOW_EMAIL to be
+    # present in the credentials file and exited 2 ("CANNOT CHECK") if it was not.
+    # No script in this repo WRITES that key - install.ps1 generates only the
+    # password - so on every real machine this gate skipped, and a skip is
+    # indistinguishable from a pass in the suite summary. That is the exact
+    # "coverage that quietly disappears" failure run-all-checks.ps1 warns about,
+    # and it was measurably happening on this box until 2026-11-06.
+    [string]$Email,
     [string]$ThreadId,
     [string]$DataRoot  = 'deploy/client-bundle/data/deer-flow'
 )
@@ -106,12 +118,17 @@ else { Ok "real artifact files on disk ($($diskList.Count) sampled)" }
 
 # ── authenticate ─────────────────────────────────────────────────────────────
 if (-not (Test-Path $EnvFile)) { Die "credentials file not found: $EnvFile" 2 }
-$email = $null; $password = $null
+$email = if ($Email) { $Email } else { $null }
+$password = $null
 foreach ($line in Get-Content $EnvFile) {
-    if ($line -match '^PACGATE_DEERFLOW_EMAIL=(.+)$')    { $email    = $Matches[1].Trim() }
-    if ($line -match '^PACGATE_DEERFLOW_PASSWORD=(.+)$') { $password = $Matches[1].Trim() }
+    if (-not $email   -and $line -match '^PACGATE_DEERFLOW_EMAIL=(.+)$')    { $email    = $Matches[1].Trim() }
+    if (-not $password -and $line -match '^PACGATE_DEERFLOW_PASSWORD=(.+)$') { $password = $Matches[1].Trim() }
 }
-if (-not $email -or -not $password) { Die 'PACGATE_DEERFLOW_EMAIL / _PASSWORD missing from the credentials file' 2 }
+# The deer-flow local provider signs in by EMAIL; the default is the account
+# install.ps1 provisions. Only the password is machine-specific, so a missing
+# email must not skip the gate (see the param comment).
+if (-not $email) { $email = 'admin@pacgate-law.com' }
+if (-not $password) { Die 'PACGATE_DEERFLOW_PASSWORD missing from the credentials file' 2 }
 
 try {
     $login = Invoke-WebRequest -Uri "$BaseUrl/api/v1/auth/login/local" -Method Post `

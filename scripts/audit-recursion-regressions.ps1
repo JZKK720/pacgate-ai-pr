@@ -44,7 +44,17 @@ param(
     # UTC timestamp, 'yyyy-MM-dd HH:mm:ss', of the moment the prompt fix went live.
     # Recorded when deer-flow was recreated with the patched prompt baked into the
     # bind-mounted file. Override it to audit a different window.
-    [string]$Baseline = '2026-10-28 04:00:00',
+    #
+    # 2026-11-07: moved from 2026-10-28 04:00:00, where it had been stuck while the
+    # defect it was meant to catch kept happening. Ten runs after that old baseline
+    # still died at exactly 1000 LLM-budget wall. They were not prompt failures - the
+    # clamp had shipped, but nothing raised a caller's budget back UP, so the UI's
+    # 1000 stayed binding. The floor (DEERFLOW_MIN_RECURSION_LIMIT, default 2000) is
+    # what actually closes them, so the baseline now starts at the floor going live.
+    # Everything before it is history this change is expected to have fixed;
+    # everything after it is a real signal, because a kill at a client-supplied
+    # budget now means the floor did not apply.
+    [string]$Baseline = '2026-11-07 07:00:00',
 
     # A run at or above this many LLM calls counts as deep enough to have
     # meaningfully exercised the convergence prompt. The historical kills landed at
@@ -139,11 +149,17 @@ def count_run_artifacts(thread_id, created_at):
 def requested_limit(kwargs_json):
     """The recursion_limit the CLIENT asked for, or None when it sent none.
 
-    This is the discriminator that matters: an error at the documented default of
-    100 is the ceiling behaving as designed (the caller sent no config, so the
-    server default applied), while an error at the UI's 1000 is the historical
-    defect signature - a run allowed a 1000-super-step budget that thrashed until
-    it exhausted it. Treating both as "regression" makes the audit unusable.
+    This is the discriminator that matters: an error at the documented server
+    default is the ceiling behaving as designed (the caller sent no config, so the
+    server default applied), while an error at a CLIENT-SUPPLIED budget below the
+    server's floor is the historical defect signature - a run pinned to a budget
+    smaller than the graph's measured working depth and killed by it.
+
+    Updated 2026-11-07: the discriminator is no longer "did it differ from 100".
+    The server now applies a FLOOR (DEERFLOW_MIN_RECURSION_LIMIT, default 2000), so
+    a client-supplied 1000 is raised to 2000 and a run that dies at 1000 means the
+    floor is NOT in force - a much sharper signal than the old comparison. See the
+    note on `at_default` below for how the two are separated.
     """
     try:
         k = json.loads(kwargs_json or "{}")
@@ -183,9 +199,14 @@ for r in recursion:
         "at": norm(r["created_at"]),
         "calls": r["llm_call_count"],
         "requested_limit": lim,
-        # No limit in the request => the server's 100 default applied, which is
-        # the ceiling working, not the bug.
-        "at_default": lim is None or lim <= 100,
+        # Updated 2026-11-07. This used to ask "did the client send no budget, or one
+        # at/below the old 100 default" -> that was "the ceiling working". With the
+        # floor in place the question is sharper: a kill is only benign when the
+        # budget it died at was the SERVER's own default, i.e. the caller sent no
+        # budget at all. A caller-supplied budget that still bound (1000, say) proves
+        # the floor did not apply, which is exactly the regression this audit exists
+        # to catch.
+        "at_default": lim is None,
     })
 defects = [x for x in rec_rows if not x["at_default"]]
 
@@ -261,19 +282,20 @@ $defectCount = @($d.recursion_defects).Count
 if ($recCount -eq 0) {
     Write-Host "  [PASS] no Recursion limit error since the baseline" -ForegroundColor Green
 } else {
-    # Separate the two meanings. An error at the server's 100 default means the
-    # caller sent no recursion_limit and the documented ceiling applied - that is
-    # the cap working. The historical defect is an error at the UI's 1000.
+    # Separate the two meanings. An error when the caller sent NO budget means the
+    # server's own default applied - that is the cap working. A kill at a
+    # CLIENT-SUPPLIED budget means the server floor did not apply, which is the
+    # defect (measured 2026-11-07: 4 such runs, all at exactly 1000).
     foreach ($r in $d.recursion) {
-        $lim = if ($null -eq $r.requested_limit) { 'none (server default 100)' } else { "$($r.requested_limit)" }
+        $lim = if ($null -eq $r.requested_limit) { 'none (server default)' } else { "$($r.requested_limit)" }
         if ($r.at_default) {
-            Write-Host "  [INFO] $($r.at)  llm=$($r.calls)  hit the 100 default (requested: $lim) - the documented ceiling, not the defect" -ForegroundColor DarkGray
+            Write-Host "  [INFO] $($r.at)  llm=$($r.calls)  hit the server default (requested: $lim) - the ceiling working, not the defect" -ForegroundColor DarkGray
         } else {
-            Write-Host "  [FAIL] $($r.at)  llm=$($r.calls)  hit the wall with recursion_limit=$lim requested - the defect signature" -ForegroundColor Red
+            Write-Host "  [FAIL] $($r.at)  llm=$($r.calls)  hit the wall with a CLIENT-supplied recursion_limit=$lim - the floor did not apply" -ForegroundColor Red
         }
     }
     if ($defectCount -eq 0) {
-        Write-Host "  [PASS] no run errored on a CALLER-SUPPLIED budget (all were the 100 default)" -ForegroundColor Green
+        Write-Host "  [PASS] no run errored on a CALLER-SUPPLIED budget (all were the server default)" -ForegroundColor Green
     }
 }
 

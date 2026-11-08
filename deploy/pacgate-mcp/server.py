@@ -421,6 +421,205 @@ def pacgate_list_connectors() -> str:
     return json.dumps(results, ensure_ascii=False, indent=2)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Firecrawl — general web search and page-to-markdown extraction
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHY THESE LIVE HERE AND NOT AS A FOURTH `mcpServers` ENTRY
+#
+# Measured 2026-11-05 against the running 0.2.30 image. `get_mcp_tools()` in
+# `deerflow/mcp/tools.py` awaits `MultiServerMCPClient.get_tools()`, which
+# `asyncio.gather`s one `load_mcp_tools` task per server WITHOUT
+# `return_exceptions`. The whole call is wrapped in a single
+# `except Exception: return []`. So one unreachable MCP server does not degrade
+# its own tool set - it deletes every MCP tool, including pacgate and officecli,
+# and the agent keeps running with no indication that its legal database
+# disappeared. A remote Firecrawl endpoint (api.firecrawl.dev, or a container
+# that may not be started) is exactly that failure mode.
+#
+# As tools on the already-healthy pacgate server, the failure is contained: a
+# missing key or a dead endpoint returns one JSON object with available=false,
+# nothing else changes, and the agent can read the reason.
+#
+# WHY v1 AND NOT v2
+#
+# `pacgate-search/src/lib.rs` (FirecrawlConnector) and the QM sandbox tool
+# `firecrawl_qm.py` both speak v1. v2 answers with a DIFFERENT shape for search
+# (`data.web[]` rather than `data[]`), so mixing versions across three clients
+# is how one of them silently starts parsing the wrong key and returns nothing.
+# Verified 2026-11-05: v1 and v2 both still serve /search and /scrape, v1 carries
+# no announced sunset, and scrape is byte-identical (`data.markdown`). A move to
+# v2 is therefore a coordinated three-file change, not a per-call choice.
+FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v1"
+# Search descriptions can carry the whole page in markdown (measured: 12,156
+# characters for one result). Unclipped, ten results would flood the model
+# context with page bodies the agent did not ask for.
+FIRECRAWL_SNIPPET_CHARS = 400
+FIRECRAWL_SCRAPE_DEFAULT_CHARS = 20000
+
+
+class _FirecrawlUnavailable(RuntimeError):
+    """No key on this deployment, or the API did not answer."""
+
+
+def _firecrawl_key() -> str:
+    """The per-machine key, or raise.
+
+    An EMPTY value counts as absent, not as a key. `.env.example` ships the line
+    commented out as `#FIRECRAWL_API_KEY=`; an operator who uncomments it without
+    pasting a value would otherwise get a 401 from the API on every call instead
+    of the honest "not configured" answer.
+    """
+    key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    if not key:
+        raise _FirecrawlUnavailable(
+            "FIRECRAWL_API_KEY is not set in this deployment's .env; "
+            "web search and page extraction are disabled (nothing else is affected)"
+        )
+    return key
+
+
+def _firecrawl_post(path: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    """POST to the Firecrawl API, or raise _FirecrawlUnavailable."""
+    try:
+        resp = httpx.post(
+            f"{FIRECRAWL_API_BASE}{path}",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {_firecrawl_key()}",
+                "Content-Type": "application/json",
+            },
+            timeout=timeout,
+        )
+    except httpx.HTTPError as exc:
+        raise _FirecrawlUnavailable(
+            f"api.firecrawl.dev is not reachable from this deployment: {type(exc).__name__}"
+        ) from exc
+    if resp.status_code >= 400:
+        # 401/403 is a wrong or revoked key - the one failure an operator can fix.
+        raise _FirecrawlUnavailable(
+            f"Firecrawl returned {resp.status_code}: {resp.text[:300]}"
+        )
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise _FirecrawlUnavailable("Firecrawl returned a body that is not JSON") from exc
+
+
+def _firecrawl_unavailable(tool: str, exc: Exception) -> str:
+    """A readable "this source is off" answer instead of a tool error.
+
+    Mirrors `_laya_unavailable_result`: a machine without a key must still be able
+    to run every other tool, and the model should be able to say WHY the web lane
+    is empty rather than retrying.
+    """
+    return json.dumps(
+        {"tool": tool, "available": False, "reason": str(exc), "results": []},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_web_search(query: str, limit: int = 5) -> str:
+    """Search the open web (Firecrawl) for current events, company news, or
+    public pages that the legal databases do not cover.
+
+    Use pacgate_connector_search for statutes, cases and filings; use this for
+    everything outside those databases. Results are web-sourced, not
+    authority-verified - always cite the URL and do not treat a search hit as
+    settled law.
+
+    Args:
+        query: The search query.
+        limit: Maximum number of results (default 5).
+    """
+    tool = "pacgate_web_search"
+    try:
+        body = _firecrawl_post(
+            "/search", {"query": query, "limit": max(1, min(limit, 20))}, timeout=60
+        )
+    except _FirecrawlUnavailable as exc:
+        return _firecrawl_unavailable(tool, exc)
+
+    if body.get("success") is False:
+        return _firecrawl_unavailable(tool, _FirecrawlUnavailable("Firecrawl reported success=false"))
+
+    results = []
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        snippet = (item.get("description") or "").strip()
+        if len(snippet) > FIRECRAWL_SNIPPET_CHARS:
+            snippet = snippet[:FIRECRAWL_SNIPPET_CHARS].rstrip() + "…"
+        results.append(
+            {
+                "title": item.get("title") or "",
+                "url": item.get("url") or "",
+                "snippet": snippet,
+                # The 4-level provenance scale must not be inflated by a web hit.
+                "source_level": "auxiliary_db",
+                "source_name": "firecrawl",
+            }
+        )
+    return json.dumps(
+        {"tool": tool, "available": True, "count": len(results), "results": results},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_web_scrape(url: str, max_chars: int = FIRECRAWL_SCRAPE_DEFAULT_CHARS) -> str:
+    """Fetch one public web page and return its main content as markdown.
+
+    Use this after pacgate_web_search when a result needs to be read, and for
+    public documents that are already at a URL. The deployed tooling cannot
+    browse, so a page that needs clicks, forms, or a login cannot be read here -
+    take the public document URL instead.
+
+    Args:
+        url: The absolute http(s) URL to fetch.
+        max_chars: Truncate the markdown at this many characters (default 20000).
+    """
+    tool = "pacgate_web_scrape"
+    if not url.lower().startswith(("http://", "https://")):
+        return json.dumps(
+            {"tool": tool, "available": True, "error": f"not an http(s) URL: {url}"}
+        )
+    try:
+        body = _firecrawl_post(
+            "/scrape", {"url": url, "formats": ["markdown"]}, timeout=120
+        )
+    except _FirecrawlUnavailable as exc:
+        return _firecrawl_unavailable(tool, exc)
+
+    # The content sits at data.markdown, NOT at the top level. Reading `markdown`
+    # directly is the exact defect that made the QM sandbox tool print an empty
+    # page with exit code 0 - see deploy/qm-pacgate/sandbox/tools/firecrawl-qm/.
+    data = body.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    markdown = data.get("markdown") or ""
+    meta = data.get("metadata") or {}
+    truncated = len(markdown) > max_chars
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": True,
+            "url": url,
+            "resolved_url": meta.get("sourceURL") or url,
+            "title": meta.get("title") or "",
+            "source_level": "auxiliary_db",
+            "truncated": truncated,
+            "chars": min(len(markdown), max_chars),
+            "markdown": markdown[:max_chars],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 @mcp.tool()
 def pacgate_list_matters() -> str:
     """List all matters (cases) for the current tenant.

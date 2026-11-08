@@ -72,6 +72,62 @@ COPY deploy/client-bundle/patches/deer-flow-run-recursion-cap.py /app/backend/ap
 
 RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
 
+# Pacgate 2026-11-06: strip pymupdf4llm's inline HTML from heading titles.
+#
+# pymupdf4llm 2.1 wraps highlighted heading text in <mark> and uses <br> for line
+# breaks INSIDE a heading. Measured on the 65-page CJK tutorial PDF: 118 <mark>
+# and 335 <br> in the converted markdown, and 59 of 241 headings arrived as
+# "**<mark>1.1 ...</mark>**".
+#
+# Those titles are not cosmetic. UploadsMiddleware renders them into the agent's
+# prompt as the "Document outline" section, so the markup was spending prompt
+# tokens on tags and obscuring the text the agent matches a question against.
+#
+# BAKED as well as mounted, for the same reason the loop-detection patch is: a
+# standalone `docker run` of this image - or any lane that forgets the mount -
+# must not reintroduce the defect. Both compose lanes also mount it so a fix can
+# ship without an image rebuild, and scripts/test-baked-patch-parity.ps1 asserts
+# the bake and the mount never point at different code.
+COPY deploy/client-bundle/patches/deer-flow-file-conversion.py /app/backend/packages/harness/deerflow/utils/file_conversion.py
+
+# Pacgate 2026-11-06: install pymupdf4llm so the PREFERRED PDF->Markdown path runs.
+#
+# MEASURED (this box, 2026-11-06). deerflow/utils/file_conversion.py already
+# tries pymupdf4llm first and falls back to MarkItDown only when the module is
+# missing or the output looks image-based. pymupdf4llm was NOT in the image, so
+# every upload took the fallback - and MarkItDown does not reproduce the source
+# PDF's typographic hierarchy.
+#
+# Same 65-page structured PDF, same convert_file_to_markdown() call:
+#     MarkItDown (what the image actually ran):   0 outline entries, 0 `#` lines
+#     pymupdf4llm (the path the code asks for) : 51 outline entries
+# The PDF carries a clean 4-level hierarchy (body 10.4pt; headings at 11.2 /
+# 13.0 / 19.0 / 33.0pt) that MarkItDown flattens completely.
+#
+# CONSEQUENCE THAT MADE THIS A BUG, not a quality nit. With no headings,
+# UploadsMiddleware emits "No structural headings detected" and no section map,
+# so the agent has no navigable view of a 141 KB document. On thread b315a961
+# that produced three consecutive runs of 87-104 bash calls re-reading the same
+# file (103, 52 and 42 re-touches) and 3.2-3.5M tokens each, all three killed by
+# GraphRecursionError with no deliverable. The prompt's convergence block cannot
+# fix a task whose structure the model was never shown.
+#
+# NOTE ON THE DEPENDENCY SET: the base venv is uv-managed and ships NO pip, so
+# this uses `uv pip install` against the interpreter explicitly. Keep the
+# `--python` flag - a bare `uv pip install` in this image resolves its own
+# environment and silently does nothing to /app/backend/.venv.
+#
+# RapidOCR is optional: pymupdf4llm prints one "RapidOCR is missing" notice and
+# continues. Image-only PDFs still fall back to MarkItDown via
+# _pymupdf_output_too_sparse(), exactly as before, so text-less scans are
+# unaffected by this layer.
+COPY deploy/pacgate-pins/pymupdf4llm.constraints.txt /tmp/pymupdf4llm.constraints.txt
+RUN uv pip install --python /app/backend/.venv/bin/python \
+      --constraint /tmp/pymupdf4llm.constraints.txt \
+      pymupdf4llm \
+    && rm -f /tmp/pymupdf4llm.constraints.txt \
+    && /app/backend/.venv/bin/python -c "import pymupdf4llm, pymupdf; print('pymupdf4llm ok; pymupdf', pymupdf.__version__)"
+
 # Pacgate: bake OfficeCLI so the agent can create/read/modify real Office
 # documents (.docx/.xlsx/.pptx) via its `officecli mcp` stdio MCP server AND via
 # the `officecli` CLI on PATH. OfficeCLI is a single self-contained .NET binary

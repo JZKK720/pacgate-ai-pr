@@ -34,7 +34,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.2.30
+    image: ghcr.io/jzkk720/pacgate-api:0.2.32
     healthcheck:
       # No curl and no wget in this image (measured 2026-10-14), so the probe
       # uses bash's /dev/tcp. /health is the one route that needs no auth
@@ -160,7 +160,7 @@ services:
       # default: it cannot be pre-pulled from any registry, and a repo default
       # that names it would break `ModelConfig::from_env` on a machine where the
       # installer never ran.
-      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
+      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-nemotron-3.5-bolt:e4b-q8_0}
       PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-nemotron-3.5-bolt:e4b-q8_0}
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
@@ -190,7 +190,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.30
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.32
     healthcheck:
       # :8001 is the gateway nginx proxies to; /health verified 200.
       test:
@@ -325,6 +325,7 @@ services:
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
       - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
       # Pacgate 2026-10-28: clamp the lead-agent recursion budget.
+      # Pacgate 2026-11-07: and FLOOR it - the clamp alone did not save anyone.
       #
       # The chat UI sends recursion_limit: 1000 on every run, and
       # build_run_config() overwrote its own 100 default with whatever the client
@@ -333,11 +334,23 @@ services:
       # GraphRecursionError - 12 of 16 failed runs on this box were this error, at
       # BOTH 100 and 1000. The patch clamps client values to a ceiling (default
       # 4000, override with DEERFLOW_MAX_RECURSION_LIMIT) while still honouring a
-      # lower request. 4000 is the measured runaway bound, not a comfort budget:
-      # the deepest successful non-looping runs on this stack reached 5767, 3154
-      # and 1589 super-steps, and super-steps per LLM call reaches 5.45. A caller
-      # that sends no config now gets this ceiling as its default instead of a
-      # hardcoded 100, which was ~10 model calls.
+      # request between the floor and the ceiling.
+      #
+      # The clamp was only half the fix, and the half that was missing is the one
+      # that cost the most. Measured 2026-11-07 across 333 recorded runs: 22 died
+      # with GraphRecursionError and EVERY one that carried a client budget died at
+      # exactly 1000 (114-136 LLM calls); four checkpoint walks consumed exactly
+      # 1001 super-steps, which is the wall itself. Meanwhile the deepest SUCCESS
+      # whose checkpoints were retained used 937 of its 1000 - only 63 super-steps of
+      # headroom - and the deepest success on record (138 LLM calls; checkpoints
+      # pruned) extrapolates to ~1150-1200 at the 8.24-8.88 ratio every other deep
+      # success shows. A budget a good run exhausts to 94% is not a budget. Those
+      # runs were not thrashing either: one made 111 model calls for 15 distinct tool
+      # payloads and left a real memo on disk. Hence a floor (default 2000, override
+      # with DEERFLOW_MIN_RECURSION_LIMIT): a client may ask for more, never less. The
+      # floor yields to a lower explicit ceiling so the env var still means what it
+      # says. Do not "tidy" the floor away as redundant - it is the only thing
+      # standing between a stale client constant and a truncated deliverable.
       - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which
@@ -348,6 +361,14 @@ services:
       # Pacgate: inject conversation-history token estimate for auto-routing
       # (see compose.bundle.yaml for the rationale).
       - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
+      # Pacgate 2026-11-06: strip pymupdf4llm's inline HTML (<mark>/<br>) from
+      # heading titles. Those titles are rendered into the agent's prompt as the
+      # "Document outline" section, and on the 65-page CJK tutorial PDF 59 of 241
+      # headings arrived as "**<mark>1.1 ...</mark>**" - markup spent as prompt
+      # tokens, obscuring the text the agent matches against. Only reachable now
+      # that pymupdf4llm is actually installed (see the image Dockerfile); with
+      # the MarkItDown fallback there were no headings at all to clean.
+      - ./patches/deer-flow-file-conversion.py:/app/backend/packages/harness/deerflow/utils/file_conversion.py:ro
       # Pacgate (hang fix 2026-10-06): bound the non-streaming title ainvoke()
       # and make CancelledError fall back instead of freezing the pregel loop
       # (run df600939: no output for 11 minutes; only STOP recovered it).
@@ -456,7 +477,7 @@ services:
   # correct without a runtime patch. Published to GHCR by the build-ghcr.yml
   # workflow; pushed on every release tag so both AIPCs stay in sync.
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.30
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32
     healthcheck:
       # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
       # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
@@ -508,7 +529,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.2.30
+    image: ghcr.io/jzkk720/pacgate-mcp:0.2.32
     healthcheck:
       # A real MCP `initialize` handshake, not a TCP connect. The image has no
       # curl; it does have python3, so the probe speaks the protocol and
@@ -538,6 +559,17 @@ services:
       # a supported state: the clause tools then report available=false instead
       # of failing, so a machine without the 1.2 GB checkpoint still works.
       PACGATE_LAYA_URL: ${PACGATE_LAYA_URL:-http://laya:8000/v1/systemone}
+      # Firecrawl key for pacgate_web_search / pacgate_web_scrape. Same
+      # per-machine value the pacgate-search connector reads from env_file, so
+      # one paste in .env arms both the /api/search connector and the agent's
+      # web tools. Absent/empty is a supported state: both tools answer
+      # available=false and every other tool is unaffected.
+      #
+      # Deliberately NOT a fourth entry in deer-flow-extensions-config.json:
+      # deer-flow gathers all MCP servers with one asyncio.gather and returns []
+      # on any exception, so an unreachable remote MCP server would delete the
+      # pacgate, openviking and officecli tools along with it.
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
     volumes:
       # Fork patch (2026-10-09): SANITIZE_TIMEOUT_S=700 per-request override for
       # sanitize endpoints (BERT NER runs minutes; stock 0.1.24 timeout kills
@@ -585,7 +617,7 @@ services:
     # Models are pre-staged, never downloaded at runtime: HF_HUB_OFFLINE=1 plus a
     # mounted model directory. A client machine must not reach huggingface.co.
     profiles: ["laya"]
-    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.30}
+    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.32}
     healthcheck:
       # /health is documented by laya. start_period is long because with
       # LAYA_PRELOAD=1 the first boot loads a 1.2 GB checkpoint into memory, and a
@@ -633,7 +665,7 @@ services:
     restart: unless-stopped
 
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.2.30
+    image: ghcr.io/jzkk720/ocr-service:0.2.32
     healthcheck:
       # /health verified 200. python3, not curl - the image has no curl.
       # start_period is long on purpose: this service downloads its model on

@@ -58,9 +58,16 @@ if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 $script:passed = 0
 $script:skipped = @()
 $script:artifacts = @{ matterId = $null; docId = $null }
+# Die() promised "FAILED AT THIS STEP" and then never said which one, so a
+# failure printed a nameless verdict. That gap cost real time on 2026-11-06: one
+# suite run failed here and a re-run passed, and the log could not distinguish
+# a flake from a real break because the failing step was never named. Record the
+# step as it starts and quote it on the way out.
+$script:currentStep = '(preflight)'
 
 function Step {
     param([string]$Name)
+    $script:currentStep = $Name
     Write-Host ''
     Write-Host "== $Name" -ForegroundColor Cyan
 }
@@ -77,10 +84,11 @@ function Die($m, $code = 1) {
     # Exit 2 means CANNOT CHECK, not FAILED. run-all-checks reports it as SKIP.
     # Printing "FAILED" for it made a release-window skip look like a break.
     if ($code -eq 2) {
-        Write-Host 'RESULT: CANNOT CHECK - the journey was not attempted.' -ForegroundColor Yellow
+        Write-Host "RESULT: CANNOT CHECK during '$($script:currentStep)' - $m" -ForegroundColor Yellow
     }
     else {
-        Write-Host 'RESULT: journey FAILED at this step. Later steps were not attempted.' -ForegroundColor Red
+        Write-Host "RESULT: journey FAILED at '$($script:currentStep)' - $m" -ForegroundColor Red
+        Write-Host '        Later steps were not attempted.' -ForegroundColor Red
     }
     Write-Host "  artifacts left: matter=$($script:artifacts.matterId) doc=$($script:artifacts.docId)" -ForegroundColor DarkGray
     exit $code

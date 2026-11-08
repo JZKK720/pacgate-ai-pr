@@ -102,11 +102,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.30` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.30` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.30` | Unchanged this release. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.30` | Unchanged this release. |
-| `ghcr.io/jzkk720/ocr-service:0.2.30` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.32` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.32` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` | Unchanged this release. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` | Unchanged this release. |
+| `ghcr.io/jzkk720/ocr-service:0.2.32` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > **0.2.14 is a correctness fix, not a feature release.** A client scan of a real
@@ -595,6 +595,20 @@ reach openviking:1933, pacgate-api:8080, and host.docker.internal:11434 (Ollama)
    key and no cloud call, which is the reason it was chosen over a metered
    judgment API.
 
+   The server also exposes `pacgate_web_search` and `pacgate_web_scrape`, which
+   call the Firecrawl API for current events, company news, and public pages the
+   legal databases do not cover. They are inert until `FIRECRAWL_API_KEY` is set
+   in `.env`; with no key they answer `available=false` and every other tool is
+   unaffected. Results are graded `auxiliary_db` - a web page is never authority.
+
+   **Firecrawl is deliberately NOT a fourth MCP server in
+   `deer-flow-extensions-config.json`.** deer-flow's `get_mcp_tools()` gathers
+   one load task per configured server with `asyncio.gather` and no
+   `return_exceptions`, then returns `[]` on any exception. One unreachable
+   remote server would therefore remove pacgate, OpenViking and officecli from
+   the agent at the same time, silently. Keeping the calls on pacgate-mcp - a
+   service the agent needs anyway - confines a web failure to two tools.
+
    It is **off by default**. The two checkpoints are about 1.45 GB on disk, so a machine
    that does not run it is not broken: the three tools return `available: false`
    with a reason, and every other tool is unaffected. **From 0.2.13 the
@@ -956,8 +970,16 @@ docker compose -f compose.prod.yaml logs -f deer-flow
   across recreates.
 - Each machine has its own independent Postgres and `./data/tenants/` directory. Matter data is not shared between machines unless you later add a private mesh and a sync or single-authority model.
 - The PkuLaw connector token is expired. Regenerate it at `https://mcp.pkulaw.com` and set `PKULAW_API_KEY` in `.env` if China-law search is needed during the pilot.
+- The Firecrawl web lane is off until a key is pasted. Set `FIRECRAWL_API_KEY` in `deploy/client-bundle/.env` and restart; one value arms the `/api/search` connector, the agent's `pacgate_web_search` / `pacgate_web_scrape` tools, and (via `setup-qm.ps1`) the QM sandbox's `firecrawl-qm` CLI. Verify with `curl -s http://localhost:8089/pacgate/api/search/health` - the `firecrawl` row flips to `available=true`. With no key, all three surfaces report "not configured" and nothing else changes.
 - Four WASM crates (citation-check, clause-parser, doc-validator, rule-engine) remain stubs. These are future-blueprint work and do not affect Phase 1 pilot functionality.
-- **Model selection:** the API defaults to models that may not exist on the target machine. After Stage 3, apply per-tenant model overrides so the LLM tiers point at models actually present in `ollama list` on that machine. Recommended pilot set (benchmarked 2026-08-28): `gemma4:12b-it-qat` (Main — 13s/tool-round, schema-valid tool calls, verified end-to-end), `qwen3.8:27b-mtp-q4_K_M` (Mid — 73s/tool-round, stronger quality for batch tabular review), `nomic-embed-text:latest` (embeddings). Avoid reasoning-mode models (e.g. nemotron) for interactive tiers — they can hang long docx generations. See `plans/007-aipc-full-installation-handoff.md` Appendix A for the SQL template.
+- **Model selection:** the API defaults to models that may not exist on the target machine. After Stage 3, apply per-tenant model overrides so the LLM tiers point at models actually present in `ollama list` on that machine. Recommended pilot set (benchmarked 2026-08-28): `gemma4:12b-it-qat` (Main — 13s/tool-round, schema-valid tool calls, verified end-to-end), `qwen3.8:27b-mtp-q4_K_M` (Mid — 73s/tool-round, stronger quality for batch tabular review), `nomic-embed-text:latest` (embeddings). Avoid reasoning-mode models (e.g. nemotron) for interactive tiers — they can hang long docx generations.
+- **Large PDFs need the outline lane to work.** Uploaded PDFs are converted to Markdown so the agent can read them. The image prefers `pymupdf4llm` and falls back to MarkItDown; only `pymupdf4llm` reproduces a PDF's heading hierarchy. If the fallback runs, the agent is told "No structural headings detected", gets no section map, and a long document becomes unnavigable — it then re-reads the same file turn after turn until the run hits its step ceiling. This is a real observed failure mode (2026-11-06), not a cosmetic issue. Verify after any image rebuild with:
+
+  ```powershell
+  pwsh -File scripts/test-pdf-outline-extraction.ps1
+  ```
+
+  It exits 1 if the converter is missing, if the deployed config routes around it, or if a structured PDF yields no outline.
 
 ## Files referenced
 
@@ -969,6 +991,8 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 | `deploy/client-bundle/.env.example` | Template for client secrets |
 | `deploy/client-bundle/ollama-models.txt` | Models to pre-pull |
 | `deploy/client-bundle/deer-flow-config.yaml` | Multi-model deer-flow config (5 models, switchable) |
+| `deploy/pacgate-pins/pymupdf4llm.constraints.txt` | Pins the PDF→Markdown converter pair the deer-flow image installs |
+| `scripts/test-pdf-outline-extraction.ps1` | Gate: a structured upload must yield a document outline the agent can navigate |
 | `deploy/qm-pacgate/qm.config.jsonc` | qm local deployment config |
 | `deploy/SETUP-AND-OPERATIONS.md` | Full 3-day on-site install guide (reference) |
 | `deploy/DEPLOYMENT-GUIDE.md` | Engineer-level deployment details (reference) |
