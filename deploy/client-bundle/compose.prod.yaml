@@ -443,7 +443,7 @@ services:
       # conversation is what this repo refuses elsewhere.
       # See deploy/DEFECT-summarization-recovery.md and
       # scripts/test-summarization-recovery.ps1.
-      - ./patches/deer-flow-summarization-recovery.py:/app/backend/.venv/lib/python3.12/site-packages/langchain/agents/middleware/summarization.py:ro
+      - ./patches/deer-flow-summarization-recovery.py:/app/backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py:ro
       # Pacgate (401 fix 2026-10-09): re-login on 401 in the pacgate adapter.
       # The adapter caches its JWT at construction; a pacgate-api restart
       # invalidates it, so every memory/artifact call 401s until deer-flow

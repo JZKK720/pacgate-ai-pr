@@ -1,309 +1,217 @@
-"""Summarization middleware."""
+"""Summarization middleware extensions for DeerFlow."""
 
-import uuid
-import warnings
-# Pacgate patch (2026-11-08): required by the folded-range index regexes.
+from __future__ import annotations
+
+import logging
 import re
-from collections.abc import Callable, Iterable, Mapping
-from functools import partial
-from typing import Any, Literal, cast
+from collections.abc import Collection
+from dataclasses import dataclass
+from typing import Any, Protocol, override, runtime_checkable
 
-from langchain_core.messages import (
-    AIMessage,
-    AnyMessage,
-    MessageLikeRepresentation,
-    RemoveMessage,
-    ToolMessage,
-)
-from langchain_core.messages.human import HumanMessage
-from langchain_core.messages.utils import (
-    count_tokens_approximately,
-    get_buffer_string,
-    trim_messages,
-)
-from langgraph.graph.message import (
-    REMOVE_ALL_MESSAGES,
-)
+from langchain.agents import AgentState
+from langchain.agents.middleware import SummarizationMiddleware
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, RemoveMessage, ToolMessage, get_buffer_string
+from langgraph.config import get_config
+from langgraph.constants import TAG_NOSTREAM
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
-from typing_extensions import override
 
-from langchain.agents.middleware.types import AgentMiddleware, AgentState, ContextT, ResponseT
-from langchain.chat_models import BaseChatModel, init_chat_model
+from deerflow.agents.middlewares.dynamic_context_middleware import is_dynamic_context_reminder
+from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
 
-TokenCounter = Callable[[Iterable[MessageLikeRepresentation]], int]
-
-DEFAULT_SUMMARY_PROMPT = """<role>
-Context Extraction Assistant
-</role>
-
-<primary_objective>
-Your sole objective in this task is to extract the highest quality/most relevant context from the conversation history below.
-</primary_objective>
-
-<objective_information>
-You're nearing the total number of input tokens you can accept, so you must extract the highest quality/most relevant pieces of information from your conversation history.
-This context will then overwrite the conversation history presented below. Because of this, ensure the context you extract is only the most important information to continue working toward your overall goal.
-</objective_information>
-
-<instructions>
-The conversation history below will be replaced with the context you extract in this step.
-You want to ensure that you don't repeat any actions you've already completed, so the context you extract from the conversation history should be focused on the most important information to your overall goal.
-
-You should structure your summary using the following sections. Each section acts as a checklist - you must populate it with relevant information or explicitly state "None" if there is nothing to report for that section:
-
-## SESSION INTENT
-What is the user's primary goal or request? What overall task are you trying to accomplish? This should be concise but complete enough to understand the purpose of the entire session.
-
-## SUMMARY
-Extract and record all of the most important context from the conversation history. Include important choices, conclusions, or strategies determined during this conversation. Include the reasoning behind key decisions. Document any rejected options and why they were not pursued.
-
-## ARTIFACTS
-What artifacts, files, or resources were created, modified, or accessed during this conversation? For file modifications, list specific file paths and briefly describe the changes made to each. This section prevents silent loss of artifact information.
-
-## NEXT STEPS
-What specific tasks remain to be completed to achieve the session intent? What should you do next?
-
-</instructions>
-
-The user will message you with the full message history from which you'll extract context to create a replacement. Carefully read through it all and think deeply about what information is most important to your overall goal and should be saved:
-
-With all of this in mind, please carefully read over the entire conversation history, and extract the most important and relevant context to replace it so that you can free up space in the conversation history.
-Respond ONLY with the extracted context. Do not include any additional information, or text before or after the extracted context.
-
-<messages>
-Messages to summarize:
-{messages}
-</messages>"""  # noqa: E501
-
-_DEFAULT_MESSAGES_TO_KEEP = 20
-_DEFAULT_TRIM_TOKEN_LIMIT = 4000
-_DEFAULT_FALLBACK_MESSAGE_COUNT = 15
-
-ContextFraction = tuple[Literal["fraction"], float]
-"""Fraction of model's maximum input tokens.
-
-Example:
-    To specify 50% of the model's max input tokens:
-
-    ```python
-    ("fraction", 0.5)
-    ```
-"""
-
-ContextTokens = tuple[Literal["tokens"], int]
-"""Absolute number of tokens.
-
-Example:
-    To specify 3000 tokens:
-
-    ```python
-    ("tokens", 3000)
-    ```
-"""
-
-ContextMessages = tuple[Literal["messages"], int]
-"""Absolute number of messages.
-
-Example:
-    To specify 50 messages:
-
-    ```python
-    ("messages", 50)
-    ```
-"""
-
-ContextSize = ContextFraction | ContextTokens | ContextMessages
-"""Union type for context size specifications.
-
-Can be either:
-
-- [`ContextFraction`][langchain.agents.middleware.summarization.ContextFraction]: A
-    fraction of the model's maximum input tokens.
-- [`ContextTokens`][langchain.agents.middleware.summarization.ContextTokens]: An absolute
-    number of tokens.
-- [`ContextMessages`][langchain.agents.middleware.summarization.ContextMessages]: An
-    absolute number of messages.
-
-Depending on use with `trigger` or `keep` parameters, this type indicates either
-when to trigger summarization or how much context to retain.
-
-Example:
-    ```python
-    # ContextFraction
-    context_size: ContextSize = ("fraction", 0.5)
-
-    # ContextTokens
-    context_size: ContextSize = ("tokens", 3000)
-
-    # ContextMessages
-    context_size: ContextSize = ("messages", 50)
-    ```
-"""
+logger = logging.getLogger(__name__)
 
 
-def _get_approximate_token_counter(model: BaseChatModel) -> TokenCounter:
-    """Tune parameters of approximate token counter based on model type."""
-    if model._llm_type.startswith("anthropic-chat"):  # noqa: SLF001
-        # 3.3 was estimated in an offline experiment, comparing with Claude's token-counting
-        # API: https://platform.claude.com/docs/en/build-with-claude/token-counting
-        return partial(
-            count_tokens_approximately, use_usage_metadata_scaling=True, chars_per_token=3.3
-        )
-    return partial(count_tokens_approximately, use_usage_metadata_scaling=True)
+@dataclass(frozen=True)
+class SummarizationEvent:
+    """Context emitted before conversation history is summarized away."""
+
+    messages_to_summarize: tuple[AnyMessage, ...]
+    preserved_messages: tuple[AnyMessage, ...]
+    thread_id: str | None
+    agent_name: str | None
+    runtime: Runtime
 
 
-class SummarizationMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, ResponseT]):
-    """Summarizes conversation history when token limits are approached.
+@runtime_checkable
+class BeforeSummarizationHook(Protocol):
+    """Hook invoked before summarization removes messages from state."""
 
-    This middleware monitors message token counts and automatically summarizes older
-    messages when a threshold is reached, preserving recent messages and maintaining
-    context continuity by ensuring AI/Tool message pairs remain together.
-    """
+    def __call__(self, event: SummarizationEvent) -> None: ...
+
+
+def _resolve_thread_id(runtime: Runtime) -> str | None:
+    """Resolve the current thread ID from runtime context or LangGraph config."""
+    thread_id = runtime.context.get("thread_id") if runtime.context else None
+    if thread_id is None:
+        try:
+            config_data = get_config()
+        except RuntimeError:
+            return None
+        thread_id = config_data.get("configurable", {}).get("thread_id")
+    return thread_id
+
+
+def _resolve_agent_name(runtime: Runtime) -> str | None:
+    """Resolve the current agent name from runtime context or LangGraph config."""
+    agent_name = runtime.context.get("agent_name") if runtime.context else None
+    if agent_name is None:
+        try:
+            config_data = get_config()
+        except RuntimeError:
+            return None
+        agent_name = config_data.get("configurable", {}).get("agent_name")
+    return agent_name
+
+
+def _tool_call_path(tool_call: dict[str, Any]) -> str | None:
+    """Best-effort extraction of a file path argument from a read_file-like tool call."""
+    args = tool_call.get("args") or {}
+    if not isinstance(args, dict):
+        return None
+    for key in ("path", "file_path", "filepath"):
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _clone_ai_message(
+    message: AIMessage,
+    tool_calls: list[dict[str, Any]],
+    *,
+    content: Any | None = None,
+) -> AIMessage:
+    """Clone an AIMessage while replacing its tool_calls list and optional content."""
+    return clone_ai_message_with_tool_calls(message, tool_calls, content=content)
+
+
+@dataclass
+class _SkillBundle:
+    """Skill-related tool calls and tool results associated with one AIMessage."""
+
+    ai_index: int
+    skill_tool_indices: tuple[int, ...]
+    skill_tool_call_ids: frozenset[str]
+    skill_tool_tokens: int
+    skill_key: str
+
+
+class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
+    """Summarization middleware with pre-compression hook dispatch and skill rescue."""
 
     def __init__(
         self,
-        model: str | BaseChatModel,
-        *,
-        trigger: ContextSize | list[ContextSize] | None = None,
-        keep: ContextSize = ("messages", _DEFAULT_MESSAGES_TO_KEEP),
-        token_counter: TokenCounter = count_tokens_approximately,
-        summary_prompt: str = DEFAULT_SUMMARY_PROMPT,
-        trim_tokens_to_summarize: int | None = _DEFAULT_TRIM_TOKEN_LIMIT,
-        **deprecated_kwargs: Any,
+        *args,
+        skills_container_path: str | None = None,
+        skill_file_read_tool_names: Collection[str] | None = None,
+        before_summarization: list[BeforeSummarizationHook] | None = None,
+        preserve_recent_skill_count: int = 5,
+        preserve_recent_skill_tokens: int = 25_000,
+        preserve_recent_skill_tokens_per_skill: int = 5_000,
+        **kwargs,
     ) -> None:
-        """Initialize summarization middleware.
-
-        Args:
-            model: The language model to use for generating summaries.
-            trigger: One or more thresholds that trigger summarization.
-
-                Provide a single
-                [`ContextSize`][langchain.agents.middleware.summarization.ContextSize]
-                tuple or a list of tuples, in which case summarization runs when any
-                threshold is met.
-
-                !!! example
-
-                    ```python
-                    # Trigger summarization when 50 messages is reached
-                    ("messages", 50)
-
-                    # Trigger summarization when 3000 tokens is reached
-                    ("tokens", 3000)
-
-                    # Trigger summarization either when 80% of model's max input tokens
-                    # is reached or when 100 messages is reached (whichever comes first)
-                    [("fraction", 0.8), ("messages", 100)]
-                    ```
-
-                    See [`ContextSize`][langchain.agents.middleware.summarization.ContextSize]
-                    for more details.
-            keep: Context retention policy applied after summarization.
-
-                Provide a [`ContextSize`][langchain.agents.middleware.summarization.ContextSize]
-                tuple to specify how much history to preserve.
-
-                Defaults to keeping the most recent `20` messages.
-
-                Does not support multiple values like `trigger`.
-
-                !!! example
-
-                    ```python
-                    # Keep the most recent 20 messages
-                    ("messages", 20)
-
-                    # Keep the most recent 3000 tokens
-                    ("tokens", 3000)
-
-                    # Keep the most recent 30% of the model's max input tokens
-                    ("fraction", 0.3)
-                    ```
-            token_counter: Function to count tokens in messages.
-            summary_prompt: Prompt template for generating summaries.
-            trim_tokens_to_summarize: Maximum tokens to keep when preparing messages for
-                the summarization call.
-
-                Pass `None` to skip trimming entirely.
-        """
-        # Handle deprecated parameters
-        if "max_tokens_before_summary" in deprecated_kwargs:
-            value = deprecated_kwargs["max_tokens_before_summary"]
-            warnings.warn(
-                "max_tokens_before_summary is deprecated. Use trigger=('tokens', value) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if trigger is None and value is not None:
-                trigger = ("tokens", value)
-
-        if "messages_to_keep" in deprecated_kwargs:
-            value = deprecated_kwargs["messages_to_keep"]
-            warnings.warn(
-                "messages_to_keep is deprecated. Use keep=('messages', value) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if keep == ("messages", _DEFAULT_MESSAGES_TO_KEEP):
-                keep = ("messages", value)
-
-        super().__init__()
-
-        if isinstance(model, str):
-            model = init_chat_model(model)
-
-        self.model = model
-        if trigger is None:
-            self.trigger: ContextSize | list[ContextSize] | None = None
-            trigger_conditions: list[ContextSize] = []
-        elif isinstance(trigger, list):
-            validated_list = [self._validate_context_size(item, "trigger") for item in trigger]
-            self.trigger = validated_list
-            trigger_conditions = validated_list
-        else:
-            validated = self._validate_context_size(trigger, "trigger")
-            self.trigger = validated
-            trigger_conditions = [validated]
-        self._trigger_conditions = trigger_conditions
-
-        self.keep = self._validate_context_size(keep, "keep")
-        if token_counter is count_tokens_approximately:
-            self.token_counter = _get_approximate_token_counter(self.model)
-            self._partial_token_counter: TokenCounter = partial(  # type: ignore[call-arg]
-                self.token_counter, use_usage_metadata_scaling=False
-            )
-        else:
-            self.token_counter = token_counter
-            self._partial_token_counter = token_counter
-        self.summary_prompt = summary_prompt
-        self.trim_tokens_to_summarize = trim_tokens_to_summarize
-
-        requires_profile = any(condition[0] == "fraction" for condition in self._trigger_conditions)
-        if self.keep[0] == "fraction":
-            requires_profile = True
-        if requires_profile and self._get_profile_limits() is None:
-            msg = (
-                "Model profile information is required to use fractional token limits, "
-                "and is unavailable for the specified model. Please use absolute token "
-                "counts instead, or pass "
-                '`\n\nChatModel(..., profile={"max_input_tokens": ...})`.\n\n'
-                "with a desired integer value of the model's maximum input tokens."
-            )
-            raise ValueError(msg)
+        super().__init__(*args, **kwargs)
+        self._skills_container_path = skills_container_path or "/mnt/skills"
+        self._skill_file_read_tool_names = frozenset(skill_file_read_tool_names or {"read_file", "read", "view", "cat"})
+        self._before_summarization_hooks = before_summarization or []
+        self._preserve_recent_skill_count = max(0, preserve_recent_skill_count)
+        self._preserve_recent_skill_tokens = max(0, preserve_recent_skill_tokens)
+        self._preserve_recent_skill_tokens_per_skill = max(0, preserve_recent_skill_tokens_per_skill)
+        # The summary LLM call runs inside a LangGraph middleware hook, so its token
+        # stream would otherwise be captured by the messages-tuple stream callback and
+        # broadcast to the frontend as a phantom AI message. Tag a dedicated model copy
+        # with TAG_NOSTREAM so the streaming handler skips it.
+        # Keep self.model untagged so the parent's profile / ls_params inspection still works.
+        #
+        # Preserve any tags already bound on the model (e.g. "middleware:summarize" set in
+        # lead_agent/agent.py for RunJournal attribution): RunnableBinding.with_config does a
+        # shallow merge that would otherwise overwrite the existing tags list entirely.
+        existing_tags = list((getattr(self.model, "config", None) or {}).get("tags") or [])
+        merged_tags = [*existing_tags, TAG_NOSTREAM] if TAG_NOSTREAM not in existing_tags else existing_tags
+        self._summary_model = self.model.with_config(tags=merged_tags)
 
     @override
-    def before_model(
-        self, state: AgentState[Any], runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
-        """Process messages before model invocation, potentially triggering summarization.
+    def _create_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
+        return self._summarize_with(messages_to_summarize)
 
-        Args:
-            state: The agent state.
-            runtime: The runtime environment.
+    @override
+    async def _acreate_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
+        return await self._asummarize_with(messages_to_summarize)
 
-        Returns:
-            An updated state with summarized messages if summarization was performed.
+    def _summarize_with(self, messages_to_summarize: list[AnyMessage]) -> str:
+        """Mirror the parent ``_create_summary`` but invoke the nostream-tagged model.
+
+        We do not swap ``self.model`` at the instance level: the agent/middleware is
+        cached and reused across concurrent runs, so a temporary swap would leak the
+        ``RunnableBinding`` to other coroutines during ``await`` and break parent logic
+        that inspects the raw model (``profile`` / ``_get_ls_params``).
         """
+        if not messages_to_summarize:
+            return "No previous conversation history."
+        prompt = self._build_summary_prompt(messages_to_summarize)
+        if prompt is None:
+            return "Previous conversation was too long to summarize."
+        try:
+            response = self._summary_model.invoke(
+                prompt,
+                config={"metadata": {"lc_source": "summarization"}},
+            )
+            return response.text.strip()
+        except Exception as e:
+            return f"Error generating summary: {e!s}"
+
+    async def _asummarize_with(self, messages_to_summarize: list[AnyMessage]) -> str:
+        """Async counterpart of :meth:`_summarize_with` using the nostream model."""
+        if not messages_to_summarize:
+            return "No previous conversation history."
+        prompt = self._build_summary_prompt(messages_to_summarize)
+        if prompt is None:
+            return "Previous conversation was too long to summarize."
+        try:
+            response = await self._summary_model.ainvoke(
+                prompt,
+                config={"metadata": {"lc_source": "summarization"}},
+            )
+            return response.text.strip()
+        except Exception as e:
+            return f"Error generating summary: {e!s}"
+
+    def _build_summary_prompt(self, messages_to_summarize: list[AnyMessage]) -> str | None:
+        """Build the summary prompt, returning ``None`` when trimming leaves nothing."""
+        trimmed_messages = self._trim_messages_for_summary(messages_to_summarize)
+        if not trimmed_messages:
+            return None
+        # Format messages to avoid token inflation from metadata when str() is called on
+        # message objects.
+        formatted_messages = get_buffer_string(trimmed_messages)
+        return self.summary_prompt.format(messages=formatted_messages).rstrip()
+
+    def before_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        result = self._maybe_summarize(state, runtime)
+        return result if result is not None else self._pacgate_hint_result(state)
+
+    async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        result = await self._amaybe_summarize(state, runtime)
+        return result if result is not None else self._pacgate_hint_result(state)
+
+    def _pacgate_hint_result(self, state: AgentState) -> dict | None:
+        """Attach the pressure hint ONLY when a summarization pass did not run.
+
+        When a pass DID run, the history is replaced by summary+index and the
+        pressure has just been relieved - appending a "fold due soon" line to the
+        same turn would contradict what just happened. So the hint is an else
+        branch, not an addition.
+        """
+        try:
+            hint = self._pacgate_context_hint(state["messages"])
+        except Exception:  # a diagnostic must never break a run
+            return None
+        if not hint:
+            return None
+        return {"messages": [HumanMessage(content=hint, name=_PACGATE_HINT_NAME)]}
+
+    def _maybe_summarize(self, state: AgentState, runtime: Runtime) -> dict | None:
         messages = state["messages"]
         self._ensure_message_ids(messages)
 
@@ -312,12 +220,12 @@ class SummarizationMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, R
             return None
 
         cutoff_index = self._determine_cutoff_index(messages)
-
         if cutoff_index <= 0:
             return None
 
-        messages_to_summarize, preserved_messages = self._partition_messages(messages, cutoff_index)
-
+        messages_to_summarize, preserved_messages = self._partition_with_skill_rescue(messages, cutoff_index)
+        messages_to_summarize, preserved_messages = self._preserve_dynamic_context_reminders(messages_to_summarize, preserved_messages)
+        self._fire_hooks(messages_to_summarize, preserved_messages, runtime)
         summary = self._create_summary(messages_to_summarize)
         new_messages = self._build_new_messages(summary, messages_to_summarize)
 
@@ -329,19 +237,7 @@ class SummarizationMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, R
             ]
         }
 
-    @override
-    async def abefore_model(
-        self, state: AgentState[Any], runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
-        """Process messages before model invocation, potentially triggering summarization.
-
-        Args:
-            state: The agent state.
-            runtime: The runtime environment.
-
-        Returns:
-            An updated state with summarized messages if summarization was performed.
-        """
+    async def _amaybe_summarize(self, state: AgentState, runtime: Runtime) -> dict | None:
         messages = state["messages"]
         self._ensure_message_ids(messages)
 
@@ -350,12 +246,12 @@ class SummarizationMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, R
             return None
 
         cutoff_index = self._determine_cutoff_index(messages)
-
         if cutoff_index <= 0:
             return None
 
-        messages_to_summarize, preserved_messages = self._partition_messages(messages, cutoff_index)
-
+        messages_to_summarize, preserved_messages = self._partition_with_skill_rescue(messages, cutoff_index)
+        messages_to_summarize, preserved_messages = self._preserve_dynamic_context_reminders(messages_to_summarize, preserved_messages)
+        self._fire_hooks(messages_to_summarize, preserved_messages, runtime)
         summary = await self._acreate_summary(messages_to_summarize)
         new_messages = self._build_new_messages(summary, messages_to_summarize)
 
@@ -367,344 +263,311 @@ class SummarizationMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, R
             ]
         }
 
-    def _should_summarize_based_on_reported_tokens(
-        self, messages: list[AnyMessage], threshold: float
-    ) -> bool:
-        """Check if reported token usage from last AIMessage exceeds threshold."""
-        last_ai_message = next(
-            (msg for msg in reversed(messages) if isinstance(msg, AIMessage)),
-            None,
-        )
-        if (  # noqa: SIM103
-            isinstance(last_ai_message, AIMessage)
-            and last_ai_message.usage_metadata is not None
-            and (reported_tokens := last_ai_message.usage_metadata.get("total_tokens", -1))
-            and reported_tokens >= threshold
-            and (message_provider := last_ai_message.response_metadata.get("model_provider"))
-            and message_provider == self.model._get_ls_params().get("ls_provider")  # noqa: SLF001
-        ):
-            return True
-        return False
-
-    def _should_summarize(self, messages: list[AnyMessage], total_tokens: int) -> bool:
-        """Determine whether summarization should run for the current token usage."""
-        if not self._trigger_conditions:
-            return False
-
-        for kind, value in self._trigger_conditions:
-            if kind == "messages" and len(messages) >= value:
-                return True
-            if kind == "tokens" and total_tokens >= value:
-                return True
-            if kind == "tokens" and self._should_summarize_based_on_reported_tokens(
-                messages, value
-            ):
-                return True
-            if kind == "fraction":
-                max_input_tokens = self._get_profile_limits()
-                if max_input_tokens is None:
-                    continue
-                threshold = int(max_input_tokens * value)
-                if threshold <= 0:
-                    threshold = 1
-                if total_tokens >= threshold:
-                    return True
-
-                if self._should_summarize_based_on_reported_tokens(messages, threshold):
-                    return True
-        return False
-
-    def _determine_cutoff_index(self, messages: list[AnyMessage]) -> int:
-        """Choose cutoff index respecting retention configuration."""
-        kind, value = self.keep
-        if kind in {"tokens", "fraction"}:
-            token_based_cutoff = self._find_token_based_cutoff(messages)
-            if token_based_cutoff is not None:
-                return token_based_cutoff
-            # None cutoff -> model profile data not available (caught in __init__ but
-            # here for safety), fallback to message count
-            return self._find_safe_cutoff(messages, _DEFAULT_MESSAGES_TO_KEEP)
-        return self._find_safe_cutoff(messages, cast("int", value))
-
-    def _find_token_based_cutoff(self, messages: list[AnyMessage]) -> int | None:
-        """Find cutoff index based on target token retention."""
-        if not messages:
-            return 0
-
-        kind, value = self.keep
-        if kind == "fraction":
-            max_input_tokens = self._get_profile_limits()
-            if max_input_tokens is None:
-                return None
-            target_token_count = int(max_input_tokens * value)
-        elif kind == "tokens":
-            target_token_count = int(value)
-        else:
-            return None
-
-        if target_token_count <= 0:
-            target_token_count = 1
-
-        if self.token_counter(messages) <= target_token_count:
-            return 0
-
-        # Use binary search to identify the earliest message index that keeps the
-        # suffix within the token budget.
-        left, right = 0, len(messages)
-        cutoff_candidate = len(messages)
-        max_iterations = len(messages).bit_length() + 1
-        for _ in range(max_iterations):
-            if left >= right:
-                break
-
-            mid = (left + right) // 2
-            if self._partial_token_counter(messages[mid:]) <= target_token_count:
-                cutoff_candidate = mid
-                right = mid
-            else:
-                left = mid + 1
-
-        if cutoff_candidate == len(messages):
-            cutoff_candidate = left
-
-        if cutoff_candidate >= len(messages):
-            if len(messages) == 1:
-                return 0
-            cutoff_candidate = len(messages) - 1
-
-        # Advance past any ToolMessages to avoid splitting AI/Tool pairs
-        return self._find_safe_cutoff_point(messages, cutoff_candidate)
-
-    def _get_profile_limits(self) -> int | None:
-        """Retrieve max input token limit from the model profile."""
-        try:
-            profile = self.model.profile
-        except AttributeError:
-            return None
-
-        if not isinstance(profile, Mapping):
-            return None
-
-        max_input_tokens = profile.get("max_input_tokens")
-
-        if not isinstance(max_input_tokens, int):
-            return None
-
-        return max_input_tokens
-
-    @staticmethod
-    def _validate_context_size(context: ContextSize, parameter_name: str) -> ContextSize:
-        """Validate context configuration tuples."""
-        kind, value = context
-        if kind == "fraction":
-            if not 0 < value <= 1:
-                msg = f"Fractional {parameter_name} values must be between 0 and 1, got {value}."
-                raise ValueError(msg)
-        elif kind in {"tokens", "messages"}:
-            if value <= 0:
-                msg = f"{parameter_name} thresholds must be greater than 0, got {value}."
-                raise ValueError(msg)
-        else:
-            msg = f"Unsupported context size type {kind} for {parameter_name}."
-            raise ValueError(msg)
-        return context
-
-    @staticmethod
+    @override
     def _build_new_messages(
-        summary: str, messages_to_summarize: list[AnyMessage] | None = None
+        self, summary: str, messages_to_summarize: list[AnyMessage] | None = None
     ) -> list[HumanMessage]:
-        # Pacgate patch (2026-11-08): keep the folded range RECOVERABLE.
-        #
-        # Stock returns one HumanMessage and nothing else, and the caller
-        # replaces history with `[RemoveMessage(REMOVE_ALL_MESSAGES), *these,
-        # *preserved]`. The folded range is therefore GONE, not hidden. The
-        # prose summary is lossy, so on a 65-page document workflow the model
-        # loses the only record of which files it already read and which
-        # sections it already passed - the measured shape of the re-read loops
-        # this repo documents (103 / 42 / 52 re-touches on thread b315a961).
-        #
-        # The second argument is optional ON PURPOSE. Stock is a @staticmethod
-        # taking one argument; a LangChain upgrade that moves this method, or a
-        # caller elsewhere in the tree, must not start raising TypeError during
-        # summarization. A missing range means no index, never a failure.
+        """Override the base implementation to let the human message with the special name 'summary'.
+        And this message will be ignored to display in the frontend, but still can be used as context for the model.
+
+        Pacgate patch (2026-11-08): keep the folded range RECOVERABLE.
+
+        The base class this inherits from returns ONE HumanMessage and the caller
+        replaces history with `[RemoveMessage(REMOVE_ALL_MESSAGES), *these,
+        *preserved]`. The folded range is therefore GONE, not hidden, and the
+        prose summary is lossy - on a 65-page document the model loses the only
+        record of which files it already read and which sections it already
+        passed. That is the measured shape of the re-read loops this repo
+        documents (103 / 42 / 52 re-touches of the same file on thread
+        b315a961, 3.2-3.5M tokens each, all killed with nothing delivered).
+
+        WHY THIS FILE AND NOT THE LANGCHAIN BASE CLASS. The first version of this
+        patch edited
+        langchain/agents/middleware/summarization.py::_build_new_messages and was
+        INERT: deer-flow overrides that method here, so the runtime never called
+        the patched base implementation. Verified 2026-11-08 with
+        `inspect.getsource(DeerFlowSummarizationMiddleware._build_new_messages)`
+        resolving to THIS class. A patch that is mounted and imported but never
+        executed looks exactly like a working one from the outside - which is why
+        the gate now asserts the runtime class, not the base class.
+
+        The second argument is optional ON PURPOSE: an upstream deer-flow change
+        that reverts to the one-argument call must degrade to "no index", never to
+        a TypeError during summarization.
+        """
         index = _pacgate_folded_index(messages_to_summarize)
         return [
             HumanMessage(
                 content=f"Here is a summary of the conversation to date:\n\n{summary}{index}",
-                additional_kwargs={"lc_source": "summarization"},
+                name="summary",
             )
         ]
 
-    @staticmethod
-    def _ensure_message_ids(messages: list[AnyMessage]) -> None:
-        """Ensure all messages have unique IDs for the add_messages reducer."""
-        for msg in messages:
-            if msg.id is None:
-                msg.id = str(uuid.uuid4())
+    def _pacgate_context_hint(self, messages: list[AnyMessage]) -> str | None:
+        """One-line context-pressure hint, or None when the band is not entered.
 
-    @staticmethod
-    def _partition_messages(
-        conversation_messages: list[AnyMessage],
+        WHY A HINT AND NOT A TOOL. Measured 2026-11-08 with this middleware's own
+        token_counter: one tool schema costs 159 tokens and is paid on EVERY
+        call - 159 x 136 = 21,624 tokens across a deep run. The budget this
+        feature exists to protect is `trigger - floor` = 36,000 - 14,728 =
+        ~21,300 tokens. A schema would therefore spend the entire protected
+        budget to report on it. The band-gated hint below costs 27 tokens, and
+        only on the calls that have already crossed the band.
+
+        It also fixes the actual failure. Models do not spontaneously query their
+        own pressure; the failure mode is the model not KNOWING, not being unable
+        to ask.
+        """
+        try:
+            total = self.token_counter(messages)
+            trigger = _pacgate_resolve_trigger_tokens(self)
+        except Exception:  # never let a hint break a run
+            return None
+        if not trigger or total < trigger * _PACGATE_HINT_BAND:
+            return None
+        pct = int(total / trigger * 100)
+        return (
+            f"<context-pressure>{pct}% of the fold budget used "
+            f"({total:,}/{trigger:,} tokens). A compression pass is due soon - "
+            "finish the current file or section before starting another.</context-pressure>"
+        )
+
+
+    def _preserve_dynamic_context_reminders(
+        self,
+        messages_to_summarize: list[AnyMessage],
+        preserved_messages: list[AnyMessage],
+    ) -> tuple[list[AnyMessage], list[AnyMessage]]:
+        """Keep hidden dynamic-context reminders out of summary compression.
+
+        These reminders carry the current date and optional memory. If summarization
+        removes them, DynamicContextMiddleware can mistake the summary HumanMessage
+        for the first user message and inject the reminder in the wrong place.
+        """
+        reminders = [msg for msg in messages_to_summarize if is_dynamic_context_reminder(msg)]
+        if not reminders:
+            return messages_to_summarize, preserved_messages
+
+        remaining = [msg for msg in messages_to_summarize if not is_dynamic_context_reminder(msg)]
+        return remaining, reminders + preserved_messages
+
+    def _partition_with_skill_rescue(
+        self,
+        messages: list[AnyMessage],
         cutoff_index: int,
     ) -> tuple[list[AnyMessage], list[AnyMessage]]:
-        """Partition messages into those to summarize and those to preserve."""
-        messages_to_summarize = conversation_messages[:cutoff_index]
-        preserved_messages = conversation_messages[cutoff_index:]
+        """Partition like the parent, then rescue recently-loaded skill bundles."""
+        to_summarize, preserved = self._partition_messages(messages, cutoff_index)
 
-        return messages_to_summarize, preserved_messages
-
-    def _find_safe_cutoff(self, messages: list[AnyMessage], messages_to_keep: int) -> int:
-        """Find safe cutoff point that preserves AI/Tool message pairs.
-
-        Returns the index where messages can be safely cut without separating
-        related AI and Tool messages. Returns `0` if no safe cutoff is found.
-
-        This is aggressive with summarization - if the target cutoff lands in the
-        middle of tool messages, we advance past all of them (summarizing more).
-        """
-        if len(messages) <= messages_to_keep:
-            return 0
-
-        target_cutoff = len(messages) - messages_to_keep
-        return self._find_safe_cutoff_point(messages, target_cutoff)
-
-    @staticmethod
-    def _find_safe_cutoff_point(messages: list[AnyMessage], cutoff_index: int) -> int:
-        """Find a safe cutoff point that doesn't split AI/Tool message pairs.
-
-        If the message at `cutoff_index` is a `ToolMessage`, search backward for the
-        `AIMessage` containing the corresponding `tool_calls` and adjust the cutoff to
-        include it. This ensures tool call requests and responses stay together.
-
-        Falls back to advancing forward past `ToolMessage` objects only if no matching
-        `AIMessage` is found (edge case).
-        """
-        if cutoff_index >= len(messages) or not isinstance(messages[cutoff_index], ToolMessage):
-            return cutoff_index
-
-        # Collect tool_call_ids from consecutive ToolMessages at/after cutoff
-        tool_call_ids: set[str] = set()
-        idx = cutoff_index
-        while idx < len(messages) and isinstance(messages[idx], ToolMessage):
-            tool_msg = cast("ToolMessage", messages[idx])
-            if tool_msg.tool_call_id:
-                tool_call_ids.add(tool_msg.tool_call_id)
-            idx += 1
-
-        # Search backward for AIMessage with matching tool_calls
-        for i in range(cutoff_index - 1, -1, -1):
-            msg = messages[i]
-            if isinstance(msg, AIMessage) and msg.tool_calls:
-                ai_tool_call_ids = {tc.get("id") for tc in msg.tool_calls if tc.get("id")}
-                if tool_call_ids & ai_tool_call_ids:
-                    # Found the AIMessage - move cutoff to include it
-                    return i
-
-        # Fallback: no matching AIMessage found, advance past ToolMessages to avoid
-        # orphaned tool responses
-        return idx
-
-    def _create_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
-        """Generate summary for the given messages.
-
-        Args:
-            messages_to_summarize: Messages to summarize.
-        """
-        if not messages_to_summarize:
-            return "No previous conversation history."
-
-        trimmed_messages = self._trim_messages_for_summary(messages_to_summarize)
-        if not trimmed_messages:
-            return "Previous conversation was too long to summarize."
-
-        # Format messages to avoid token inflation from metadata when str() is called on
-        # message objects
-        formatted_messages = get_buffer_string(trimmed_messages)
+        if self._preserve_recent_skill_count == 0 or self._preserve_recent_skill_tokens == 0 or not to_summarize:
+            return to_summarize, preserved
 
         try:
-            response = self.model.invoke(
-                self.summary_prompt.format(messages=formatted_messages).rstrip(),
-                config={"metadata": {"lc_source": "summarization"}},
-            )
-            return response.text.strip()
-        except Exception as e:
-            return f"Error generating summary: {e!s}"
-
-    async def _acreate_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
-        """Generate summary for the given messages.
-
-        Args:
-            messages_to_summarize: Messages to summarize.
-        """
-        if not messages_to_summarize:
-            return "No previous conversation history."
-
-        trimmed_messages = self._trim_messages_for_summary(messages_to_summarize)
-        if not trimmed_messages:
-            return "Previous conversation was too long to summarize."
-
-        # Format messages to avoid token inflation from metadata when str() is called on
-        # message objects
-        formatted_messages = get_buffer_string(trimmed_messages)
-
-        try:
-            response = await self.model.ainvoke(
-                self.summary_prompt.format(messages=formatted_messages).rstrip(),
-                config={"metadata": {"lc_source": "summarization"}},
-            )
-            return response.text.strip()
-        except Exception as e:
-            return f"Error generating summary: {e!s}"
-
-    def _trim_messages_for_summary(self, messages: list[AnyMessage]) -> list[AnyMessage]:
-        """Trim messages to fit within summary generation limits."""
-        try:
-            if self.trim_tokens_to_summarize is None:
-                return messages
-            return cast(
-                "list[AnyMessage]",
-                trim_messages(
-                    messages,
-                    max_tokens=self.trim_tokens_to_summarize,
-                    token_counter=self.token_counter,
-                    start_on="human",
-                    strategy="last",
-                    allow_partial=True,
-                    include_system=True,
-                ),
-            )
+            bundles = self._find_skill_bundles(to_summarize, self._skills_container_path)
         except Exception:
-            return messages[-_DEFAULT_FALLBACK_MESSAGE_COUNT:]
+            logger.exception("Skill-preserving summarization rescue failed; falling back to default partition")
+            return to_summarize, preserved
 
+        if not bundles:
+            return to_summarize, preserved
+
+        rescue_bundles = self._select_bundles_to_rescue(bundles)
+        if not rescue_bundles:
+            return to_summarize, preserved
+
+        bundles_by_ai_index = {bundle.ai_index: bundle for bundle in rescue_bundles}
+        rescue_tool_indices = {idx for bundle in rescue_bundles for idx in bundle.skill_tool_indices}
+        rescued: list[AnyMessage] = []
+        remaining: list[AnyMessage] = []
+        for i, msg in enumerate(to_summarize):
+            bundle = bundles_by_ai_index.get(i)
+            if bundle is not None and isinstance(msg, AIMessage):
+                rescued_tool_calls = [tc for tc in msg.tool_calls if tc.get("id") in bundle.skill_tool_call_ids]
+                remaining_tool_calls = [tc for tc in msg.tool_calls if tc.get("id") not in bundle.skill_tool_call_ids]
+
+                if rescued_tool_calls:
+                    rescued.append(_clone_ai_message(msg, rescued_tool_calls, content=""))
+                if remaining_tool_calls or msg.content:
+                    remaining.append(_clone_ai_message(msg, remaining_tool_calls))
+                continue
+
+            if i in rescue_tool_indices:
+                rescued.append(msg)
+                continue
+
+            remaining.append(msg)
+
+        return remaining, rescued + preserved
+
+    def _find_skill_bundles(
+        self,
+        messages: list[AnyMessage],
+        skills_root: str,
+    ) -> list[_SkillBundle]:
+        """Locate AIMessage + paired ToolMessage groups that load skill files."""
+        bundles: list[_SkillBundle] = []
+        n = len(messages)
+        i = 0
+        while i < n:
+            msg = messages[i]
+            if not (isinstance(msg, AIMessage) and msg.tool_calls):
+                i += 1
+                continue
+
+            tool_calls = list(msg.tool_calls)
+            skill_paths_by_id: dict[str, str] = {}
+            for tc in tool_calls:
+                if self._is_skill_tool_call(tc, skills_root):
+                    tc_id = tc.get("id")
+                    path = _tool_call_path(tc)
+                    if tc_id and path:
+                        skill_paths_by_id[tc_id] = path
+
+            if not skill_paths_by_id:
+                i += 1
+                continue
+
+            skill_tool_tokens = 0
+            skill_key_parts: list[str] = []
+            skill_tool_indices: list[int] = []
+            matched_skill_call_ids: set[str] = set()
+
+            j = i + 1
+            while j < n and isinstance(messages[j], ToolMessage):
+                j += 1
+
+            for k in range(i + 1, j):
+                tool_msg = messages[k]
+                if isinstance(tool_msg, ToolMessage) and tool_msg.tool_call_id in skill_paths_by_id:
+                    skill_tool_tokens += self.token_counter([tool_msg])
+                    skill_key_parts.append(skill_paths_by_id[tool_msg.tool_call_id])
+                    skill_tool_indices.append(k)
+                    matched_skill_call_ids.add(tool_msg.tool_call_id)
+
+            if not skill_tool_indices:
+                i = j
+                continue
+
+            bundles.append(
+                _SkillBundle(
+                    ai_index=i,
+                    skill_tool_indices=tuple(skill_tool_indices),
+                    skill_tool_call_ids=frozenset(matched_skill_call_ids),
+                    skill_tool_tokens=skill_tool_tokens,
+                    skill_key="|".join(sorted(skill_key_parts)),
+                )
+            )
+            i = j
+
+        return bundles
+
+    def _select_bundles_to_rescue(self, bundles: list[_SkillBundle]) -> list[_SkillBundle]:
+        """Pick bundles to keep, walking newest-first under count/token budgets."""
+        selected: list[_SkillBundle] = []
+        if not bundles:
+            return selected
+
+        seen_skill_keys: set[str] = set()
+        total_tokens = 0
+        kept = 0
+
+        for bundle in reversed(bundles):
+            if kept >= self._preserve_recent_skill_count:
+                break
+            if bundle.skill_key in seen_skill_keys:
+                continue
+            if bundle.skill_tool_tokens > self._preserve_recent_skill_tokens_per_skill:
+                continue
+            if total_tokens + bundle.skill_tool_tokens > self._preserve_recent_skill_tokens:
+                continue
+
+            selected.append(bundle)
+            total_tokens += bundle.skill_tool_tokens
+            kept += 1
+            seen_skill_keys.add(bundle.skill_key)
+
+        selected.reverse()
+        return selected
+
+    def _is_skill_tool_call(self, tool_call: dict[str, Any], skills_root: str) -> bool:
+        """Return True when ``tool_call`` reads a file under the configured skills root."""
+        name = tool_call.get("name") or ""
+        if name not in self._skill_file_read_tool_names:
+            return False
+        path = _tool_call_path(tool_call)
+        if not path:
+            return False
+        normalized_root = skills_root.rstrip("/")
+        return path == normalized_root or path.startswith(normalized_root + "/")
+
+    def _fire_hooks(
+        self,
+        messages_to_summarize: list[AnyMessage],
+        preserved_messages: list[AnyMessage],
+        runtime: Runtime,
+    ) -> None:
+        if not self._before_summarization_hooks:
+            return
+
+        event = SummarizationEvent(
+            messages_to_summarize=tuple(messages_to_summarize),
+            preserved_messages=tuple(preserved_messages),
+            thread_id=_resolve_thread_id(runtime),
+            agent_name=_resolve_agent_name(runtime),
+            runtime=runtime,
+        )
+
+        for hook in self._before_summarization_hooks:
+            try:
+                hook(event)
+            except Exception:
+                hook_name = getattr(hook, "__name__", None) or type(hook).__name__
+                logger.exception("before_summarization hook %s failed", hook_name)
 
 # ---------------------------------------------------------------------------
-# Pacgate patch (2026-11-08): folded-range index + context-pressure snapshot.
+# Pacgate patch (2026-11-08): folded-range index + context-pressure hint.
 #
-# WHY THESE LIVE IN THIS FILE. The patch is a full-file mount replacement, so
-# the helpers must travel with the module it patches. Keeping them here means
-# one file to audit and no import path to add to the image.
+# These live in THIS file because the patch is a full-file mount replacement, so
+# the helpers must travel with the module they patch. One file to audit.
 # ---------------------------------------------------------------------------
 
-# Bounds: the index must cost far less than the range it describes, or it
+# Bounds. The index must cost far less than the range it describes, or it
 # re-introduces the pressure it exists to relieve. A pass at trigger=36000 /
-# keep=6000 leaves ~25k of headroom, so a few hundred tokens is noise.
+# keep=6000 leaves ~25k of headroom; measured 1.7% overhead on a realistic fold.
 _PACGATE_MAX_TOOL_NAMES = 20
 _PACGATE_MAX_PATHS = 24
 _PACGATE_MAX_HEADINGS = 20
 _PACGATE_MAX_PATH_CHARS = 200
 
-# POSIX file with an extension | URL | Windows path. Broad on separators
-# because tool layers report all three on this stack.
+# Pressure hint band: report once the fold budget is this far consumed. 0.85
+# leaves ~15% of the budget for the model to finish the line of work it is on.
+_PACGATE_HINT_BAND = 0.85
+_PACGATE_HINT_NAME = "pacgate_context_hint"
+
+# Tools whose output CANNOT be re-derived by calling them again. Everything
+# else (read_file, ls, glob, grep, bash, pacgate_list_*, the document readers)
+# is reproducible from disk, so a pointer is sufficient recovery for those.
+#
+# MEASURED 2026-11-08: a web scrape reply is ~4,208 tokens. So for these three
+# tools the pointer alone is NOT recovery - the page may have changed or stopped
+# being reachable - and an excerpt is the honest minimum.
+_PACGATE_NON_REPRODUCIBLE = (
+    "pacgate_web_scrape",
+    "pacgate_web_search",
+    "pacgate_connector_search",
+)
+_PACGATE_EXCERPT_CHARS = 600
+_PACGATE_MAX_EXCERPTS = 4
+
+# POSIX file with an extension | URL | Windows path.
 _PACGATE_PATH_RE = re.compile(
     r"(?:/[\w.\-]+){2,}\.[A-Za-z0-9]{1,8}"
     r"|https?://[^\s\"')>\]]+"
     r"|[A-Za-z]:\\[^\s\"'<>|]+"
 )
-
 # Markdown headings - what pymupdf4llm emits for PDF structure. This is the
-# handle a long-document navigation loop actually needs: the 0.2.32 fix made
-# headings reachable (outline=51 on the CJK PDF); this keeps the model aware of
-# which ones it has already passed once they fall into a folded range.
+# handle a long-document navigation loop needs: 0.2.32 made headings reachable
+# (outline=51 on the CJK PDF); this keeps them in view once folded.
 _PACGATE_HEADING_RE = re.compile(r"^#{1,3}\s+(.{1,120})$", re.MULTILINE)
 
 
@@ -738,19 +601,28 @@ def _pacgate_text_of(message: Any) -> str:
     return ""
 
 
+def _pacgate_excerpt(text: str) -> str:
+    """One-line, whitespace-collapsed excerpt - bounded and greppable."""
+    flat = " ".join(text.split())
+    if len(flat) <= _PACGATE_EXCERPT_CHARS:
+        return flat
+    return flat[:_PACGATE_EXCERPT_CHARS].rstrip() + " [...]"
+
+
 def _pacgate_folded_index(messages: list[Any] | None) -> str:
     """Compact verbatim index of the range about to be folded.
 
     Returns '' when there is nothing worth indexing, so a trivial range adds
     nothing to the prompt.
 
-    Recovers POINTERS, not prose. It deliberately does not archive message
-    bodies: a persistent store of folded matter conversation would be a second
-    unscoped copy of privileged content, which is the property this repo
-    refuses elsewhere (OpenViking is tenant/matter scoped; session capture stays
-    on PacgateMemoryStore -> pacgate-api). Disk already holds the artifacts
-    under /data/outputs, so the index is the cheap correct half of
-    reversibility.
+    Recovers POINTERS for reproducible tools and a bounded EXCERPT for the three
+    tools whose output cannot be re-derived. It stores NO message bodies: a
+    persistent archive of folded matter conversation would be a second unscoped
+    copy of privileged content, which is the property this repo refuses
+    elsewhere (OpenViking is tenant/matter scoped; the ethical wall is proven
+    with PEER_NOT_ALLOWED; session capture stays on PacgateMemoryStore ->
+    pacgate-api). Disk holds the reproducible artifacts, so a pointer is enough
+    for those - and the excerpt covers the part disk does not hold.
     """
     if not messages:
         return ""
@@ -758,6 +630,7 @@ def _pacgate_folded_index(messages: list[Any] | None) -> str:
     tool_names: list[str] = []
     paths: list[str] = []
     headings: list[str] = []
+    excerpts: list[str] = []
 
     for message in messages:
         # Tool names come from the assistant turn that REQUESTED the call, so
@@ -772,12 +645,19 @@ def _pacgate_folded_index(messages: list[Any] | None) -> str:
                     if isinstance(value, str):
                         paths.extend(m.group(0) for m in _PACGATE_PATH_RE.finditer(value))
 
-        # Tool replies carry the tool NAME on the message itself.
-        name = getattr(message, "name", None)
-        if name and getattr(message, "tool_call_id", None):
-            tool_names.append(str(name))
-
         text = _pacgate_text_of(message)
+
+        # A tool REPLY carries the tool name on the message itself. This is the
+        # only place an excerpt can be captured: the assistant turn holds the
+        # arguments, the reply holds the content.
+        name = getattr(message, "name", None)
+        is_reply = bool(getattr(message, "tool_call_id", None))
+        if name and is_reply:
+            tool_names.append(str(name))
+            if name in _PACGATE_NON_REPRODUCIBLE and text.strip():
+                if len(excerpts) < _PACGATE_MAX_EXCERPTS:
+                    excerpts.append(f"{name}: {_pacgate_excerpt(text)}")
+
         if text:
             paths.extend(m.group(0) for m in _PACGATE_PATH_RE.finditer(text))
             headings.extend(m.group(1).strip() for m in _PACGATE_HEADING_RE.finditer(text))
@@ -786,12 +666,16 @@ def _pacgate_folded_index(messages: list[Any] | None) -> str:
     paths = [p[:_PACGATE_MAX_PATH_CHARS] for p in _pacgate_dedupe(paths)][:_PACGATE_MAX_PATHS]
     headings = _pacgate_dedupe(headings)[:_PACGATE_MAX_HEADINGS]
 
-    if not (tool_names or paths or headings):
+    if not (tool_names or paths or headings or excerpts):
         return ""
 
     lines = ["", "Folded range - recoverable handles (verbatim, not paraphrased):"]
     if tool_names:
         lines.append(f"  tools called: {', '.join(tool_names)}")
+    if excerpts:
+        # Only the non-reproducible tools get content carried forward.
+        lines.append("  content that CANNOT be re-fetched (excerpt):")
+        lines.extend(f"    - {e}" for e in excerpts)
     if paths:
         lines.append("  paths/urls touched:")
         lines.extend(f"    - {p}" for p in paths)
@@ -799,37 +683,30 @@ def _pacgate_folded_index(messages: list[Any] | None) -> str:
         lines.append("  section headings seen:")
         lines.extend(f"    - {h}" for h in headings)
     lines.append(
-        "  These are handles, not content. Re-read a path to recover its text "
-        "rather than reconstructing it from the summary."
+        "  Re-read a path to recover its text rather than reconstructing it from "
+        "the summary. Excerpts above are all that survives for live web/federated "
+        "results."
     )
     return "\n".join(lines)
 
 
-def pacgate_resolve_trigger_tokens(middleware: Any) -> int:
+def _pacgate_resolve_trigger_tokens(middleware: Any) -> int:
     """Token-type trigger off a live middleware, without guessing.
 
-    MEASURED 2026-11-08: the shape at runtime is a TUPLE, not a dict.
-    `deer-flow-config.yaml` writes
+    MEASURED 2026-11-08: the shape at RUNTIME is a tuple, not the YAML dict.
+    deer-flow-config.yaml writes `- type: tokens / value: 36000`, but
+    SummarizationMiddleware.__init__ validates and stores
+    `ContextTokens = tuple[Literal["tokens"], int]`, i.e. ("tokens", 36000), or a
+    list of those. A resolver written against the YAML shape returns 0 against
+    the live object and reports "no pressure" on a run about to summarize - a
+    silent zero in the one number this feature exists to report.
 
-        trigger:
-          - type: tokens
-            value: 36000
-
-    but `SummarizationMiddleware.__init__` validates and stores it as
-    `ContextTokens = tuple[Literal["tokens"], int]`, i.e. `("tokens", 36000)`,
-    or a list of those. A resolver written against the YAML shape returns 0
-    against the live object and reports "no pressure" on a run that is about to
-    summarize - the exact silent-zero failure this helper exists to avoid.
-
-    Handles: tuple/list of tuples (runtime), list/dict of {type, value} (YAML,
-    in case a caller passes config straight through), and a bare int. Returns 0
-    ONLY when the shape is genuinely unrecognised, which callers must treat as
-    "cannot report" rather than "no pressure".
+    Returns 0 ONLY when the shape is genuinely unrecognised; callers must read
+    that as "cannot report", never as "no pressure".
     """
     trigger = getattr(middleware, "trigger", None)
 
     def from_one(item: Any) -> int | None:
-        # Runtime shape: ("tokens", 36000)
         if isinstance(item, (tuple, list)) and len(item) == 2:
             kind, value = item
             if kind == "tokens" and isinstance(value, int):
@@ -841,11 +718,8 @@ def pacgate_resolve_trigger_tokens(middleware: Any) -> int:
 
     if isinstance(trigger, int):
         return trigger
-
-    # A single tuple reads as a 2-element sequence of scalars; a list-of-tuples
-    # reads as a sequence of sequences. Distinguish before iterating, or a
-    # single ("tokens", 36000) is mistaken for two unknown items.
     if isinstance(trigger, (tuple, list)):
+        # A single ("tokens", 36000) must not be mistaken for two unknown items.
         direct = from_one(trigger)
         if direct is not None:
             return direct
@@ -853,35 +727,23 @@ def pacgate_resolve_trigger_tokens(middleware: Any) -> int:
             found = from_one(item)
             if found is not None:
                 return found
-
     if isinstance(trigger, dict):
         found = from_one(trigger)
         if found is not None:
             return found
-
     return 0
 
 
 def pacgate_context_status(middleware: Any, messages: list[Any]) -> dict[str, Any]:
-    """Context-pressure snapshot from the live middleware.
+    """Context-pressure snapshot, for the OPERATOR surface (API/UI).
 
     Reads the SAME token_counter and trigger the summarizer uses, so the number
     reported is the number that decides whether a pass fires - not a separate
-    estimate that can drift from it.
-
-    WHY THIS IS NOT A TOOL. Every registered tool adds its schema to every
-    request. The unremovable per-call floor is already 14,728 tokens (3,220
-    system prompt + 11,508 across 45 tool schemas), and
-    DEFECT-summarization-treadmill.md is the record of what happens when a
-    threshold sits below that floor. Adding tools purely for visibility would
-    raise the floor to observe a threshold measured against it. The caller
-    decides whether the value is worth a schema.
-
-    Returns a plain dict so it survives JSON serialisation into a tool result or
-    an API response without either side importing this module.
+    estimate that can drift from it. Costs zero prompt tokens because it is
+    called by the application layer, not by the model.
     """
     counted = middleware.token_counter(messages)
-    trigger = pacgate_resolve_trigger_tokens(middleware)
+    trigger = _pacgate_resolve_trigger_tokens(middleware)
     used = int(counted)
     return {
         "used_tokens": used,

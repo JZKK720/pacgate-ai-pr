@@ -1,25 +1,34 @@
 """Gate: the summarization recovery patch keeps a folded range recoverable.
 
 WHAT THIS ASSERTS, and why each one is a real failure mode rather than a style
-preference. Every case below was either measured on this stack or is a shape the
-patch has to survive:
+preference.
 
-  R1  the patch is a FULL-FILE mount replacement, not a diff
-  R2  the stock single-argument signature still works (upgrade safety)
+THE ASSERTION THAT MATTERS MOST IS R1. The first version of this patch edited
+`langchain/agents/middleware/summarization.py::_build_new_messages`, mounted
+cleanly, imported cleanly, and was INERT: deer-flow overrides that method in
+`deerflow/agents/middlewares/summarization_middleware.py`, so the runtime never
+called the patched base implementation. A patch that is mounted and imported but
+never executed looks exactly like a working one from the outside. R1 therefore
+asserts the RUNTIME DISPATCH TARGET, not the file that was edited.
+
+  R1  the patch ships the deer-flow middleware (the runtime dispatch target)
+  R2  the stock one-argument call still works (upgrade safety)
   R3  the two-argument path appends a verbatim index
   R4  a range with no handles appends NOTHING (no prompt bloat)
-  R5  the index costs far less than the range it describes
-  R6  the trigger resolver handles the RUNTIME tuple shape, not the YAML shape
-  R7  context status reports against the live middleware's own counter
+  R5  the index is small relative to the range it describes
+  R6  the trigger resolver reads the RUNTIME tuple shape, not the YAML shape
+  R7  context status agrees with the middleware's own decision
   R8  an unrecognised trigger shape reports 0 ("cannot report"), never a
       confident "no pressure"
-  R9  both before_model call sites pass the folded range
-  R10 the patch is mounted by both compose lanes
+  R9  both _maybe_summarize call sites pass the folded range
+  R10 both compose lanes mount the patch at the RUNTIME path
+  R11 non-reproducible tool output is excerpted, reproducible output is not
+  R12 the pressure hint is SILENT below the band and fires above it
 
 R6 EXISTS BECAUSE THIS WAS A REAL BUG IN THE FIRST DRAFT. The resolver was
 written against `deer-flow-config.yaml`, which writes a LIST OF DICTS
 ({type: tokens, value: 36000}). The live object holds
-`ContextTokens = tuple[Literal["tokens"], int]`, i.e. `("tokens", 36000)`. A
+`ContextTokens = tuple[Literal["tokens"], int]`, i.e. ("tokens", 36000). A
 dict-shaped resolver returns 0 against the live object and reports "no pressure"
 on a run that is about to summarize - a silent zero, the worst kind.
 
@@ -27,11 +36,6 @@ Exit codes, matching the rest of this repo:
   0 = every assertion passed
   1 = a real failure
   2 = CANNOT CHECK (no container, or the patched module is not reachable)
-
-Run:
-  pwsh -NoProfile -File scripts/test-summarization-recovery.ps1
-or directly:
-  python scripts/test_summarization_recovery.py
 """
 
 from __future__ import annotations
@@ -43,6 +47,9 @@ import sys
 
 PATCH_REL = os.path.join("deploy", "client-bundle", "patches",
                          "deer-flow-summarization-recovery.py")
+RUNTIME_TARGET = (
+    "/app/backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py"
+)
 CONTAINER = os.environ.get("PACGATE_DF_CONTAINER", "deer-flow")
 VENV_PY = "/app/backend/.venv/bin/python"
 
@@ -74,7 +81,9 @@ def run_in_container(script: str) -> tuple[int, str]:
         ["docker", "exec", "-i", CONTAINER, VENV_PY, "-"],
         input=script, text=True, capture_output=True,
     )
-    out = (proc.stdout or "") + (proc.returncode and (proc.stderr or "") or "")
+    out = proc.stdout or ""
+    if proc.returncode:
+        out += proc.stderr or ""
     return proc.returncode, out
 
 
@@ -84,22 +93,27 @@ def main() -> int:
 
     print("=== summarization recovery patch ===")
 
-    # ── R1: full-file replacement ────────────────────────────────────────────
     if not os.path.exists(patch_path):
         cannot_check(f"patch not found at {PATCH_REL}")
     text = open(patch_path, encoding="utf-8", newline="").read()
-    is_full_file = "class SummarizationMiddleware" in text and "import uuid" in text
-    check("R1 the patch is a full-file replacement of the stock module", is_full_file,
-          "a diff cannot be bind-mounted over a module; see deer-flow-file-conversion.py")
+
+    # ── R1: runtime dispatch target, not "a file that imports" ───────────────
+    is_runtime_class = ("class DeerFlowSummarizationMiddleware" in text
+                        and "def _pacgate_context_hint" in text)
+    is_base_class = "class SummarizationMiddleware" in text
+    check("R1 the patch ships the RUNTIME class deer-flow actually dispatches to",
+          is_runtime_class and not is_base_class,
+          "editing the langchain base class mounts and imports cleanly but is INERT, "
+          "because deer-flow overrides _build_new_messages. See this file's docstring.")
 
     # ── R9: both call sites pass the folded range ────────────────────────────
-    sync_n = text.count("new_messages = self._build_new_messages(summary, messages_to_summarize)")
+    patched_n = text.count("new_messages = self._build_new_messages(summary, messages_to_summarize)")
     bare_n = text.count("new_messages = self._build_new_messages(summary)")
-    check("R9 both before_model and abefore_model pass the folded range",
-          sync_n == 2 and bare_n == 0,
-          f"patched call sites={sync_n} (expected 2), stock-form sites={bare_n} (expected 0)")
+    check("R9 both _maybe_summarize and _amaybe_summarize pass the folded range",
+          patched_n == 2 and bare_n == 0,
+          f"patched={patched_n} (want 2), stock-form={bare_n} (want 0)")
 
-    # ── R10: mounted by both lanes ───────────────────────────────────────────
+    # ── R10: both lanes mount at the RUNTIME path ────────────────────────────
     lanes = {}
     for lane in ("compose.prod.yaml", "compose.bundle.yaml"):
         lane_path = os.path.join(repo_root, "deploy", "client-bundle", lane)
@@ -107,10 +121,10 @@ def main() -> int:
             lane_text = open(lane_path, encoding="utf-8", newline="").read()
         except OSError:
             lane_text = ""
-        lanes[lane] = "deer-flow-summarization-recovery.py" in lane_text
-    check("R10 both compose lanes mount the patch", all(lanes.values()), json.dumps(lanes))
+        lanes[lane] = RUNTIME_TARGET in lane_text
+    check("R10 both compose lanes mount the patch at the RUNTIME path",
+          all(lanes.values()), json.dumps(lanes))
 
-    # ── everything else runs inside the real venv ────────────────────────────
     probe = subprocess.run(["docker", "exec", CONTAINER, "true"], capture_output=True)
     if probe.returncode != 0:
         cannot_check(f"container {CONTAINER} is not running")
@@ -121,12 +135,26 @@ def main() -> int:
         cannot_check(f"could not stage the patch into {CONTAINER}: {cp.stderr.strip()}")
 
     script = r'''
-import importlib.util, json
+import sys, json, importlib.util
+sys.path.insert(0, "/app/backend/packages/harness")
 from unittest.mock import MagicMock
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-spec = importlib.util.spec_from_file_location("sump", "/tmp/_recovery_probe.py")
+# Load the MOUNTED FILE directly rather than through the package. Two reasons,
+# both learned here:
+#   1. `import langchain.agents` fails on this image with a circular ImportError
+#      (`factory` -> `middleware/__init__` -> `summarization` -> `agents`).
+#      Measured 2026-11-08: that failure is PRE-EXISTING and reproduces with no
+#      patch present and no harness path on sys.path. It is not caused by this
+#      patch, and the running app is unaffected because uvicorn's boot order
+#      binds AgentState first.
+#   2. Loading the file directly is what we actually want to assert: the bytes
+#      that will be mounted, executed.
+# dataclasses resolves cls.__module__ through sys.modules, so the module must be
+# registered before exec_module or the @dataclass decorator raises AttributeError.
+spec = importlib.util.spec_from_file_location("dsum_probe", "/tmp/_recovery_probe.py")
 m = importlib.util.module_from_spec(spec)
+sys.modules["dsum_probe"] = m
 try:
     spec.loader.exec_module(m)
 except Exception as exc:
@@ -134,9 +162,9 @@ except Exception as exc:
     raise SystemExit(0)
 
 out = {}
+D = m.DeerFlowSummarizationMiddleware
 
-# ── R2/R3/R4: builder signatures ────────────────────────────────────────────
-out["one_arg"] = m.SummarizationMiddleware._build_new_messages("SUM")[0].content
+out["one_arg"] = D._build_new_messages(MagicMock(), "SUM")[0].content
 
 folded = [
     AIMessage(content="", tool_calls=[{"name": "read_file",
@@ -145,36 +173,40 @@ folded = [
                 tool_call_id="c1", name="read_file"),
     AIMessage(content="## 2. Liability\nbody"),
 ]
-out["two_arg"] = m.SummarizationMiddleware._build_new_messages("SUM", folded)[0].content
+out["two_arg"] = D._build_new_messages(MagicMock(), "SUM", folded)[0].content
 out["no_handles"] = m._pacgate_folded_index([HumanMessage(content="plain prose")])
 
-# R5 must be measured against a REALISTIC range. A 65-char fixture makes the
-# index's fixed explanatory text dominate the ratio and says nothing about a
-# real fold, which is kilobytes. Build a range the size a 36k-trigger pass
-# actually folds, then compare.
-big = []
-for i in range(60):
-    big.append(ToolMessage(
-        content=("# Section %d\n" % i) + ("body text about the agreement. " * 40)
-                + "/data/outputs/doc-%d.pdf" % i,
-        tool_call_id="c%d" % i, name="read_file"))
-out["big_folded_len"] = sum(len(str(getattr(x, "content", ""))) for x in big)
-out["big_index"] = m._pacgate_folded_index(big)
-out["big_index_len"] = len(out["big_index"])
+big = [ToolMessage(content=("# Section %d\n" % i) + ("body text. " * 40)
+                   + "/data/outputs/doc-%d.pdf" % i,
+                   tool_call_id="c%d" % i, name="read_file") for i in range(60)]
+out["big_folded_len"] = sum(len(str(x.content)) for x in big)
+out["big_index_len"] = len(m._pacgate_folded_index(big))
 
-# ── R6: RUNTIME tuple shape, plus the YAML shapes ───────────────────────────
+web = [AIMessage(content="", tool_calls=[{"name": "pacgate_web_scrape",
+        "args": {"url": "https://example.com/j"}, "id": "w1"}]),
+       ToolMessage(content="The court held X. " * 200, tool_call_id="w1",
+                   name="pacgate_web_scrape")]
+out["web_index"] = m._pacgate_folded_index(web)
+disk = [AIMessage(content="", tool_calls=[{"name": "read_file",
+         "args": {"path": "/data/outputs/a.pdf"}, "id": "d1"}]),
+        ToolMessage(content="The court held X. " * 200, tool_call_id="d1",
+                    name="read_file")]
+out["disk_index"] = m._pacgate_folded_index(disk)
+
 class Odd: trigger = "weird"
-mw = m.SummarizationMiddleware(model=MagicMock(), trigger=("tokens", 36000),
-                               keep=("tokens", 6000))
-out["trigger_tuple"] = m.pacgate_resolve_trigger_tokens(mw)
-out["trigger_list_of_tuples"] = m.pacgate_resolve_trigger_tokens(
-    m.SummarizationMiddleware(model=MagicMock(), trigger=[("tokens", 36000)],
-                              keep=("tokens", 6000)))
-out["trigger_unknown"] = m.pacgate_resolve_trigger_tokens(Odd())
+mw = D(model=MagicMock(), trigger=("tokens", 36000), keep=("tokens", 6000))
+out["trigger_tuple"] = m._pacgate_resolve_trigger_tokens(mw)
+out["trigger_list"] = m._pacgate_resolve_trigger_tokens(
+    D(model=MagicMock(), trigger=[("tokens", 36000)], keep=("tokens", 6000)))
+out["trigger_unknown"] = m._pacgate_resolve_trigger_tokens(Odd())
+out["status"] = m.pacgate_context_status(mw, [HumanMessage(content="word " * 5000)])
 
-# ── R7: status against the live counter ────────────────────────────────────
-snap = m.pacgate_context_status(mw, [HumanMessage(content="word " * 5000)])
-out["status"] = snap
+per_word = mw.token_counter([HumanMessage(content="word " * 1000)]) / 1000.0
+out["hint_below"] = mw._pacgate_context_hint(
+    [HumanMessage(content="word " * int(36000 * 0.50 / per_word))])
+out["hint_above"] = mw._pacgate_context_hint(
+    [HumanMessage(content="word " * int(36000 * 0.92 / per_word))])
+
 print(json.dumps(out))
 '''
     rc, raw = run_in_container(script)
@@ -195,50 +227,50 @@ print(json.dumps(out))
         print(f"\nRESULT: {_passed} passed, {_failed} failed")
         return 1
 
-    # R2: stock signature must be byte-identical to before the patch
     check("R2 the stock single-argument call still works",
           res["one_arg"] == "Here is a summary of the conversation to date:\n\nSUM",
           repr(res["one_arg"]))
 
-    # R3: index appended on the two-argument path
     two = res["two_arg"]
     check("R3 the two-argument path appends a verbatim index",
           "recoverable handles" in two and "read_file" in two
-          and "/data/outputs/handbook.pdf" in two and "1. Scope" in two,
-          two)
+          and "/data/outputs/handbook.pdf" in two and "1. Scope" in two, two)
 
-    # R4: no bloat when there is nothing to index
     check("R4 a range with no handles appends nothing",
           res["no_handles"] == "", repr(res["no_handles"]))
 
-    # R5: the index must cost far less than the range it describes. Measured on a
-    # range the size a real summarization pass folds, not on a toy fixture - the
-    # index carries fixed explanatory text, so a tiny range measures the
-    # boilerplate rather than the compression.
     ratio = res["big_index_len"] / max(1, res["big_folded_len"])
     check("R5 the index is small relative to the range it describes",
           ratio < 0.10,
-          f"index={res['big_index_len']} chars vs folded={res['big_folded_len']} chars "
+          f"index={res['big_index_len']} vs folded={res['big_folded_len']} "
           f"(ratio {ratio:.3f}, want < 0.100)")
 
-    # R6: the runtime tuple is the shape that actually occurs
+    check("R11a non-reproducible tool output is excerpted",
+          "CANNOT be re-fetched" in res["web_index"]
+          and "The court held X." in res["web_index"], res["web_index"][:400])
+    check("R11b reproducible tool output is NOT excerpted (pointer only)",
+          "CANNOT be re-fetched" not in res["disk_index"]
+          and "/data/outputs/a.pdf" in res["disk_index"], res["disk_index"][:400])
+
     check("R6 the resolver reads the RUNTIME tuple shape",
           res["trigger_tuple"] == 36000, f"got {res['trigger_tuple']!r} (want 36000)")
     check("R6b a list of runtime tuples also resolves",
-          res["trigger_list_of_tuples"] == 36000, f"got {res['trigger_list_of_tuples']!r}")
-
-    # R8: unknown shape must be 0, not a confident zero-pressure reading
+          res["trigger_list"] == 36000, f"got {res['trigger_list']!r}")
     check("R8 an unrecognised trigger shape reports 0 (cannot report)",
           res["trigger_unknown"] == 0, f"got {res['trigger_unknown']!r}")
 
-    # R7: status numbers agree with the middleware's own decision
     snap = res["status"]
     check("R7 context status reports against the live counter",
           snap["trigger_tokens"] == 36000 and snap["used_tokens"] > 0
           and 0 < snap["used_pct_of_trigger"] < 100
           and snap["headroom_tokens"] == snap["trigger_tokens"] - snap["used_tokens"]
-          and snap["should_summarize"] is False,
-          json.dumps(snap))
+          and snap["should_summarize"] is False, json.dumps(snap))
+
+    check("R12a the pressure hint is SILENT below the band",
+          res["hint_below"] is None, repr(res["hint_below"])[:200])
+    check("R12b the pressure hint FIRES above the band",
+          isinstance(res["hint_above"], str) and "context-pressure" in res["hint_above"]
+          and "fold budget used" in res["hint_above"], repr(res["hint_above"])[:300])
 
     print(f"\nRESULT: {_passed} passed, {_failed} failed")
     return 0 if _failed == 0 else 1
