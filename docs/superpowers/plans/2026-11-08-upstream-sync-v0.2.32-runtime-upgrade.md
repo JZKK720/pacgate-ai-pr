@@ -560,7 +560,112 @@ git commit -m "docs(plan): record the measured outcome of the 0.2.32 runtime upg
 
 ---
 
-## Out of scope, and why
+## Outcome
+
+Measured on this box on 2026-11-08, after the work in this plan. Every row is a command that was
+actually run; nothing here is inferred from a neighbouring green result.
+
+### History
+
+| Claim | Result |
+|---|---|
+| Merge adopted | `fd23be0` - `main` went from `ahead 9, behind 8` to `ahead 12, behind 0` |
+| Conflict count | 1 (`deploy/client-bundle/.env.example`), documentation-only, both sides kept |
+| Pre-merge backup | branch `backup/pre-sync-2026-11-08` -> `969e0be` |
+| Tree version | `pacgate-ai/Cargo.toml` -> `0.2.32` |
+| Release provenance | `test-release-provenance.ps1` -> **PASSED**: `v0.2.32` identifies the `7a6dd732c6df` artifacts clients pull |
+| Local fixes preserved | bounded `for attempt in range(2)` retry present (1 match); `audit-e2e-credentials`, `test-pdf-outline-extraction`, `test-firecrawl-wiring` all still registered in `run-all-checks.ps1` |
+
+### Runtime
+
+| Gate | Before | After |
+|---|---|---|
+| `test-stack-version-coherence.ps1` | **9 passed, 5 failed** - all five running `:0.2.30` | **14 passed, exit 0** - all five on `:0.2.32` |
+| `test-pdf-outline-extraction.ps1` | **2 passed, 5 failed** - `ModuleNotFoundError: pymupdf4llm`, `headings=0 outline=0`, 7 control failures | **7 passed, all green** - `pymupdf 2.1`, `headings=54 outline=51` |
+| `test-run-recursion-cap.ps1` | (not runnable meaningfully before - the floor did not exist) | **43 passed, 0 failed** |
+| `audit-recursion-regressions.ps1` | - | `fix EVIDENCED - no caller-budget regression, and 6 run(s) delivered files` |
+| `audit-deer-flow-patches.ps1` | - | `OK: every patched upstream path still exists at the target` |
+| `audit-e2e-credentials.ps1` | - | `6 passed, 4 warning(s)`, exit 0 - every required credential VALID (connector keys absent by design) |
+| `test-cross-stack-credentials.ps1` | - | `every shared credential agrees across both stacks`, 0 warnings |
+| `smoke-full-stack.ps1` | - | `passed: 20 failed: 0 skipped: 1` - every reachable lane passed |
+| `test-legal-journey.ps1` | - | `19 assertions passed`, `full legal journey PASSED, all lanes verified` |
+| `test-agent-mcp-e2e.ps1` | **7 passed, 1 failed** (E3) | **9 passed, 0 failed** - `called: pacgate_pacgate_list_connectors` |
+| `test-qm-currentness.ps1` | **exit 1** - 3 staged definition files behind | **exit 0** - `30 file(s) identical`, `qm is current` |
+| **`run-all-checks.ps1`** | - | **`ALL 67 GATES PASSED`**, exit 0 (18 live-stack gates checked separately) |
+
+Images: all five pulled anonymously and their local `RepoDigests` match the registry -
+`pacgate-api 6273177`, `pacgate-mcp cb33113`, `ocr-service 419a5e4`, `deer-flow-pacgate 7019a03`,
+`deer-flow-frontend-pacgate ff70b1d`. `report-ghcr-digests.ps1 -Version 0.2.32` -> "All 5 images
+pullable anonymously", with `:latest` in sync.
+
+### Two defects found while executing this plan
+
+**1. `test-agent-mcp-e2e.ps1` E3 could never pass.** deer-flow records MCP calls as
+`<serverName>_<toolName>`, so the real name is the doubled `pacgate_pacgate_list_connectors`, while
+E3 matched against bare names derived from `server.py`. The tool loop was working the whole time -
+deer-flow's log showed the tool auto-promoting and pacgate-mcp answering 200 - and the gate's FAIL
+message asserted the opposite in the same words a real regression would use. Fixed and
+red-checked both ways: `8 passed, 1 failed` with the qualified names excluded, `9 passed, 0 failed`
+when restored. Recorded in `deploy/DEFECT-agent-mcp-gate-name-qualification.md`.
+
+**2. The running qm container still had the pre-fix Firecrawl bug.** `test-qm-currentness.ps1`
+went red because the merge changed three `deploy/qm-pacgate` files that `-Update` never re-stages.
+This was not cosmetic: `docker exec qm-pacgate-core grep markdown /layer/tools/.../firecrawl_qm.py`
+showed the old `result.get("markdown", "")` on line 70 - the exact defect that makes
+`firecrawl-qm scrape <url>` print NOTHING and exit 0, which an agent then reads as "this page has no
+content". After re-staging, the same probe shows `md = data.get("markdown") or ""` at line 108.
+
+Because `sandbox/tools` and `sandbox/skills` are **bind-mounted** into `qm-pacgate-core`, refreshing
+the staged files applied the fix live with **no restart**, so the stack was not bounced while
+anyone could be working. The three refreshed files are gitignored machine-local state, so nothing
+was committed for this.
+
+### Assumptions made, and why
+
+- **MID tier moved to `nemotron-3.5-bolt:e4b-q8_0`.** Decided on measurement, not on upstream's
+  comment: residency here is size-one (loading e4b evicted a resident 74B, and loading ornith
+  evicted a resident e4b), and e4b measured 1274 tok/s prefill / 34-59 decode against ornith's
+  992 / 34. Upstream records the opposite prefill ordering, so its trade-off does not reproduce
+  here. Full reasoning in `docs/superpowers/decisions/2026-11-08-local-model-posture.md`.
+- **`deer-flow-config.local.yaml` was regenerated rather than edited.** The naive
+  `^  #   ` uncomment rule also matches the retired `qwen3.8-27b-local` block; the plan's bounded
+  loop was used instead, and the result is asserted to contain exactly one extra active entry.
+- **Main was not pushed.** `main` is 12 ahead of `origin/main`. Publishing is a maintainer
+  decision, and `fork` shares no history with `origin` at all, so it is a separate operation.
+
+### Left undone, deliberately
+
+| Thing | Why |
+|---|---|
+| `test-baked-patch-parity.ps1` B4 | `[skip] CANNOT CHECK: ghcr.io/jzkk720/deer-flow-pacgate:0.2.8 is not present locally` - a historical drift report against a 0.2.8 image this box never pulled. Exit 2 is not a pass, and it is not a failure either. |
+| `preflight-docker-egress.ps1` | `CANNOT CHECK - no probe image`. |
+| The 13 untracked files | The LOCAL-FIRST legal AI stack reference, its diagrams and renderers. Verified to carry no secret-shaped content and to collide with nothing upstream. Unrelated to this upgrade. |
+| `laya-serve:0.2.32` | Behind the `laya` profile; not running; nothing in this box's lanes uses it. |
+| Pruning the `:0.2.30` images | Keeps the rollback cheap. |
+
+### Rollback
+
+```powershell
+# Runtime: one command back to 0.2.30, those images are still local
+docker compose -f deploy/client-bundle/compose.prod.yaml -f deploy/client-bundle/compose.local-model-override.yaml `
+    up -d --force-recreate pacgate-api deer-flow deer-flow-frontend pacgate-mcp ocr-service
+
+# History: fd23be0 is a merge; the pre-merge tip is on its own branch
+git log --oneline -1 backup/pre-sync-2026-11-08
+```
+
+No DB migrations were added between 0.2.30 and 0.2.32 - `pacgate-ai/migrations/` is byte-identical
+at both refs and stops at `009_cjk_fulltext.sql` - so the rollback needs no SQL. That is why it is
+cheap.
+
+### One environment note worth keeping
+
+The first anonymous-registry probes failed with `http 0` / `WinError 10061`. That was **not** a
+publish or network-to-GHCR fault: `HTTP_PROXY` and `HTTPS_PROXY` were set to `http://127.0.0.1:7890`
+and nothing was listening on that port. With the proxy variables cleared, the same probes returned
+`token http 200` and all five digests. If a registry check returns `http 0` on this box, clear the
+proxy variables before concluding anything about the release.
+
 
 | Thing | Why not here |
 |---|---|
