@@ -565,6 +565,26 @@ _PACGATE_MAX_PATH_CHARS = 200
 
 # Pressure hint band: report once the fold budget is this far consumed. 0.85
 # leaves ~15% of the budget for the model to finish the line of work it is on.
+#
+# CALIBRATED AGAINST REAL HISTORY, 2026-11-08 (scripts/calibrate_context_band.py,
+# 15 busiest threads, deepest checkpoint each, decoded from the LangGraph
+# checkpoint DB):
+#
+#     peak tokens: min=8,669  median=16,847  max=24,910
+#     peak vs the 36,000 trigger: median 46.8%   max 69.2%
+#     threads at or over the trigger: 0 of 15
+#     band 0.85 would fire on: 0 of 15
+#
+# So on THIS workload the hint never fires and no fold occurs - and both are
+# correct, because there is no pressure. Retouch ratio across those threads was
+# median 1.0, max 1.24: the re-read loops this patch exists for are not present
+# either. The mechanism is insurance for long document runs, not a fix for
+# current traffic.
+#
+# The band is left at 0.85 deliberately. Lowering it to fire on a 17k thread
+# would report pressure the trigger does not consider pressure, and would then
+# claim a behavioural win that is really just a lower alarm. Re-calibrate from
+# accumulated fold rows once a long document workflow runs on this stack.
 _PACGATE_HINT_BAND = 0.85
 _PACGATE_HINT_NAME = "pacgate_context_hint"
 

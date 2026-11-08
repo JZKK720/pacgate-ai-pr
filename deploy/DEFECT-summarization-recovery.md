@@ -207,8 +207,44 @@ to the trigger when none is, so it becomes correct the moment a profile is added
 with no further change. Gated by `R14a`/`R14b`; red-checked by reverting to
 trigger-only, which fails `R14b`.
 
-**Still open:** the band itself is a magic number (`0.85`). It should be derived
-from the fold rows once there are enough of them, not kept as an estimate.
+**Now calibrated, not estimated.** `scripts/calibrate_context_band.py` derives the
+band from the LangGraph checkpoint database - every recorded conversation state -
+rather than from the fold log, because the fold log is empty until a fold happens.
+
+Measured 2026-11-08 on the 15 busiest threads (deepest checkpoint each):
+
+| metric | value |
+|---|---|
+| peak tokens | min 8,669 / median **16,847** / max **24,910** |
+| peak vs the 36,000 trigger | median **46.8%** / max **69.2%** |
+| threads at or over the trigger | **0 of 15** |
+| band 0.85 would fire on | **0 of 15** |
+| retouch ratio | median **1.0** / max **1.24** |
+
+Verified as genuine, not truncated state: the busiest thread is 60 messages
+(3 human / 29 ai / 28 tool) with real 4.9k-char `bash` outputs and Chinese
+analysis.
+
+**Interpretation - three things explained at once:**
+
+1. `fold_telemetry_report.py` reports CANNOT CHECK because summarization has
+   **never fired** since the trigger moved to 36,000. The sensor is idle, not
+   broken.
+2. The hint is silent because there is **no pressure to report**. Correct
+   behaviour, not a defect.
+3. The recovery index is dormant on this workload - and the retouch ratio (median
+   1.0) says the re-read loops it targets are not present either. It is insurance
+   for long document runs, not a fix for current traffic.
+
+**The band stays at 0.85 deliberately.** Lowering it to fire on a 17k thread would
+warn about pressure the trigger does not consider pressure, and would let us claim
+a behavioural win that is really just a lower alarm.
+
+**Genuinely still open:** the band has not been calibrated against *fold* events,
+because none exist on this traffic. `calibrate_context_band.py` should be re-run
+after a long document workflow (the 65-page CJK PDF that folded six times under the
+old 12,000 trigger) to calibrate from the tail rather than from the bulk.
+
 
 ### Limit 2: excerpts cover only the three live-web tools
 
@@ -241,3 +277,26 @@ changed".
 
 
 
+
+### Limit 4: "no real fold has occurred, so the write path is unproven"
+
+Was true when first written; now resolved as far as this workload allows.
+
+The write path was proven by exercising the **live mounted module** in-container -
+building a real `DeerFlowSummarizationMiddleware` through the app's own class and
+calling `pacgate_record_fold` - then reading the row back through
+`fold_telemetry_report.py`. That verified the writer, the bind-mounted path, the
+JSON shape and the reader end to end, without needing a genuine fold.
+
+What it cannot prove is behaviour under a fold the runtime itself triggered,
+because **no such fold has happened since the trigger moved to 36,000** (see the
+calibration above). That is a workload property, not a defect here. The honest
+statement is:
+
+> The sensor is wired and demonstrably writes and reads. It remains
+> **unexercised by production traffic**, and must be re-checked after the first
+> long document workflow that actually folds.
+
+`fold_telemetry_report.py` reports `CANNOT CHECK` in this state on purpose. It
+never reports a pass, because a green result there would mean "the sensor works",
+not "the feature works".

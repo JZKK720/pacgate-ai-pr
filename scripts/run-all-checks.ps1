@@ -850,6 +850,20 @@ $measurements = @(
     # run's own work, never against a fixed threshold.
     'scripts/fold-telemetry-report.ps1'
 
+    # IS THE 0.85 BAND DERIVED OR GUESSED? Registered 2026-11-08.
+    #
+    # The band was an estimate. This reads the LangGraph checkpoint database -
+    # every recorded conversation state - because the fold log is empty until a
+    # fold happens, and on this workload none has. Measured 2026-11-08, 15 busiest
+    # threads: peak tokens median 16,847 / max 24,910 against a 36,000 trigger, so
+    # 0 of 15 reach it and the band fires on 0 of 15. Retouch ratio median 1.0.
+    #
+    # That output is the point: it proves the hint is silent because there is no
+    # pressure, not because it is broken, and it warns against lowering the band
+    # to manufacture a firing. A measurement, not a gate - a workload with no long
+    # runs is healthy, not failing.
+    'scripts/calibrate-context-band.ps1'
+
     # Is the convergence prompt actually holding? Six runs were killed by
     # "Recursion limit of 1000 reached" at 115-118 LLM calls. The fix is a PROMPT
     # change, which cannot be asserted the way a clamp can: only a run long enough
