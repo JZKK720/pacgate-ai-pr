@@ -71,6 +71,7 @@ Both AIPC machines run the full stack identically. Each machine is independently
 | `deploy/SETUP-AND-OPERATIONS.md` | Full 3-day on-site installation guide |
 | `deploy/DEPLOYMENT-GUIDE.md` | Engineer-level deployment details |
 | `docs/PACGATE-LAW-STAFF-HANDBOOK.md` | Non-technical staff user guide (EN; ZH + PDF alongside) |
+| `docs/LOCAL-FIRST-LEGAL-AI-STACK-REFERENCE.md` | Bilingual (EN/ZH) technical reference for the legal-agent chain, figures included; DOCX + PDF rendered by `scripts/render_legal_ai_reference.py` |
 | `docs/` | Proposal pages, build plans, progress reportcard |
 | `docs/PACGATE-AI-BUILD-PLAN-PHASE1.md` | Phase 1 commercial and technical plan |
 

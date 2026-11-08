@@ -1,0 +1,25 @@
+sequenceDiagram
+    autonumber
+    actor A as Attorney
+    participant G as Ingress gateway
+    participant F as Workspace frontend
+    participant R as Research runtime
+    participant B as Tool bridge
+    participant C as Matter core
+    participant M as Local model host
+    participant L as Memory lane
+
+    A->>G: question, scoped to one matter
+    G->>F: static assets and proxy
+    F->>R: run request
+    R->>L: recall prior context
+    L-->>R: session summaries and decisions
+    R->>B: list documents, read document
+    B->>C: authenticated call with matter scope
+    C-->>B: documents, extraction state
+    B-->>R: tool result
+    R->>M: grounded prompt
+    M-->>R: streamed answer with citations
+    R->>L: remember outcome
+    R-->>F: answer, citations, artifact list
+    F-->>A: rendered answer and exports

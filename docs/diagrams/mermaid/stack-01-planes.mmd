@@ -1,0 +1,49 @@
+flowchart TB
+    U["Firm users<br/>browser on the office network"]:::user
+
+    subgraph ACCESS["Access plane"]
+        GW["Ingress gateway<br/>one published port :8089"]:::svc
+    end
+
+    subgraph RUNTIME["Runtime plane"]
+        RR["Research runtime<br/>multi-stage pipeline"]:::rt
+        CR["Collaboration runtime<br/>scope-isolated workspace"]:::rt
+    end
+
+    subgraph CORE["Matter core plane"]
+        MC["Matter core service<br/>matters, documents, policy"]:::core
+        BR["Tool bridge<br/>MCP surface"]:::core
+        XS["Extraction service<br/>raster to text"]:::core
+    end
+
+    subgraph MODEL["Model plane"]
+        MH["Local model host<br/>inference :11434"]:::model
+    end
+
+    subgraph DATA["Data plane"]
+        PG[("Case database<br/>records and vectors")]:::db
+        FS[("Matter volume<br/>per-tenant folders")]:::db
+        ML[("Memory lane<br/>conversation context")]:::db
+    end
+
+    U --> GW
+    GW --> RR
+    GW --> MC
+    RR --> BR
+    BR --> MC
+    CR --> MC
+    RR --> MH
+    CR --> MH
+    MC --> MH
+    MC --> PG
+    MC --> FS
+    MC --> XS
+    RR --> ML
+    CR --> ML
+
+    classDef user fill:#FFFFFF,stroke:#7B8AA8,stroke-width:1.2px,color:#2D3B56;
+    classDef svc fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.3px,color:#1D3658;
+    classDef rt fill:#F7F2E6,stroke:#B89544,stroke-width:1.3px,color:#4D3B18;
+    classDef core fill:#E9F0FA,stroke:#3C6BA8,stroke-width:1.5px,color:#16304F;
+    classDef model fill:#EAF5F9,stroke:#3D8AA7,stroke-width:1.3px,color:#17465A;
+    classDef db fill:#F3E7C7,stroke:#A69255,stroke-width:1.3px,color:#3B2F14;
