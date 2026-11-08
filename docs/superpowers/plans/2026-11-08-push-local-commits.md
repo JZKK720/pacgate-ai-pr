@@ -93,7 +93,7 @@ Preconditions decay. These are cheap and they are the ones that would make a pus
 - Consumes: local `main` at `6aebca3`
 - Produces: a go/no-go for Task 2
 
-- [ ] **Step 1: Confirm still fast-forward, and read the real count**
+- [x] **Step 1: Confirm still fast-forward, and read the real count**
 
 This plan's own commit is part of what will be published, so the count moves as this document is
 committed. Read it, do not assume 14.
@@ -108,7 +108,7 @@ git fetch origin
 Expected: `ahead: 15`, `behind: 0`. A non-zero `behind` means upstream moved - **stop** and re-run
 the merge analysis rather than pushing.
 
-- [ ] **Step 2: Confirm it is a fast-forward**
+- [x] **Step 2: Confirm it is a fast-forward**
 
 ```powershell
 git merge-base --is-ancestor origin/main main; "ancestor exit=$LASTEXITCODE"
@@ -117,7 +117,7 @@ git push --dry-run origin main
 
 Expected: `ancestor exit=0` and a `..` range (not a `+` forced update) in the dry-run.
 
-- [ ] **Step 3: Confirm provenance is still green**
+- [x] **Step 3: Confirm provenance is still green**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-release-provenance.ps1
@@ -125,7 +125,7 @@ pwsh -NoProfile -File scripts\test-release-provenance.ps1
 
 Expected: exit 0, `PASSED: v0.2.32 identifies the 7a6dd732c6df artifacts clients will pull`.
 
-- [ ] **Step 4: Confirm no secret value is in the outgoing set**
+- [x] **Step 4: Confirm no secret value is in the outgoing set**
 
 ```powershell
 $keys = @('PACGATE_DB_PASSWORD','PACGATE_JWT_SECRET','PACGATE_API_PASSWORD','OPENVIKING_ROOT_API_KEY','OPENVIKING_API_KEY','PACGATE_SANITIZER_KEY')
@@ -140,7 +140,7 @@ foreach ($k in $keys) {
 
 Expected: `leaks: 0`. Any hit is a **hard stop** - do not push, and treat it as a credential incident.
 
-- [ ] **Step 5: Confirm the working tree has nothing uncommitted that should go too**
+- [x] **Step 5: Confirm the working tree has nothing uncommitted that should go too**
 
 ```powershell
 git status --short
@@ -158,7 +158,7 @@ Expected: only the 13 pre-existing untracked files (the LOCAL-FIRST legal AI sta
 - Consumes: the go from Task 1
 - Produces: `origin/main` at `6aebca3`
 
-- [ ] **Step 1: Push**
+- [x] **Step 1: Push**
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -167,7 +167,7 @@ git push origin main
 
 Expected: `17a498e..6aebca3  main -> main`. **Do not add `--force`** under any circumstance; if git rejects it, the precondition changed and Task 1 must be re-run.
 
-- [ ] **Step 2: Verify the remote actually moved**
+- [x] **Step 2: Verify the remote actually moved**
 
 ```powershell
 git fetch origin
@@ -178,7 +178,7 @@ git rev-list --count origin/main..main
 
 Expected: `origin/main` at `6aebca3`, `behind: 0`, `ahead: 0`.
 
-- [ ] **Step 3: Verify GitHub agrees, not just the local ref**
+- [x] **Step 3: Verify GitHub agrees, not just the local ref**
 
 ```powershell
 gh api repos/JZKK720/pacgate-ai-pr/commits/main --jq '.sha[0:7] + "  " + .commit.message' 2>&1 | Select-Object -First 1
@@ -198,7 +198,7 @@ A push is not a delivery. This task proves a fresh clone gets the fix without an
 - Consumes: `origin/main` at `6aebca3`
 - Produces: proof that the adapter fix and the E3 fix are in the published tree
 
-- [ ] **Step 1: Confirm the published tree has the bounded retry**
+- [x] **Step 1: Confirm the published tree has the bounded retry**
 
 Do **not** check for the bare absence of `return self.get(path, headers=headers)`: the fixed
 version quotes that line inside its own docstring while explaining what the bug was, so a naive
@@ -218,7 +218,7 @@ Expected: `True`, `True`, **`5`**, **`1`**. The two counts are the discriminatin
 `v0.2.32` tree they are `0` and `5`. A `1` for the last line is the docstring, not live code; a `5`
 means the fix did not land.
 
-- [ ] **Step 2: Confirm that patch is bind-mounted by BOTH lanes**
+- [x] **Step 2: Confirm that patch is bind-mounted by BOTH lanes**
 
 ```powershell
 foreach ($lane in @('compose.prod.yaml','compose.bundle.yaml')) {
@@ -229,7 +229,7 @@ foreach ($lane in @('compose.prod.yaml','compose.bundle.yaml')) {
 
 Expected: `mounted: True` for both. This is what makes the fix reach a client **without a new image** - the container reads the mounted file.
 
-- [ ] **Step 3: Confirm the E3 gate fix is published**
+- [x] **Step 3: Confirm the E3 gate fix is published**
 
 ```powershell
 $gate = git --no-pager show origin/main:scripts/test-agent-mcp-e2e.ps1 | Out-String
@@ -239,7 +239,7 @@ $gate = git --no-pager show origin/main:scripts/test-agent-mcp-e2e.ps1 | Out-Str
 
 Expected: both `True`.
 
-- [ ] **Step 4: Confirm the live client path serves the fixed file**
+- [x] **Step 4: Confirm the live client path serves the fixed file**
 
 ```powershell
 docker exec deer-flow sh -c 'grep -c "for attempt in range(2)" /app/adapters/pacgate_deerflow_adapter/client.py'
@@ -257,7 +257,7 @@ Expected: `1` on this box, because compose mounts it. A client gets the same res
 - Consumes: the pushed `main`
 - Produces: evidence that the push did not break provenance or any gate
 
-- [ ] **Step 1: Provenance again, now on the pushed commit**
+- [x] **Step 1: Provenance again, now on the pushed commit**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-release-provenance.ps1
@@ -265,7 +265,7 @@ pwsh -NoProfile -File scripts\test-release-provenance.ps1
 
 Expected: exit 0. Publishing the commits does not change how the images were built, so this must be **unchanged** from Task 1.
 
-- [ ] **Step 2: Origin coherence**
+- [x] **Step 2: Origin coherence**
 
 ```powershell
 pwsh -NoProfile -File scripts\test-origin-coherence.ps1
@@ -273,7 +273,7 @@ pwsh -NoProfile -File scripts\test-origin-coherence.ps1
 
 Expected: `every advertised origin is accepted for auth`, exit 0.
 
-- [ ] **Step 3: Full suite**
+- [x] **Step 3: Full suite**
 
 ```powershell
 pwsh -NoProfile -File scripts/run-all-checks.ps1
@@ -295,7 +295,7 @@ The push alone is sufficient for both fixes to reach clients, because both trave
 - Consumes: the pushed `main`
 - Produces: a recorded decision, not necessarily a bump
 
-- [ ] **Step 1: Read what the bump actually rewrites**
+- [x] **Step 1: Read what the bump actually rewrites**
 
 ```powershell
 Select-String -Path scripts\bump-release-version.ps1 -Pattern '^param','compose pins','ghcr' | Select-Object -First 8
@@ -303,7 +303,7 @@ Select-String -Path scripts\bump-release-version.ps1 -Pattern '^param','compose 
 
 It rewrites every `ghcr.io/jzkk720/<image>:<version>` pin across the compose files. That is why a bump without a build is unsafe: the pins would name tags GHCR does not have.
 
-- [ ] **Step 2: Record the decision**
+- [x] **Step 2: Record the decision**
 
 Bump only if **all** of these hold - state which is false if you do not bump:
 
@@ -315,7 +315,7 @@ Recommended: **do not bump now.** Both fixes reach clients through the mount via
 
 If you bump anyway, understand what it costs: `bump-release-version.ps1` rewrites all six `ghcr.io/jzkk720/*:<version>` pins plus `Cargo.toml`. Between the bump and a successful GHCR run, every client install names a tag that does not exist, so a client running `-Update` in that window pulls nothing.
 
-- [ ] **Step 3: If a bump IS decided, do it as one sequence**
+- [x] **Step 3: If a bump IS decided, do it as one sequence**
 
 ```powershell
 git checkout -b release/0.2.33
@@ -341,11 +341,64 @@ Do **not** merge to `main` until `check-ghcr-anon.py` reports the tag PUBLIC for
 - Consumes: results from Tasks 2-5
 - Produces: an auditable record
 
-- [ ] **Step 1: Append a `## Outcome` section**
+- [x] **Step 1: Append a `## Outcome
+
+Measured 2026-11-08. Every row is a command that was actually run.
+
+### The push
+
+| Claim | Result |
+|---|---|
+| Preconditions | `ahead 24, behind 0`; `merge-base --is-ancestor` exit 0; dry-run `17a498e..8d4c744` (a `..` range, not a forced update); provenance PASSED; **0 secret leaks** across all 6 real values; working tree clean with only the 13 pre-existing untracked files |
+| Push | `git push origin main` -> `17a498e..8d4c744  main -> main`, exit 0. **No force used.** |
+| Local refs | `ahead 0, behind 0` |
+| **GitHub agrees, not just local refs** | `gh api repos/JZKK720/pacgate-ai-pr/commits/main` -> `8d4c744` plus the matching subject line |
+
+### The fixes are reachable by a client
+
+| Check | Result |
+|---|---|
+| Adapter fix in the published tree | bounded retry `True`, `_request` helper `True`, **5** verbs routed through it, **1** legacy self-call (the docstring) |
+| Mounted by both lanes | `compose.prod.yaml: True`, `compose.bundle.yaml: True` |
+| E3 gate fix published | qualified names accepted `True`, server name read from config `True` |
+| Recovery patch published | `git cat-file -e origin/main:...` -> exists |
+| Live client path | `docker exec deer-flow grep` -> `1` |
+| **A FRESH CLONE gets them** | `git clone --depth 1` of the public repo -> HEAD `8d4c744`, adapter fixed `True`, recovery patch `True`. This is the decisive test: a client machine cloning today receives both. |
+
+### Release story unchanged
+
+| Gate | Result |
+|---|---|
+| `test-release-provenance.ps1` (after the push) | **PASSED** - `v0.2.32` still identifies the `7a6dd732c6df` artifacts |
+| `test-origin-coherence.ps1` | `19 passed` |
+| `run-all-checks.ps1` | **ALL 68 GATES PASSED** |
+
+### The `0.2.33` decision: DO NOT BUMP
+
+`bump-release-version.ps1` rewrites all **12** `ghcr.io/jzkk720/*:0.2.33` pins across both
+compose files. GHCR has no `0.2.33`, so between the bump and a successful workflow run
+every client install names a tag that resolves to nothing. Both fixes already reach
+clients through the bind-mounted path - proven above by the fresh clone - so a bump buys
+traceability only, at the cost of a window where installs break.
+
+Condition 1 of the plan's own gate is **false**: no new image is required.
+
+### What remains unproven, rather than implied
+
+- **The live fold test is not part of the suite.** It costs minutes of model time and
+  folds are document- and prompt-dependent: an 8-turn run over the 16-page AIPC handbook
+  recorded **zero** folds even though all eight turns completed. Two folds ARE on record
+  from earlier runs, and both exposed real instrumentation defects. Run it manually with
+  `python scripts/live_long_document_fold_test.py --turns 8`.
+- `fold_telemetry_report.py` still reports `CANNOT CHECK` on ordinary traffic, because no
+  thread has crossed the 36,000 trigger (median 16,847, max 24,910). Correct state, not a
+  broken sensor.
+- `test-baked-patch-parity.ps1` B4 remains `CANNOT CHECK` (no `0.2.8` image locally).
+` section**
 
 Record: the pushed range and the resulting `origin/main` SHA (verified via `gh api`, not only local refs), the provenance result before and after, the full-suite result with any exit-2 items named, the confirmation that the client path serves the fixed adapter, and the `0.2.33` decision with its reason.
 
-- [ ] **Step 2: State what a client must do to receive the fixes**
+- [x] **Step 2: State what a client must do to receive the fixes**
 
 The honest answer, so it is not overclaimed. A client receives **both** fixes by running:
 
@@ -376,7 +429,7 @@ already current. The handoff opens with a push-status check that reads `origin/m
 directly and stops if the push has not landed, so the instruction cannot be followed out
 of order.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add docs/superpowers/plans/2026-11-08-push-local-commits.md
