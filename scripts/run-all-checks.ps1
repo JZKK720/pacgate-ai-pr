@@ -486,6 +486,25 @@ $gates = @(    'scripts/test-install-render.ps1'
     # reports exit codes but never adds to $failed, so a red gate there cannot
     # fail the suite. A config that treadmills must fail it.
     'scripts/test-summarization-treadmill.ps1'
+    # FOLDED-RANGE RECOVERY, registered 2026-11-08.
+    #
+    # The gate above proves summarization DOES NOT treadmill. It says nothing about
+    # what survives a pass. Stock `SummarizationMiddleware.before_model` returns
+    # `[RemoveMessage(REMOVE_ALL_MESSAGES), *one_summary, *preserved]`, so the folded
+    # range is GONE, not hidden, and the prose summary is lossy - on a 65-page
+    # document the model loses the only record of which files it already read. That
+    # is the measured shape of the re-read loops this repo documents (103 / 42 / 52
+    # re-touches of the same file on thread b315a961).
+    #
+    # The patch keeps a verbatim index of tool names, paths/urls and section
+    # headings, and exposes context pressure via pacgate_context_status. Measured
+    # cost: 1,318 chars of index against 76,600 chars folded = 1.7% overhead.
+    #
+    # It matters that this is gated rather than assumed: the patch replaces a
+    # THIRD-PARTY module inside the container venv, so a `pip install` that moves
+    # the file, or a mount that stops resolving, would keep summarization working
+    # while silently dropping the index. Nothing else in this repo would notice.
+    'scripts/test-summarization-recovery.ps1'
 
     # The lead-agent prompt must explain how to READ an uploaded document, and
     # must warn the agent off `pip install`. Registered 2026-10-24, after a live
@@ -815,6 +834,36 @@ $liveStackGates = @(
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
 
+    # IS THE CONTEXT-PRESSURE HINT ACTUALLY HELPING? Registered 2026-11-08.
+    #
+    # The hint is advisory text, so it cannot be asserted the way a clamp can.
+    # MEASURED: that judgement had NO SENSOR - runs.total_input_tokens is
+    # cumulative, token_usage_by_model is an aggregate, and middleware_tokens is 0,
+    # so neither per-call pressure nor a re-read count was answerable.
+    #
+    # The recovery patch now writes one JSONL row per summarization pass and
+    # scripts/fold_telemetry_report.py turns it into tokens_at_fold and
+    # retouch_ratio (tool_calls / distinct_payloads). It belongs in $measurements,
+    # NOT $gates: exit 2 ("no fold recorded yet") is the normal state on a quiet
+    # box and must never fail the suite. A green result here means the sensor
+    # works, not that the hint works - the ratio is read per run against that
+    # run's own work, never against a fixed threshold.
+    'scripts/fold-telemetry-report.ps1'
+
+    # IS THE 0.85 BAND DERIVED OR GUESSED? Registered 2026-11-08.
+    #
+    # The band was an estimate. This reads the LangGraph checkpoint database -
+    # every recorded conversation state - because the fold log is empty until a
+    # fold happens, and on this workload none has. Measured 2026-11-08, 15 busiest
+    # threads: peak tokens median 16,847 / max 24,910 against a 36,000 trigger, so
+    # 0 of 15 reach it and the band fires on 0 of 15. Retouch ratio median 1.0.
+    #
+    # That output is the point: it proves the hint is silent because there is no
+    # pressure, not because it is broken, and it warns against lowering the band
+    # to manufacture a firing. A measurement, not a gate - a workload with no long
+    # runs is healthy, not failing.
+    'scripts/calibrate-context-band.ps1'
+
     # Is the convergence prompt actually holding? Six runs were killed by
     # "Recursion limit of 1000 reached" at 115-118 LLM calls. The fix is a PROMPT
     # change, which cannot be asserted the way a clamp can: only a run long enough
@@ -916,6 +965,13 @@ $measurements = @(
 # It exits 2 (CANNOT CHECK) on a fresh clone where neither .env exists - those
 # files are gitignored and per-machine by design.
 $gates += 'scripts/test-cross-stack-credentials.ps1'
+# E2E CREDENTIAL VALIDITY, registered 2026-11-05.
+#
+# The gate above answers "do the two env files AGREE?"; this one answers "is each
+# credential this lane depends on still VALID right now?". Different failure
+# shapes: disagreement 401s one side, staleness 401s every side at once.
+# Exits 2 when the stack is down, so it is a normal skip on a dev box.
+$gates += 'scripts/audit-e2e-credentials.ps1'
 # CROSS-MACHINE TRANSFER, registered 2026-10-19.
 #
 # The question "how do Matters, skills, tools, templates and recorded matters

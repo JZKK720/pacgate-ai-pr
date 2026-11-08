@@ -52,22 +52,65 @@ class PacgateApiClient:
         return headers
 
     def _relogin_if_401(self, resp: httpx.Response) -> httpx.Response | None:
-        """On 401 with email/password credentials, re-login once and signal retry.
+        """Legacy helper, kept for callers outside this class.
 
-        Returns the original response when no retry is possible; returns None
-        after a successful re-login so callers re-send the request.
+        Prefer :meth:`_request`, which bounds the retry. This method on its own
+        performs a login and returns None to mean "retry", and a caller that
+        recurses on None can loop forever - that was the 2026-11-05 defect.
         """
         if resp.status_code != 401 or not (self.email and self.password):
             return resp
         self.jwt_token = self.login(self.email, self.password)
         return None
 
-    def get(self, path: str, headers: dict[str, str] | None = None) -> httpx.Response:
-        merged = {**self._headers(), **(headers or {})}
-        resp = self._client.get(f"{self.base_url}{path}", headers=merged)
-        if self._relogin_if_401(resp) is None:
-            return self.get(path, headers=headers)
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        files: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        """Send a request, re-authenticating AT MOST ONCE on 401.
+
+        MEASURED 2026-11-05: the per-method retry used to be unbounded recursion -
+
+            if self._relogin_if_401(resp) is None:
+                return self.get(path, headers=headers)
+
+        and every recursive call got a FRESH login+retry, so the docstring's
+        "once" held only if the retried request happened to return non-401. A
+        stub answering 401 while login keeps succeeding ran 997 logins and 998
+        GETs before RecursionError. That is reachable, not hypothetical: an
+        account that can authenticate but not authorise (login 200, every matter
+        call 401) turns the first memory update into a login storm.
+
+        `retried` is local to ONE call: one login, one retry, then the 401 is
+        returned for the caller to surface. `login()` raises on bad credentials,
+        so a genuinely-bad login fails immediately and never reaches the retry.
+        """
+        for attempt in range(2):
+            merged = {**self._headers(), **(headers or {})}
+            resp = self._client.request(
+                method,
+                f"{self.base_url}{path}",
+                json=json,
+                headers=merged,
+                files=files,
+                data=data,
+            )
+            if attempt:
+                return resp
+            if resp.status_code != 401 or not (self.email and self.password):
+                return resp
+            self.jwt_token = self.login(self.email, self.password)
+
         return resp
+
+    def get(self, path: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        return self._request("GET", path, headers=headers)
 
     def login(self, email: str, password: str) -> str:
         resp = self._client.post(
@@ -91,11 +134,7 @@ class PacgateApiClient:
         # adapter's revision guard), merged OVER the auth/Content-Type base.
         # Missing this kwarg made every PacgateMemoryStorage.save() raise
         # TypeError and silently fail the whole memory update.
-        merged = {**self._headers(), **(headers or {})}
-        resp = self._client.post(f"{self.base_url}{path}", json=json, headers=merged)
-        if self._relogin_if_401(resp) is None:
-            return self.post(path, json=json, headers=headers)
-        return resp
+        return self._request("POST", path, json=json, headers=headers)
 
     def put(
         self,
@@ -103,31 +142,18 @@ class PacgateApiClient:
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        merged = {**self._headers(), **(headers or {})}
-        resp = self._client.put(f"{self.base_url}{path}", json=json, headers=merged)
-        if self._relogin_if_401(resp) is None:
-            return self.put(path, json=json, headers=headers)
-        return resp
+        return self._request("PUT", path, json=json, headers=headers)
 
     def delete(self, path: str) -> httpx.Response:
-        resp = self._client.delete(f"{self.base_url}{path}", headers=self._headers())
-        if self._relogin_if_401(resp) is None:
-            return self.delete(path)
-        return resp
+        return self._request("DELETE", path)
 
     def upload(self, path: str, file_path: str, matter_id: str) -> httpx.Response:
-        """Upload a file to pacgate-api."""
+        """Upload a file to pacgate-api.
+
+        The file is re-opened per attempt on purpose: re-sending an already
+        consumed handle uploads zero bytes, which reads as a silent data loss.
+        """
         with open(file_path, "rb") as f:
-            files = {"file": (file_path, f)}
-            headers = (
-                {"Authorization": f"Bearer {self.jwt_token}"} if self.jwt_token else {}
+            return self._request(
+                "POST", path, files={"file": (file_path, f)}, data={"matter_id": matter_id}
             )
-            resp = self._client.post(
-                f"{self.base_url}{path}",
-                files=files,
-                data={"matter_id": matter_id},
-                headers=headers,
-            )
-            if self._relogin_if_401(resp) is None:
-                return self.upload(path, file_path, matter_id)
-            return resp

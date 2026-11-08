@@ -269,3 +269,11 @@ deploy/laya-serve/laya-weights/
 # Local dev-lane image override (see the file's own header for why).
 # A local build must never be tagged over a published ghcr artifact.
 deploy/client-bundle/compose.local-dev-override.yaml
+
+# Machine-local deer-flow config: the tracked deer-flow-config.yaml plus any
+# picker entry this box can run but the CLIENT pre-pull contract must not carry.
+# The 74B bolt is the reason this exists - 24.8 GB, over a 16 GB AIPC card, so it
+# can never go in ollama-models.txt, yet a 32 GB box can hold it.
+# Pair it with a compose override that rebinds only the deer-flow config mount.
+deploy/client-bundle/deer-flow-config.local.yaml
+deploy/client-bundle/compose.local-model-override.yaml

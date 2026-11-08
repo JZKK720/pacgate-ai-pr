@@ -71,6 +71,46 @@ Check 'E1 the pacgate MCP tool names were derived from source' `
       "derived $($mcpTools.Count) tool name(s) from $ServerFile"
 Write-Host ("         tools: {0}" -f (($mcpTools | Select-Object -First 6) -join ', ')) -ForegroundColor DarkGray
 
+# ── E1c: the names an assistant tool_call ACTUALLY carries are SERVER-QUALIFIED ─
+# MEASURED 2026-11-08, on the 0.2.32 stack. deer-flow registers MCP tools as
+# `<serverName>_<toolName>`, so a call to `pacgate_list_connectors` on the server
+# named `pacgate` is recorded as `pacgate_pacgate_list_connectors`:
+#
+#   deerflow.agents.middlewares.deferred_tool_filter_middleware - INFO -
+#     Auto-promoting deferred tool 'pacgate_pacgate_list_connectors' on first call
+#
+# E3 used to exact-match the bare names above against that recorded name, so it
+# could NEVER pass on a run that called a pacgate tool. The tool loop was working -
+# pacgate-mcp answered 200 and the tool auto-promoted - while the gate reported a
+# failure. A gate that cannot pass is as useless as one that cannot fail, and this
+# one is worse than most because its FAIL message reads exactly like a real
+# regression ("the agent replied without calling one").
+#
+# The prefix is READ from the live extensions config, not hardcoded: renaming the
+# server must change the accepted names with it, and a config that loses the
+# `pacgate` server should fail loudly rather than silently accept bare names.
+$extCfg = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/deer-flow-extensions-config.json'
+$serverNames = @()
+if (Test-Path $extCfg) {
+    try {
+        $srv = (Get-Content $extCfg -Raw | ConvertFrom-Json).mcpServers
+        $serverNames = @($srv.PSObject.Properties.Name)
+    } catch {
+        CannotCheck "could not parse $extCfg ($($_.Exception.Message))"
+    }
+}
+Check 'E1c the extensions config names the pacgate MCP server' `
+      ($serverNames -contains 'pacgate') `
+      "servers: $(($serverNames | Sort-Object) -join ', ')"
+
+# Accept BOTH forms. The qualified form is what is recorded; the bare form is kept
+# so this gate still works against a deer-flow that does not namespace, and so a
+# future upstream change back to bare names does not produce a false FAIL.
+$mcpToolQualified = @($mcpTools | ForEach-Object { "pacgate_$_" })
+$mcpToolsAccepted  = @($mcpTools + $mcpToolQualified | Sort-Object -Unique)
+Write-Host ("         accepted call names: {0} (+{1} server-qualified)" -f `
+    ($mcpTools.Count), ($mcpToolQualified.Count)) -ForegroundColor DarkGray
+
 # ── credentials ──────────────────────────────────────────────────────────────
 # The deer-flow admin is NOT the pacgate-api principal. Resolve exactly as
 # test-model-picker-e2e.ps1 does, including the env-var name, which a first draft of
@@ -112,6 +152,50 @@ try {
     CannotCheck "deer-flow login failed at $NginxUrl (HTTP $code)"
 }
 Check 'E1 authenticated to deer-flow' ($null -ne (Get-Csrf))
+
+# ── E1b: the model the picker DEFAULTs to must actually be installed ────────
+# WHY THIS EXISTS (measured 2026-11-05, this box)
+#
+# A run that omits `context.model_name` resolves to `models[0]` in the
+# deer-flow-config `models:` list. On this machine models[0] is
+# `nemotron-bolt-7b-local` -> `nemotron-3.5-bolt:e4b-q8_0`, and that tag was
+# NEVER PULLED. Every such run returned in 0.7 s with:
+#
+#   status=error, deerflow_error_fallback=true,
+#   "LLM request failed: Error code: 404 - model 'nemotron-3.5-bolt:e4b-q8_0'
+#    not found"
+#
+# Meanwhile a run that explicitly selected an installed model succeeded, so the
+# stack looked half-working and the model picked in the UI got blamed. The
+# failure is entirely avoidable: it is a missing `ollama pull`, and the roster
+# already declares which tags must exist. Nothing checked the DEFAULT one.
+#
+# This asserts the roster's first entry by TAG, against Ollama directly, so the
+# cause is named here instead of being discovered from a UI screenshot.
+try {
+    $roster = (Invoke-WebRequest -Uri "$NginxUrl/api/models" -WebSession $session -UseBasicParsing -TimeoutSec 25).Content | ConvertFrom-Json
+    $defaultEntry = @($roster.models) | Select-Object -First 1
+    $defaultTag = if ($defaultEntry) { [string]$defaultEntry.model } else { '' }
+    Check 'E1b the picker roster names a default model tag' ([bool]$defaultTag) 'models[0] carried no model tag'
+
+    if ($defaultTag) {
+        $installed = @()
+        try {
+            $tags = (Invoke-WebRequest -Uri 'http://localhost:11434/api/tags' -UseBasicParsing -TimeoutSec 15).Content | ConvertFrom-Json
+            $installed = @($tags.models | ForEach-Object { $_.name })
+        } catch { }
+
+        if ($installed.Count -eq 0) {
+            Write-Host "  [SKIP] E1b could not read ollama /api/tags; cannot confirm '$defaultTag'" -ForegroundColor Yellow
+        } else {
+            $have = $installed -contains $defaultTag
+            Check "E1b the DEFAULT picker model '$defaultTag' is installed" $have `
+                "models[0] is '$($defaultEntry.name)' -> '$defaultTag', which is NOT in ollama. Any run that omits context.model_name resolves to it and fails in <1 s with a 404 'model not found' - pull it: ollama pull $defaultTag"
+        }
+    }
+} catch {
+    Write-Host "  [SKIP] E1b could not read the picker roster ($($_.Exception.Message))" -ForegroundColor Yellow
+}
 
 # ── E2: an agent run completes ────────────────────────────────────────────────
 try {
@@ -171,7 +255,13 @@ try {
 }
 Check 'E2 an agent run completes (the KeyError-class defect)' ($r.StatusCode -eq 200) "got HTTP $($r.StatusCode)"
 
-# ── E3/E4: it actually called an MCP tool ─────────────────────────────────────
+# ── E2b: the run did not degrade into an error fallback ──────────────────────
+# MEASURED 2026-11-05: with the LOW-tier model absent, deer-flow still returns
+# HTTP 200 for `/runs/wait`. It swallows the upstream 404 into an `ai` message whose
+# content is "LLM request failed: Error code: 404 ... model 'x' not found", marked
+# `deerflow_error_fallback: true`. E2 alone therefore cannot tell a real answer from
+# a total model outage. The marker is explicit and worth asserting directly.
+#
 # Accept both payload shapes: `messages` at the top level of a runs/wait response, or
 # nested under `.values` from /state. Assuming one is how the sibling gate first
 # reported a false FAIL on a healthy stack.
@@ -182,25 +272,57 @@ if ($json) {
     if ($json.messages) { $msgs = @($json.messages) }
     elseif ($json.values -and $json.values.messages) { $msgs = @($json.values.messages) }
 }
-$serialized = if ($msgs.Count -gt 0) { ($msgs | ConvertTo-Json -Depth 20) } else { [string]$r.Content }
 
-# A text reply alone does NOT count. Look for an advertised tool name appearing in a
-# tool-call record.
+$fallback = @($msgs | Where-Object { $_.additional_kwargs -and $_.additional_kwargs.deerflow_error_fallback })
+$why = if ($fallback.Count -gt 0) { ($fallback | ForEach-Object { $_.additional_kwargs.error_detail } | Select-Object -First 1) } else { $null }
+Check 'E2b the run produced an answer, not an LLM error fallback' ($fallback.Count -eq 0) `
+    "deer-flow returned an error fallback instead of a reply: $why"
+
+# ── E3/E4: it actually called an MCP tool ─────────────────────────────────────
+# STRUCTURED RECORDS ONLY. WHY (measured 2026-11-05, this box):
+#   The previous version scanned the WHOLE serialized payload for an advertised tool
+#   name. But the gate's own prompt says "Call the pacgate_list_connectors tool", and
+#   that prompt is echoed back inside the human message - so the check matched ITS OWN
+#   PROMPT and reported `called: pacgate_list_connectors` on a run where the model had
+#   404'd and no tool ran at all. It was green on a totally broken agent lane, and it
+#   was green for the same reason it was green during the 0.1.33 era: the assertion
+#   could not distinguish "the agent called a tool" from "the word appears somewhere".
+#   A tool call must therefore be read from a `tool_calls` field on an ASSISTANT
+#   message, or from a tool-role message that answers one - never from free text, and
+#   never from a human turn.
 $called = @()
-foreach ($tn in $mcpTools) {
-    if ($serialized -match [regex]::Escape($tn)) { $called += $tn }
+$toolRecord = $false
+foreach ($m in $msgs) {
+    # A human turn is the PROMPT. It can name every tool and prove nothing.
+    if ($m.type -in @('human', 'user')) { continue }
+
+    if ($m.tool_calls) {
+        foreach ($tc in @($m.tool_calls)) {
+            $name = if ($tc.name) { $tc.name } elseif ($tc.function -and $tc.function.name) { $tc.function.name } else { $null }
+            if ($name -and ($mcpToolsAccepted -contains $name)) { $called += $name; $toolRecord = $true }
+        }
+    }
+    if ($m.additional_kwargs -and $m.additional_kwargs.tool_calls) {
+        foreach ($tc in @($m.additional_kwargs.tool_calls)) {
+            $name = if ($tc.name) { $tc.name } elseif ($tc.function -and $tc.function.name) { $tc.function.name } else { $null }
+            if ($name -and ($mcpToolsAccepted -contains $name)) { $called += $name; $toolRecord = $true }
+        }
+    }
+    if ($m.additional_kwargs -and $m.additional_kwargs.tool_call_id) { $toolRecord = $true }
+    if ($m.tool_call_id) { $toolRecord = $true }
+    if ($m.type -in @('tool', 'tool_result')) { $toolRecord = $true }
 }
 $called = @($called | Sort-Object -Unique)
 
 Check 'E3 the run invoked at least one real MCP tool' `
       ($called.Count -ge 1) `
-      'none of the advertised tool names appear in the run payload - the agent replied without calling a tool'
+      'no assistant tool_calls record names an advertised MCP tool - the agent replied without calling one (a tool name appearing only in the prompt does not count)'
 if ($called.Count -ge 1) {
     Write-Host ("         called: {0}" -f ($called -join ', ')) -ForegroundColor DarkGray
 }
 
 Check 'E4 a tool-call record came back (the call did not fail after issuance)' `
-      ($serialized -match 'tool_call_id|tool_calls|ToolMessage|tool_result') `
+      $toolRecord `
       'a tool was named but no tool-call record is present - the call was issued and produced nothing'
 
 Write-Host ''
