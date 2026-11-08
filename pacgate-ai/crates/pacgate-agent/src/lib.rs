@@ -124,6 +124,53 @@ pub struct ToolDispatcher {
 }
 
 impl ToolDispatcher {
+    /// Case-insensitive `(line_number, context)` for each match, capped at 40.
+    ///
+    /// Local to the dispatcher so the agent never has to call the docx store's
+    /// `find_in`, which reads the unredacted original.
+    fn find_matches(haystack: &str, needle: &str) -> Vec<(usize, String)> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let needle_lower = needle.to_lowercase();
+        let mut out = Vec::new();
+        for (idx, line) in haystack.lines().enumerate() {
+            if line.to_lowercase().contains(&needle_lower) {
+                out.push((idx + 1, line.trim().to_string()));
+                if out.len() >= 40 {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// The document text the AGENT is allowed to see.
+    ///
+    /// `docs.read()` returns the stored ORIGINAL - the redaction lives in
+    /// `kb_chunks`. MEASURED 2026-11-03: `fetch_documents`, `read_document` and
+    /// `find_in_document` all went through it, so the agent read raw client
+    /// identifiers while the database and every gate said `sanitized`. The agent
+    /// then reported that sanitisation had done nothing, and it was right.
+    ///
+    /// That is the same defect as the HTTP `/download` endpoint, on a second path.
+    /// Both had to be fixed; fixing only one would have left the agent reading
+    /// originals through the tool surface.
+    ///
+    /// Refuses rather than silently falling back to the original: a tool that hands
+    /// back unredacted text under a `sanitized` label is worse than one that errors.
+    async fn sanitised_or_refuse(&self, id: &DocumentId) -> Result<String> {
+        match self.kb.sanitised_text(id).await? {
+            Some(text) => Ok(text),
+            None => Err(PacgateError::ValidationError(
+                "this document has no sanitised text available; it is either still \
+                 pending or its format cannot be rebuilt from chunks. Refusing to \
+                 return the unredacted original."
+                    .to_string(),
+            )),
+        }
+    }
+
     pub fn new(
         docs: Arc<dyn DocumentStore>,
         workflows: Arc<dyn WorkflowStore>,
@@ -186,9 +233,12 @@ impl ToolDispatcher {
             .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
+        // Versioned reads keep the historical behaviour: a specific version is a
+        // deliberate request for that artifact. The default read must be the
+        // redaction - see `sanitised_or_refuse`.
         let text = match args.version {
             Some(v) => self.docs.read_version(&id, v).await?,
-            None => self.docs.read(&id).await?,
+            None => self.sanitised_or_refuse(&id).await?,
         };
         Ok(serde_json::json!({ "document_id": args.document_id, "content": text }))
     }
@@ -201,7 +251,23 @@ impl ToolDispatcher {
             .parse()
             .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
 
-        let results = self.docs.find_in(&id, &args.query).await?;
+        // Search the REDACTED text, not the stored original. `docs.find_in` reads
+        // `storage_path`, which is the client document - the same leak as
+        // `read_document`, and it would happily return a match on a raw identifier.
+        //
+        // Done here rather than via `docs.find_in` because that helper lives in
+        // `pacgate-docx` and reads the original by construction.
+        let Some(haystack) = self.kb.sanitised_text(&id).await? else {
+            return Err(PacgateError::ValidationError(
+                "this document has no sanitised text available; refusing to search \
+                 the unredacted original."
+                    .to_string(),
+            ));
+        };
+        let results: Vec<serde_json::Value> = Self::find_matches(&haystack, &args.query)
+            .into_iter()
+            .map(|(line, snippet)| serde_json::json!({ "line": line, "context": snippet }))
+            .collect();
         Ok(serde_json::json!({ "document_id": args.document_id, "results": results }))
     }
 
@@ -214,7 +280,7 @@ impl ToolDispatcher {
             let id: DocumentId = raw_id
                 .parse()
                 .map_err(|e| PacgateError::ValidationError(format!("invalid document_id: {e}")))?;
-            let content = self.docs.read(&id).await?;
+            let content = self.sanitised_or_refuse(&id).await?;
             docs.push(serde_json::json!({ "document_id": raw_id, "content": content }));
         }
         Ok(serde_json::json!({ "documents": docs }))
@@ -596,6 +662,30 @@ pub struct AgentLoop {
     pub max_rounds: u32,
 }
 
+/// One piece of observable progress from a running turn.
+///
+/// Measured 2026-11-03: `chat_stream_handler` ran the WHOLE agent loop to
+/// completion and only then emitted `.data` frames, so a turn that used 8 tools
+/// sent nothing at all for minutes and the UI showed an indefinite spinner. The
+/// user reported it as "36 steps and no response from the LLM" - the model was
+/// working, but no event ever crossed the wire. Emitting at each boundary is the
+/// fix, and it needs no streaming from the provider to be useful.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEvent {
+    ToolStart { name: String },
+    ToolEnd { name: String, is_error: bool },
+    RoundStart { round: u32 },
+    /// A pre-serialised terminal frame (text / citations / done / error).
+    ///
+    /// The concrete payload type lives in `pacgate-api`, so it is serialised where
+    /// it is known and carried here opaquely. Keeping the final answer on the same
+    /// channel as the progress frames is what stops it being dropped when the turn
+    /// runs in a detached task.
+    Final { payload: String },
+}
+
+
 impl AgentLoop {
     pub fn new(router: Arc<LlmRouter>, dispatcher: Arc<ToolDispatcher>) -> Self {
         Self {
@@ -630,6 +720,31 @@ impl AgentLoop {
         persona_prompt: Option<&str>,
         matter_id: Option<&MatterId>,
     ) -> Result<AgentTurnResult> {
+        self.run_with_router_and_progress(
+            router,
+            history,
+            user_message,
+            persona_prompt,
+            matter_id,
+            None,
+        )
+        .await
+    }
+
+    /// The same turn, reporting each tool boundary.
+    ///
+    /// `progress` is called synchronously at every observable boundary so the
+    /// caller can forward it to a transport. It must therefore not block: the
+    /// API passes a channel send, and a closed receiver simply drops the event.
+    pub async fn run_with_router_and_progress(
+        &self,
+        router: &Arc<LlmRouter>,
+        history: Vec<AgentMessage>,
+        user_message: &str,
+        persona_prompt: Option<&str>,
+        matter_id: Option<&MatterId>,
+        progress: Option<&(dyn Fn(AgentEvent) + Sync)>,
+    ) -> Result<AgentTurnResult> {
         let llm = router.get(self.tier)?;
         let tools = tool_definitions();
 
@@ -661,13 +776,60 @@ impl AgentLoop {
         // loop. See the `identical_rounds` handling below.
         let mut last_round_sig: Option<String> = None;
         let mut identical_rounds = 0u32;
+        // How a failed call must be reported back to the model. See below.
+        let mut failed_signatures: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut consecutive_failed_rounds = 0u32;
+        let mut last_model_text: Option<String> = None;
 
         for round in 0..self.max_rounds {
+            if let Some(emit) = progress {
+                emit(AgentEvent::RoundStart { round });
+            }
             let (content, tool_calls) = llm.complete(messages.clone(), tools.clone()).await?;
+
+            // Retained so a turn that ends without a closing message can still say
+            // something truthful. The model often narrates before calling a tool.
+            if let Some(ref text) = content {
+                if !text.trim().is_empty() {
+                    last_model_text = Some(text.clone());
+                }
+            }
 
             if tool_calls.is_empty() {
                 // Final answer
-                let citations = extract_citations(content.as_deref().unwrap_or(""));
+                //
+                // DEFENSE IN DEPTH (2026-11-04). `pacgate-llm::interpret_choice`
+                // already rejects a blank completion, so reaching here with no
+                // text should be impossible. It is still asserted, because this
+                // is the exact line where the "empty document, HTTP 200" defect
+                // shipped: before the LLM-layer guard existed, an empty reply
+                // fell through this branch as a successful final answer and
+                // every layer above forwarded it. A silent empty success is the
+                // most expensive failure this product can produce, so the
+                // cheapest possible second check is worth keeping.
+                let text = content.as_deref().unwrap_or("");
+                if text.trim().is_empty() {
+                    // A turn that ran tools and then went quiet still has
+                    // something truthful to say - prefer that over an error.
+                    if let Some(ref prior) = last_model_text {
+                        let citations = extract_citations(prior.as_str());
+                        return Ok(AgentTurnResult {
+                            message_id: MessageId::new(),
+                            content: last_model_text.clone(),
+                            citations,
+                            tool_calls_made,
+                            max_rounds_reached: false,
+                        });
+                    }
+                    return Err(pacgate_core::PacgateError::LlmError(
+                        "the model returned an empty final answer and no tool call \
+                         produced any text; there is nothing to show the user"
+                            .into(),
+                    ));
+                }
+
+                let citations = extract_citations(text);
                 return Ok(AgentTurnResult {
                     message_id: MessageId::new(),
                     content,
@@ -741,8 +903,24 @@ impl AgentLoop {
             });
 
             // Execute each tool and push results
+            let mut round_had_error = false;
             for tc in &tool_calls {
+                if let Some(emit) = progress {
+                    emit(AgentEvent::ToolStart {
+                        name: tc.tool_name.clone(),
+                    });
+                }
                 let result = self.dispatcher.dispatch(tc).await;
+                let is_error = result.content.get("error").is_some();
+                if is_error {
+                    round_had_error = true;
+                }
+                if let Some(emit) = progress {
+                    emit(AgentEvent::ToolEnd {
+                        name: tc.tool_name.clone(),
+                        is_error,
+                    });
+                }
                 // Ollama requires tool-message content to be a string; a raw
                 // JSON object triggers "invalid message content type". Stringify
                 // non-string values while preserving the payload.
@@ -757,6 +935,42 @@ impl AgentLoop {
                     tool_call_id: Some(result.tool_call_id.clone()),
                     name: None,
                 });
+            }
+
+            // ── Stop retrying calls that cannot succeed ────────────────────────
+            //
+            // Measured 2026-11-03, the user's own question
+            // ("检查一下，我们的脱敏和OCR系统是否工作正常？"): the model asked to read 4
+            // `pending` documents. Reading them is refused BY DESIGN - returning the
+            // original would hand the client's raw identifiers to the model. But the
+            // refusal was reported as a bare validation error, so the model concluded
+            // "the tool is broken", retried the same document, then the next, and
+            // exhausted all 10 rounds. The turn closed with `content: Some("")` and
+            // the user saw an empty answer after minutes of work.
+            //
+            // A refusal is a terminal fact. Telling the model so - with an
+            // instruction to report it rather than retry - converts a wasted loop
+            // into an answer that explains which documents are not ready.
+            if round_had_error {
+                consecutive_failed_rounds += 1;
+                let sig = tool_calls
+                    .iter()
+                    .map(|tc| format!("{}:{}", tc.tool_name, tc.arguments))
+                    .collect::<Vec<_>>()
+                    .join("|");
+                failed_signatures.insert(sig);
+            } else {
+                consecutive_failed_rounds = 0;
+            }
+
+            if consecutive_failed_rounds >= 3 {
+                warn!(
+                    round,
+                    "three consecutive rounds produced only tool errors; asking for the \
+                     final answer instead of spending the remaining rounds on calls that \
+                     cannot succeed"
+                );
+                break;
             }
         }
 
@@ -782,6 +996,24 @@ impl AgentLoop {
             }
         };
 
+        // An EMPTY closing message is not an answer.
+        //
+        // Measured 2026-11-03: the failing turn returned `text_delta { text: "" }`
+        // followed by `done`, so the client rendered a completed turn containing
+        // nothing. `Some("")` is indistinguishable from success at every layer below
+        // this function, so the emptiness has to be resolved here.
+        let closing = match closing {
+            Some(text) if !text.trim().is_empty() => Some(text),
+            _ => {
+                // Fall back to whatever the last round's model message said. The
+                // model often explains itself before emitting tool calls, and that
+                // text is real content the user has not seen.
+                last_model_text.filter(|t| !t.trim().is_empty()).or_else(|| {
+                    Some(self.fallback_message(&tool_calls_made, consecutive_failed_rounds))
+                })
+            }
+        };
+
         tracing::warn!(
             max_rounds = self.max_rounds,
             tools = tool_calls_made.len(),
@@ -795,6 +1027,34 @@ impl AgentLoop {
             tool_calls_made,
             max_rounds_reached: true,
         })
+    }
+
+    /// A truthful, non-empty message for a turn that ran tools but never produced a
+    /// closing answer.
+    ///
+    /// The alternative is `Some("")`, which every caller treats as a successful
+    /// empty reply - measured 2026-11-03, that is exactly what the user received
+    /// after the loop spent all 10 rounds. A short explanation is strictly better:
+    /// it names what ran and, when rounds failed, tells the reader that some
+    /// documents could not be read rather than implying there was nothing to say.
+    fn fallback_message(&self, tool_calls_made: &[String], failed_rounds: u32) -> String {
+        if tool_calls_made.is_empty() {
+            return "The model returned an empty response. Please retry.".to_string();
+        }
+        let mut message = format!(
+            "The model did not produce a final answer within {} tool rounds ({} tool calls).",
+            self.max_rounds,
+            tool_calls_made.len()
+        );
+        if failed_rounds >= 3 {
+            message.push_str(
+                " Several rounds produced only tool errors, most often because the \
+                 requested documents are still awaiting sanitisation and cannot be read \
+                 until that completes.",
+            );
+        }
+        message.push_str(" Please retry, or narrow the request to one document.");
+        message
     }
 
     fn convert_history(&self, history: &[AgentMessage]) -> Vec<ChatMessage> {
@@ -979,7 +1239,7 @@ mod tests {
                 // start asserting a different thing.
                 let n = counter_inner.load(Ordering::SeqCst);
                 let body = format!(
-                    r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"call_{n}","type":"function","function":{{"name":"list_documents","arguments":"{{\"nonce\":{n}}}"}}}}]}}}}]}}"#
+                    r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"call_{n}","type":"function","function":{{"name":"list_documents","arguments":"{{\"matter_id\":\"bfb3f4fd-7ee6-4c7e-9ea2-11a4b0c1d1aa\",\"nonce\":{n}}}"}}}}]}}}}]}}"#
                 );
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1069,6 +1329,13 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl pacgate_core::KbStore for NoStore {
+            async fn sanitised_text(
+                &self,
+                _: &pacgate_core::DocumentId,
+            ) -> Result<Option<String>> {
+                Err(PacgateError::StorageError("test double: unreachable by design".into()))
+            }
+
             async fn search(
                 &self,
                 _: &MatterId,
@@ -1085,9 +1352,241 @@ mod tests {
         ))
     }
 
+    /// Tools that SUCCEED. Needed by the loop-detector tests: their dispatcher used
+    /// to fail by design ("unreachable double"), but tool errors are now meaningful
+    /// to the loop - three failing rounds legitimately end the turn - so a failing
+    /// double would test the error path instead of the signature detector.
+    fn succeeding_dispatcher() -> Arc<ToolDispatcher> {
+        struct EmptyStore;
+        #[async_trait::async_trait]
+        impl pacgate_core::DocumentStore for EmptyStore {
+            async fn read(&self, _: &DocumentId) -> Result<String> {
+                Ok(String::new())
+            }
+            async fn read_version(&self, _: &DocumentId, _: u32) -> Result<String> {
+                Ok(String::new())
+            }
+            async fn list_for_matter(&self, _: &MatterId) -> Result<Vec<pacgate_core::Document>> {
+                Ok(Vec::new())
+            }
+            async fn find_in(&self, _: &DocumentId, _: &str) -> Result<Vec<pacgate_core::FindResult>> {
+                Ok(Vec::new())
+            }
+            async fn create_from_structure(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: &serde_json::Value,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError("test double".into()))
+            }
+            async fn apply_edit(
+                &self,
+                _: &DocumentId,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError("test double".into()))
+            }
+            async fn replicate(&self, _: &DocumentId, _: u32) -> Result<Vec<pacgate_core::Document>> {
+                Ok(Vec::new())
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::WorkflowStore for EmptyStore {
+            async fn get_prompt(&self, _: &str) -> Result<String> {
+                Ok(String::new())
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::KbStore for EmptyStore {
+            async fn sanitised_text(&self, _: &DocumentId) -> Result<Option<String>> {
+                Ok(Some(String::new()))
+            }
+            async fn search(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: u32,
+            ) -> Result<Vec<pacgate_core::KbChunk>> {
+                Ok(Vec::new())
+            }
+        }
+        Arc::new(ToolDispatcher::new(
+            Arc::new(EmptyStore),
+            Arc::new(EmptyStore),
+            Arc::new(EmptyStore),
+        ))
+    }
+
+    /// Every tool call fails, which is what a `pending` document produces.
+    const REFUSAL: &str = "validation error: this document has no sanitised text available; \
+                           it is either still pending or its format cannot be rebuilt from \
+                           chunks. Refusing to return the unredacted original.";
+    fn failing_dispatcher() -> Arc<ToolDispatcher> {
+        struct AlwayFails;
+        #[async_trait::async_trait]
+        impl pacgate_core::DocumentStore for AlwayFails {
+            async fn read(&self, _: &DocumentId) -> Result<String> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn read_version(&self, _: &DocumentId, _: u32) -> Result<String> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn list_for_matter(&self, _: &MatterId) -> Result<Vec<pacgate_core::Document>> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn find_in(&self, _: &DocumentId, _: &str) -> Result<Vec<pacgate_core::FindResult>> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn create_from_structure(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: &serde_json::Value,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn apply_edit(
+                &self,
+                _: &DocumentId,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> Result<pacgate_core::Document> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn replicate(&self, _: &DocumentId, _: u32) -> Result<Vec<pacgate_core::Document>> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::WorkflowStore for AlwayFails {
+            async fn get_prompt(&self, _: &str) -> Result<String> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+        }
+        #[async_trait::async_trait]
+        impl pacgate_core::KbStore for AlwayFails {
+            async fn sanitised_text(&self, _: &DocumentId) -> Result<Option<String>> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+            async fn search(
+                &self,
+                _: &MatterId,
+                _: &str,
+                _: u32,
+            ) -> Result<Vec<pacgate_core::KbChunk>> {
+                Err(PacgateError::StorageError(REFUSAL.into()))
+            }
+        }
+        Arc::new(ToolDispatcher::new(
+            Arc::new(AlwayFails),
+            Arc::new(AlwayFails),
+            Arc::new(AlwayFails),
+        ))
+    }
+
+    /// The user-visible defect: a turn that uses tools must report progress WHILE it
+    /// runs. Measured 2026-11-03, `chat_stream_handler` emitted every SSE frame only
+    /// after the whole loop finished, so an 8-tool turn sent zero bytes for minutes.
+    /// This asserts the ordering property directly: the first event arrives before
+    /// the turn completes, and the round/tool boundaries are all reported.
     #[tokio::test]
-    async fn hitting_max_rounds_returns_the_turn_instead_of_discarding_it() {
+    async fn progress_is_reported_at_every_boundary_during_the_turn() {
         let (base, _hits) = spawn_tool_calling_server();
+        let router = Arc::new(test_router(&base));
+
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: dispatcher(),
+            tier: LlmTier::Main,
+            max_rounds: 3,
+        };
+
+        let seen: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        let emit = |event: AgentEvent| {
+            let label = match &event {
+                AgentEvent::ToolStart { name } => format!("start:{name}"),
+                AgentEvent::ToolEnd { name, .. } => format!("end:{name}"),
+                AgentEvent::RoundStart { round } => format!("round:{round}"),
+                AgentEvent::Final { .. } => "final".into(),
+            };
+            seen.lock().unwrap().push(label);
+        };
+
+        let _ = agent
+            .run_with_router_and_progress(
+                &router,
+                vec![],
+                "do the thing",
+                None,
+                None,
+                Some(&emit),
+            )
+            .await;
+
+        let log = seen.lock().unwrap().clone();
+        assert!(
+            !log.is_empty(),
+            "a turn that ran tools reported NO progress at all - this is exactly the \
+             indefinite-spinner defect the user reported"
+        );
+        assert_eq!(
+            log.first().map(|s| s.as_str()),
+            Some("round:0"),
+            "the first round must be announced before any tool runs, else the client has \
+             nothing to show during the first (slowest) model call: {log:?}"
+        );
+        // Every tool start must be matched by its end, so the UI can clear its spinner.
+        let starts = log.iter().filter(|s| s.starts_with("start:")).count();
+        let ends = log.iter().filter(|s| s.starts_with("end:")).count();
+        assert!(starts > 0, "the test server returns tool calls: {log:?}");
+        assert_eq!(starts, ends, "an unbalanced tool event leaves the UI spinning: {log:?}");
+    }
+
+    /// Measured 2026-11-03, the user's own question. Reading a `pending` document is
+    /// refused by design, the model retried the refusal until `max_rounds`, and the
+    /// turn closed with `content: Some("")` - a completed turn containing nothing.
+    ///
+    /// Three invariants, all of them user-visible:
+    ///   1. consecutive failing rounds must NOT consume the whole budget;
+    ///   2. the turn must still carry a message;
+    ///   3. that message must not be empty.
+    #[tokio::test]
+    async fn a_turn_of_failing_tools_ends_with_a_message_not_an_empty_answer() {
+        let (base, _hits) = spawn_tool_calling_server();
+        let router = Arc::new(test_router(&base));
+
+        let agent = AgentLoop {
+            router: router.clone(),
+            dispatcher: failing_dispatcher(),
+            tier: LlmTier::Main,
+            max_rounds: 10,
+        };
+
+        let turn = agent
+            .run_with_router(&router, vec![], "read the pending documents", None, None)
+            .await
+            .expect("a refused tool call is not a request-level error");
+
+        let text = turn.content.unwrap_or_default();
+        assert!(
+            !text.trim().is_empty(),
+            "the turn completed with an empty answer - this is the exact defect the \
+             user reported after watching the steps count up with no response"
+        );
+        assert!(
+            text.contains("sanitis") || text.contains("did not produce a final answer"),
+            "the answer must explain itself instead of being blank: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn hitting_max_rounds_returns_the_turn_instead_of_discarding_it() {        let (base, _hits) = spawn_tool_calling_server();
         let router = Arc::new(test_router(&base));
 
         let agent = AgentLoop {
@@ -1164,7 +1663,7 @@ mod tests {
 
     fn tool_call_body(nonce: &str) -> String {
         format!(
-            r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"c","type":"function","function":{{"name":"list_documents","arguments":"{{\"nonce\":\"{nonce}\"}}"}}}}]}}}}]}}"#
+            r#"{{"choices":[{{"message":{{"role":"assistant","content":null,"tool_calls":[{{"id":"c","type":"function","function":{{"name":"list_documents","arguments":"{{\"matter_id\":\"bfb3f4fd-7ee6-4c7e-9ea2-11a4b0c1d1aa\",\"nonce\":\"{nonce}\"}}"}}}}]}}}}]}}"#
         )
     }
 
@@ -1176,7 +1675,7 @@ mod tests {
         let router = Arc::new(test_router(&base));
         let agent = AgentLoop {
             router: router.clone(),
-            dispatcher: dispatcher(),
+            dispatcher: succeeding_dispatcher(),
             tier: LlmTier::Main,
             max_rounds: 50,
         };
@@ -1207,7 +1706,7 @@ mod tests {
         let router = Arc::new(test_router(&base));
         let agent = AgentLoop {
             router: router.clone(),
-            dispatcher: dispatcher(),
+            dispatcher: succeeding_dispatcher(),
             tier: LlmTier::Main,
             max_rounds: 50,
         };
@@ -1267,3 +1766,4 @@ mod tests {
         assert!(turn.tool_calls_made.is_empty());
     }
 }
+

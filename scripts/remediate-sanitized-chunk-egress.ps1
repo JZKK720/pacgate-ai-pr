@@ -68,8 +68,14 @@ function Invoke-Psql([string]$Sql) {
     # STDIN, never `cmd /c "... -c ""$sql"""`. The -c form silently dropped the
     # WHERE clause in an earlier version of the audit script and reported leaks for
     # patterns that cannot exist. STDIN has no quoting layer to lose.
-    $out = $Sql | docker exec -i pacgate-db psql -U pacgate -d pacgate -t -A 2>&1
-    return ($out | Where-Object { $_ -notmatch '^(INFO|NOTICE|WARNING)' })
+    #
+    # Encoding and error handling live in the SHARED helper, because this script and
+    # the audit both need them and both got them wrong the same way: the pipe used the
+    # console code page (936 here), which mangled the full-width colon in five patterns
+    # and made Postgres reject the whole query. The error text was then returned as if
+    # it were a result set, so this script printed "0 affected - nothing to remediate"
+    # on a database that demonstrably held the leak. Measured 2026-11-03.
+    return Invoke-PacgatePsql -Sql $Sql
 }
 
 # ── credentials ─────────────────────────────────────────────────────────────────
@@ -98,18 +104,34 @@ if (-not $apiPassword -or $apiPassword -match '^change-me') {
 . (Join-Path $PSScriptRoot 'lib/RawPiiPatterns.ps1')
 $rawPredicate = Get-PacgateRawPiiPredicate -Column 'c.content'
 
-# A pattern match alone is not a leak. The product refuses to call a bare digit
-# run an identifier (spec 8.4), so a checksum-INVALID 18-digit run in a sanitized
-# chunk is the product working as designed. Selecting on the raw predicate alone
-# made this script offer to re-sanitize documents that are already clean - the
-# same drift the shared-patterns file was created to stop, one level up.
+# A pattern match alone is not a leak - but "checksum-invalid" no longer means clean.
 #
-# Measured 2026-10-25: the raw predicate selected 2 documents, both fixtures whose
-# IDs fail ISO 7064 MOD 11-2. The audit reported "NO LEAK" while this reported
-# "2 affected" - two scripts disagreeing about the same rows.
+# The product refuses to call a bare digit run an identifier (spec 8.4), so this used
+# to narrow the selection to rows carrying a checksum-VALID resident ID, on the theory
+# that a checksum-invalid 18-digit run was the product working as designed. Measured
+# 2026-10-25 that reasoning reconciled the audit ("NO LEAK") with this script ("2
+# affected") by treating both fixtures as non-leaks.
 #
-# So the selection is narrowed to rows that carry a checksum-VALID resident ID.
-# That is the only class the product itself would have redacted.
+# MEASURED 2026-11-02 that reasoning stopped being true. A resident ID whose SHAPE is
+# well-formed (region prefix plus a real calendar birthdate) is now redacted even when
+# its check digit is wrong, because a mistyped or OCR-damaged ID is still personal data
+# - see `cn_resident_id_shape_ok` and the client case that proved it: a checksum-invalid
+# ID survived sanitization, was indexed, and could be used as a lookup key against the
+# vector store. `110105199003074512` is exactly that value.
+#
+# So a checksum-invalid ID-shaped run in a `sanitized` chunk is now a REAL leak, and
+# narrowing this selection by the check digit would make the very leak that motivated
+# the fix permanent: re-sanitizing would clean it, but this script would never select
+# the document. The predicate is therefore LEFT AS IT IS - every pattern match is
+# selectable - and the check digit is used only to LABEL what was found, not to exclude
+# it. That is the fail-closed direction: a false positive costs one redundant
+# re-sanitize (which is idempotent), a false negative costs a published leak.
+#
+# Note the practical cost of the change: `rawPredicate` now includes a lawyer-licence,
+# bank-account, plate and tax-id pattern, so a machine whose sanitized chunks contain
+# e.g. an unlabelled 17-digit number will be selected. Re-sanitizing is safe and
+# idempotent - `reingest_sanitized_chunks` deletes-then-inserts inside one transaction -
+# so the cost is a job run, not data damage.
 $findSql = @"
 CREATE OR REPLACE FUNCTION pg_temp.cn_id_valid(s text) RETURNS boolean AS `$`$
 DECLARE
@@ -131,10 +153,6 @@ FROM kb_chunks c
 JOIN documents d ON d.id = c.document_id
 WHERE c.sanitization_state = 'sanitized'
   AND ($rawPredicate)
-  AND EXISTS (
-    SELECT 1 FROM regexp_matches(c.content, '(?!0{16})[0-9]{17}[0-9Xx]', 'g') AS r
-    WHERE pg_temp.cn_id_valid(r[1])
-  )
 GROUP BY c.document_id, c.tenant_id
 ORDER BY c.tenant_id, c.document_id
 LIMIT $Limit;

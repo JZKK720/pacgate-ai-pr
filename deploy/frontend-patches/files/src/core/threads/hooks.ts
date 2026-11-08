@@ -965,13 +965,45 @@ export function useThreadStream({
             threadId: threadId,
             streamSubgraphs: true,
             streamResumable: true,
-            config: {
-              recursion_limit: 1000,
-            },
+            // Pacgate 2026-11-07: do NOT pin a recursion budget from the client.
+            //
+            // This used to send `recursion_limit: 1000` on every run (upstream's
+            // large-budget default for deep research). That constant became a wall:
+            // measured across 333 runs on this box, 22 died with
+            // GraphRecursionError and every one carrying a client budget died at
+            // exactly 1000. The deepest SUCCESS whose checkpoints were retained used
+            // 937 of its 1000 - 63 steps of headroom - so this was not a budget, it
+            // was the next ceiling, and it cut runs mid-work with real deliverables
+            // already on disk.
+            //
+            // The budget belongs to the server, which knows the graph's depth:
+            // app/gateway/services.py build_run_config() now applies a floor
+            // (DEERFLOW_MIN_RECURSION_LIMIT, default 2000) and a ceiling
+            // (DEERFLOW_MAX_RECURSION_LIMIT, default 4000). Omitting the key lets
+            // the server's own budget apply; the floor there still protects us if
+            // some other client ships a stale constant.
             context: {
               ...extraContext,
               ...context,
-              thinking_enabled: context.mode !== "flash",
+              // Pacgate 2026-10-30: an UNSET mode must not enable thinking.
+              //
+              // It did. `context.mode !== "flash"` is true for undefined, and the
+              // mode default lives in local storage - so every first-turn run from a
+              // fresh profile ran with thinking on. deer-flow-config.yaml carries
+              // `when_thinking_disabled: {reasoning_effort: none}` for every
+              // thinking-capable model, but the factory applies it only when
+              // thinking_enabled is false, so the suppression never fired and the
+              // reply budget was shared with the invisible reasoning channel.
+              //
+              // Measured: 12 `deepseek-v4.1-flash` replies ended with
+              // finish_reason=length after 8192/8192 tokens spent entirely on
+              // reasoning, producing an empty assistant message. That is conditional
+              // on prompt size, not universal - a short prompt answered fine either
+              // way - so this is a real budget defect, not a hang.
+              thinking_enabled:
+                context.mode === "thinking" ||
+                context.mode === "pro" ||
+                context.mode === "ultra",
               is_plan_mode: context.mode === "pro" || context.mode === "ultra",
               subagent_enabled: context.mode === "ultra",
               reasoning_effort:

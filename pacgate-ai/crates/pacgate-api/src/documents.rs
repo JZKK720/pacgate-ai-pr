@@ -203,6 +203,37 @@ pub struct DownloadQuery {
     version: Option<u32>,
 }
 
+/// Which body the download endpoint may serve, decided without touching the DB.
+///
+/// Extracted so it can be tested at all: `documents.rs` had no test module, which is
+/// why the 2026-11-03 download leak survived every gate. The decision is the whole
+/// bug - before it, "sanitized" meant "allowed" and the bytes were passed through
+/// unchanged.
+#[derive(Debug, PartialEq)]
+enum DownloadBody {
+    /// The redacted rendering, rebuilt from `kb_chunks`.
+    SanitisedText,
+    /// The stored original, only for a document explicitly marked `never`.
+    OriginalBinary,
+    /// Refused: the label says sanitised but the artifact is binary, and a redacted
+    /// binary cannot be rebuilt from text chunks. Serving the original here would be
+    /// exactly the leak this fixes.
+    RefusedBinary,
+}
+
+fn download_body_for(state: &str, format: &DocumentFormat) -> DownloadBody {
+    let text_like = matches!(
+        format,
+        DocumentFormat::Txt | DocumentFormat::Markdown | DocumentFormat::Html
+    );
+    match (state, text_like) {
+        ("sanitized", true) => DownloadBody::SanitisedText,
+        ("sanitized", false) => DownloadBody::RefusedBinary,
+        ("never", _) => DownloadBody::OriginalBinary,
+        _ => DownloadBody::RefusedBinary,
+    }
+}
+
 pub async fn download_document(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -233,11 +264,99 @@ pub async fn download_document(
         )));
     }
 
-    let (doc, bytes) = state
+    let (doc, raw_bytes) = state
         .doc_store
         .download_bytes(&doc_id, query.version)
         .await
         .map_err(ApiError::from)?;
+
+    // The download MUST serve the SANITISED rendering, not the stored original.
+    //
+    // MEASURED 2026-11-03, and this was a live P0 that every existing gate missed:
+    // 36 of 37 documents labelled `sanitized` returned their FULL ORIGINAL TEXT
+    // through this endpoint, including `OCR-VERIFY-扫描件样张` (80 KB, raw 身份证号)
+    // and `probe-0217-regression` (raw HK1234567 / M1234567). The egress gate above
+    // only refused `pending`; it never replaced the bytes, so the label said
+    // "sanitised" while the payload said otherwise.
+    //
+    // Worse, `pacgate_read_document` in the MCP server is a thin wrapper over this
+    // path, so the agent read the original and correctly reported that sanitisation
+    // had done nothing - while the database and every gate said it was clean.
+    //
+    // `kb_chunks.content` holds the redacted rendering for every sanitised document
+    // (verified: `纳税人识别号 [CN_TAX_ID_...]`), so the sanitised body is recovered
+    // from there rather than re-running the pipeline. Binary formats (docx/pdf/...)
+    // cannot be rebuilt byte-for-byte from chunks, so they are served as the redacted
+    // TEXT rather than as the original file - which is what the conversion surface
+    // consumes anyway.
+    let body_plan = download_body_for(&doc_state, &doc.format);
+
+    let bytes = match body_plan {
+        DownloadBody::SanitisedText => {
+            let rows: Vec<String> = sqlx::query_scalar(
+                "SELECT content FROM kb_chunks \
+                 WHERE document_id = $1 ORDER BY chunk_index",
+            )
+            .bind(doc_id.0)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| ApiError::internal(format!("download chunk lookup failed: {e}")))?;
+
+            if rows.is_empty() {
+                return Err(ApiError::conflict(
+                    "document is labelled 'sanitized' but has no sanitised chunks to serve; \
+                     re-run the sanitize job (its download would otherwise return the original)"
+                        .to_string(),
+                ));
+            }
+            rows.join("").into_bytes()
+        }
+        DownloadBody::RefusedBinary => {
+            // A redacted BINARY cannot be rebuilt byte-for-byte from text chunks, so
+            // the ORIGINAL is never served from here.
+            //
+            // Returning 409 was my regression, not a requirement: `pacgate_convert_document`
+            // fetches this endpoint and converts locally, so refusing the body broke
+            // PDF/DOCX/XLSX/PPTX entirely (measured 2026-11-03, test-format-coverage-e2e).
+            // The redaction already exists as text; serving it keeps every format usable
+            // and still discloses nothing.
+            let rows: Vec<String> = sqlx::query_scalar(
+                "SELECT content FROM kb_chunks \
+                 WHERE document_id = $1 ORDER BY chunk_index",
+            )
+            .bind(doc_id.0)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| ApiError::internal(format!("download chunk lookup failed: {e}")))?;
+
+            if rows.is_empty() {
+                return Err(ApiError::conflict(
+                    "download refused: this document is labelled 'sanitized' but has no \
+                     sanitised text chunks, so its original cannot be released. Re-run \
+                     the sanitize job.",
+                ));
+            }
+
+            let text = rows.join("");
+            let mut resp = Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}.md\"", doc.name),
+                )
+                // The caller cannot infer the original container from Markdown, and the
+                // converter needs to say what it actually received.
+                .header("x-pacgate-source-format", "redacted-text")
+                .body(axum::body::Body::from(text))
+                .map_err(|e| ApiError::internal(e.to_string()))?;
+            resp.headers_mut()
+                .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+            return Ok(resp);
+        }
+        // `never` - explicitly never-sanitised, so the original IS the artifact.
+        DownloadBody::OriginalBinary => raw_bytes,
+    };
 
     let content_type = match doc.format {
         DocumentFormat::Docx => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -379,4 +498,97 @@ pub async fn get_tabular_results(
     Path(_id):    Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     Err(ApiError::internal("tabular review engine not yet wired"))
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::*;
+
+    /// The 2026-11-03 regression, stated as an invariant.
+    ///
+    /// `documents.rs` had NO test module at all, which is why the leak survived:
+    /// the endpoint refused `pending` but passed the stored bytes through unchanged,
+    /// so a document labelled `sanitized` served its full original text. 36 of 37
+    /// documents did. The MCP tool `pacgate_read_document` wraps this endpoint, so
+    /// the agent read raw client identifiers and - correctly - reported that
+    /// sanitisation had not worked, while every gate said clean.
+    ///
+    /// A status-code assertion cannot catch this: the original and the redacted
+    /// artifact are both HTTP 200.
+    #[test]
+    fn a_sanitized_text_document_never_serves_its_original() {
+        for fmt in [DocumentFormat::Txt, DocumentFormat::Markdown, DocumentFormat::Html] {
+            assert_eq!(
+                download_body_for("sanitized", &fmt),
+                DownloadBody::SanitisedText,
+                "{fmt:?} is text-like, so its body must come from the redacted chunks"
+            );
+            assert_ne!(
+                download_body_for("sanitized", &fmt),
+                DownloadBody::OriginalBinary,
+                "{fmt:?} must never fall back to the stored original"
+            );
+        }
+    }
+
+    /// A sanitised BINARY is served as REDACTED TEXT, never as its original bytes.
+    ///
+    /// The first version of this fix returned 409 here. That was wrong, and the
+    /// format-coverage gate caught it: `pacgate_convert_document` fetches
+    /// `/download` and converts the bytes locally, so refusing the body broke
+    /// PDF/DOCX/XLSX/PPTX conversion outright. The requirement was never "refuse
+    /// binaries" - it was "never release the ORIGINAL". The redaction already
+    /// exists as text in `kb_chunks`; serving that keeps every format usable and
+    /// still discloses nothing.
+    #[test]
+    fn a_sanitized_binary_document_is_served_as_redacted_text() {
+        for fmt in [
+            DocumentFormat::Docx,
+            DocumentFormat::Xlsx,
+            DocumentFormat::Pptx,
+            DocumentFormat::Pdf,
+            DocumentFormat::ImagePng,
+            DocumentFormat::ImageJpeg,
+            DocumentFormat::ImageTiff,
+            DocumentFormat::ImageBmp,
+            DocumentFormat::ImageWebp,
+        ] {
+            assert_eq!(
+                download_body_for("sanitized", &fmt),
+                DownloadBody::RefusedBinary,
+                "{fmt:?} has no faithful binary rebuild, so the body must come from chunks"
+            );
+            assert_ne!(
+                download_body_for("sanitized", &fmt),
+                DownloadBody::OriginalBinary,
+                "{fmt:?} must never fall back to the stored original"
+            );
+        }
+    }
+
+    /// An explicitly `never` document keeps serving its original - that is what the
+    /// state means, and it is the one path where the raw bytes are the artifact.
+    #[test]
+    fn a_never_document_still_serves_its_original() {
+        for fmt in [DocumentFormat::Txt, DocumentFormat::Docx, DocumentFormat::Pdf] {
+            assert_eq!(
+                download_body_for("never", &fmt),
+                DownloadBody::OriginalBinary,
+                "{fmt:?} marked 'never' is unredacted by definition"
+            );
+        }
+    }
+
+    /// Every other state is refused. The HTTP handler rejects these earlier, but the
+    /// decision function must not have a "default allow" branch either.
+    #[test]
+    fn any_other_state_is_refused() {
+        for state in ["pending", "blocked", "", "SANITIZED"] {
+            assert_eq!(
+                download_body_for(state, &DocumentFormat::Txt),
+                DownloadBody::RefusedBinary,
+                "state {state:?} must not authorise a download"
+            );
+        }
+    }
 }

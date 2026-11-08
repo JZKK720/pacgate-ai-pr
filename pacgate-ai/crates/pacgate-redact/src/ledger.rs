@@ -46,6 +46,38 @@ pub struct RedactionLedger {
     /// The verifier's own explanation of the verdict.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verification_notes: Vec<String>,
+    /// Identifiers that were redacted DESPITE failing their check digit.
+    ///
+    /// The second review's sharpest finding was that a check digit was deciding
+    /// whether a value got redacted at all: `6222021234567890129`, one digit
+    /// misread, came back verbatim while its valid neighbour was removed. An OCR
+    /// error is the most likely form a real identifier takes in this product, so
+    /// the gate protected nobody - it only decided who leaked.
+    ///
+    /// The gate is gone (2026-11-03). This field is where the old signal went, so
+    /// the fact is still RECORDED rather than thrown away: a reviewer can see that
+    /// four identifiers were removed on shape alone and may want to confirm the
+    /// extraction, which is the legitimate use of a checksum. It is a label on the
+    /// decision, not an input to it.
+    ///
+    /// Empty whenever every redacted value validated, so a clean ledger is
+    /// byte-identical to before this field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suspect: Vec<SuspectEntry>,
+}
+
+/// One identifier redacted on shape rather than on a passing check digit.
+///
+/// Carries the ENTITY and the CLASS only - never the value, and never the token.
+/// The value is precisely the thing this record must not hold a second copy of,
+/// and the token is not useful without the vault.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SuspectEntry {
+    pub entity: String,
+    /// Why the check digit did not pass: `bad_check_digit` today.
+    pub reason: String,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// One surviving match, as recorded in the ledger.
@@ -108,6 +140,17 @@ impl RedactionLedger {
                 })
                 .collect(),
             verification_notes: verification.notes.clone(),
+            suspect: redaction
+                .applied
+                .iter()
+                .filter(|a| a.source == crate::MatchSource::Pattern)
+                .map(|a| SuspectEntry {
+                    entity: format!("{:?}", a.entity),
+                    reason: "bad_check_digit".to_string(),
+                    start: a.start,
+                    end: a.end,
+                })
+                .collect(),
         }
     }
 
@@ -242,7 +285,7 @@ mod tests {
         );
         assert!(!l.ruleset_version.is_empty());
     }
-}
+
     #[test]
     fn a_block_ledger_records_why_it_blocked() {
         // Measured 2026-10-24: five of thirteen firm documents came back
@@ -287,3 +330,69 @@ mod tests {
             "the residue must carry the verifier's notes, got: {json}"
         );
     }
+
+    /// The check digit's outcome is RECORDED, not used to decide.
+    ///
+    /// MEASURED 2026-11-03: `6222021234567890129`, one digit misread, was left
+    /// verbatim while its Luhn-valid neighbour was removed - a check digit was
+    /// deciding who leaked. The gate is gone; the signal lives here instead, so a
+    /// reviewer can still see that a value was removed on shape alone.
+    #[test]
+    fn a_shape_only_redaction_is_recorded_as_suspect() {
+        use crate::{EntityType, MatchSource};
+
+        let r = Redaction {
+            text: "卡号 [BANK_CARD_53C82EF1C9807E78]".to_string(),
+            applied: vec![crate::AppliedRedaction {
+                entity: EntityType::BankCard,
+                placeholder: "[BANK_CARD_53C82EF1C9807E78]".to_string(),
+                start: 5,
+                end: 36,
+                source: MatchSource::Pattern,
+            }],
+        };
+        let l = RedactionLedger::seal(
+            JobId::new(),
+            MappingVersion::CURRENT,
+            "卡号 6222021234567890129",
+            &r,
+            &verification(Verdict::Pass),
+        );
+
+        let json = l.to_json().expect("serialise");
+        assert!(json.contains("suspect"), "the shape-only removal must be recorded: {json}");
+        assert!(json.contains("bad_check_digit"), "{json}");
+        assert!(json.contains("BankCard"), "{json}");
+        assert!(
+            !json.contains("6222021234567890129"),
+            "the suspect record must not hold the value - it is the thing being removed: {json}"
+        );
+    }
+
+    /// A checksum-validated removal is not suspect, so a clean job records nothing
+    /// and its ledger is unchanged from before this field existed.
+    #[test]
+    fn a_checksum_validated_redaction_is_not_suspect() {
+        use crate::{EntityType, MatchSource};
+
+        let r = Redaction {
+            text: "卡号 [BANK_CARD_53C82EF1C9807E78]".to_string(),
+            applied: vec![crate::AppliedRedaction {
+                entity: EntityType::BankCard,
+                placeholder: "[BANK_CARD_53C82EF1C9807E78]".to_string(),
+                start: 5,
+                end: 36,
+                source: MatchSource::Checksum,
+            }],
+        };
+        let l = RedactionLedger::seal(
+            JobId::new(),
+            MappingVersion::CURRENT,
+            "卡号 4111111111111111",
+            &r,
+            &verification(Verdict::Pass),
+        );
+        assert!(l.suspect.is_empty());
+        assert!(!l.to_json().expect("serialise").contains("suspect"));
+    }
+}

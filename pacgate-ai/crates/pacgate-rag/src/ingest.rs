@@ -248,7 +248,7 @@ impl ChunkIngestor {
 
         let embeddings = self
             .embedding
-            .embed_batch(&chunks.iter().cloned().collect::<Vec<_>>())
+            .embed_batch(&chunks.to_vec())
             .await?;
 
         // Delete FIRST, then insert - both inside the transaction.

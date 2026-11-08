@@ -1,0 +1,354 @@
+# Audit: are deer-flow runs still dying on `Recursion limit reached`?
+#
+# WHY THIS EXISTS
+#
+# Six runs were killed by "Recursion limit of 1000 reached" between 2026-10-27 and
+# 2026-10-28 (115-118 LLM calls, 3M+ tokens each). The fix shipped as a prompt
+# change: convergence discipline in patches/deer-flow-prompt.py, because the
+# killing runs were doing legitimate diverse work (259 bash calls, 259 DISTINCT
+# commands) and no threshold separates them from successful runs.
+#
+# A prompt fix is not assertable the way a clamp is. It changes model behaviour,
+# and only a run that is LONG ENOUGH to approach the old wall (~115 LLM calls over
+# 12-19 minutes) can demonstrate it. Every gate in this repo uses short probes, so
+# none of them can answer the question that actually matters here:
+#
+#     "has a run hit the recursion wall since the fix went live?"
+#
+# Without this audit that question is answered by somebody remembering to grep the
+# database, which is not a control. This makes it a repeatable measurement.
+#
+# WHAT IT REPORTS
+#   - runs since the recorded baseline, split success / recursion / other error
+#   - the DEEPEST successful run since the baseline (LLM calls) - the single best
+#     signal of whether the convergence prompt is holding
+#   - every recursion error since the baseline, named with its timestamp#
+# Exit codes
+#   0 = no recursion error since the baseline (the fix is holding so far)
+#   1 = a recursion error occurred AFTER the baseline (a real regression)
+#   2 = cannot check (no database, or no runs since the baseline yet)
+#
+# Exit 2 is the correct answer on a quiet box: four trivial runs cannot prove
+# anything about a wall that needs ~115 LLM calls to reach. Reporting 2 rather than
+# 0 keeps "not exercised" from being mistaken for "verified".
+#
+# Usage:
+#   pwsh -File scripts/audit-recursion-regressions.ps1
+#   pwsh -File scripts/audit-recursion-regressions.ps1 -Baseline '2026-10-27 00:00:00'
+#   pwsh -File scripts/audit-recursion-regressions.ps1 -DeepEnough 100 -Json
+#
+# This is a read-only measurement. It changes nothing and is safe on a schedule.
+
+[CmdletBinding()]
+param(
+    # UTC timestamp, 'yyyy-MM-dd HH:mm:ss', of the moment the prompt fix went live.
+    # Recorded when deer-flow was recreated with the patched prompt baked into the
+    # bind-mounted file. Override it to audit a different window.
+    #
+    # 2026-11-07: moved from 2026-10-28 04:00:00, where it had been stuck while the
+    # defect it was meant to catch kept happening. Ten runs after that old baseline
+    # still died at exactly 1000 LLM-budget wall. They were not prompt failures - the
+    # clamp had shipped, but nothing raised a caller's budget back UP, so the UI's
+    # 1000 stayed binding. The floor (DEERFLOW_MIN_RECURSION_LIMIT, default 2000) is
+    # what actually closes them, so the baseline now starts at the floor going live.
+    # Everything before it is history this change is expected to have fixed;
+    # everything after it is a real signal, because a kill at a client-supplied
+    # budget now means the floor did not apply.
+    [string]$Baseline = '2026-11-07 07:00:00',
+
+    # A run at or above this many LLM calls counts as deep enough to have
+    # meaningfully exercised the convergence prompt. The historical kills landed at
+    # 114-118, and the deepest SUCCESS was 138, so 100 is a defensible floor.
+    [int]$DeepEnough = 100,
+
+    [string]$DbPath = 'deploy/client-bundle/data/deer-flow/data/deerflow.db',
+
+    [switch]$Json
+)
+
+$ErrorActionPreference = 'Continue'
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
+if (-not (Test-Path $DbPath)) {
+    if ($Json) { '{"status":"cannot-check","reason":"deerflow.db not found"}' } else {
+        Write-Host "`nCANNOT CHECK: run database not found: $DbPath" -ForegroundColor Yellow
+        Write-Host '  Start the stack once so deer-flow creates its run database, then re-run.' -ForegroundColor DarkGray
+    }
+    exit 2
+}
+
+# Read-only. Python is used rather than a sqlite module because the repo already
+# relies on python for its DB probes and it keeps this gate independent of any
+# PowerShell SQL add-on being present on a client box.
+$py = @'
+import sqlite3, json, sys
+db = sys.argv[1]
+baseline = sys.argv[2]
+try:
+    c = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+    c.row_factory = sqlite3.Row
+    rows = list(c.execute(
+        "select status, llm_call_count, error, created_at, kwargs_json, thread_id from runs order by created_at"))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    raise SystemExit(0)
+
+def norm(s):
+    return (s or "").replace("T", " ")[:19]
+
+def count_run_artifacts(thread_id, created_at):
+    """Files a run actually delivered into its thread's outputs dir.
+
+    WHY THIS EXISTS: the depth bar (LLM calls) is one proxy for "the prompt was
+    exercised", and a bad one on its own. Measured 2026-10-29, efficient tasks
+    finish a 13-minute manual in ~13 calls, so a 100-call bar can never be met and
+    the audit would report "not exercised" forever even when the fix plainly works.
+
+    The better question is "did a hard task DELIVER its files", because the old
+    failure mode was not just the recursion error - short runs also reported
+    success while writing NOTHING (they announced "I will now save the files" and
+    stopped). Delivered artifacts is therefore the substantive signal; call count
+    is supporting evidence.
+    """
+    import os, time
+    hits = []
+    # HOST paths, not container paths, and NOT relative to the db file's own depth.
+    # db = deploy/client-bundle/data/deer-flow/data/deerflow.db, so users/ is
+    # TWO levels up from the db dir - not one. Two earlier guesses were both wrong
+    # and both failed silently:
+    #   "/data/deer-flow/users"            -> container-only path, never on the host
+    #   <db_dir>/deer-flow/users           -> doubled "data" segment, does not exist
+    # Walk up until a "users" dir is found, so the layout can move without this
+    # probe silently reporting "nothing delivered" when files are present.
+    base = None
+    probe = os.path.dirname(os.path.abspath(db))
+    for _ in range(4):
+        cand = os.path.join(probe, "users")
+        if os.path.isdir(cand):
+            base = cand
+            break
+        probe = os.path.dirname(probe)
+    if base is None:
+        return hits
+    for uid in os.listdir(base):
+        d = os.path.join(base, uid, "threads", thread_id, "user-data", "outputs")
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            p = os.path.join(d, f)
+            if not os.path.isfile(p) or f.startswith("."):
+                continue
+            try:
+                sz = os.path.getsize(p)
+                mt = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(os.path.getmtime(p)))
+            except OSError:
+                continue
+            hits.append({"name": f, "bytes": sz, "mtime": mt})
+    return hits
+
+def requested_limit(kwargs_json):
+    """The recursion_limit the CLIENT asked for, or None when it sent none.
+
+    This is the discriminator that matters: an error at the documented server
+    default is the ceiling behaving as designed (the caller sent no config, so the
+    server default applied), while an error at a CLIENT-SUPPLIED budget below the
+    server's floor is the historical defect signature - a run pinned to a budget
+    smaller than the graph's measured working depth and killed by it.
+
+    Updated 2026-11-07: the discriminator is no longer "did it differ from 100".
+    The server now applies a FLOOR (DEERFLOW_MIN_RECURSION_LIMIT, default 2000), so
+    a client-supplied 1000 is raised to 2000 and a run that dies at 1000 means the
+    floor is NOT in force - a much sharper signal than the old comparison. See the
+    note on `at_default` below for how the two are separated.
+    """
+    try:
+        k = json.loads(kwargs_json or "{}")
+    except Exception:
+        return None
+    def find(o):
+        if isinstance(o, dict):
+            for kk, vv in o.items():
+                if kk == "recursion_limit":
+                    try:
+                        return int(vv)
+                    except (TypeError, ValueError):
+                        return None
+                f = find(vv)
+                if f is not None:
+                    return f
+        elif isinstance(o, list):
+            for vv in o:
+                f = find(vv)
+                if f is not None:
+                    return f
+        return None
+    return find(k)
+
+after = [r for r in rows if norm(r["created_at"]) >= baseline]
+recursion = [r for r in after if "ecursion limit" in (r["error"] or "")]
+other_err = [r for r in after
+             if r["status"] != "success" and "ecursion limit" not in (r["error"] or "")]
+succ = [r for r in after if r["status"] == "success"]
+deep = [r for r in succ if (r["llm_call_count"] or 0) > 0]
+deepest = max(((r["llm_call_count"] or 0) for r in deep), default=0)
+
+rec_rows = []
+for r in recursion:
+    lim = requested_limit(r["kwargs_json"])
+    rec_rows.append({
+        "at": norm(r["created_at"]),
+        "calls": r["llm_call_count"],
+        "requested_limit": lim,
+        # Updated 2026-11-07. This used to ask "did the client send no budget, or one
+        # at/below the old 100 default" -> that was "the ceiling working". With the
+        # floor in place the question is sharper: a kill is only benign when the
+        # budget it died at was the SERVER's own default, i.e. the caller sent no
+        # budget at all. A caller-supplied budget that still bound (1000, say) proves
+        # the floor did not apply, which is exactly the regression this audit exists
+        # to catch.
+        "at_default": lim is None,
+    })
+defects = [x for x in rec_rows if not x["at_default"]]
+
+print(json.dumps({
+    "total_runs": len(rows),
+    "since_baseline": len(after),
+    "success": len(succ),
+    "recursion": rec_rows,
+    "recursion_defects": defects,
+    "other_errors": [{"at": norm(r["created_at"]),
+                      "calls": r["llm_call_count"],
+                      "error": (r["error"] or "")[:80]} for r in other_err],
+    "deepest_success_calls": deepest,
+    # Deliverable evidence for every successful run in the window.
+    "deliveries": [{
+        "at": norm(r["created_at"]),
+        "calls": r["llm_call_count"],
+        "files": count_run_artifacts(r["thread_id"], norm(r["created_at"])),
+    } for r in deep],
+    "first_run_at": norm(after[0]["created_at"]) if after else None,
+    "last_run_at": norm(after[-1]["created_at"]) if after else None,
+}))
+'@
+
+$tmp = Join-Path $env:TEMP ("rec_audit_" + [guid]::NewGuid().ToString('N').Substring(0,8) + ".py")
+try {
+    Set-Content -Path $tmp -Value $py -Encoding UTF8
+    $out = & python $tmp (Resolve-Path $DbPath).Path $Baseline 2>$null | Out-String
+} finally {
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+}
+
+$line = @($out -split "`n" | Where-Object { $_.Trim().StartsWith('{') }) | Select-Object -Last 1
+if (-not $line) {
+    if ($Json) { '{"status":"cannot-check","reason":"python probe returned nothing"}' } else {
+        Write-Host "`nCANNOT CHECK: the database probe returned no JSON. Is python on PATH?" -ForegroundColor Yellow
+    }
+    exit 2
+}
+
+$d = $line | ConvertFrom-Json
+if ($d.error) {
+    Write-Host "`nCANNOT CHECK: $($d.error)" -ForegroundColor Yellow
+    exit 2
+}
+
+if ($Json) {
+    [pscustomobject]@{
+        baseline      = $Baseline
+        total_runs    = $d.total_runs
+        since_baseline= $d.since_baseline
+        success       = $d.success
+        recursion     = @($d.recursion).Count
+        deepest_calls = $d.deepest_success_calls
+        deep_enough   = ($d.deepest_success_calls -ge $DeepEnough)
+    } | ConvertTo-Json -Depth 4
+    if (@($d.recursion).Count -gt 0) { exit 1 }
+    exit 0
+}
+
+Write-Host '=== deer-flow recursion regressions ===' -ForegroundColor Cyan
+Write-Host "  baseline (fix went live): $Baseline"
+Write-Host "  database: $DbPath"
+Write-Host "  total runs on record:     $($d.total_runs)"
+Write-Host "  runs since baseline:      $($d.since_baseline)"
+if ($d.since_baseline -gt 0) {
+    Write-Host "  window:                   $($d.first_run_at) -> $($d.last_run_at)" -ForegroundColor DarkGray
+}
+Write-Host ''
+
+$recCount = @($d.recursion).Count
+$defectCount = @($d.recursion_defects).Count
+if ($recCount -eq 0) {
+    Write-Host "  [PASS] no Recursion limit error since the baseline" -ForegroundColor Green
+} else {
+    # Separate the two meanings. An error when the caller sent NO budget means the
+    # server's own default applied - that is the cap working. A kill at a
+    # CLIENT-SUPPLIED budget means the server floor did not apply, which is the
+    # defect (measured 2026-11-07: 4 such runs, all at exactly 1000).
+    foreach ($r in $d.recursion) {
+        $lim = if ($null -eq $r.requested_limit) { 'none (server default)' } else { "$($r.requested_limit)" }
+        if ($r.at_default) {
+            Write-Host "  [INFO] $($r.at)  llm=$($r.calls)  hit the server default (requested: $lim) - the ceiling working, not the defect" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [FAIL] $($r.at)  llm=$($r.calls)  hit the wall with a CLIENT-supplied recursion_limit=$lim - the floor did not apply" -ForegroundColor Red
+        }
+    }
+    if ($defectCount -eq 0) {
+        Write-Host "  [PASS] no run errored on a CALLER-SUPPLIED budget (all were the server default)" -ForegroundColor Green
+    }
+}
+
+if (@($d.other_errors).Count -gt 0) {
+    Write-Host "  [INFO] $((@($d.other_errors)).Count) other non-success run(s) - not this defect:" -ForegroundColor DarkGray
+    foreach ($e in $d.other_errors) {
+        Write-Host "         $($e.at)  llm=$($e.calls)  $($e.error)" -ForegroundColor DarkGray
+    }
+}
+
+# The depth signal. A prompt fix cannot be demonstrated by short runs, so say so
+# rather than implying the fix is proven.
+$deepest = $d.deepest_success_calls
+
+# Deliverable evidence, which is the substantive signal. A run that finished a
+# hard task and left real files proves the prompt is working; a run that used few
+# LLM calls proves nothing either way.
+$delivered = @($d.deliveries | Where-Object { @($_.files).Count -gt 0 })
+Write-Host ''
+if ($delivered.Count -gt 0) {
+    Write-Host "  [PASS] $($delivered.Count) successful run(s) DELIVERED files - the fix produced usable work:" -ForegroundColor Green
+    foreach ($run in $delivered) {
+        $names = @($run.files) | ForEach-Object { "$($_.name) ($([math]::Round($_.bytes/1KB,0)) KB)" }
+        Write-Host "         $($run.at)  llm=$($run.calls)  -> $($names -join ', ')" -ForegroundColor Green
+    }
+} else {
+    Write-Host "  [INFO] no successful run since baseline delivered a file, so there is no evidence the prompt produces usable work yet." -ForegroundColor Yellow
+}
+
+Write-Host ''
+if ($deepest -ge $DeepEnough) {
+    Write-Host "  [PASS] deepest successful run reached $deepest LLM calls (>= $DeepEnough) - the prompt was exercised near the old wall" -ForegroundColor Green
+} else {
+    Write-Host "  [INFO] deepest successful run since baseline: $deepest LLM calls (need >= $DeepEnough to exercise the fix)" -ForegroundColor Yellow
+    Write-Host "         the historical kills landed at 114-118 calls, so no run since the fix has come near the wall yet." -ForegroundColor DarkGray
+    Write-Host "         A quiet result here is NOT evidence the convergence prompt works - it is evidence it has not been tested." -ForegroundColor DarkGray
+}
+
+Write-Host ''
+if ($defectCount -gt 0) {
+    Write-Host "RESULT: REGRESSION - $defectCount run(s) errored on a caller-supplied recursion budget." -ForegroundColor Red
+    exit 1
+}
+# Delivery is the substantive evidence. Depth is supporting only: an efficient
+# task can prove the prompt works in 13 calls, and demanding 100 would keep this
+# audit red forever on a stack that is actually fine.
+if ($delivered.Count -gt 0) {
+    Write-Host "RESULT: fix EVIDENCED - no caller-budget regression, and $($delivered.Count) run(s) delivered files." -ForegroundColor Green
+    exit 0
+}
+if ($deepest -lt $DeepEnough) {
+    Write-Host "RESULT: no caller-budget regression, but NOT exercised - no run reached $DeepEnough LLM calls and nothing was delivered." -ForegroundColor Yellow
+    exit 2
+}
+Write-Host "RESULT: no caller-budget regression, and a run deep enough to test the fix succeeded." -ForegroundColor Green
+exit 0

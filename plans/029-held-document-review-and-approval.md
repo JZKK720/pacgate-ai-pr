@@ -88,7 +88,7 @@ let held_for_review =
 ```
 
 Everything else is the ordinary job path: the same detectors, the same
-`verify_reduced`, the same `reingest_sanitized_chunks`. The approval is recorded
+`verify`, the same `reingest_sanitized_chunks`. The approval is recorded
 in the audit row as `approved_job_id`, so the release names the evidence it was
 based on.
 

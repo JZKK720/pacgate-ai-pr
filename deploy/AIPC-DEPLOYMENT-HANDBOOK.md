@@ -30,11 +30,17 @@ AIPC #2 must pull the **updated** code (see Stage 1) so it gets these fixes.
    **entire** MCP tool load (deer-flow uses `asyncio.gather`), so **no** MCP tools appeared.
    **Fix:** use `OPENVIKING_ROOT_API_KEY` (template now uses `${OPENVIKING_ROOT_API_KEY}`).
 
-3. **`docker compose up -d --force-recreate deer-flow` wipes deer-flow's local DB.**
-   The SQLite DB, admin user, threads, and `.jwt_secret` live at `/app/backend/.deer-flow/`
-   **inside the container** (not mounted). Recreating the container loses them → the frontend
-   gets 401 and the `/setup` page appears. **Use `docker compose restart deer-flow`** for
-   config changes; only recreate if you accept losing the local DB (then re-run `/setup`).
+3. **Prefer `docker compose restart deer-flow` over `--force-recreate` for config changes.**
+   `.deer-flow` (SQLite DB, admin user, threads, `.jwt_secret`) is now **bind-mounted** at
+   `./data/deer-flow:/app/backend/.deer-flow` in BOTH `compose.prod.yaml` and
+   `compose.bundle.yaml`, so a recreate no longer loses it. Measured 2026-10-28: a
+   `--force-recreate deer-flow` on the dev box left the DB, the `10/21` `.jwt_secret` and
+   the user threads intact.
+   **This was previously documented as destructive and that reason is now stale.** The
+   guidance still stands for a different reason: a recreate also re-runs `/setup`-adjacent
+   startup work and interrupts in-flight runs, and `patches/*.py` plus `deer-flow-config.yaml`
+   are read at process start, so `restart` is enough to apply them. Recreate only when the
+   compose file itself changed (new mounts, env, or image).
 
 4. **QM sign-in needs an email transport, not Outlook SMTP.** The old SMTP path
    (`smtp.office365.com` + app password) is broken — Microsoft retired Basic Auth / app
@@ -96,12 +102,28 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.6` | Published, public. Adds the matter-workspace rollup (`GET /api/matters/:id/workspace`). |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.6` | Published, public. Exposes 19 MCP tools to deer-flow (adds `pacgate_get_workspace`, `pacgate_read_memory`, `pacgate_write_memory`). |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.6` | Published, public. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6` | Published, public. |
-| `ghcr.io/jzkk720/ocr-service:0.2.6` | Published, public. PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.32` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.32` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` | Unchanged this release. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` | Unchanged this release. |
+| `ghcr.io/jzkk720/ocr-service:0.2.32` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
+
+> **0.2.14 is a correctness fix, not a feature release.** A client scan of a real
+> scanned contract produced `verdict: pass` with 13 replacements while eight
+> identifier classes stayed verbatim in text that was then indexed as searchable -
+> and the document carried the `sanitized` label, so nothing downstream looked at it
+> again. The recorded reason was
+> `"noise replay: 1 of 1 surviving matches dropped by the same suppressor the redaction used"`:
+> the verifier replayed the redactor's own suppressor, so any survivor it missed on
+> the way in was missed again on the way out.
+>
+> The verifier now never lets that suppressor touch a rule match. Two capabilities
+> exist because the fix is forward-only - text already mislabelled needs a way back:
+> `pacgate_rescan_residue` re-reads the STORED chunks (rules only, no model) and
+> names what survived, and `pacgate_reset_sanitization` returns a `sanitized`
+> document to `pending` so a re-run is a real rewrite rather than a no-op. Until a
+> machine has been rescanned, do not treat its RAG results as clean.
 
 > Namespace and version corrected 2026-09-22. This table previously listed
 > `ghcr.io/pacgate-ai/*` at 0.1.0/0.1.3. `pacgate-ai` is the legacy mirror; the
@@ -155,6 +177,50 @@ GitHub → your profile → Packages → `pacgate-api` → Package settings → 
 **Public** → Save. Repeat for `deer-flow-pacgate`. This is safe: the images contain only
 the compiled binary and SQL migrations, every secret is injected at runtime via `.env`,
 and the installer already has full source access to the same code.
+
+### Pruning old image versions
+
+Six packages have accumulated roughly 210 tags, most of them long superseded. Only the
+newest three releases need to exist for a client to install or roll back.
+
+```powershell
+# Show the plan first. This is the default and deletes nothing.
+.\scripts\prune-ghcr-versions.ps1
+
+# Then, with a token that has read:packages + delete:packages:
+$env:GHCR_PRUNE_TOKEN = '<token>'
+.\scripts\prune-ghcr-versions.ps1 -Execute
+```
+
+Three things make this harder than it looks, and the script exists because of them:
+
+- **The registry API cannot delete GHCR manifests.** `DELETE /v2/<repo>/manifests/<digest>`
+  answers **405** for every credential. Deletion goes through the GitHub Packages REST API
+  and needs a token with `read:packages` **and** `delete:packages`. An ordinary `repo`
+  token gets `403`. A `200` from `ghcr.io/token?...:delete` is **not** evidence of
+  permission — it is returned regardless of what the token may do.
+  - **A GitHub Actions workflow cannot do this either, and that is structural.** `jzkk720`
+    is a **user** account, not an organisation, so the packages it owns live under
+    `/user/packages/...`. The automatic `GITHUB_TOKEN` is an *installation* token: it can
+    never act as the user, and its `/repos/{owner}/{repo}/packages` path only sees packages
+    **linked** to the repo. Measured 2026-11-03 from inside Actions with
+    `permissions: packages: write` — the repo list, the single package, its versions, and
+    the `/orgs/jzkk720/...` variant all returned **404**. An earlier version of this
+    handbook suggested a workflow; it was removed because it could never succeed. A
+    user-scoped token with `delete:packages` is the only route.
+- **`latest` and a release tag can share one digest.** Deleting the version behind an old
+  tag can take `latest` with it. The plan protects every digest that a kept tag or
+  `latest` points at, and says so instead of deleting.
+- **One digest can carry several tags.** `0.2.13` and the leftover `tmp-del` tag point at
+  the same manifest, so the plan collapses them into one delete. Listing them separately
+  would make the second DELETE answer 404 and report a successful run as a failure.
+
+Deletion is irreversible, so the script is dry-run by default, needs `-Execute` plus a
+typed confirmation, and is covered by `scripts/test-prune-ghcr-versions.ps1` (offline
+fixtures, no credential) which asserts it cannot drop a kept release or misreport itself.
+
+Keep at least the version you are rolling back to. A client on `0.2.16` that needs to
+revert should find `0.2.15` still pullable.
 
 Only rebuild and push if the Rust source changes, from the dev machine. **Take the
 tag from the compose pin rather than typing a version** — a hard-coded tag here
@@ -497,6 +563,7 @@ pacgate-ai-bundle_default  (Docker Compose network)
 ├── openviking :1933   ← long-term memory (MCP: find/search/read/remember)
 ├── pacgate-api :8080  ← metadata API (matters/workflows/connectors)
 ├── pacgate-mcp :8000  ← FastMCP bridge exposing pacgate KB/connector search
+├── laya :8000         ← optional local decision engine (opt-in profile)
 ├── deer-flow :8001    ← research workspace (consumes openviking + pacgate-mcp)
 └── nginx :8089        ← ingress (deer-flow frontend + /pacgate/ API)
 
@@ -518,6 +585,46 @@ reach openviking:1933, pacgate-api:8080, and host.docker.internal:11434 (Ollama)
 2. **deer-flow → pacgate**: `pacgate-mcp` (FastMCP) exposes
    `pacgate_kb_search` / `pacgate_connector_search` / `pacgate_list_connectors`
    to deer-flow, backed by pacgate-api's RAG + legal connectors.
+
+   From 0.2.10 the same server also exposes three clause tools -
+   `pacgate_clause_risk`, `pacgate_clause_flags`, `pacgate_route_language` -
+   which forward to the optional `laya` service. **laya is a local System 1
+   decision engine**: it answers typed questions about a single clause (how
+   risky, which risk flags, which party it favors) in one forward pass and
+   returns calibrated probabilities rather than generated prose. There is no API
+   key and no cloud call, which is the reason it was chosen over a metered
+   judgment API.
+
+   The server also exposes `pacgate_web_search` and `pacgate_web_scrape`, which
+   call the Firecrawl API for current events, company news, and public pages the
+   legal databases do not cover. They are inert until `FIRECRAWL_API_KEY` is set
+   in `.env`; with no key they answer `available=false` and every other tool is
+   unaffected. Results are graded `auxiliary_db` - a web page is never authority.
+
+   **Firecrawl is deliberately NOT a fourth MCP server in
+   `deer-flow-extensions-config.json`.** deer-flow's `get_mcp_tools()` gathers
+   one load task per configured server with `asyncio.gather` and no
+   `return_exceptions`, then returns `[]` on any exception. One unreachable
+   remote server would therefore remove pacgate, OpenViking and officecli from
+   the agent at the same time, silently. Keeping the calls on pacgate-mcp - a
+   service the agent needs anyway - confines a web failure to two tools.
+
+   It is **off by default**. The two checkpoints are about 1.45 GB on disk, so a machine
+   that does not run it is not broken: the three tools return `available: false`
+   with a reason, and every other tool is unaffected. **From 0.2.13 the
+   checkpoints ship inside the image**, so enabling it is one command:
+   `docker compose --profile laya up -d laya`. There is nothing to stage and
+   nothing to download at run time - the weights are checksum-verified when the
+   image is built, and the service runs with `HF_HUB_OFFLINE=1`.
+   Budget **4.4 GiB of host RAM** for it: measured idle with both checkpoints
+   loaded, because each keeps its own fp32 copy. That is host memory, not VRAM,
+   and on a 16 GiB machine with a large local model already resident it is worth
+   checking free memory first.
+
+   Both checkpoints are required. laya routes by script - Latin text to
+   `english`, Chinese to `multilingual` - and a missing checkpoint makes that
+   language fail with HTTP 500. Measured on English clauses, the `english`
+   checkpoint is also the more accurate of the two.
 3. **QM → OpenViking**: the QM core has `OPENVIKING_URL=http://openviking:1933`
    and `OPENVIKING_API_KEY` (the root key). The `pacgate-qm` sandbox tool
    (`ov-remember` / `ov-search` / `ov-read`) calls OpenViking from inside the
@@ -585,8 +692,44 @@ Run this checklist on each AIPC independently.
 ### Ollama
 
 - [ ] `ollama list` shows the required models
+- [ ] **`ollama ps` shows a GPU, not `100% CPU`** - run `scripts/test-ollama-gpu-residency.ps1`, it must exit 0
 - [ ] deer-flow can call Ollama for inference
 - [ ] qm can call Ollama for inference
+
+> **The CPU-only trap - read this before you conclude a machine is slow.**
+>
+> Ollama enumerates compute devices **once, at server start**, and it unpacks the
+> ROCm/Vulkan backend into `lib\ollama\<vendor>_*` only *after* that. A server
+> started before the unpack completes decides "CPU only" and keeps that decision
+> for its entire lifetime - with a perfectly healthy install, a supported GPU, and
+> no error anywhere.
+>
+> Measured 2026-11-04 on the RX 7600 XT box:
+>
+> | Event | Time |
+> |---|---|
+> | Ollama server started | 09:12:46 |
+> | `rocm_v7_1` unpacked | 09:13:24 (+38 s) |
+> | `ggml-hip.dll` written | 09:13:32 |
+>
+> That machine ran every local model on the CPU for 3.5 hours. One "Reply with
+> exactly: OK" took **377 s**; the same request after restarting Ollama took
+> **7.4 s** at `100% GPU`. A chat turn looked like a hang while
+> `smoke-full-stack` reported every lane green.
+>
+> **First action if local inference feels slow or the agent appears to stall:**
+>
+> ```powershell
+> ollama ps                      # PROCESSOR must say GPU, not 100% CPU
+> .\scripts\test-ollama-gpu-residency.ps1
+> ```
+>
+> If either says CPU, **restart the Ollama app** (not the model) and re-check. Do
+> not reinstall ROCm, do not replace the model, and do not touch the stack - the
+> install is almost certainly fine.
+>
+> This is also why the residency gate is part of `run-all-checks.ps1`: a fresh
+> AIPC can lose this same race on its very first start.
 
 ### Data
 
@@ -827,8 +970,16 @@ docker compose -f compose.prod.yaml logs -f deer-flow
   across recreates.
 - Each machine has its own independent Postgres and `./data/tenants/` directory. Matter data is not shared between machines unless you later add a private mesh and a sync or single-authority model.
 - The PkuLaw connector token is expired. Regenerate it at `https://mcp.pkulaw.com` and set `PKULAW_API_KEY` in `.env` if China-law search is needed during the pilot.
+- The Firecrawl web lane is off until a key is pasted. Set `FIRECRAWL_API_KEY` in `deploy/client-bundle/.env` and restart; one value arms the `/api/search` connector, the agent's `pacgate_web_search` / `pacgate_web_scrape` tools, and (via `setup-qm.ps1`) the QM sandbox's `firecrawl-qm` CLI. Verify with `curl -s http://localhost:8089/pacgate/api/search/health` - the `firecrawl` row flips to `available=true`. With no key, all three surfaces report "not configured" and nothing else changes.
 - Four WASM crates (citation-check, clause-parser, doc-validator, rule-engine) remain stubs. These are future-blueprint work and do not affect Phase 1 pilot functionality.
-- **Model selection:** the API defaults to models that may not exist on the target machine. After Stage 3, apply per-tenant model overrides so the LLM tiers point at models actually present in `ollama list` on that machine. Recommended pilot set (benchmarked 2026-08-28): `gemma4:12b-it-qat` (Main — 13s/tool-round, schema-valid tool calls, verified end-to-end), `qwen3.8:27b-mtp-q4_K_M` (Mid — 73s/tool-round, stronger quality for batch tabular review), `nomic-embed-text:latest` (embeddings). Avoid reasoning-mode models (e.g. nemotron) for interactive tiers — they can hang long docx generations. See `plans/007-aipc-full-installation-handoff.md` Appendix A for the SQL template.
+- **Model selection:** the API defaults to models that may not exist on the target machine. After Stage 3, apply per-tenant model overrides so the LLM tiers point at models actually present in `ollama list` on that machine. Recommended pilot set (benchmarked 2026-08-28): `gemma4:12b-it-qat` (Main — 13s/tool-round, schema-valid tool calls, verified end-to-end), `qwen3.8:27b-mtp-q4_K_M` (Mid — 73s/tool-round, stronger quality for batch tabular review), `nomic-embed-text:latest` (embeddings). Avoid reasoning-mode models (e.g. nemotron) for interactive tiers — they can hang long docx generations.
+- **Large PDFs need the outline lane to work.** Uploaded PDFs are converted to Markdown so the agent can read them. The image prefers `pymupdf4llm` and falls back to MarkItDown; only `pymupdf4llm` reproduces a PDF's heading hierarchy. If the fallback runs, the agent is told "No structural headings detected", gets no section map, and a long document becomes unnavigable — it then re-reads the same file turn after turn until the run hits its step ceiling. This is a real observed failure mode (2026-11-06), not a cosmetic issue. Verify after any image rebuild with:
+
+  ```powershell
+  pwsh -File scripts/test-pdf-outline-extraction.ps1
+  ```
+
+  It exits 1 if the converter is missing, if the deployed config routes around it, or if a structured PDF yields no outline.
 
 ## Files referenced
 
@@ -840,6 +991,8 @@ docker compose -f compose.prod.yaml logs -f deer-flow
 | `deploy/client-bundle/.env.example` | Template for client secrets |
 | `deploy/client-bundle/ollama-models.txt` | Models to pre-pull |
 | `deploy/client-bundle/deer-flow-config.yaml` | Multi-model deer-flow config (5 models, switchable) |
+| `deploy/pacgate-pins/pymupdf4llm.constraints.txt` | Pins the PDF→Markdown converter pair the deer-flow image installs |
+| `scripts/test-pdf-outline-extraction.ps1` | Gate: a structured upload must yield a document outline the agent can navigate |
 | `deploy/qm-pacgate/qm.config.jsonc` | qm local deployment config |
 | `deploy/SETUP-AND-OPERATIONS.md` | Full 3-day on-site install guide (reference) |
 | `deploy/DEPLOYMENT-GUIDE.md` | Engineer-level deployment details (reference) |

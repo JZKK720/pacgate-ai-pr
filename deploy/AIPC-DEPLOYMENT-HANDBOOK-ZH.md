@@ -30,11 +30,16 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
    MCP 工具出现。**修复：** 使用 `OPENVIKING_ROOT_API_KEY`（模板现已使用
    `${OPENVIKING_ROOT_API_KEY}`）。
 
-3. **`docker compose up -d --force-recreate deer-flow` 会清空 deer-flow 的本地数据库。**
-   SQLite 数据库、管理员用户、线程和 `.jwt_secret` 位于 `/app/backend/.deer-flow/`
-   **容器内部**（未挂载）。重建容器会丢失它们 → 前端返回 401 并出现 `/setup` 页面。
-   **配置变更请使用 `docker compose restart deer-flow`**；只有在你接受丢失本地
-   数据库时才重建（然后重新运行 `/setup`）。
+3. **配置变更优先使用 `docker compose restart deer-flow`，而不是 `--force-recreate`。**
+   `.deer-flow`（SQLite 数据库、管理员用户、线程、`.jwt_secret`）现已**绑定挂载**到
+   `./data/deer-flow:/app/backend/.deer-flow`，`compose.prod.yaml` 与
+   `compose.bundle.yaml` 两个 lane 都是如此，因此重建容器不再丢失这些数据。
+   实测 2026-10-28：在开发机上对 deer-flow 执行 `--force-recreate`，数据库、
+   `10/21` 的 `.jwt_secret` 与用户线程均完好保留。
+   **本条目此前写作"重建会丢失数据库"，该理由已过时。** 这条建议本身仍然成立，
+   但理由不同：重建会重新执行启动流程并中断正在运行的 run；而 `patches/*.py` 与
+   `deer-flow-config.yaml` 只在进程启动时读取，`restart` 已足以生效。仅在 compose
+   文件本身变化时（新增挂载、环境变量或镜像）才需要重建。
 
 4. **QM 登录需要邮件传输，而不是 Outlook SMTP。** 旧的 SMTP 路径
    （`smtp.office365.com` + 应用密码）已失效——微软已于 2025 年 9 月停用
@@ -103,12 +108,20 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.6` | 已发布，公开。新增案件工作区汇总视图（`GET /api/matters/:id/workspace`）。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.6` | 已发布，公开。向 deer-flow 暴露 19 个 MCP 工具（新增 `pacgate_get_workspace`、`pacgate_read_memory`、`pacgate_write_memory`）。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.6` | 已发布，公开。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6` | 已发布，公开。 |
-| `ghcr.io/jzkk720/ocr-service:0.2.6` | 已发布，公开。PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
+| `ghcr.io/jzkk720/pacgate-api:0.2.32` | **脱敏修复版本。** 修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.32` | 向 deer-flow 暴露 24 个 MCP 工具；新增 `pacgate_rescan_residue` 与 `pacgate_reset_sanitization` 供补救流程使用。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 即可获得这些工具，无需新镜像。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` | 本版本未变更。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` | 本版本未变更。 |
+| `ghcr.io/jzkk720/ocr-service:0.2.32` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
+
+> **0.2.14 是正确性修复，不是功能版本。** 客户扫描真实扫描件时返回
+> `verdict: pass`、13 处替换，而八类标识符原样保留在被检索的文本里；该文档还带有
+> `sanitized` 标记，下游因此不再复核。账本记录的原因是
+> `"noise replay: 1 of 1 surviving matches dropped by the same suppressor the redaction used"`：
+> 校验器重放了脱敏器自己的抑制器，抑制器在入口漏掉的，出口必然同样漏掉。
+>
+> 现在校验器绝不允许该抑制器触碰规则匹配。修复只对后续生效，因此另有两项能力：`pacgate_rescan_residue` 按**库中实际存储**的分块重扫（仅规则层，不加载模型）并指出残留内容；`pacgate_reset_sanitization` 把 `sanitized` 文档退回 `pending`，使重跑是真正重写而非空操作。在完成一次重扫之前，不要把该机器的 RAG 结果当作干净数据使用。
 
 > 命名空间与版本于 2026-09-22 更正。此表此前列出 `ghcr.io/pacgate-ai/*` 的 0.1.0/0.1.3。`pacgate-ai` 为遗留镜像，实际命名空间为 `jzkk720`，发布自 plan 016 起已迁移。旧表中的
 > `pacgate-ai/...-frontend-pacgate:0.1.0` 行标注“已发布”，实际返回 **404**——从未存在。五个 `jzkk720/*` 镜像按当前固定值（0.1.28，见上表）匿名拉取均返回 HTTP 200。
@@ -157,6 +170,44 @@ GitHub → 你的个人资料 → Packages → `pacgate-api` → Package setting
 **Public** → Save。对 `deer-flow-pacgate` 重复此操作。这是安全的：镜像只包含
 编译后的二进制文件和 SQL 迁移，所有密钥都在运行时通过 `.env` 注入，且安装程序
 已拥有对相同代码的完整源码访问权限。
+
+### 清理历史镜像版本
+
+六个包累积了约 210 个标签，绝大多数早已被取代。客户端安装或回滚只需要最新的三个发布版本。
+
+```powershell
+# 先看计划。这是默认行为，不会删除任何内容。
+.\scripts\prune-ghcr-versions.ps1
+
+# 确认无误后，使用具备 read:packages + delete:packages 的令牌执行：
+$env:GHCR_PRUNE_TOKEN = '<token>'
+.\scripts\prune-ghcr-versions.ps1 -Execute
+```
+
+有三点比表面看起来复杂，脚本正是为解决它们而存在：
+
+- **registry API 无法删除 GHCR 清单。** `DELETE /v2/<repo>/manifests/<digest>` 对任何凭据
+  都返回 **405**。删除必须走 GitHub Packages REST API，且令牌需同时具备 `read:packages`
+  与 `delete:packages`；普通 `repo` 权限的令牌会得到 `403`。注意：`ghcr.io/token?...:delete`
+  返回 `200` **不能**证明有删除权限——它无论令牌能否删除都会返回 200。
+- **GitHub Actions 工作流同样做不到，而且这是结构性的。** `jzkk720` 是**用户**账号，
+  不是组织，因此它拥有的包位于 `/user/packages/...` 下。自动的 `GITHUB_TOKEN` 是
+  *安装*令牌：它永远无法以用户身份行事，其 `/repos/{owner}/{repo}/packages` 路径只能
+  看到**已关联**到该仓库的包。2026-11-03 在 Actions 中以 `permissions: packages: write`
+  实测：仓库包列表、单个包、包版本、以及 `/orgs/jzkk720/...` 变体**全部返回 404**。
+  本手册早先版本的说明曾建议用工作流，因它永远不可能成功而删除。唯一可行路径是
+  具备 `delete:packages` 的**用户级**令牌。
+- **`latest` 可能与某个发布标签共享同一摘要。** 删除旧标签背后的版本会把 `latest` 一起删掉。
+  计划会保护所有被保留标签或 `latest` 指向的摘要，并明确列出而不删除。
+- **一个摘要可能挂多个标签。** 实测 `0.2.13` 与遗留的 `tmp-del` 指向同一清单，计划会将
+  它们合并为一次删除。若分开列出，第二次 DELETE 会返回 404，把一次完全成功的执行
+  报告成失败。
+
+删除不可逆，因此脚本默认试运行，需要 `-Execute` 加手动确认，并由
+`scripts/test-prune-ghcr-versions.ps1`（离线夹具、无需凭据）覆盖，断言它不会删除
+本应保留的版本，也不会误报自身结果。
+
+请至少保留你要回滚到的那个版本：运行 `0.2.16` 的客户端需要退回时，`0.2.15` 应当仍可拉取。
 
 仅当 Rust 源码变更时，才在开发机上重建并推送。**标签值应从 compose 固定值中读取，
 而不要手写版本号**——此处硬编码的标签已两次过期，其中一次还把健康系统误报为故障：
@@ -474,6 +525,7 @@ pacgate-ai-bundle_default  (Docker Compose 网络)
 ├── openviking :1933   ← 长期记忆（MCP：find/search/read/remember）
 ├── pacgate-api :8080  ← 元数据 API（事项/工作流/连接器）
 ├── pacgate-mcp :8000  ← FastMCP 桥接，暴露 pacgate KB/连接器搜索
+├── laya :8000         ← 可选的本地判定引擎（自选 profile）
 ├── deer-flow :8001    ← 研究工作空间（消费 openviking + pacgate-mcp）
 └── nginx :8089        ← 入口（deer-flow 前端 + /pacgate/ API）
 
@@ -494,6 +546,26 @@ openviking:1933、pacgate-api:8080 和 host.docker.internal:11434（Ollama）。
 2. **deer-flow → pacgate**：`pacgate-mcp`（FastMCP）向 deer-flow 暴露
    `pacgate_kb_search` / `pacgate_connector_search` / `pacgate_list_connectors`，
    由 pacgate-api 的 RAG + 法律连接器支撑。
+
+   自 0.2.10 起，同一服务还暴露三个条款工具：`pacgate_clause_risk`、
+   `pacgate_clause_flags`、`pacgate_route_language`，转发给可选的 `laya` 服务。
+   **laya 是本地 System 1 判定引擎**：对单个条款提出定型问题（风险高低、有哪些
+   风险标记、偏向哪一方），一次前向推理即返回校准后的概率，而不是生成式文本。
+   它不需要 API 密钥，也不发起任何云端调用——这正是选择它而不用按次计费的判定
+   API 的原因。
+
+   它**默认关闭**。两个检查点合计约 1.45 GB，运行它的机器与不运行它的机器功能都
+完整：三个工具会返回 `available: false` 并附带原因，其余工具完全不受影响。
+**自 0.2.13 起，检查点已打包进镜像**，因此启用只需一条命令：
+`docker compose --profile laya up -d laya`。无需预置权重，运行时也不下载任何内容
+——权重在构建镜像时校验 SHA-256，服务以 `HF_HUB_OFFLINE=1` 运行。
+请为它预留 **4.4 GiB 主机内存**：这是两个检查点均加载后的实测空闲占用，因为每个
+检查点各持有一份 fp32 副本。这是主机内存而非显存；在 16 GiB 且已驻留大模型的
+机器上，建议先确认可用内存。
+
+   两个检查点都需要。laya 按文字体系路由：拉丁文本走 `english`，中文走
+   `multilingual`；缺少任一检查点，该语言的请求会返回 HTTP 500。实测英文条款上
+   `english` 检查点也更准确。
 3. **QM → OpenViking**：QM 核心有 `OPENVIKING_URL=http://openviking:1933` 和
    `OPENVIKING_API_KEY`（根密钥）。`pacgate-qm` 沙箱工具（`ov-remember` /
    `ov-search` / `ov-read`）在代理沙箱内通过 `http://host.docker.internal:1933`
@@ -558,8 +630,41 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 ### Ollama
 
 - [ ] `ollama list` 显示所需模型
+- [ ] **`ollama ps` 的 PROCESSOR 列显示 GPU，而不是 `100% CPU`** - 运行 `scripts/test-ollama-gpu-residency.ps1`，退出码必须为 0
 - [ ] deer-flow 可以调用 Ollama 进行推理
 - [ ] qm 可以调用 Ollama 进行推理
+
+> **CPU-only 陷阱 - 在判定一台机器"慢"之前请先读这里。**
+>
+> Ollama 只在**服务启动时枚举一次**计算设备，而它是在启动*之后*才把 ROCm/Vulkan
+> 后端解包到 `lib\ollama\<vendor>_*` 的。若服务在后端解包完成前就已启动，它会把结论
+> 定为"仅 CPU"，并在整个生命周期内保持该结论 - 安装完全正常、GPU 受支持，且没有任何
+> 报错。
+>
+> 2026-11-04 在 RX 7600 XT 机器上的实测：
+>
+> | 事件 | 时间 |
+> |---|---|
+> | Ollama 服务启动 | 09:12:46 |
+> | `rocm_v7_1` 解包完成 | 09:13:24（+38 秒） |
+> | `ggml-hip.dll` 写入 | 09:13:32 |
+>
+> 该机器所有本地模型在 CPU 上跑了 3.5 小时。一次"Reply with exactly: OK"耗时
+> **377 秒**；重启 Ollama 后同一请求耗时 **7.4 秒**，`100% GPU`。期间对话轮次看起来
+> 像卡死，而 `smoke-full-stack` 仍报告全部绿灯。
+>
+> **若本地推理明显变慢或智能体看似停滞，第一个动作：**
+>
+> ```powershell
+> ollama ps                      # PROCESSOR 必须是 GPU，不能是 100% CPU
+> .\scripts\test-ollama-gpu-residency.ps1
+> ```
+>
+> 若显示 CPU，请**重启 Ollama 应用**（不是重启模型）后复检。不要重装 ROCm、不要更换
+> 模型、也不要改动技术栈 - 安装几乎肯定是正常的。
+>
+> 也正因如此，该项检查已纳入 `run-all-checks.ps1`：全新 AIPC 首次启动时可能触发同一
+> 竞争条件。
 
 ### 数据
 

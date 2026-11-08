@@ -24,3 +24,17 @@ deploy/qm-pacgate/sandbox/Dockerfile text eol=lf
 # a CRLF checkout is harmless for node, but keep both files LF so the image
 # is byte-stable across platforms and the file stays diff-friendly.
 deploy/qm-pacgate/sandbox-local/** text eol=lf
+
+# Deer-flow source patches: always LF, on every platform.
+# Measured 2026-10-27 on a plain Windows clone (core.autocrlf=true): 19 of the
+# 22 files under patches/ checked out as w/crlf. Python parses a CRLF copy fine
+# (ast.parse OK, 698 CRLF markers), so the running stack was never broken - but
+# two real costs followed. The worktree stops being byte-identical across
+# machines (sha256 3E531976... here vs F7ADA451... in the source worktree), and
+# `git am` cannot replay these commits: it aborts with "does not match index"
+# on every file whose checkout was converted, which is the same CRLF trap
+# recorded in plans/023-deer-flow-2.1-upgrade.md 2.1.
+# These files are bind-mounted read-only into Linux containers, so LF is what
+# the runtime wants anyway. Pinning it makes a clone, bundle and `git am`
+# reproduce the same bytes on any platform.
+deploy/client-bundle/patches/** text eol=lf

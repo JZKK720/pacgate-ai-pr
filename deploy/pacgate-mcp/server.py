@@ -231,6 +231,11 @@ class PacgateApi:
     def delete(self, path: str) -> httpx.Response:
         return self._request("DELETE", path)
 
+    def patch(
+        self, path: str, json: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> httpx.Response:
+        return self._request("PATCH", path, json=json, timeout=timeout)
+
     def post_multipart(
         self, path: str, data: dict[str, Any], files: dict[str, Any]
     ) -> httpx.Response:
@@ -437,6 +442,205 @@ def pacgate_list_connectors() -> str:
     _handle_error(resp)
     results = resp.json()
     return json.dumps(results, ensure_ascii=False, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Firecrawl — general web search and page-to-markdown extraction
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHY THESE LIVE HERE AND NOT AS A FOURTH `mcpServers` ENTRY
+#
+# Measured 2026-11-05 against the running 0.2.30 image. `get_mcp_tools()` in
+# `deerflow/mcp/tools.py` awaits `MultiServerMCPClient.get_tools()`, which
+# `asyncio.gather`s one `load_mcp_tools` task per server WITHOUT
+# `return_exceptions`. The whole call is wrapped in a single
+# `except Exception: return []`. So one unreachable MCP server does not degrade
+# its own tool set - it deletes every MCP tool, including pacgate and officecli,
+# and the agent keeps running with no indication that its legal database
+# disappeared. A remote Firecrawl endpoint (api.firecrawl.dev, or a container
+# that may not be started) is exactly that failure mode.
+#
+# As tools on the already-healthy pacgate server, the failure is contained: a
+# missing key or a dead endpoint returns one JSON object with available=false,
+# nothing else changes, and the agent can read the reason.
+#
+# WHY v1 AND NOT v2
+#
+# `pacgate-search/src/lib.rs` (FirecrawlConnector) and the QM sandbox tool
+# `firecrawl_qm.py` both speak v1. v2 answers with a DIFFERENT shape for search
+# (`data.web[]` rather than `data[]`), so mixing versions across three clients
+# is how one of them silently starts parsing the wrong key and returns nothing.
+# Verified 2026-11-05: v1 and v2 both still serve /search and /scrape, v1 carries
+# no announced sunset, and scrape is byte-identical (`data.markdown`). A move to
+# v2 is therefore a coordinated three-file change, not a per-call choice.
+FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v1"
+# Search descriptions can carry the whole page in markdown (measured: 12,156
+# characters for one result). Unclipped, ten results would flood the model
+# context with page bodies the agent did not ask for.
+FIRECRAWL_SNIPPET_CHARS = 400
+FIRECRAWL_SCRAPE_DEFAULT_CHARS = 20000
+
+
+class _FirecrawlUnavailable(RuntimeError):
+    """No key on this deployment, or the API did not answer."""
+
+
+def _firecrawl_key() -> str:
+    """The per-machine key, or raise.
+
+    An EMPTY value counts as absent, not as a key. `.env.example` ships the line
+    commented out as `#FIRECRAWL_API_KEY=`; an operator who uncomments it without
+    pasting a value would otherwise get a 401 from the API on every call instead
+    of the honest "not configured" answer.
+    """
+    key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    if not key:
+        raise _FirecrawlUnavailable(
+            "FIRECRAWL_API_KEY is not set in this deployment's .env; "
+            "web search and page extraction are disabled (nothing else is affected)"
+        )
+    return key
+
+
+def _firecrawl_post(path: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    """POST to the Firecrawl API, or raise _FirecrawlUnavailable."""
+    try:
+        resp = httpx.post(
+            f"{FIRECRAWL_API_BASE}{path}",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {_firecrawl_key()}",
+                "Content-Type": "application/json",
+            },
+            timeout=timeout,
+        )
+    except httpx.HTTPError as exc:
+        raise _FirecrawlUnavailable(
+            f"api.firecrawl.dev is not reachable from this deployment: {type(exc).__name__}"
+        ) from exc
+    if resp.status_code >= 400:
+        # 401/403 is a wrong or revoked key - the one failure an operator can fix.
+        raise _FirecrawlUnavailable(
+            f"Firecrawl returned {resp.status_code}: {resp.text[:300]}"
+        )
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise _FirecrawlUnavailable("Firecrawl returned a body that is not JSON") from exc
+
+
+def _firecrawl_unavailable(tool: str, exc: Exception) -> str:
+    """A readable "this source is off" answer instead of a tool error.
+
+    Mirrors `_laya_unavailable_result`: a machine without a key must still be able
+    to run every other tool, and the model should be able to say WHY the web lane
+    is empty rather than retrying.
+    """
+    return json.dumps(
+        {"tool": tool, "available": False, "reason": str(exc), "results": []},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_web_search(query: str, limit: int = 5) -> str:
+    """Search the open web (Firecrawl) for current events, company news, or
+    public pages that the legal databases do not cover.
+
+    Use pacgate_connector_search for statutes, cases and filings; use this for
+    everything outside those databases. Results are web-sourced, not
+    authority-verified - always cite the URL and do not treat a search hit as
+    settled law.
+
+    Args:
+        query: The search query.
+        limit: Maximum number of results (default 5).
+    """
+    tool = "pacgate_web_search"
+    try:
+        body = _firecrawl_post(
+            "/search", {"query": query, "limit": max(1, min(limit, 20))}, timeout=60
+        )
+    except _FirecrawlUnavailable as exc:
+        return _firecrawl_unavailable(tool, exc)
+
+    if body.get("success") is False:
+        return _firecrawl_unavailable(tool, _FirecrawlUnavailable("Firecrawl reported success=false"))
+
+    results = []
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        snippet = (item.get("description") or "").strip()
+        if len(snippet) > FIRECRAWL_SNIPPET_CHARS:
+            snippet = snippet[:FIRECRAWL_SNIPPET_CHARS].rstrip() + "…"
+        results.append(
+            {
+                "title": item.get("title") or "",
+                "url": item.get("url") or "",
+                "snippet": snippet,
+                # The 4-level provenance scale must not be inflated by a web hit.
+                "source_level": "auxiliary_db",
+                "source_name": "firecrawl",
+            }
+        )
+    return json.dumps(
+        {"tool": tool, "available": True, "count": len(results), "results": results},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_web_scrape(url: str, max_chars: int = FIRECRAWL_SCRAPE_DEFAULT_CHARS) -> str:
+    """Fetch one public web page and return its main content as markdown.
+
+    Use this after pacgate_web_search when a result needs to be read, and for
+    public documents that are already at a URL. The deployed tooling cannot
+    browse, so a page that needs clicks, forms, or a login cannot be read here -
+    take the public document URL instead.
+
+    Args:
+        url: The absolute http(s) URL to fetch.
+        max_chars: Truncate the markdown at this many characters (default 20000).
+    """
+    tool = "pacgate_web_scrape"
+    if not url.lower().startswith(("http://", "https://")):
+        return json.dumps(
+            {"tool": tool, "available": True, "error": f"not an http(s) URL: {url}"}
+        )
+    try:
+        body = _firecrawl_post(
+            "/scrape", {"url": url, "formats": ["markdown"]}, timeout=120
+        )
+    except _FirecrawlUnavailable as exc:
+        return _firecrawl_unavailable(tool, exc)
+
+    # The content sits at data.markdown, NOT at the top level. Reading `markdown`
+    # directly is the exact defect that made the QM sandbox tool print an empty
+    # page with exit code 0 - see deploy/qm-pacgate/sandbox/tools/firecrawl-qm/.
+    data = body.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    markdown = data.get("markdown") or ""
+    meta = data.get("metadata") or {}
+    truncated = len(markdown) > max_chars
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": True,
+            "url": url,
+            "resolved_url": meta.get("sourceURL") or url,
+            "title": meta.get("title") or "",
+            "source_level": "auxiliary_db",
+            "truncated": truncated,
+            "chars": min(len(markdown), max_chars),
+            "markdown": markdown[:max_chars],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @mcp.tool()
@@ -923,6 +1127,14 @@ def pacgate_sanitize_document(
     be downloaded or retrieved until a human decides. Restore is NOT exposed
     through MCP; it is a client-side operator action in pacgate-api.
 
+    Trusting the verdict: since 2026-11-02 the verifier re-scans with the rule
+    layer independently of the redactor's suppressor, so a `pass` means no
+    structural identifier survived - it is no longer a replay of the same
+    suppressor that drove the redaction. `verification_notes` records a
+    `model gate:` line when a MODEL guess was suppressed; that never applies to
+    a checksum or pattern match. For text sanitized BEFORE that date, use
+    pacgate_rescan_residue rather than trusting the stored verdict.
+
     LONG-RUNNING: large documents can take several minutes (the sanitizer
     re-verifies with the same detector set it redacted with). This call uses
     its own long timeout; do not reduce PACGATE_SANITIZE_TIMEOUT below the
@@ -967,6 +1179,80 @@ def pacgate_verify_sanitized(document_id: str) -> str:
     """
     client = get_client()
     resp = client.get(f"/api/documents/{document_id}/sanitize-status")
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_rescan_residue(
+    document_id: str,
+    matter_wide: bool = False,
+    offset: int = 0,
+) -> str:
+    """Re-scan STORED text for identifiers that are still present (read-only).
+
+    Use this BEFORE relying on any `sanitized` verdict produced before
+    2026-11-02. Until that date the verifier replayed the redactor's own
+    suppressor over the residue, so a document could pass while still holding
+    身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌,
+    微信号 and 纳税人识别号 verbatim - and a surviving resident ID could then
+    be used as a lookup key against the knowledge base.
+
+    This does not trust the ledger. It reads the chunks as stored, runs the
+    deterministic rule layer only (no NER model, no embeddings, so it is fast
+    and repeatable), and reports the surviving value.
+
+    READ-ONLY: it never promotes, blocks or rewrites anything. Fixing what it
+    finds is a separate, explicit step - see the `next` field, which names the
+    reset + re-sanitize sequence.
+
+    Args:
+        document_id: The UUID of the document to scan, or the anchor document
+                     when matter_wide is true.
+        matter_wide: Scan every chunk in the document's matter instead of just
+                     this document (default false).
+        offset: Skip this many chunks, for paging a large matter.
+
+    Returns: { chunks_scanned, chunks_offending, documents_offending,
+    findings[{document_id, chunk_id, document_state, entity, text}],
+    already_marked_sanitized[], next, truncated }.
+
+    Read `already_marked_sanitized` first: those documents are published AND
+    still carrying an identifier, so their search results must not be treated as
+    clean until they are reset and re-sanitized.
+    """
+    client = get_client()
+    resp = client.post(
+        f"/api/documents/{document_id}/sanitize-rescan",
+        json={"matter_wide": matter_wide, "offset": offset},
+    )
+    _handle_error(resp)
+    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_reset_sanitization(document_id: str) -> str:
+    """Un-publish a document so a re-sanitize can actually replace its chunks.
+
+    A document in state `sanitized` whose chunks still carry an identifier (see
+    pacgate_rescan_residue) cannot be repaired by simply re-running the job: the
+    published rows are what the repair has to overwrite, and the promotion path
+    is pending-only on purpose. This returns the document and its chunks to
+    `pending` - not searchable, not downloadable - so the next sanitize run is a
+    real rewrite rather than a no-op.
+
+    This REMOVES reachability for the duration. That is the fail-closed
+    direction, and it is why the call is explicit: admin/partner only, audited as
+    `document.sanitize-reset`.
+
+    Args:
+        document_id: The UUID of the published document to reset.
+
+    Returns: { document_id, document_reopened, chunks_reopened, note }.
+    Re-run pacgate_sanitize_document afterwards to publish the repaired text.
+    """
+    client = get_client()
+    resp = client.patch(f"/api/documents/{document_id}/sanitize-reset")
     _handle_error(resp)
     return json.dumps(resp.json(), ensure_ascii=False, indent=2)
 
@@ -1023,9 +1309,678 @@ def pacgate_sanitize_text(text: str, data_level: str = "T3") -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# laya: local System 1 decision engine (optional)
+#
+# WHY THIS EXISTS (2026-10-31)
+#
+# laya is a non-autoregressive decision engine: you ask typed questions
+# (choice / score / noul) about a piece of text and get calibrated answers from
+# one forward pass. Nothing is generated, so there is nothing to parse and
+# nothing to hallucinate. That makes it the right tool for judging a clause
+# that the extraction pipeline has ALREADY found - not for reading documents,
+# which is what the reasoning model does.
+#
+# It runs as its own HTTP service (`laya-serve`) because the deer-flow image is
+# upstream and cannot take a new Python dependency. It is OPTIONAL: it costs a
+# 1.2 GB checkpoint, so a machine may not have it. Everything below therefore
+# degrades to an explicit "unavailable" result rather than raising. A tool that
+# raises on an unconfigured machine looks broken; a tool that says it is not
+# enabled is a capability that is simply absent.
+#
+# No API key is involved anywhere in this path - that is the entire point of
+# using laya instead of a metered judgment API.
+# ---------------------------------------------------------------------------
+
+LAYA_DEFAULT_URL = "http://laya:8000/v1/systemone"
+
+# The three questions are fixed here rather than taken from the caller so the
+# model is always asked the same thing. A caller-supplied question set would
+# make results incomparable across clauses, which is the one property a risk
+# signal has to have.
+_LAYA_RISK_QUESTIONS: dict[str, Any] = {
+    "risk": {
+        "type": "choice",
+        "instructions": "How risky is this contract clause for our client?",
+        "criteria": {
+            "high": (
+                "uncapped or unlimited liability, punitive or liquidated damages, "
+                "one-sided termination, broad indemnity, waiver of key remedies"
+            ),
+            "medium": (
+                "ambiguous wording, asymmetric obligations, unclear remedies, "
+                "short or missing notice periods"
+            ),
+            "low": (
+                "routine terms, balanced obligations, standard boilerplate, "
+                "clear and mutual remedies"
+            ),
+        },
+    },
+    "favored_party": {
+        "type": "choice",
+        "instructions": "Which party does this clause favor?",
+        "criteria": {
+            "client": "clearly favors our client",
+            "counterparty": "clearly favors the other party",
+            "neutral": "balanced, mutual, or standard",
+        },
+    },
+}
+
+_LAYA_FLAG_QUESTIONS: dict[str, Any] = {
+    "uncapped_liability": {
+        "type": "noul",
+        "instructions": "Does this clause expose our client to liability with no cap?",
+    },
+    "unilateral_termination": {
+        "type": "noul",
+        "instructions": "Can the other party terminate without our client having a matching right?",
+    },
+    "auto_renewal": {
+        "type": "noul",
+        "instructions": "Does this clause renew the agreement automatically unless notice is given?",
+    },
+    "dispute_waiver": {
+        "type": "noul",
+        "instructions": "Does this clause waive or restrict our client's right to litigate or arbitrate?",
+    },
+}
+
+
+def _laya_url() -> str:
+    return os.environ.get("PACGATE_LAYA_URL", LAYA_DEFAULT_URL).rstrip("/")
+
+
+def _laya_post(payload: dict[str, Any]) -> dict[str, Any]:
+    """POST to laya-serve, or raise _LayaUnavailable."""
+    timeout = float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+    try:
+        resp = httpx.post(_laya_url(), json=payload, timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise _LayaUnavailable(
+            f"laya is not reachable at {_laya_url()} "
+            f"(set PACGATE_LAYA_URL, or enable the laya service): {type(exc).__name__}"
+        ) from exc
+    if resp.status_code >= 400:
+        raise _LayaUnavailable(
+            f"laya returned {resp.status_code} for this request: {resp.text[:300]}"
+        )
+    return resp.json()
+
+
+class _LayaUnavailable(RuntimeError):
+    """laya is not configured for this deployment, or did not answer."""
+
+
+def _laya_truncation(usage: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Describe a state that laya cut short, or None when it read all of it.
+
+    WHY THIS IS NOT LEFT IN `usage` (measured 2026-11-02). laya reports
+    `usage.truncated` honestly, and every consumer of these tools reads the
+    `answers` field - the probabilities look identical whether they were computed
+    over the clause or over its first 400 words. Measured on the shipped question
+    sets against the 4-flag endpoint: a clause of ~330 words is read in full, and
+    ~384 words already drops 12 tokens, silently. Chinese is worse in practice
+    because a single clause can carry 1,000+ characters.
+
+    A probability computed over a prefix is not a wrong number; it is a number
+    about a different clause. So it is surfaced at the top level, next to the
+    answer, and the Chinese path refuses to grade at all - a `low` derived from
+    the first third of a clause is exactly the false clearance the withholding
+    logic elsewhere in this file exists to prevent.
+    """
+    if not isinstance(usage, dict) or not usage.get("truncated"):
+        return None
+    dropped = usage.get("state_tokens_dropped")
+    return {
+        "partial": True,
+        "state_tokens_dropped": dropped,
+        "state_tokens_read": usage.get("state_tokens"),
+        "note": (
+            "The clause exceeded laya's window and the tail was dropped before "
+            "judgement, so these numbers describe only the part that was read. "
+            "Do not treat an absence of flags in the dropped text as absence of "
+            "risk. Split the clause, or raise max_len for this deployment."
+        ),
+    }
+
+
+def _laya_unavailable_result(tool: str, exc: Exception) -> str:
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": False,
+            "reason": str(exc),
+            "note": (
+                "laya is an optional local decision engine. The clause tools are "
+                "inactive until a laya service is configured for this deployment."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _laya_answers(
+    state: str,
+    questions: dict[str, Any],
+    *,
+    min_confidence: float | None = None,
+    max_len: int | None = None,
+    lang: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"state": state, "questions": questions}
+    # Forwarded only when set, so the deployment's own Router settings stay in
+    # charge otherwise. min_confidence is the abstention gate: without it laya
+    # is forced to pick a bucket, and a confident wrong answer is worse than
+    # "cannot judge" in legal review.
+    if min_confidence is not None:
+        payload["min_confidence"] = float(min_confidence)
+    if max_len is not None:
+        payload["max_len"] = int(max_len)
+    if lang:
+        payload["lang"] = lang
+    return _laya_post(payload)
+
+
+# ---------------------------------------------------------------------------
+# Chinese risk grading is withheld on purpose.
+#
+# Measured 2026-11-01 against CCL-DRR (6,794 Chinese contract clauses, three-way
+# labels, near-uniform so chance is 0.333), running the questions this server
+# ships:
+#
+#     accuracy          0.333   exactly chance
+#     recall on 风险高    0.00    it did not flag ONE high-risk clause
+#     predictions       high=0  medium=17  low=4
+#
+# Asking the same question in Chinese was worse (0.238). Overall accuracy moves
+# between 0.238 and 0.571 depending on framing and sample, which is the trap: on
+# this class balance, answering "medium" most of the time scores 0.57 while
+# catching nothing. So a Chinese "low" is not clearance, and returning one at all
+# invites exactly that misreading in a legal review.
+#
+# Reproduce: scripts/bench-laya-chinese-risk.ps1 (gates on recall of 风险高).
+#
+# The guard is on CJK content, not on `lang`, because the caller may not pass
+# `lang` and the text is the ground truth. `validated_for_language: false` plus a
+# null verdict makes the reason impossible to ignore and impossible to sum into a
+# report as if it were a green result.
+# ---------------------------------------------------------------------------
+_CJK_RANGES: tuple[tuple[int, int], ...] = (
+    (0x3400, 0x4DBF),    # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
+    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),    # Halfwidth and Fullwidth Forms
+    (0x20000, 0x2FA1F),  # CJK Extension B and beyond
+)
+
+
+def _is_cjk_dominant(text: str) -> bool:
+    """True when the text's letters are mostly CJK.
+
+    Ratio rather than presence: an English contract legitimately contains a
+    Chinese party name, and refusing those would make the English path useless.
+    """
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return False
+    cjk = sum(
+        1 for ch in letters
+        if any(lo <= ord(ch) <= hi for lo, hi in _CJK_RANGES)
+    )
+    return cjk / len(letters) >= 0.30
+
+
+def _laya_withheld_result(tool: str, clause: str) -> str:
+    # The alternative differs by tool, and getting it wrong leaves a reader stuck:
+    # pacgate_clause_risk DOES grade Chinese (its own calibrated path), so for it
+    # the honest answer points at `allow_unvalidated_language`; only
+    # pacgate_clause_flags has nowhere else to send a Chinese clause.
+    if tool == "pacgate_clause_flags":
+        instead = (
+            "Use pacgate_clause_risk on this Chinese clause: it has a "
+            "Chinese-calibrated path measured at recall 0.86-1.00 on the "
+            "high-risk class. The four English flags are not available for Chinese."
+        )
+    else:
+        instead = (
+            "Read the clause with the reasoning model and have the reviewing "
+            "lawyer judge it."
+        )
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": True,
+            "validated_for_language": False,
+            "verdict_withheld": True,
+            "reason": (
+                "Chinese clause-risk grading is withheld: measured against CCL-DRR "
+                "it returned chance-level accuracy with 0.00 recall on high-risk "
+                "clauses (it flagged none of them). A 'low' verdict here would be "
+                "read as clearance, which it is not."
+            ),
+            "measured": {
+                "dataset": "CCL-DRR (6794 Chinese contract clauses, MIT)",
+                "accuracy": 0.333,
+                "chance_accuracy": 0.333,
+                "recall_high_risk": 0.00,
+                "reproduce": "scripts/bench-laya-chinese-risk.ps1",
+            },
+            "use_instead": instead,
+            "validated_languages": ["en"],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The Chinese path, measured and rebuilt rather than guessed.
+#
+# WHY THE OBVIOUS VERSION FAILED. Asking "how risky is this clause" as a
+# three-way choice over Chinese text scored 0.333 accuracy (chance) with recall
+# 0.00 on 风险高. One question carrying three semantic axes - severity, ambiguity
+# and asymmetry - collapsed onto the majority class.
+#
+# WHAT WORKS. Decompose into three yes/no questions, one concept each, and
+# combine them. Measured on CCL-DRR across four sampling seeds:
+#
+#     recall on 风险高   0.86 - 1.00   (chance-level baselines missed all of them)
+#     precision          0.35 - 0.43
+#     accuracy           0.38 - 0.57   (chance 0.333)
+#
+# The trade is deliberate. Recall near 1.00 means dangerous clauses are almost
+# never missed; precision ~0.4 means a lawyer reviews roughly 2.5-3 clauses for
+# every one that is genuinely high-risk. For legal triage that is the correct
+# bias - a false "high" costs a few minutes of review, a false "low" ships an
+# unfair term. It is also why this is triage and not adjudication: most of what
+# it escalates is fine.
+#
+# The thresholds below are tuned (uncapped >= 0.75, the rest >= 0.50), not round
+# numbers picked by feel. Tuned on one sample and re-measured on others; the
+# spread above is the real spread, not a single lucky draw.
+# ---------------------------------------------------------------------------
+_LAYA_ZH_QUESTIONS: dict[str, Any] = {
+    "uncapped": {
+        "type": "noul",
+        "instructions": "该条款是否使我方承担无上限的责任？",
+    },
+    "unilateral": {
+        "type": "noul",
+        "instructions": "该条款是否只赋予对方单方解除权？",
+    },
+    "ambiguous": {
+        "type": "noul",
+        "instructions": (
+            "该条款是否使用了“酌情”“原则上”“另行协商”等不确定措辞，"
+            "导致权利义务难以确定？"
+        ),
+    },
+}
+
+_LAYA_ZH_THRESHOLDS = {"uncapped": 0.75, "unilateral": 0.50, "ambiguous": 0.50}
+
+
+def _laya_zh_answers(
+    clause: str,
+    *,
+    min_confidence: float | None = None,
+    lang: str | None = None,
+) -> dict[str, Any]:
+    return _laya_answers(
+        clause,
+        _LAYA_ZH_QUESTIONS,
+        min_confidence=min_confidence,
+        lang=lang,
+    )
+
+
+def _laya_zh_grade(answers: dict[str, Any]) -> dict[str, Any]:
+    """Collapse three Chinese yes/no answers into one risk grade, with the inputs."""
+    probs = {
+        key: float((answers.get(key) or {}).get("noul") or 0.0)
+        for key in _LAYA_ZH_QUESTIONS
+    }
+    if (probs["uncapped"] >= _LAYA_ZH_THRESHOLDS["uncapped"]
+            or probs["unilateral"] >= _LAYA_ZH_THRESHOLDS["unilateral"]):
+        grade = "high"
+    elif probs["ambiguous"] >= _LAYA_ZH_THRESHOLDS["ambiguous"]:
+        grade = "medium"
+    else:
+        grade = "low"
+    return {"grade": grade, "probabilities": probs, "thresholds": _LAYA_ZH_THRESHOLDS}
+
+
+def _laya_zh_verdict(answers: dict[str, Any]) -> dict[str, Any]:
+    """Grade the Chinese answers, or withhold the grade when the engine abstained.
+
+    WHY ABSTENTION HAS TO STOP THE GRADE (measured 2026-11-02). `min_confidence`
+    reaches laya and laya marks the answer - `low_confidence: true` and
+    `abstention: "abstained"` - but the grader only ever read `noul`, so
+    abstention changed nothing. Measured on an isolated clause: `noul` 0.4773 at
+    `answer_confidence` 0.4773 with the default 0.55 threshold came back
+    `abstained` and was still graded. `noul` 0.4773 is below every threshold in
+    `_LAYA_ZH_THRESHOLDS`, so the grade that reaches the caller is `low` - the
+    one verdict this path must never emit on a clause it could not judge. The
+    English path has the same hole (`abstention` sits unread in the payload), but
+    there the numbers are at least visible to the reader; here a single word is
+    synthesised from them, so the hole is fixed here first.
+    """
+    withheld = [
+        key for key in _LAYA_ZH_QUESTIONS
+        if (answers.get(key) or {}).get("abstention") == "abstained"
+    ]
+    if withheld:
+        return {
+            "grade": None,
+            "withheld": True,
+            "abstained_questions": withheld,
+            "note": (
+                "The engine declined to judge "
+                + ", ".join(withheld)
+                + " at this min_confidence. No grade is reported: a clause it "
+                  "could not decide is not a low-risk clause. Read it, or lower "
+                  "min_confidence to see the raw probabilities and treat them as "
+                  "a prompt to review."
+            ),
+            "probabilities": {
+                key: float((answers.get(key) or {}).get("noul") or 0.0)
+                for key in _LAYA_ZH_QUESTIONS
+            },
+            "thresholds": _LAYA_ZH_THRESHOLDS,
+        }
+    return {**_laya_zh_grade(answers), "withheld": False}
+
+
+@mcp.tool()
+def pacgate_clause_risk(
+    clause: str,
+    min_confidence: float = 0.55,
+    lang: str | None = None,
+    allow_unvalidated_language: bool = False,
+) -> str:
+    """Judge a single contract clause for risk and for which party it favors.
+
+    VALIDATED FOR BOTH LANGUAGES, with different paths and different trade-offs:
+
+    - English: against CUAD the English checkpoint's four flags score AUC
+      0.93-1.00 (n=80 over 25 contracts). Reproduce with
+      scripts/bench-laya-clause-flags.ps1. One of those figures belongs to a
+      different question than the flag this server ships - see
+      pacgate_clause_flags, which says which one and why it matters.
+    - Chinese: the English three-way question was measured at chance with recall
+      0.00 - it flagged none of 7 high-risk clauses. Chinese text therefore uses
+      three dedicated yes/no questions instead, measured on CCL-DRR at recall
+      **0.86-1.00** on the high-risk class with precision 0.35-0.43 across four
+      sampling seeds. It over-flags on purpose: a missed unfair term is
+      expensive, an unnecessary review is not.
+
+    Note the difference in the two numbers. For English the flags are a graded
+    triage signal. For Chinese, recall 0.86-1.00 with precision ~0.4 means roughly
+    2.5-3 clauses are escalated per genuinely risky one - a 'high' is a prompt to
+    review, never a finding, and a 'low' is only as good as that measurement.
+
+    Use this on a clause the extraction pipeline has already pulled out of a
+    document. It does not read or summarize documents; for that use
+    pacgate_kb_search or pacgate_read_document.
+
+    This tool degrades to an explicit `available: false` result when the
+    deployment has no laya service, so treat that field as the capability check.
+
+    Args:
+        clause: The clause text. Keep it to one clause: the engine judges a
+            bounded state, and a whole contract exceeds its window.
+        min_confidence: Abstention threshold in [0, 1]. An answer below it comes
+            back flagged `low_confidence` rather than being hidden - treat a low
+            confidence answer as "a human should read this clause". For Chinese
+            the grade is withheld outright instead: a clause the engine declined
+            to judge is not a low-risk clause.
+        lang: Optional language code (e.g. "zh", "en") to skip detection.
+        allow_unvalidated_language: Escape hatch for benchmarking only. Set true
+            to get the English three-way verdict for Chinese text instead of the
+            Chinese-calibrated path. Never leave this on in a review path.
+    """
+    if _is_cjk_dominant(clause) and not allow_unvalidated_language:
+        try:
+            data = _laya_zh_answers(clause, min_confidence=min_confidence, lang=lang)
+        except _LayaUnavailable as exc:
+            return _laya_unavailable_result("pacgate_clause_risk", exc)
+        partial = _laya_truncation(data.get("usage"))
+        if partial:
+            # Refuse rather than grade a prefix: the Chinese path exists because a
+            # missed unfair term is expensive, and a tail nobody read cannot be
+            # cleared. The English path reports `partial` beside its answers; here
+            # one word is synthesised, so there is nothing honest to report it beside.
+            return json.dumps(
+                {
+                    "tool": "pacgate_clause_risk",
+                    "available": True,
+                    "validated_for_language": True,
+                    "language": "zh",
+                    "verdict_withheld": True,
+                    "partial": True,
+                    "reason": (
+                        "The clause did not fit laya's window and "
+                        f"{partial['state_tokens_dropped']} tokens of it were dropped "
+                        "before judgement. A clause-level grade over part of a clause "
+                        "is not a grade, and a 'low' would be false clearance. Split "
+                        "the clause and judge each part."
+                    ),
+                    "usage": data.get("usage"),
+                    "routing": data.get("routing"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        grade = _laya_zh_verdict(data.get("answers", {}))
+        return json.dumps(
+            {
+                "tool": "pacgate_clause_risk",
+                "available": True,
+                "validated_for_language": True,
+                "language": "zh",
+                "risk": grade["grade"],
+                "verdict_withheld": grade["withheld"],
+                "abstained_questions": grade.get("abstained_questions"),
+                "probabilities": grade["probabilities"],
+                "thresholds": grade["thresholds"],
+                "routing": data.get("routing"),
+                "usage": data.get("usage"),
+                "measured": {
+                    "dataset": "CCL-DRR (6794 Chinese contract clauses, MIT)",
+                    "recall_high_risk": "0.86-1.00 across four sampling seeds",
+                    "precision": "0.35-0.43",
+                    "accuracy": "0.38-0.57 (chance 0.333)",
+                    "note": (
+                        "Recall is the point: dangerous clauses are almost never "
+                        "missed. Precision ~0.4 means roughly 2.5-3 clauses are "
+                        "escalated per genuinely risky one, so a 'high' here is a "
+                        "prompt to review, not a finding. Reproduce with "
+                        "scripts/bench-laya-chinese-risk.ps1 (gates on recall)."
+                    ),
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    try:
+        data = _laya_answers(
+            clause,
+            _LAYA_RISK_QUESTIONS,
+            min_confidence=min_confidence,
+            lang=lang,
+        )
+    except _LayaUnavailable as exc:
+        return _laya_unavailable_result("pacgate_clause_risk", exc)
+    return json.dumps(
+        {
+            "tool": "pacgate_clause_risk",
+            "available": True,
+            # Beside the answers, because that is the field a caller reads: a
+            # probability over a truncated clause looks exactly like one over the
+            # whole clause, and only this key says which it is.
+            "partial": _laya_truncation(data.get("usage")),
+            "answers": data.get("answers", {}),
+            "routing": data.get("routing"),
+            "usage": data.get("usage"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_clause_flags(
+    clause: str,
+    min_confidence: float = 0.55,
+    lang: str | None = None,
+    allow_unvalidated_language: bool = False,
+) -> str:
+    """Test a clause for four specific legal risk flags as probabilities.
+
+    VALIDATED FOR ENGLISH (measured 2026-11-01 against CUAD, 25 contracts, 80
+    predictions, English checkpoint):
+
+        uncapped_liability            AUC 0.931   P 0.83  R 0.83
+        termination_for_convenience   AUC 0.988   P 1.00  R 0.81
+        auto_renewal                  AUC 0.942   P 0.90  R 0.82
+        dispute_waiver                AUC 1.000   P 1.00  R 0.71
+
+    Every flag separates its concept from unrelated clauses in the same
+    contracts. Reproduce with scripts/bench-laya-clause-flags.ps1.
+
+    ONE OF THOSE FOUR IS NOT A FLAG THIS TOOL RETURNS. The benchmark measures a
+    `termination_for_convenience` question ("may a party end this agreement without
+    cause, for convenience, on notice?"), and this tool asks a different one:
+    `unilateral_termination` adds an asymmetry requirement CUAD does not annotate.
+    On identical clauses the matched question scores AUC 0.988 and the asymmetry
+    question 0.600 - both honest numbers about different questions. The 0.988 is
+    reported here because the measurement exists, not because this tool earns it,
+    and the number above is labelled with the question it belongs to.
+
+    The shipped asymmetry question is also the weakest of the four in isolation
+    (2026-11-02): over 8 one-sided and 8 mutual termination clauses it did not
+    separate the groups at all - mean P 0.55 against 0.57, with mutual clauses
+    reaching 0.93. `uncapped_liability` (0.96 vs 0.17) and `auto_renewal`
+    (0.97 vs 0.51) did separate cleanly. Treat a high
+    `unilateral_termination` as a prompt to read the termination clause, never as
+    a finding. A replacement phrasing exists and separates perfectly in Chinese
+    (a three-option perception question, 3/3 vs 0/4); it is not shipped because it
+    changes the English number and has not been re-measured against CUAD.
+
+    CHINESE: the four English flags are NOT reported. They were measured on English
+    contracts, and on Chinese text the same questions flagged 0 of 7 high-risk
+    clauses (CCL-DRR), so four reassuring near-zero numbers would read as
+    clearance. Chinese text gets `validated_for_language: false` from this tool and
+    should go to `pacgate_clause_risk` instead, which has a Chinese-calibrated path
+    measured at recall 0.86-1.00.
+
+    Each flag is a yes/no probability, not a label, so a reviewer can set their
+    own threshold and see that 0.6 is honestly different from 0.95.
+
+    A `partial` key appears beside the answers when the clause did not fit the
+    window. laya reads about 330 words at this deployment's settings; beyond that
+    the tail is dropped before judgement and four probabilities describe a prefix.
+
+    This tool degrades to an explicit `available: false` result when the
+    deployment has no laya service.
+
+    Args:
+        clause: The clause text. One clause, not a whole contract.
+        min_confidence: Abstention threshold in [0, 1].
+        lang: Optional language code to skip detection.
+        allow_unvalidated_language: Escape hatch for benchmarking only. Set true
+            to get the English flag probabilities for Chinese text. Never leave
+            this on in a review path.
+    """
+    if not allow_unvalidated_language and _is_cjk_dominant(clause):
+        return _laya_withheld_result("pacgate_clause_flags", clause)
+    try:
+        data = _laya_answers(
+            clause,
+            _LAYA_FLAG_QUESTIONS,
+            min_confidence=min_confidence,
+            lang=lang,
+        )
+    except _LayaUnavailable as exc:
+        return _laya_unavailable_result("pacgate_clause_flags", exc)
+    return json.dumps(
+        {
+            "tool": "pacgate_clause_flags",
+            "available": True,
+            # Same reason as pacgate_clause_risk: `answers` is what a caller reads,
+            # and four reassuring probabilities over the first part of a clause are
+            # otherwise indistinguishable from four over all of it.
+            "partial": _laya_truncation(data.get("usage")),
+            "answers": data.get("answers", {}),
+            "routing": data.get("routing"),
+            "usage": data.get("usage"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_route_language(
+    text: str,
+    lang_guess: str | None = None,
+) -> str:
+    """Report which laya checkpoint and language laya would use for this text.
+
+    Routing decides whether a clause is judged by the Chinese-capable
+    multilingual checkpoint or an English-tuned one, so it is worth checking
+    before trusting a batch of results. This makes no inference call and needs
+    no model loaded.
+
+    This tool degrades to an explicit `available: false` result when the
+    deployment has no laya service.
+
+    Args:
+        text: Sample text to route, typically a clause or a document's opening.
+        lang_guess: Optional language code from your own detection, consulted
+            before detection runs.
+    """
+    payload: dict[str, Any] = {"state": text, "questions": {}}
+    if lang_guess:
+        payload["lang_guess"] = lang_guess
+    try:
+        timeout = float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+        route_url = _laya_url().replace("/systemone", "/route")
+        resp = httpx.post(route_url, json=payload, timeout=timeout)
+        if resp.status_code >= 400:
+            raise _LayaUnavailable(
+                f"laya returned {resp.status_code} for this request: {resp.text[:300]}"
+            )
+        data = resp.json()
+    except _LayaUnavailable as exc:
+        return _laya_unavailable_result("pacgate_route_language", exc)
+    except httpx.HTTPError as exc:
+        return _laya_unavailable_result(
+            "pacgate_route_language",
+            _LayaUnavailable(
+                f"laya is not reachable at {_laya_url()}: {type(exc).__name__}"
+            ),
+        )
+    return json.dumps(
+        {
+            "tool": "pacgate_route_language",
+            "available": True,
+            "model": data.get("model"),
+            "repo": data.get("repo"),
+            "reason": data.get("reason"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def main() -> None:
     port = int(os.environ.get("PACGATE_MCP_PORT", "8000"))
     logger.info("Starting pacgate MCP server on :%s", port)
+    logger.info("laya endpoint: %s", _laya_url())
     # Tools are registered on the module-level `mcp` via @mcp.tool().
     mcp.run(transport="streamable-http")
 

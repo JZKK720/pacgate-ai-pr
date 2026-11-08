@@ -1,12 +1,14 @@
 use axum::{
     extract::{Extension, State},
     response::{
-        sse::{Event, Sse},
+        sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
     Json,
 };
 use futures::stream;
+use futures::StreamExt;
+use pacgate_agent::AgentEvent;
 use pacgate_auth::Claims;
 use pacgate_core::{AgentMessage, MatterId, SoulPersona, TenantId};
 use serde::{Deserialize, Serialize};
@@ -193,9 +195,6 @@ pub enum SsePayload {
     TextDelta {
         text: String,
     },
-    /// Tool execution start/end events — part of the SSE protocol,
-    /// emitted once tool streaming lands in chat_stream_handler.
-    #[allow(dead_code)]
     ToolStart {
         name: String,
     },
@@ -203,6 +202,12 @@ pub enum SsePayload {
     ToolEnd {
         name: String,
         is_error: bool,
+    },
+    /// Which tool-call round the turn is entering. Cheap, and it is the only
+    /// signal during a long model call - without it an idle spinner and a hung
+    /// process look identical.
+    Round {
+        round: u32,
     },
     CitationBlock {
         citations: Vec<pacgate_core::CitationRef>,
@@ -240,8 +245,13 @@ pub async fn chat_stream_handler(
         return sse_error_response("matter not found");
     }
 
-    // For now, delegate to non-streaming and emit the full response as a single SSE event.
-    // Phase 4 will wire up proper streaming via LlmRouter::stream().
+    // Run the turn in a background task and forward every boundary over a channel,
+    // so the client receives data WHILE the agent works instead of after it stops.
+    //
+    // The previous body awaited `run_with_router` to completion and then built the
+    // event vector, which is the same as not streaming at all: a turn using 8 tools
+    // sent zero bytes for minutes and the UI sat on a spinner. Reported by the user
+    // as "36 steps and still no response from the LLM".
     let persona_prompt = compose_persona_prompt(soul.as_ref(), req.persona_id.as_deref());
 
     let event_stream: std::pin::Pin<
@@ -251,59 +261,106 @@ pub async fn chat_stream_handler(
             Ok(r) => r,
             Err(e) => return sse_error_response(e.to_string()),
         };
-        match state
-            .agent_loop
-            .run_with_router(
-                &router,
-                req.history,
-                &req.message,
-                persona_prompt.as_deref(),
-                Some(&matter_id),
-            )
-            .await
-        {
-            Ok(result) => {
-                let events: Vec<_> = {
-                    let mut v = Vec::new();
 
+        // Bounded so a disconnected client cannot pin unbounded memory; a full
+        // channel simply drops progress frames, which is the correct trade - the
+        // frames are advisory and the final answer still arrives.
+        let (tx, rx) = tokio::sync::mpsc::channel::<AgentEvent>(64);
+        let agent_loop = state.agent_loop.clone();
+        let history = req.history;
+        let message = req.message;
+
+        // The turn's own result must travel over the SAME channel as the progress
+        // frames, otherwise the answer is lost: the spawned task is detached and
+        // its return value is discarded. Emit the terminal frames here.
+        tokio::spawn(async move {
+            let event_tx = tx.clone();
+            let emit = move |event: AgentEvent| {
+                let _ = event_tx.try_send(event);
+            };
+            let outcome = agent_loop
+                .run_with_router_and_progress(
+                    &router,
+                    history,
+                    &message,
+                    persona_prompt.as_deref(),
+                    Some(&matter_id),
+                    Some(&emit),
+                )
+                .await;
+
+            // `emit` borrows a clone, so `tx` itself is still usable for the close.
+            let send = |payload: SsePayload| {
+                let _ = tx.try_send(AgentEvent::Final {
+                    payload: serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into()),
+                });
+            };
+
+            match outcome {
+                Ok(result) => {
                     if let Some(text) = result.content {
-                        let payload = SsePayload::TextDelta { text };
-                        if let Ok(json) = serde_json::to_string(&payload) {
-                            v.push(Ok(Event::default().data(json)));
-                        }
+                        send(SsePayload::TextDelta { text });
                     }
-
                     if !result.citations.is_empty() {
-                        let payload = SsePayload::CitationBlock {
+                        send(SsePayload::CitationBlock {
                             citations: result.citations,
-                        };
-                        if let Ok(json) = serde_json::to_string(&payload) {
-                            v.push(Ok(Event::default().data(json)));
-                        }
+                        });
                     }
-
-                    let done = SsePayload::Done {
+                    send(SsePayload::Done {
                         message_id: result.message_id.to_string(),
-                    };
-                    if let Ok(json) = serde_json::to_string(&done) {
-                        v.push(Ok(Event::default().data(json)));
-                    }
-
-                    v
-                };
-                Box::pin(stream::iter(events))
-            }
-            Err(e) => {
-                let payload = SsePayload::Error {
+                    });
+                }
+                Err(e) => send(SsePayload::Error {
                     message: e.to_string(),
-                };
-                let event = serde_json::to_string(&payload)
-                    .map(|json| Ok(Event::default().data(json)))
-                    .unwrap_or_else(|_| Ok(Event::default().data("internal error")));
-                Box::pin(stream::iter(vec![event]))
+                }),
             }
-        }
+        });
+
+        let progress = tokio_stream::wrappers::ReceiverStream::new(rx).map(|event| {
+            let json = match event {
+                AgentEvent::ToolStart { name } => {
+                    serde_json::to_string(&SsePayload::ToolStart { name })
+                }
+                AgentEvent::ToolEnd { name, is_error } => {
+                    serde_json::to_string(&SsePayload::ToolEnd { name, is_error })
+                }
+                AgentEvent::RoundStart { round } => {
+                    serde_json::to_string(&SsePayload::Round { round })
+                }
+                // Already serialised by the producer, which is where the concrete
+                // payload type is known.
+                AgentEvent::Final { payload } => Ok(payload),
+            };
+            Ok(Event::default().data(json.unwrap_or_else(|_| "{}".into())))
+        });
+
+        Box::pin(progress)
     };
 
-    Sse::new(event_stream).into_response()
+    // `X-Accel-Buffering: no` is the portable half of the fix: it tells nginx (and
+    // anything honouring the convention) not to buffer this response. The nginx
+    // location also sets `proxy_buffering off`, because a proxy that does neither
+    // turns every progress frame into one flush at the end - measured 2026-11-03,
+    // 22 frames arriving simultaneously after a 6.4s stall.
+    //
+    // keep_alive closes the LAST gap in the "no feedback" complaint. The progress
+    // frames mark every tool boundary, but between a round start and the next tool
+    // the MODEL is generating and emits nothing - measured 2026-11-04, a long
+    // document-check turn went 24.7s with the connection silent, which reads as a
+    // hang even though work is happening. A 10s comment ping keeps the stream live
+    // (and stops an idle proxy from dropping a slow turn) without touching the event
+    // logic: it only fires when no real frame has gone out in the interval.
+    let sse = Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(10))
+            .text("keep-alive"),
+    );
+    let mut response = sse.into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", "no".parse().unwrap());
+    response
+        .headers_mut()
+        .insert(axum::http::header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
 }

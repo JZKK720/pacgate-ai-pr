@@ -64,30 +64,30 @@ cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 # a tag that was never created, so that push could only fail.
 
 # Build pacgate-api (Rust 1.94 multi-stage)
-docker build -t ghcr.io/jzkk720/pacgate-api:0.2.6 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/jzkk720/pacgate-api:0.2.32 -f pacgate-ai/Dockerfile ./pacgate-ai
 
 # Build pacgate-mcp bridge
-docker build -t ghcr.io/jzkk720/pacgate-mcp:0.2.6 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
+docker build -t ghcr.io/jzkk720/pacgate-mcp:0.2.32 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
 
 # Build deer-flow wrapper
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.2.6 -f deploy/deer-flow-pacgate/Dockerfile .
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.2.32 -f deploy/deer-flow-pacgate/Dockerfile .
 
 # Build ocr-service (first-class since 0.1.16)
-docker build -t ghcr.io/jzkk720/ocr-service:0.2.6 -f deploy/ocr-service/Dockerfile ./deploy/ocr-service
+docker build -t ghcr.io/jzkk720/ocr-service:0.2.32 -f deploy/ocr-service/Dockerfile ./deploy/ocr-service
 
 # Build deer-flow frontend (gateway URL baked in)
 .\deploy\build-frontend.ps1 -Push
 
 # Push images
-docker push ghcr.io/jzkk720/pacgate-api:0.2.6
-docker push ghcr.io/jzkk720/pacgate-mcp:0.2.6
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.2.6
-docker push ghcr.io/jzkk720/ocr-service:0.2.6
-docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6
+docker push ghcr.io/jzkk720/pacgate-api:0.2.32
+docker push ghcr.io/jzkk720/pacgate-mcp:0.2.32
+docker push ghcr.io/jzkk720/deer-flow-pacgate:0.2.32
+docker push ghcr.io/jzkk720/ocr-service:0.2.32
+docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32
 
 # Verify pullable
-docker pull ghcr.io/jzkk720/pacgate-api:0.2.6
-docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.2.6
+docker pull ghcr.io/jzkk720/pacgate-api:0.2.32
+docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.2.32
 ```
 
 Note: qm does NOT have a Docker image — it runs via `qm up` from the
@@ -113,10 +113,17 @@ client-bundle/
     └── README.md              ← 20 practice-area + 10 SOUL personas reference
 ```
 
-Zip it: `Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip`
+Package it: `pwsh -File scripts/package-bundle.ps1`
 
-Also copy `deploy/qm-pacgate/` separately — it goes on the client machine
-next to the client bundle.
+**Do NOT use `Compress-Archive deploy/client-bundle/*`.** Measured 2026-10-29, that
+sweeps in live secrets and client data: `.env`, `.deer-flow-credentials`,
+`qm-pacgate/.env` (about 15 signing secrets), `openviking/ov.conf`,
+`openviking/workspace/`, and `data/` (2.39 GB of run DB and matter documents). On
+Windows a leading dot does not hide a file, so `*` matches all of them. The script
+uses an allowlist, asserts every named path exists, refuses to write the zip if a
+forbidden path reaches staging, and takes the qm deployment from its tracked source
+(`deploy/qm-pacgate`) the way `setup-qm.ps1` does. Its output is 84 files /
+1.47 MB and ships `.env.example` only.
 
 ### 2.3 Prepare the qm deployment
 
@@ -148,12 +155,19 @@ ollama pull nomic-embed-text:latest
 ollama list   # verify
 ```
 
-### 3.3 Deploy the client bundle
+### 3.3 Deploy the stack
+
+**This is a git clone, not a zip.** AIPC 1 and AIPC 2 are clones — see
+`AIPC-DEPLOYMENT-HANDBOOK.md` Stage 1, `plans/027-hx370-64gb-install-verify.md`
+note 1 ("installed in place... same commit, same pins"), and `README-client.md`
+step 3. This section used to say `Expand-Archive ... -DestinationPath C:\pacgate`
+and `cd C:\pacgate`, which contradicted all three and sent operators to a path
+that does not exist on those machines.
 
 ```powershell
-# Copy zip to C:\pacgate
-Expand-Archive pacgate-client-bundle-v0.1.0.zip -DestinationPath C:\pacgate
-cd C:\pacgate
+cd C:\
+git clone https://github.com/JZKK720/pacgate-ai-pr.git
+cd pacgate-ai-pr\deploy\client-bundle
 
 # Configure
 copy .env.example .env
@@ -162,6 +176,46 @@ notepad .env    # fill in PACGATE_DB_PASSWORD, PACGATE_JWT_SECRET, PACGATE_TENAN
 # Run installer
 .\install.ps1
 ```
+
+Verify:
+```powershell
+docker compose -f compose.prod.yaml ps    # all services running
+curl http://localhost:8089/health    # ok
+```
+
+#### Updating an existing install
+
+```powershell
+cd C:\pacgate-ai-pr\deploy\client-bundle
+.\install.ps1 -Update
+```
+
+`-Update` fast-forwards the repo, re-renders the MCP config, pulls the new GHCR
+images, brings the stack up, reloads nginx, and **restarts** deer-flow and the
+frontend so bind-mounted `patches/*.py` and `next.config.js` take effect. It
+refuses rather than guessing when the machine has local work: uncommitted tracked
+changes leave the repo untouched and are listed.
+
+Do **not** run `git pull` separately, and do **not** edit image pins by hand.
+
+#### The zip path (only for a machine with no git)
+
+`pwsh -File scripts/package-bundle.ps1` produces a bundle for a host that cannot
+clone. It is **not** the path for AIPC 1 or 2.
+
+```powershell
+Expand-Archive pacgate-client-bundle-v<version>.zip -DestinationPath C:\pacgate
+cd C:\pacgate
+copy .env.example .env ; notepad .env
+.\install.ps1
+```
+
+Never package with `Compress-Archive deploy/client-bundle/*`: on Windows a leading
+dot does not hide a file, so that glob ships `.env`, `.deer-flow-credentials`,
+`qm-pacgate/.env` (about 15 signing secrets), `openviking/ov.conf`,
+`openviking/workspace/`, and `data/` (2.39 GB of run DB and matter documents).
+The script is an allowlist that refuses to write the zip if any of them reach
+staging. Its output is 84 files / 1.47 MB.
 
 Verify:
 ```powershell
@@ -191,17 +245,16 @@ Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -B
 $body = @{email="qm-bridge@pacgate.local"; password="<generate-strong-password>"} | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 
-# 2. Copy qm-pacgate to the client machine
-Copy-Item -Path qm-pacgate -Destination C:\pacgate\qm-pacgate -Recurse
-
-# 3. Run the bootstrap script
-cd C:\pacgate
+# 2. Stage qm-pacgate (copies from deploy/qm-pacgate, skipping .env/node_modules)
+cd C:\pacgate-ai-pr\deploy\client-bundle
 .\setup-qm.ps1
-# This generates signing secrets, creates .env, prompts for admin email
-# and bridge credentials, runs qm check + sandbox build
 
-# 4. Start qm
-cd C:\pacgate\qm-pacgate
+# setup-qm.ps1 generates signing secrets, creates qm-pacgate\.env, prompts for
+# admin email and bridge credentials, then runs qm check + sandbox build.
+# You do NOT copy the directory by hand - it does the staging itself.
+
+# 3. Start qm
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
 npm exec qm -- up
 
 # 5. Verify
@@ -283,16 +336,16 @@ Walk through `deploy/USER-MANUAL.md`:
 
 ### 6.1 Switching models (deer-flow)
 
-1. Edit `C:\pacgate\deer-flow-config.yaml`
+1. Edit `C:\pacgate-ai-pr\deploy\client-bundle\deer-flow-config.yaml`
 2. Reorder the `models` list (first entry = default)
 3. Restart: `docker compose -f compose.prod.yaml restart deer-flow`
 4. Verify: open `http://localhost:8089/research/` and send a test message
 
 ### 6.2 Switching models (qm)
 
-1. Edit `C:\pacgate\qm-pacgate\qm.config.jsonc`
+1. Edit `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\qm.config.jsonc`
 2. Change `MODEL_NAME` to the desired Ollama model
-3. Restart: `cd C:\pacgate\qm-pacgate && npm exec qm -- down && npm exec qm -- up`
+3. Restart: `cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate && npm exec qm -- down && npm exec qm -- up`
 4. Verify: open `http://localhost:8182` and send a test message
 
 ### 6.3 Adding a new attorney user
@@ -317,10 +370,54 @@ Assign a SOUL persona via the pacgate-api admin endpoint if needed.
 
 | What | How | Frequency |
 |------|-----|-----------|
-| Matter data | Copy `C:\pacgate\data\tenants\` | Weekly |
+| Matter data | Copy `C:\pacgate-ai-pr\deploy\client-bundle\data\tenants\` | Weekly |
 | Database | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` | Weekly |
-| qm state | Backup `C:\pacgate\qm-pacgate\.env` (contains signing keys) | Once (on install) |
-| .env | Backup `C:\pacgate\.env` securely | Once (on install) |
+| qm state | Backup `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\.env` (contains signing keys) | Once (on install) |
+| .env | Backup `C:\pacgate-ai-pr\deploy\client-bundle\.env` securely | Once (on install) |
+
+### 6.6 Bounding the deer-flow thread store
+
+`client-bundle\data\deer-flow\` is the deer-flow bind mount (`./data:/data`) and
+it grows with every research session. It is gitignored, so nothing in the repo
+watches it and no gate goes red when it fills a disk.
+
+Two things grow and they are **not** interchangeable:
+
+| What | Growth | What it is |
+|------|--------|-----------|
+| `users/<user>/threads/<id>/` | per thread, 1 MB - 500 MB+ | agent workspace: uploads, generated documents, scratch files, and any `.venv` the agent builds for itself |
+| `checkpoints.db-wal` | per run, unbounded until checkpointed | un-checkpointed SQLite pages |
+
+Measured on the dev box 2026-10-30: 2.4 GB total, of which one 2026-10-21 thread
+held a 517 MB self-created `.venv`, and the WAL was 470 MB.
+
+```powershell
+# report only - never deletes anything
+.\scripts\clean-thread-workspaces.ps1
+
+# see what a rule would remove, without removing it
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -WhatIf
+
+# remove threads last active more than 30 days ago, keeping the newest 5
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -Delete
+
+# reclaim the WAL without deleting any thread (safe during a quiet window)
+.\scripts\clean-thread-workspaces.ps1 -CheckpointWal
+```
+
+**Do not delete these directories by hand.** A thread is three records that must
+stay in agreement: the directory, its rows in `checkpoints.db`, and its entry in
+the `store` table that backs `/threads/search`. Removing only the directory leaves
+a thread that still appears in the UI and returns 404 for every file. The script
+deletes through `DELETE /api/threads/{id}`, which removes all three together.
+
+**Never delete `checkpoints.db-wal` as a file.** It holds committed pages not yet
+folded into the main DB. Use `-CheckpointWal` (`PRAGMA wal_checkpoint(TRUNCATE)`),
+which verified at 470 MB -> 0 MB with `integrity_check = ok` and all 5,955
+checkpoint rows intact.
+
+Matter data, documents and the knowledge base live in Postgres - nothing in this
+section touches them. This is run history only.
 
 ## 7. Troubleshooting
 
@@ -358,7 +455,7 @@ ollama ps    # should show GPU in output
 ### qm won't start
 
 ```powershell
-cd C:\pacgate\qm-pacgate
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
 npm exec qm -- check    # validate config
 # Check .env has all required secrets (no blank values)
 # Check signing secrets are 64-char hex strings
@@ -382,11 +479,11 @@ docker compose -f compose.prod.yaml logs deer-flow  # check logs
 
 | Image | Contains | Base |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.6` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.6` | deer-flow backend + Python adapter (176 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.6` | pacgate-api MCP bridge (19 tools) | `python:3.12-slim` |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6` | deer-flow Next.js research UI | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.6` | PaddleOCR extraction service | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.32` | Rust binary (`pacgate-server`) + SQL migrations | `rust:1.94-bookworm` \u2192 `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` | deer-flow backend + Python adapter (176 lines) | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.32` | pacgate-api MCP bridge (19 tools) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` | deer-flow Next.js research UI | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.32` | PaddleOCR extraction service | `python:3.12-slim` |
 
 ### 8.2 Data flow
 

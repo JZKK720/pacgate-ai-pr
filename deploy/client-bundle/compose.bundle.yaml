@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   pacgate-api:
-    image: ghcr.io/jzkk720/pacgate-api:0.2.6
+    image: ghcr.io/jzkk720/pacgate-api:0.2.32
     healthcheck:
       # No curl and no wget in this image (measured 2026-10-14), so the probe
       # uses bash's /dev/tcp. /health is the one route that needs no auth
@@ -73,12 +73,22 @@ services:
       PACGATE_ALLOW_REGISTRATION: "false"
       PACGATE_JWT_SECRET: ${PACGATE_JWT_SECRET}
       PACGATE_DEFAULT_TENANT: ${PACGATE_TENANT_ID:-default-firm}
+      # Key the sanitizer derives identifier tokens from. See the same block in
+      # compose.prod.yaml for why this is separate from PACGATE_JWT_SECRET and
+      # what is lost when it is unset.
+      PACGATE_SANITIZER_KEY: ${PACGATE_SANITIZER_KEY:-}
       # NER weights are baked into the image at /app/models/ner (SHA-256 verified
       # at build time). This is what turns person/organisation-name detection ON:
       # unset means Tier-1 rules only, 5 of 15 classes instead of 8, with the
       # install still looking healthy. Gate: scripts/test-ner-enabled.ps1.
       # Must match the Dockerfile COPY target exactly - set-but-missing is fatal.
       PACGATE_NER_MODEL_DIR: /app/models/ner
+      # Internal calls must never go through a proxy. The Rust client already
+      # exempts loopback, but its bypass list cannot know the compose service
+      # names (ocr-service, pacgate-db, ...), so the guard is closed here as well.
+      # Do not narrow this to loopback only.
+      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,pacgate-db,pacgate-api,pacgate-mcp,ocr-service,deer-flow,deer-flow-frontend,openviking,laya,nginx"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,pacgate-db,pacgate-api,pacgate-mcp,ocr-service,deer-flow,deer-flow-frontend,openviking,laya,nginx"
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Plan 019/021: the extraction lane (cached per document version, fail-closed).
       OCR_SERVICE_URL: http://ocr-service:8100
@@ -108,14 +118,15 @@ services:
       # uses IGNORES a per-request num_ctx - verified 2026-10-20), but that tag
       # is a machine artifact that cannot be pre-pulled from a registry, so the
       # installer writes it into .env instead of this default.
-      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-ornith-1.5:9b}
-      PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-gemma4:12b-it-qat}
+      PACGATE_MODEL_MID: ${PACGATE_MODEL_MID:-nemotron-3.5-bolt:e4b-q8_0}
+      PACGATE_MODEL_LOW: ${PACGATE_MODEL_LOW:-nemotron-3.5-bolt:e4b-q8_0}
       RUST_LOG: info
     # Load ALL secrets from .env so pacgate-search's default_router() can read
     # the connector API keys (YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY,
-    # FYOPEN_API_KEY, COURT_LISTENER_API_KEY, VAQUILL_API_KEY, ANSVAR_API_KEY,
-    # OPENCORPORATES_API_KEY). Without these, every external legal connector
-    # reports available=false and search returns only free sources.
+    # FYOPEN_API_KEY, COURTLISTENER_API_KEY, VAQUILL_API_KEY,
+    # OPENCORPORATES_API_KEY, FIRECRAWL_API_KEY). Without these, every external
+    # legal connector reports available=false and search returns only free sources.
+    # Kept identical to compose.prod.yaml - see the CourtListener spelling note there.
     env_file:
       - .env
     volumes:
@@ -126,7 +137,7 @@ services:
     restart: unless-stopped
 
   deer-flow:
-    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.6
+    image: ghcr.io/jzkk720/deer-flow-pacgate:0.2.32
     healthcheck:
       # :8001 is the gateway nginx proxies to; /health verified 200.
       test:
@@ -214,6 +225,17 @@ services:
       # measured evidence and the removal condition - which is NOT "v2.1.0 has
       # these commits" (it does not; it scopes per run instead).
       - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
+      - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
+      # Pacgate 2026-10-28: clamp the lead-agent recursion budget so a thrashing
+      # run stops early instead of burning 1000 supersteps and ~3M tokens. See
+      # the longer note in compose.prod.yaml.
+      # Pacgate 2026-11-07: the clamp is only half of it - measured 22
+      # GraphRecursionErrors, every client-budgeted one at exactly 1000, while the
+      # deepest SUCCESS whose checkpoints were retained used 937 of its 1000. 1000 was
+      # not a budget but the next ceiling, so the patch now also applies a FLOOR
+      # (default 2000, DEERFLOW_MIN_RECURSION_LIMIT) that a client cannot undercut.
+      # Details and measurements are in compose.prod.yaml beside the same mount.
+      - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's
       # /v1 endpoint ignores - background calls then generate to EOS and hog
@@ -224,6 +246,10 @@ services:
       # multi-step research runs (cloud), instead of relying only on the constant
       # tool-schema count.
       - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
+      # Pacgate 2026-11-06: strip pymupdf4llm's inline HTML (<mark>/<br>) from
+      # heading titles before they reach the agent's "Document outline" prompt
+      # section. See the longer note in compose.prod.yaml.
+      - ./patches/deer-flow-file-conversion.py:/app/backend/packages/harness/deerflow/utils/file_conversion.py:ro
       # Pacgate (hang fix 2026-10-06): bound the non-streaming title ainvoke()
       # and make CancelledError fall back instead of freezing the pregel loop
       # (run df600939: no output for 11 minutes; only STOP recovered it).
@@ -312,6 +338,17 @@ services:
       # frontend's formatTimeAgo("") threw RangeError: Invalid time value,
       # killing the settings memory card. Bind-mounted until upstreamed.
       - ./patches/pacgate-adapter-storage.py:/app/adapters/pacgate_deerflow_adapter/storage.py:ro
+      # Pacgate 2026-10-30: seeded legal skills (see compose.prod.yaml for the
+      # rationale). Read-only; the agent writes its own skills to custom/ via the
+      # scanned `skill_manage` path, never by editing a seed.
+      - ./deer-flow-skills:/app/backend/.deer-flow/skills/public:ro
+      # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated
+      # (see compose.prod.yaml for the measured failure and the two-layer cause).
+      # Kept in lockstep with compose.prod.yaml - A5 of
+      # test-workflow-compose-wiring.ps1 fails on patch-mount drift, and
+      # install.ps1 uses this file, so a bundle-only mount would leave the
+      # deployment path unfixed.
+      - ./patches/deer-flow-mcp-args.py:/app/backend/packages/harness/deerflow/mcp/tools.py:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).
@@ -319,7 +356,7 @@ services:
     restart: unless-stopped
 
   deer-flow-frontend:
-    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6
+    image: ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32
     healthcheck:
       # NO bash in this image (only sh), so /dev/tcp is unavailable. It does have
       # node v22, so the probe uses fetch. Verified: exits 0 against :3000 and 1
@@ -356,7 +393,7 @@ services:
     restart: unless-stopped
 
   pacgate-mcp:
-    image: ghcr.io/jzkk720/pacgate-mcp:0.2.6
+    image: ghcr.io/jzkk720/pacgate-mcp:0.2.32
     healthcheck:
       # A real MCP `initialize` handshake, not a TCP connect. The image has no
       # curl; it does have python3, so the probe speaks the protocol and
@@ -382,6 +419,21 @@ services:
       # chat agent can address the deployment's scoped matter without knowing
       # the UUID (mirrors the deer-flow service's PACGATE_MATTER_ID above).
       PACGATE_MATTER_ID: ${PACGATE_MATTER_ID}
+      # Optional local decision engine (see the `laya` service below). Absent is
+      # a supported state: the clause tools then report available=false instead
+      # of failing, so a machine without the 1.2 GB checkpoint still works.
+      PACGATE_LAYA_URL: ${PACGATE_LAYA_URL:-http://laya:8000/v1/systemone}
+      # Firecrawl key for pacgate_web_search / pacgate_web_scrape. Same
+      # per-machine value the pacgate-search connector reads from env_file, so
+      # one paste in .env arms both the /api/search connector and the agent's
+      # web tools. Absent/empty is a supported state: both tools answer
+      # available=false and every other tool is unaffected.
+      #
+      # Deliberately NOT a fourth entry in deer-flow-extensions-config.json:
+      # deer-flow gathers all MCP servers with one asyncio.gather and returns []
+      # on any exception, so an unreachable remote MCP server would delete the
+      # pacgate, openviking and officecli tools along with it.
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
     volumes:
       # Fork patch (2026-10-09): SANITIZE_TIMEOUT_S=700 per-request override for
       # sanitize endpoints (BERT NER runs minutes; stock 0.1.24 timeout kills
@@ -401,8 +453,72 @@ services:
   # SHADOWS the baked copy and lets PaddleOCR reach for the CDN again for anything
   # the volume lacks - the dependency the bake exists to remove. See the longer
   # note in compose.prod.yaml.
+  laya:
+    # Optional local decision engine (2026-10-31). Judges a single clause with
+    # typed questions - how risky, which risk flags, which party it favors -
+    # instead of generating prose, so an answer is a calibrated probability
+    # rather than something to parse. Reached by pacgate-mcp over HTTP.
+    #
+    # WHY IT IS OPT-IN: the multilingual checkpoint is 1.2 GB on disk. A machine
+    # that does not run it is not broken - pacgate-mcp's clause tools report
+    # available=false and the rest of the stack is unaffected. Bring it up with
+    #   docker compose --profile laya up -d laya
+    #
+    # WHY A SEPARATE SERVICE: the deer-flow image is upstream and cannot take a
+    # new Python dependency, so laya lives beside it rather than inside it.
+    #
+    # Models are pre-staged, never downloaded at runtime: HF_HUB_OFFLINE=1 plus a
+    # mounted model directory. A client machine must not reach huggingface.co.
+    profiles: ["laya"]
+    image: ${LAYA_IMAGE:-ghcr.io/jzkk720/laya-serve:0.2.32}
+    healthcheck:
+      # /health is documented by laya. start_period is long because with
+      # LAYA_PRELOAD=1 the first boot loads a 1.2 GB checkpoint into memory, and a
+      # short probe would mark a healthy-but-loading container unhealthy.
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request;raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=6).status==200 else 1)"
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 600s
+    container_name: laya
+    environment:
+      LAYA_PORT: "8000"
+      LAYA_DEVICE: ${LAYA_DEVICE:-cpu}
+      # Preload so the first clause does not pay the load, and cap resident
+      # checkpoints at 1 so a second checkpoint cannot silently double memory.
+      LAYA_PRELOAD: "1"
+      # BOTH checkpoints, because routing sends English text to the `english`
+      # checkpoint and Chinese to `multilingual`. With only multilingual
+      # loaded, an English clause makes the router build `english` and fail
+      # with a 500 (measured). ~1.45 GB staged in total; MAX_LOADED must be 2
+      # or the second checkpoint is evicted on every switch.
+      LAYA_MODELS: ${LAYA_MODELS:-multilingual,english}
+      LAYA_MAX_LOADED: "2"
+      LAYA_THREADS: ${LAYA_THREADS:-4}
+      # Offline by construction. Staged weights only; nothing is fetched at run
+      # time, which is the whole reason this can run on a client machine.
+      HF_HUB_OFFLINE: "1"
+      LAYA_REVISION: ${LAYA_REVISION:-}
+    # Models ship INSIDE the image from 0.2.13 (verified Apache-2.0, so
+    # redistribution is permitted). That removed the client-side staging step and
+    # two silent failure modes: an empty cache crash-looped at boot, and a partial
+    # cache reported `healthy` while the missing checkpoint's language returned
+    # HTTP 500.
+    #
+    # NO MODELS MOUNT HERE, DELIBERATELY. A bind mount REPLACES the image layer
+    # rather than merging with it, so mounting ${LAYA_HF_CACHE} over
+    # /home/laya/.cache/huggingface hides every baked weight - proven 2026-11-02 by
+    # mounting an empty directory and watching the snapshot disappear. Overriding
+    # the weights means rebuilding the image with a different LAYA_REVISION build
+    # arg; shipping a mount here would un-bake it.
+    #
+    # HF_HUB_OFFLINE=1 keeps a bad lookup loud instead of reaching for the network.
+    restart: unless-stopped
+
   ocr-service:
-    image: ghcr.io/jzkk720/ocr-service:0.2.6
+    image: ghcr.io/jzkk720/ocr-service:0.2.32
     healthcheck:
       # /health verified 200. python3, not curl - the image has no curl.
       # start_period is long on purpose: this service downloads its model on

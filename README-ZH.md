@@ -4,8 +4,11 @@
 
 **English:** [README.md](README.md) | [Staff Handbook](docs/PACGATE-LAW-STAFF-HANDBOOK.md)
 
-## 版本：v0.2.6（2026年10月25日）
+## 版本：v0.2.32（2026年11月7日）
 
+- **本地服务代理修复。** 未设置 `*_PROXY` 时，`reqwest` 0.12 会采用操作系统代理，而该配置不带本机回环豁免。由此产生两个后果，现均由 `pacgate_core::http::local_service_client` 关闭（清除平台代理，同时保留运维显式配置的 `HTTP(S)_PROXY` 用于远程供应商）：
+  - **在 Windows 上，回环调用直接失效。** 平台设置不会绕过 `127.0.0.0/8`，因此发往 `http://127.0.0.1:<port>` 的调用被送到代理并返回 `502 Bad Gateway`。2026-11-04 实测：`pacgate-agent` 12 个测试中 6 个因此失败，设置 `NO_PROXY` 后 12 个全部通过。现豁免 `localhost`、`127.0.0.0/8`、`::1`、`*.local` 与 `host.docker.internal`。
+  - **已部署容器不会继承代理**（实测：运行中的 `pacgate-api` 无任何 `*_PROXY` 变量），因此客户端访问 Ollama、OCR 与向量嵌入的调用并未受影响。为避免某台机器或某个镜像设置了代理后把内部流量静默转走，这些客户端同样改用新的构造函数。
 - Rust 元数据核心：12 个 crate + 4 个 WASM crate，冒烟/智能体/工作流/集成测试全部通过
 - 15 个文件共 220 个 YAML 工作流模板
 - 30 个法律角色人格（20 个业务领域 + 10 个 SOUL）
@@ -13,11 +16,11 @@
 - RAG 检索（pgvector + tsvector + Ollama 嵌入，T1-T4 数据分级过滤）— 完全本地运行
 - OpenViking 记忆模块：经 qm 桥接的 ov-remember / ov-search / ov-read，deer-flow 内 MCP 召回
 - 认证体系（JWT + argon2 + SOUL 解析中间件）
-- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.6`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
-- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.6`（公开）
-- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.6`（公开；暴露 19 个 MCP 工具，含文档/工作流）
-- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6`（公开；构建时烘焙网关地址）
-- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.6`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
+- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.32`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
+- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.32`（公开）
+- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.32`（公开；暴露 22 个 MCP 工具，含文档/工作流）
+- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32`（公开；构建时烘焙网关地址）
+- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.32`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
 - qm 协作桥接已验证（Python CLI，HARNESS=pi，真实 Ollama）
 - 客户部署包已入库：`deploy/client-bundle/` — 全新克隆安装路径已验证
 - 知识图谱：935 节点、2220 条边、49 个社区
@@ -83,11 +86,11 @@ Pacgate 运行时镜像均为**公开**（已验证匿名拉取）。源码仓�
 
 | 镜像 | 内容 | 基础镜像 |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.2.6` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.6` | pacgate-api MCP 桥接（19 个工具，含文档/工作流） | `python:3.12-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.6` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.6` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.32` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.32` | pacgate-api MCP 桥接（19 个工具，含文档/工作流） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.32` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
 
 每个镜像同时带有 `:latest` 标签，与版本标签保持同步。
 

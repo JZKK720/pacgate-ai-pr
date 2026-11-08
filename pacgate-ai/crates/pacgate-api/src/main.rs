@@ -61,6 +61,12 @@ async fn main() -> anyhow::Result<()> {
                 .as_str(),
             "true" | "1" | "yes"
         ),
+        // Key the sanitizer derives identifier tokens from. Unset means a
+        // per-process random key: safe, but cross-document correlation is given
+        // up. See `AppConfig::sanitizer_key`.
+        sanitizer_key: std::env::var("PACGATE_SANITIZER_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
     });
 
     // Create Postgres connection pool
@@ -150,9 +156,39 @@ async fn main() -> anyhow::Result<()> {
     struct RagKbStore {
         rag: Arc<pacgate_rag::RagStore>,
         tenant_id: pacgate_core::TenantId,
+        /// Needed by `sanitised_text`: the redacted body lives in `kb_chunks`, and
+        /// the RAG search surface cannot fetch one document's full text.
+        db: sqlx::PgPool,
     }
     #[async_trait::async_trait]
     impl KbStore for RagKbStore {
+        /// The redacted rendering of one document, straight from `kb_chunks`.
+        ///
+        /// `None` when there is no sanitised chunk. The caller must refuse in that
+        /// case - returning the original from `storage_path` is the 2026-11-03 leak.
+        async fn sanitised_text(
+            &self,
+            document_id: &pacgate_core::DocumentId,
+        ) -> pacgate_core::Result<Option<String>> {
+            let rows: Vec<String> = sqlx::query_scalar(
+                "SELECT content FROM kb_chunks \
+                 WHERE document_id = $1 AND tenant_id = $2 \
+                 ORDER BY chunk_index",
+            )
+            .bind(document_id.0)
+            .bind(self.tenant_id.0)
+            .fetch_all(&self.db)
+            .await
+            .map_err(|e| pacgate_core::PacgateError::StorageError(e.to_string()))?;
+
+            if rows.is_empty() {
+                Ok(None)
+            }
+            else {
+                Ok(Some(rows.join("")))
+            }
+        }
+
         async fn search(
             &self,
             matter_id: &pacgate_core::MatterId,
@@ -182,6 +218,15 @@ async fn main() -> anyhow::Result<()> {
     struct EmptyKbStore;
     #[async_trait::async_trait]
     impl KbStore for EmptyKbStore {
+        async fn sanitised_text(
+            &self,
+            _document_id: &pacgate_core::DocumentId,
+        ) -> pacgate_core::Result<Option<String>> {
+            // No chunks exist without a working RAG store, so refuse rather than
+            // let the caller fall back to the unredacted original.
+            Ok(None)
+        }
+
         async fn search(
             &self,
             _matter_id: &pacgate_core::MatterId,
@@ -226,6 +271,7 @@ async fn main() -> anyhow::Result<()> {
             Some(rag_store) => Arc::new(RagKbStore {
                 rag: rag_store.clone(),
                 tenant_id,
+                db: pool.clone(),
             }),
             None => Arc::new(EmptyKbStore),
         };

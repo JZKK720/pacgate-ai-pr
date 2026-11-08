@@ -258,7 +258,26 @@ $contextPrefixes = @(
     'pacgate-adapters/python/pacgate_deerflow_adapter/',
     'deploy/deer-flow-pacgate/config.yaml',
     'deploy/deer-flow-src/frontend/',
-    'deploy/frontend-patches/files/'   # CI copies these INTO the frontend context
+    'deploy/frontend-patches/files/',  # CI copies these INTO the frontend context
+    # ADDED 2026-10-28. deploy/deer-flow-pacgate/Dockerfile COPYs these two
+    # straight into the image (L51 and L58), so they DO reach a built layer. They
+    # were missing here, which made this gate report BENIGN on the most
+    # image-affecting files in the tree - the exact under-report the comment
+    # below calls the dangerous direction. Consequence measured today: the
+    # recursion-cap patch landed in this list as benign, so a release cut could
+    # have shipped an image whose gateway silently lacked the cap while this gate
+    # stayed green. Derived from the Dockerfile, not guessed: re-check L51/L58 if
+    # the bake moves.
+    'deploy/client-bundle/patches/deer-flow-loop-detection.py',
+    'deploy/client-bundle/patches/deer-flow-run-recursion-cap.py',
+    # ADDED 2026-11-06 for the 0.2.31 PDF-outline fix. Both are COPY sources in
+    # deploy/deer-flow-pacgate/Dockerfile (L91 and L124) and have no bind mount
+    # shadowing them, so their content reaches clients ONLY through the image.
+    # That makes them the most dangerous kind of build input to leave untracked:
+    # the gate's own failure message named them, which is the correct direction
+    # for this gate to err in.
+    'deploy/client-bundle/patches/deer-flow-file-conversion.py',
+    'deploy/pacgate-pins/pymupdf4llm.constraints.txt'
 )
 
 # A Dockerfile is itself a build input even though it is not a COPY source.
@@ -269,6 +288,52 @@ $dockerfiles = @(
     'deploy/deer-flow-pacgate/Dockerfile',
     'deploy/deer-flow-frontend-pacgate/Dockerfile'
 )
+
+# ── SHADOWED INPUTS (added 2026-11-01) ───────────────────────────────────────
+#
+# A file can be a COPY source AND be bind-mounted read-only over the same path in
+# both compose lanes. The mount wins at run time, so the file's content reaches
+# clients through compose - not through the image - and changing it does NOT
+# invalidate the release.
+#
+# This distinction was missing, and it cost three release tags in one session.
+# deploy/pacgate-mcp/ is in $contextPrefixes above (the Dockerfile COPYs
+# server.py), so every edit to it failed this gate and demanded a bump. But both
+# lanes mount `../pacgate-mcp/server.py:/app/server.py:ro`, and measured on the
+# live stack:
+#
+#     working tree sha256 == running container /app/server.py sha256
+#
+# The fix was already serving before the bump that claimed to ship it existed.
+#
+# Image-affecting now requires BOTH that a COPY can reach the file AND that no
+# lane mounts it read-only. The mounts are read from the compose files, not
+# assumed.
+$shadowed = @{}
+$mountPattern = '^\s*-\s*(?<src>[^:\s]+):(?<dst>/[^\s:]+):ro\s*$'
+foreach ($lane in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
+    if (-not (Test-Path -LiteralPath $lane)) { continue }
+    foreach ($line in (Get-Content -LiteralPath $lane)) {
+        $m = [regex]::Match($line, $mountPattern)
+        if (-not $m.Success) { continue }
+        $dst = $m.Groups['dst'].Value
+        $src = $m.Groups['src'].Value
+        # ${VAR} sources cannot be resolved to a repo path, so they stay unmapped
+        # and their files keep counting as image inputs - the conservative side.
+        if ($src -match '\$\{') { continue }
+        $norm = ($src -replace '^\.\./', 'deploy/') -replace '^\./', 'deploy/client-bundle/'
+        if (-not $norm.StartsWith('deploy/')) { continue }
+        if (-not $shadowed.ContainsKey($dst)) { $shadowed[$dst] = @() }
+        $shadowed[$dst] += $norm
+    }
+}
+
+function Get-ShadowedPath([string]$file) {
+    foreach ($dst in $shadowed.Keys) {
+        if ($shadowed[$dst] -contains $file) { return "$file -> $dst" }
+    }
+    return $null
+}
 
 # .dockerignore genuinely narrows the pacgate-ai context (this is what excluded
 # the changed pacgate-ai-assets/render.py from the image). Honouring its
@@ -286,43 +351,10 @@ if (Test-Path 'pacgate-ai/.dockerignore') {
         ForEach-Object { "pacgate-ai/$_" })
 }
 
-# Files that a compose file bind-mounts OVER the image copy. A change to one of
-# these does NOT make the tag a wrong recipe for the published artifact: the
-# artifact is still exactly what the tag builds, and the running container reads
-# the host file instead. It is a different (and legitimate) deployment shape -
-# the repo's own patch pipeline - so it must be reported, not failed.
-#
-# This distinction matters because the two failure modes look identical in a
-# plain file diff. A change that reaches a layer means "a rebuild from the tag
-# would differ from what clients pull" (the 0.1.28 defect). A change that is
-# bind-mounted means "clients pull the tag's image and then override one file",
-# which is what deploy/client-bundle/compose.prod.yaml does for 20 patches plus
-# deploy/pacgate-mcp/server.py. Failing the second would make the gate
-# permanently red on any machine that carries a local patch, which is how a gate
-# stops being read.
-$bindMounted = @()
-foreach ($composeFile in @('deploy/client-bundle/compose.prod.yaml', 'deploy/client-bundle/compose.bundle.yaml')) {
-    if (-not (Test-Path $composeFile)) { continue }
-    foreach ($line in (Get-Content $composeFile)) {
-        # Shape: `- ./patches/x.py:/app/...:ro` or `- ../pacgate-mcp/server.py:/app/server.py:ro`
-        if ($line -match '^\s*-\s*(\.\.?/[^:]+):[^:]+') {
-            $src = $Matches[1].Trim()
-            $full = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $composeFile) $src))
-            # Normalise to a repo-relative path WITHOUT [System.IO.Path]::GetRelativePath:
-            # that method is .NET Core only and throws MethodNotFound under Windows
-            # PowerShell 5.1, which this repo still supports (see
-            # test-ps51-native-stderr.ps1). Compare absolute paths instead.
-            $bindMounted += $full
-        }
-    }
-}
-$bindMounted = @($bindMounted | Sort-Object -Unique)
-$repoRootFull = [System.IO.Path]::GetFullPath((Get-Location).Path)
-
 $changed = @(& git diff --name-only "$resolved..HEAD" 2>$null | Where-Object { $_ })
 $affecting = @()
-$overridden = @()
 $benign = @()
+$shadowedChanges = @()
 foreach ($f in $changed) {
     $isInput = $false
     foreach ($p in $contextPrefixes) { if ($f.StartsWith($p)) { $isInput = $true; break } }
@@ -330,12 +362,48 @@ foreach ($f in $changed) {
     if ($isInput) {
         foreach ($ip in $ignoredPrefixes) { if ($f.StartsWith($ip)) { $isInput = $false; break } }
     }
-    if ($isInput -and ($bindMounted -contains [System.IO.Path]::GetFullPath((Join-Path $repoRootFull $f)))) { $overridden += $f }
-    elseif ($isInput) { $affecting += $f }
+    if ($isInput) {
+        # A COPY-reachable file that both lanes bind-mount read-only cannot change
+        # the published artifact: the mount shadows the baked copy at run time.
+        $sh = Get-ShadowedPath $f
+        if ($sh) { $shadowedChanges += $sh; continue }
+        $affecting += $f
+    }
     else { $benign += $f }
 }
 
 Info "checked $($changed.Count) file(s) changed between $($builtRev) and HEAD"
+
+# Self-check (added 2026-10-28). The prefix list above is maintained by hand, so a
+# new COPY source in a Dockerfile can silently land in $benign and the gate reports
+# PASS while the image really does change. That happened today: the recursion-cap
+# patch was classified benign even though the deer-flow Dockerfile COPYs it.
+# Re-derive the deer-flow COPY sources from the Dockerfile itself and fail if one
+# is missing from the hand-written list, so the list cannot drift unnoticed.
+$deerFlowDf = 'deploy/deer-flow-pacgate/Dockerfile'
+if (Test-Path $deerFlowDf) {
+    $copySources = @(Get-Content -LiteralPath $deerFlowDf |
+        Where-Object { $_ -match '^\s*COPY\s' -and $_ -notmatch '--from=' } |
+        ForEach-Object { ($_ -replace '^\s*COPY\s+(?:--\S+\s+)*', '').Trim() -split '\s+' | Select-Object -First 1 } |
+        Where-Object { $_ -and $_ -notmatch '^\.?/?$' })
+    $unlisted = @()
+    foreach ($src in $copySources) {
+        $norm = $src.TrimStart('./').TrimEnd('/')
+        if (-not $norm) { continue }
+        $matched = $false
+        foreach ($p in $contextPrefixes) {
+            if ($norm.StartsWith($p.TrimEnd('/')) -or $p.StartsWith($norm + '/') -or $norm -eq $p.TrimEnd('/')) { $matched = $true; break }
+        }
+        if (-not $matched) { $unlisted += $src }
+    }
+    if ($unlisted.Count -gt 0) {
+        Fail "the deer-flow Dockerfile COPYs $($unlisted.Count) source(s) this gate does not track, so it cannot tell whether they changed:"
+        $unlisted | ForEach-Object { Info "  $_" }
+        Info 'add each one to $contextPrefixes above, or move it out of the image build'
+    } else {
+        Pass "every deer-flow Dockerfile COPY source is tracked as an image input"
+    }
+}
 
 if ($affecting.Count -gt 0) {
     Fail "$($affecting.Count) file(s) that CAN reach a built image changed after the published revision was built:"
@@ -346,10 +414,10 @@ if ($affecting.Count -gt 0) {
     Pass "no image-affecting file changed between $($builtRev) and HEAD, so the tag still describes the published artifacts"
     # Reported, not hidden: this is the evidence that the diff was read, and it
     # is what lets a reviewer see the judgement rather than trust a count.
-    if ($overridden.Count -gt 0) {
-        Info "$($overridden.Count) file(s) changed but are BIND-MOUNTED over the image by compose, so the published artifact is unchanged:"
-        $overridden | ForEach-Object { Info "  $_" }
-        Info 'the running container reads the host copy, so this is a patch-pipeline change, not a tag/artifact mismatch'
+    if ($shadowedChanges.Count -gt 0) {
+        Info "$($shadowedChanges.Count) COPY-reachable file(s) changed but a compose lane mounts them read-only, so the mount - not the image - carries the change:"
+        $shadowedChanges | ForEach-Object { Info "  $_" }
+        Info 'these reach clients through install -Update once the lane is re-rendered; no release tag is needed'
     }
     if ($benign.Count -gt 0) {
         Info "$($benign.Count) file(s) changed but cannot reach an image (docs, gates, CI, ignored context):"

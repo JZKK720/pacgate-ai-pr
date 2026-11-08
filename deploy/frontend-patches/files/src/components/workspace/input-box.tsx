@@ -136,13 +136,15 @@ function getResolvedMode(
   mode: InputMode | undefined,
   supportsThinking: boolean,
 ): InputMode {
-  if (!supportsThinking && mode !== "flash") {
+  if (!supportsThinking) {
     return "flash";
   }
-  if (mode) {
-    return mode;
-  }
-  return supportsThinking ? "pro" : "flash";
+  // Pacgate 2026-10-30: do NOT default an unset mode to "pro". This function is
+  // called from a mount effect, so the default was written into the user's context
+  // before they chose anything - and "pro" turns thinking on. An unset mode now
+  // means "no explicit choice", which flash represents without spending the reply
+  // budget on reasoning. The user can still pick Thinking/Pro/Ultra.
+  return mode ?? "flash";
 }
 
 export function InputBox({

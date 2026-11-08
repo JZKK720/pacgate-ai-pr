@@ -26,6 +26,19 @@
 param(
     [string[]]$Configs = @(
         'deploy/client-bundle/deer-flow-config.yaml',
+        # Pacgate 2026-11-06: the IMAGE-BAKED config was not audited, and that is
+        # exactly where a stale tag survived unnoticed. Commit a78073a moved the
+        # client config, install.ps1 and this pre-pull list onto
+        # nemotron-3.5-bolt:e4b-q8_0 but left deploy/deer-flow-pacgate/config.yaml
+        # on gemma4:12b-it-qat in 6 active places - including models[0], the
+        # default for a bare `docker run` of the published image. No client pulls
+        # that tag any more, so such a run would 404 with no fallback.
+        #
+        # It looked safe because that file is bind-mounted OVER on every client
+        # lane; the defect only bites the one path nothing exercised. Auditing it
+        # here makes the two configs answer to the same list, which is the only
+        # thing that keeps them from drifting again.
+        'deploy/deer-flow-pacgate/config.yaml',
         'deploy/client-bundle/openviking/ov.conf.template'
     ),
     [string]$PrePullList = 'deploy/client-bundle/ollama-models.txt',
@@ -80,14 +93,41 @@ foreach ($cfg in $Configs) {
     if (-not (Test-Path $cfg)) { Fail "config not found: $cfg"; continue }
     $text = Get-Content $cfg -Raw
 
-    # Commented-out entries (a leading '#') are deliberately disabled; skip them so
-    # a disabled model does not trip the guard.
+    # Pacgate 2026-10-30: scan the `models:` BLOCK, not every line of the file.
+    #
+    # The previous matcher was `^\s*model:\s*(\S+)` over the whole YAML, so a
+    # `subagents:` entry's `model:` key was collected as if it were a loadable
+    # model tag. Two such entries in one config produced false positives, and
+    # Normalize-Tag turned each into a `:latest` miss - so the guard exited 1 on a
+    # config that was correct, which is how a guard gets ignored.
+    #
+    # Measured on a fixture: the old matcher reported gemma4-12b-local:latest from a
+    # `subagents:` block; the scoped matcher reports only gemma4:12b-it-qat and
+    # nomic-embed-text:latest.
+    #
+    # JSON configs have no block structure to respect, so the JSON form still scans
+    # the whole file - a JSON model entry IS a loadable model.
     $tags = @()
-    foreach ($line in (Get-Content $cfg)) {
-        if ($line -match '^\s*#') { continue }
-        # YAML `model: <tag>` and JSON `"model": "<tag>"`
-        if ($line -match '^\s*model:\s*(\S+)') { $tags += Normalize-Tag $Matches[1] }
-        elseif ($line -match '"model"\s*:\s*"([^"]+)"') { $tags += Normalize-Tag $Matches[1] }
+    $lines = @(Get-Content $cfg)
+    $isJson = $cfg -match '\.json$'
+
+    if ($isJson) {
+        foreach ($line in $lines) {
+            if ($line -match '^\s*#') { continue }
+            if ($line -match '"model"\s*:\s*"([^"]+)"') { $tags += Normalize-Tag $Matches[1] }
+        }
+    } else {
+        $inModels = $false
+        foreach ($line in $lines) {
+            if ($line -match '^[A-Za-z_][A-Za-z0-9_-]*\s*:') {
+                # A new top-level key ends the models block.
+                $inModels = ($line -match '^models\s*:')
+                continue
+            }
+            if (-not $inModels) { continue }
+            if ($line -match '^\s*#') { continue }
+            if ($line -match '^\s*model:\s*(\S+)') { $tags += Normalize-Tag $Matches[1] }
+        }
     }
     $tags = @($tags | Where-Object { $_ } | Sort-Object -Unique)
     Write-Host "  $cfg"

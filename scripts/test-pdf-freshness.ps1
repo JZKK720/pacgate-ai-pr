@@ -126,9 +126,24 @@ foreach ($pdf in $tracked) {
 
     # Working-tree freshness: an uncommitted md edit that also changes mtime. On a
     # fresh clone all mtimes are the checkout time, so this cannot fire there.
+    #
+    # mtime ALONE is not evidence of an edit. It moves for reasons that leave the
+    # content identical - a version bump applied then reverted (the revert restores
+    # the bytes but not the clock), a checkout, a formatter no-op. Measured
+    # 2026-10-28: AIPC-DEPLOYMENT-HANDBOOK.md carried a newer mtime than its PDF
+    # while `git status` was empty and its blob hash still equalled HEAD's
+    # (f8f8822...), so this branch reported "STALE - uncommitted edit" about a file
+    # that had no edit at all. Gate the mtime signal behind an actual content
+    # difference, so it stays useful for a genuine uncommitted edit and stops
+    # crying wolf otherwise.
     $pdfMt = (Get-Item $pdf).LastWriteTimeUtc
     $mdMt = (Get-Item $src).LastWriteTimeUtc
-    $byMtime = ($mdMt -gt $pdfMt)
+    $mdDirty = $false
+    if ($mdMt -gt $pdfMt) {
+        $dirtyOut = (& git @GitPathArgs status --porcelain -- $src 2>$null | Out-String)
+        $mdDirty = -not [string]::IsNullOrWhiteSpace($dirtyOut)
+    }
+    $byMtime = ($mdMt -gt $pdfMt) -and $mdDirty
 
     if ($byCommit -or $byMtime) {
         $why = if ($byCommit) { 'commit history' } else { 'working-tree mtime' }

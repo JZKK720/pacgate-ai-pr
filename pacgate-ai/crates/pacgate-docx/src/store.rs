@@ -596,7 +596,7 @@ fn page_starts(content: &str, lines_per_page: usize) -> Vec<usize> {
     for (idx, b) in content.bytes().enumerate() {
         if b == b'\n' {
             line_count += 1;
-            if line_count % lines_per_page == 0 {
+            if line_count.is_multiple_of(lines_per_page) {
                 starts.push(idx + 1);
             }
         }

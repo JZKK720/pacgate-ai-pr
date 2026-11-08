@@ -5,6 +5,12 @@ __pycache__/
 *.pyc
 .venv/
 
+# Firecrawl CLI working directory. `firecrawl scrape/search ... -o <path>` and
+# `firecrawl init` write here, and the CLI stores its own session there. Scraped
+# page bodies are third-party content (whole articles, client-visible pages) and
+# have no place in a repo whose diff reviewers read.
+.firecrawl/
+
 # Rust build artifacts
 pacgate-ai/target/
 pacgate-ai/**/target/
@@ -252,3 +258,14 @@ sync-fork-after.png
 # Gate-suite and upgrade transcripts written during a session.
 /checks-*.log
 /upgrade-*.log
+
+# Staged laya weights (staged per machine, never committed). laya-weights/ is the
+# staging target for the laya-serve BUILD CONTEXT: the weights are baked into that
+# image, so CI needs them present only at build time.
+laya-hf-cache/
+deploy/laya-serve/laya-weights/
+
+
+# Local dev-lane image override (see the file's own header for why).
+# A local build must never be tagged over a published ghcr artifact.
+deploy/client-bundle/compose.local-dev-override.yaml

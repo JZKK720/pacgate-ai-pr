@@ -593,7 +593,21 @@ impl ConnectorRegistry {
                 env_var: Some("ANSVAR_API_KEY".into()),
                 priority: ConnectorPriority::Evaluate,
                 region: ConnectorRegion::Europe,
-                implemented: true,
+                // Measured 2026-10-31: this flag was true while the crate contained no
+                // `impl DataSourceConnector for AnsvarConnector` anywhere, so
+                // GET /api/search/registry claimed an implementation that could not be
+                // called and GET /api/search/connectors omitted the name. Measured
+                // live on 0.2.8: 11 entries claimed implemented, 10 were actually
+                // constructible, and `ansvar` was the difference.
+                //
+                // Ansvar is a self-hosted MCP server
+                // (github.com/Ansvar-Systems/EU_compliance_MCP) and is NOT deployed in
+                // this stack, so there is nothing to point a client at. ANSVAR_API_KEY
+                // was documented in .env.example, both compose files and the archived
+                // handoff for a connector that cannot run. Catalogued-and-not-
+                // implemented is the honest state; flip this back only together with a
+                // real impl and a key that reaches it.
+                implemented: false,
             })
             // ── Hong Kong ──
             .with_entry(ConnectorMetadata {
@@ -1656,6 +1670,163 @@ impl DataSourceConnector for GleifConnector {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Firecrawl — general web search and page extraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Firecrawl — web search and page-to-markdown extraction.
+///
+/// Requires an API key (env: `FIRECRAWL_API_KEY`). Each AIPC registers its own key,
+/// so this connector is deliberately inert until one is pasted into `.env`:
+/// `is_available()` is false and `search()` returns an empty Vec, which the router
+/// treats as "no results from this source" rather than an error.
+///
+/// WHY THIS IS A CONNECTOR AND NOT AN MCP SERVER: measured 2026-10-31, the pinned
+/// deer-flow image carries no `firecrawl-mcp` binary (only `npx`), the MCP connector
+/// template has never contained a firecrawl entry, and that image has NO per-server
+/// isolation - `get_mcp_tools()` awaits one `client.get_tools()` for all servers and
+/// returns `[]` on any exception. So a firecrawl MCP entry with an empty key would not
+/// degrade web search; it would remove every MCP tool, including `pacgate` and
+/// `officecli`. As a Rust connector its failure mode is a single empty result set,
+/// which is the property that makes per-machine keys safe.
+///
+/// `source_level` is `auxiliary_db`, not `authority_verified`: a web page is not
+/// statutory text, and the 4-level grading must not be inflated by a search hit.
+pub struct FirecrawlConnector {
+    api_key: Option<String>,
+    client: reqwest::Client,
+}
+
+impl FirecrawlConnector {
+    pub fn new(api_key: Option<String>) -> Self {
+        Self {
+            api_key,
+            client: build_connector_client(),
+        }
+    }
+}
+
+#[async_trait]
+impl DataSourceConnector for FirecrawlConnector {
+    fn name(&self) -> &str { "firecrawl" }
+    fn display_name(&self) -> &str { "Firecrawl (Web Search)" }
+    fn is_available(&self) -> bool { self.api_key.is_some() }
+
+    async fn search(&self, query: &SearchQuery) -> Vec<SearchResult> {
+        let api_key = match &self.api_key {
+            Some(k) => k,
+            None => return Vec::new(),
+        };
+
+        // Contract measured against the live endpoint 2026-10-31:
+        //   POST https://api.firecrawl.dev/v1/search
+        //   {"query": "...", "limit": N}
+        //   -> {"success": true, "data": [{"url","title","description"}], "id": "..."}
+        // `limit` is honored server-side and CJK queries round-trip correctly.
+        let body = serde_json::json!({
+            "query": query.keywords,
+            "limit": query.limit,
+        });
+
+        let resp = match self.client
+            .post("https://api.firecrawl.dev/v1/search")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "firecrawl search failed");
+                return Vec::new();
+            }
+        };
+
+        if !resp.status().is_success() {
+            // A wrong or expired key lands here. Warn, do not propagate: the router
+            // aggregates, and one dead source must not fail the whole search.
+            tracing::warn!(
+                connector = self.name(),
+                status = %resp.status(),
+                "firecrawl search returned a non-success status"
+            );
+            return Vec::new();
+        }
+
+        let json: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(connector = self.name(), error = %e, "firecrawl response was not JSON");
+                return Vec::new();
+            }
+        };
+
+        // `success: false` can still arrive with HTTP 200 on some deployments.
+        if json.get("success").and_then(|v| v.as_bool()) == Some(false) {
+            tracing::warn!(connector = self.name(), "firecrawl reported success=false");
+            return Vec::new();
+        }
+
+        json.get("data")
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        let title = item.get("title")?.as_str()?.to_string();
+                        let url = item.get("url").and_then(|v| v.as_str()).map(String::from);
+                        let summary = item
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        Some(SearchResult {
+                            title,
+                            citation: None,
+                            summary,
+                            url,
+                            source_name: self.name().to_string(),
+                            source_level: "auxiliary_db".to_string(),
+                            jurisdiction: query.jurisdiction.clone(),
+                            date: None,
+                            metadata: Some(item.clone()),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn health_check(&self) -> Result<(), SearchError> {
+        let api_key = match &self.api_key {
+            Some(k) => k,
+            None => return Err(SearchError::Auth("FIRECRAWL_API_KEY is not set".into())),
+        };
+
+        // A one-result search is a real end-to-end probe: it exercises auth, the
+        // request schema and the response schema, unlike a health endpoint that can
+        // answer 200 while search is broken. Deliberately cheap (limit: 1).
+        match self.client
+            .post("https://api.firecrawl.dev/v1/search")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({ "query": "test", "limit": 1 }))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
+                Err(SearchError::Auth(format!("HTTP {}", resp.status())))
+            }
+            Ok(resp) if resp.status().as_u16() == 429 => {
+                Err(SearchError::RateLimited("HTTP 429".into()))
+            }
+            Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
+            Err(e) => Err(SearchError::Connection(e.to_string())),
+        }
+    }
+}
+
 /// Create a default SearchRouter with all connectors.
 /// Chinese connectors need API keys (env vars: YUANDIAN_API_KEY, PKULAW_API_KEY, QCC_API_KEY, FYOPEN_API_KEY).
 /// Free international connectors (CourtListener, SEC EDGAR, GLEIF, EUR-Lex) are always active.
@@ -1688,6 +1859,16 @@ pub fn default_router() -> SearchRouter {
         .with_connector(Arc::new(EurLexConnector::new()))
         .with_connector(Arc::new(OpenCorporatesConnector::new(
             std::env::var("OPENCORPORATES_API_KEY").ok(),
+        )))
+        .with_connector(Arc::new(FirecrawlConnector::new(
+            // `.ok()` alone yields `Some("")` for a variable that is set but empty,
+            // which would make `is_available()` true and call the API with an empty
+            // bearer token. `.env.example` ships the line as `#FIRECRAWL_API_KEY=`,
+            // and an operator who uncomments it without pasting a key must get the
+            // "not configured" state, not a 401 on every search.
+            std::env::var("FIRECRAWL_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty()),
         )))
 }
 
@@ -2010,6 +2191,137 @@ impl DataSourceConnector for OpenCorporatesConnector {
             Ok(resp) if resp.status().is_success() => Ok(()),
             Ok(resp) => Err(SearchError::Unavailable(format!("HTTP {}", resp.status()))),
             Err(e) => Err(SearchError::Connection(e.to_string())),
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// THE property that makes a per-machine key safe: with no key the connector is
+    /// inert. If this ever returns true, the connector will call the API on a machine
+    /// that has no credential and the failure surfaces at request time instead of at
+    /// configuration time.
+    #[test]
+    fn firecrawl_is_unavailable_without_a_key() {
+        let c = FirecrawlConnector::new(None);
+        assert!(!c.is_available());
+        assert_eq!(c.name(), "firecrawl");
+    }
+
+    #[test]
+    fn firecrawl_is_available_with_a_key() {
+        let c = FirecrawlConnector::new(Some("fc-test".into()));
+        assert!(c.is_available());
+    }
+
+    /// search() must return an empty Vec, not an error, when there is no key. The
+    /// router aggregates results across connectors, so one unconfigured source
+    /// cannot be allowed to fail the whole search.
+    #[tokio::test]
+    async fn firecrawl_search_is_empty_without_a_key() {
+        let c = FirecrawlConnector::new(None);
+        let q = SearchQuery { keywords: "合同".into(), ..Default::default() };
+        assert!(c.search(&q).await.is_empty());
+    }
+
+    /// health_check() is the one method that MUST report an error - that is its job.
+    #[tokio::test]
+    async fn firecrawl_health_check_reports_missing_key() {
+        let c = FirecrawlConnector::new(None);
+        assert!(matches!(c.health_check().await, Err(SearchError::Auth(_))));
+    }
+
+    /// A web page is not statutory text. Grading it `authority_verified` would inflate
+    /// the 4-level provenance scale the client asked for.
+    ///
+    /// The level is assigned inside `search()`, which needs a live key, so this
+    /// asserts the literal in the source rather than a runtime value. That is a weaker
+    /// check than an integration test but it is not vacuous: it fails if someone
+    /// "upgrades" the grade, which is the mistake worth catching.
+    #[test]
+    fn firecrawl_grades_results_as_auxiliary_not_authority() {
+        let src = include_str!("lib.rs");
+        let impl_block = src
+            .split("impl DataSourceConnector for FirecrawlConnector")
+            .nth(1)
+            .expect("FirecrawlConnector impl not found");
+        let search_fn = impl_block
+            .split("async fn health_check")
+            .next()
+            .expect("search fn not found");
+        assert!(
+            search_fn.contains("source_level: \"auxiliary_db\""),
+            "firecrawl must grade results auxiliary_db"
+        );
+        assert!(
+            !search_fn.contains("authority_verified"),
+            "a web page must never be graded authority_verified"
+        );
+    }
+
+    /// An empty-but-present key must count as NO key. `.env.example` ships the line as
+    /// `#FIRECRAWL_API_KEY=`; an operator who uncomments it without pasting a value
+    /// must get the inert state, not a 401 on every search. This is why the router
+    /// filters empty values rather than calling `.ok()` alone.
+    #[test]
+    fn firecrawl_treats_an_empty_key_as_absent() {
+        let raw = Some(String::new());
+        let filtered = raw.filter(|k: &String| !k.trim().is_empty());
+        assert!(!FirecrawlConnector::new(filtered).is_available());
+
+        let whitespace = Some("   ".to_string());
+        let filtered_ws = whitespace.filter(|k: &String| !k.trim().is_empty());
+        assert!(!FirecrawlConnector::new(filtered_ws).is_available());
+    }
+
+    /// End to end against the REAL Firecrawl API, using a deliberately invalid key.
+    ///
+    /// This is the path a client hits with a typo'd or expired key, and it must degrade
+    /// to an empty result set - not a panic, and not an error that fails the whole
+    /// search across every other connector.
+    ///
+    /// Measured 2026-10-31: `api.firecrawl.dev/v1/search` answers 200 with NO
+    /// Authorization header (unauthenticated/demo tier) but 401 with an INVALID one. So
+    /// a bad key is not a silent no-op upstream; this connector must absorb it.
+    ///
+    /// `#[ignore]` because it needs network egress, which an offline AIPC does not have.
+    /// Run with: cargo test -p pacgate-search -- --ignored
+    #[tokio::test]
+    #[ignore = "requires network egress to api.firecrawl.dev"]
+    async fn firecrawl_bad_key_yields_empty_not_panic() {
+        let c = FirecrawlConnector::new(Some("fc-not-a-real-key-000000".into()));
+        let q = SearchQuery { keywords: "contract law".into(), limit: 1, ..Default::default() };
+        // Must return, and must be empty. A panic or a propagated error fails here.
+        let results = c.search(&q).await;
+        assert!(results.is_empty(), "a rejected key must yield no results, got {}", results.len());
+
+        // health_check is the method that SHOULD surface the auth failure.
+        let h = c.health_check().await;
+        assert!(
+            matches!(h, Err(SearchError::Auth(_)) | Err(SearchError::Unavailable(_))),
+            "a rejected key must report Auth/Unavailable from health_check, got {h:?}"
+        );
+    }
+
+    /// The registry must expose firecrawl. This is what makes the connector reachable
+    /// from /api/search at all - an impl that is never registered is dead code.
+    #[test]
+    fn router_lists_firecrawl() {
+        let entries = default_router().list_connectors();
+        let fc: Vec<_> = entries.iter().filter(|(n, _, _)| n == "firecrawl").collect();
+        assert_eq!(fc.len(), 1, "firecrawl must be registered exactly once");
+
+        // `std::env::var` returns Ok("") for an EMPTY variable, not Err. An earlier
+        // version of this test used is_err() and failed on a machine where the var was
+        // exported-but-empty - the same distinction that makes `is_some()` the correct
+        // availability check, since Some("") would otherwise look like a valid key.
+        let key_state = std::env::var("FIRECRAWL_API_KEY").unwrap_or_default();
+        if key_state.trim().is_empty() {
+            assert!(
+                !fc[0].2,
+                "firecrawl must report unavailable when the key is unset or empty"
+            );
         }
     }
 }

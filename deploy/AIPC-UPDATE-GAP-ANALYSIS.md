@@ -167,3 +167,321 @@ them is the six items in §5.
 
 - `scripts/audit-aipc-update-coverage.ps1` — read-only; classifies every bind
   mount by whether it reaches a running machine unattended.
+
+---
+
+## AIPC1 handoff (2026-10-30) - what was adopted, and what deliberately was not
+
+The handoff arrived as a delta inventory plus nine verdict records. Each item was
+re-verified against this tree and the live 0.2.7 container before any change. Four of
+the nine did not survive that check, and adopting them would have shipped patches for
+behaviour that is already correct.
+
+| ID | Verdict | Outcome here |
+|---|---|---|
+| V-01 | MCP arguments never path-translated | **Adopted.** `deer-flow-mcp-args.py` + `test-mcp-argument-paths.ps1`. The handoff's root cause was right and was re-proved: without `InjectedToolArg`, `runtime` arrives as `None`, so a rewrite would silently no-op. |
+| V-01b | - | **Found, not in the handoff.** The mounted adapter renames hyphens to underscores in the tool prefix, while `get_mcp_tools()` compared against the raw server key. Every hyphenated server lost session pooling and the result path conversion. Fixed in the same patch. |
+| V-02 | `read_file` on a binary says use `pandoc` | **Rejected - already fixed upstream.** The live container returns the pandas/openpyxl hint. `git log -S pandoc` over `sandbox/tools.py` finds nothing; upstream fixed it in `6a4a30fa`. |
+| V-03 | Recursion default was a hardcoded 100 | **Adopted.** The default now equals the ceiling. The existing gate asserted the 100 default as correct, so that assertion was flipped first and red-checked. Two independent floors (`channels/manager.py:51`, `client.py:218`) are recorded as known remaining gaps, not silently declared fixed. |
+| V-04 | `officecli set` rejects the selector `get` accepts | **Adopted as a prompt fix, not a code fix.** officecli is an upstream binary and was not patched. The prompt no longer teaches a command the sandbox rejects, and documents `batch --input`. |
+| V-05 | 14 skills declared tools that resolve to nothing | **Rejected - not applicable.** Upstream ships 3 seeded skills and all three deliberately declare no `allowed-tools`, with the measured reason in their headers. `test-skill-evolution.ps1` E5 already enforces this. |
+| V-06 | `audit-model-tags.ps1` false positives | **Adopted.** Scoped to the `models:` block and registered in the gate list, which it never was - it was described in comments there but never invoked, which is why it reported clean while the Rust tier roster 404'd. |
+| V-07 | The connector template wipes 27 connectors | **Adopted, and worse than reported.** The change report compared against a hardcoded three-name list, so removals beyond `firecrawl` were not even named. Measured on a fixture: 6 servers in, 3 out, 1 named. The render now merges and never removes. |
+| V-08 | `thinking_enabled` defaults ON | **Adopted in source.** Build-time only: the frontend image ships compiled output and has no source mount, so this lands on the next image build. |
+| V-09 | A local 0.2.8 was invented | **Nothing to do.** Confirmed: no `0.2.8` string exists in the tracked tree. Recorded so it is not repeated. |
+| Part 3 | 5 of 6 playbook references are dangling | **Not applicable.** Upstream has no `playbooks/` and none of the three seeded skills references one. The dangling references live in AIPC1's 60-skill corpus, which lives in a different repo and must not be ported. |
+| Part 4 | `OPERATOR.md` is tracked and public | **Corrected.** `git ls-files` returns nothing, `git check-ignore` matches, and both historical blobs carry `[REDACTED - see password manager]` with no live value. Credential status is owned by `plans/013-credential-rotation.md`. |
+
+### Firecrawl: why it is NOT in the template, and what to do per machine
+
+AIPC1 asked whether each machine needs its own Firecrawl key registered before the
+connector ships. Two measured facts decide the shape:
+
+1. **`firecrawl` is not in the template at all.** `deer-flow-extensions-config.template.json`
+   carries exactly three servers (`openviking`, `pacgate`, `officecli`). `firecrawl`
+   appeared only in the installer's hardcoded `$knownServers` list - which is why the
+   old render named it and nothing else. Adding it now means writing a NEW connector
+   entry, and the invocation form (`command`/`args`) is not recorded anywhere in this
+   repo, because AIPC1's live config is gitignored. It is therefore not invented here.
+2. **A failing MCP server takes every MCP tool with it.** The pinned 0.2.7 image has no
+   per-server isolation: `get_mcp_tools()` awaits one `client.get_tools()` for all
+   servers and its `except` handler logs and `return []`. So one `firecrawl` entry with
+   an empty key does not degrade web search - it silently removes `pacgate`,
+   `officecli` and every legal-database connector too.
+
+Because of (2), the per-machine registration must be an **opt-in switch**, not an
+enabled-by-default entry: ship the connector with `"enabled": false` and a
+`${FIRECRAWL_API_KEY}` placeholder, and let the operator flip `enabled` to `true` on a
+machine only after the key is in `.env`. The key store already exists - `setup-qm.ps1`
+reads `FIRECRAWL_API_KEY` from the bundle's gitignored `.env`, which is the documented
+single source - so no new secret mechanism is needed.
+
+**Open action:** obtain AIPC1's exact firecrawl `command`/`args` and add the disabled
+entry plus a gate assertion that every enabled server resolves to a non-empty key.
+Until then, no machine should add an enabled firecrawl entry by hand: one wrong entry
+is a total MCP outage, not a partial one.
+
+### Deliberately not ported
+
+The 60 skills and the `playbooks/` corpus live in `pacgate-ai/deer-flow` on branch
+`pacgate-layer`, not here. The live `deer-flow-extensions-config.json` holds 27
+legal-database credentials and is gitignored for that reason. Porting either would
+leak credentials or fork a corpus that has its own repo.
+
+### Open, not fixed by this change
+
+- `app/channels/manager.py:51` and `deerflow/client.py:218` each hardcode
+  `recursion_limit: 100` independently of `build_run_config`. The IM path routes
+  through the gateway and is therefore floored; a direct `deerflow.client` caller is not.
+- The frontend thinking fix is inert until the next frontend image build.
+- `compose.prod.yaml`'s seed-skills comment cites
+  `sandbox/tools.py:validate_local_tool_path`, which does not exist in the pinned image
+  (the real function is `validate_local_file_path`). The behaviour it describes is
+  correct; the citation is wrong.
+
+### Superseded 2026-11-07: the recursion clamp needed a floor
+
+The clamp described above was adopted, and it was **not sufficient**. It bounded an
+upper request (`caller 1000 -> ceiling 4000`) but never raised a caller back up, so
+the chat UI's unconditional `recursion_limit: 1000` remained authoritative on every
+run and the 4000 ceiling was never binding.
+
+Measured across 333 runs: 22 `GraphRecursionError`s, every client-budgeted one at
+exactly 1000 (114-136 LLM calls), four checkpoint walks consuming exactly 1001
+super-steps (the wall: a killed run's last step index is `limit + 1`), while the
+deepest **successful** run whose checkpoints were retained used 937 of its 1000 - only
+63 steps of headroom - and the deepest success on record (138 LLM calls, checkpoints
+pruned) extrapolates to ~1150-1200 at the 8.24-8.88 ratio every other deep success
+shows. 1000 sat at the graph's working depth rather than above it, and the killed
+runs were not thrashing (one made 111 model calls for 15 distinct tool payloads and
+left a real memo on disk).
+
+`build_run_config()` now applies `_PACGATE_MIN_RECURSION_LIMIT` (default 2000,
+`DEERFLOW_MIN_RECURSION_LIMIT`) as a floor and the frontend no longer sends the key at
+all. The ceiling stays at 4000 and a caller may still ask for more, up to it. Full
+measurements are in `DEFECT-recursion-budget-floor.md`; the gate
+`scripts/test-run-recursion-cap.ps1` passes 43/43 including live checks against the
+running container. Note that this also **retired a gate assertion** that had pinned
+the defect: `test-run-recursion-cap.ps1` previously required "the UI's 1000 sits under
+the ceiling and passes through", and `audit-recursion-regressions.ps1` counted a kill
+at 1000 as "the cap working".
+
+## 0.2.8 release verification (2026-10-30)
+
+Tag `v0.2.8` = `b970466`. Workflow run 41058079927 on `v0.2.8` completed; all five
+images are published and anonymously pullable (token `200` per package, which is the
+check that matters - clients run `docker login` for nothing).
+
+| Check | Result |
+|---|---|
+| `credential-guard` job (blocks the build) | success |
+| all 5 images built and pushed | success |
+| anonymous pull token, each package | 200 |
+| stack up on `:0.2.8`, every service healthy | yes |
+| `test-stack-version-coherence` | 14 passed |
+| `test-baked-patch-parity` | 13 passed, **0 warnings** (drift resolved) |
+| `test-thinking-default` incl. T5 (built image) | 12 passed |
+| `test-mcp-argument-paths` | 21 passed |
+| `test-document-generation-e2e` (live run) | 19 passed, 0 failed |
+
+The frontend fix is now in the compiled bundle, which is the only way it could ship:
+`thinking_enabled:"thinking"===d.mode||"pro"===d.mode||"ultra"===d.mode`. The 0.2.7
+image carried `thinking_enabled:"flash"!==d.mode`. The backend's baked recursion
+default also moved from the stale `100` to `_PACGATE_MAX_RECURSION_LIMIT`.
+
+### GHCR preflight fails behind a dead local proxy, and that is not a repo defect
+
+Both `preflight-release-tag.ps1` and `verify-delivery-state.ps1` reported every GHCR
+tag as `UNVERIFIED` / `ERROR` while the packages were in fact public and pullable.
+The cause was the environment, not the code:
+
+```text
+HTTP_PROXY=http://127.0.0.1:7892
+HTTPS_PROXY=http://127.0.0.1:7892     <- nothing listening on 7892
+```
+
+`docker manifest inspect ghcr.io/...:0.2.7` reported `proxyconnect tcp: dial tcp
+127.0.0.1:7892: connectex: No connection could be made`, and `curl` to
+`https://ghcr.io/v2/` returned `http=000 exit=7`. With the proxy cleared, the same
+commands return the 0.2.7 manifest (and `manifest unknown` for 0.2.8 before the
+release), which is the correct pair of answers.
+
+So when either script says GHCR is `UNVERIFIED`, check the proxy before believing the
+registry is unreachable:
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 7892 -InformationLevel Quiet   # False = dead proxy
+$env:HTTP_PROXY = ''; $env:HTTPS_PROXY = ''; $env:NO_PROXY = '*'
+.\scripts\preflight-release-tag.ps1
+```
+
+The scripts are right to refuse to guess: an unreadable answer is not evidence the
+images exist. The mistake would be reading `UNVERIFIED` as "the registry is down".
+
+## Firecrawl and e2e coverage (2026-10-31)
+
+### Firecrawl is a connector, not an MCP server - and that is a safety decision
+
+Each AIPC pastes its own `FIRECRAWL_API_KEY` into `.env`; until then the connector
+reports `available=false` and /api/search simply returns no web results.
+
+The alternative - a `firecrawl` entry in `deer-flow-extensions-config.json` - was
+rejected on measurement, not preference:
+
+- the pinned deer-flow image carries no `firecrawl-mcp` binary (only `npx`), so the
+  entry would need a runtime install on an offline machine;
+- the MCP template has never contained a firecrawl entry;
+- and the image has NO per-server isolation. `get_mcp_tools()` awaits one
+  `client.get_tools()` for all servers and its `except` handler logs and `return []`.
+  A firecrawl entry with an empty key would not degrade web search, it would remove
+  every MCP tool including `pacgate` and `officecli`.
+
+As a `DataSourceConnector` the failure mode is one empty result set. Verified
+contract: `POST https://api.firecrawl.dev/v1/search` with `{"query","limit"}` returns
+`{"success",data:[{"url","title","description"}]}`; `limit` is honored and CJK
+queries round-trip.
+
+`source_level` is `auxiliary_db`. A web page is not statutory text and must not be
+graded `authority_verified`.
+
+### A connector key name was wrong for three releases
+
+The code reads `COURTLISTENER_API_KEY`. Both compose files and `plans/013` told
+operators to set a differently spelled name with an extra underscore. Nothing reads
+that spelling, so an operator who followed the docs got a connector that reported
+`available=false` forever with no error, no log line, and no symptom beyond "this
+source never returns results". `test-connector-registry.ps1` now asserts the contract
+in both directions: every key the code reads is documented, and no documented
+connector key is one the code ignores.
+
+### A second false "implemented" claim
+
+The registry has 27 catalog entries; 11 were marked `implemented: true` while only 10
+had a `DataSourceConnector` impl. `ansvar` was the mismatch, and `ANSVAR_API_KEY` was
+documented for a connector that cannot be constructed. `GET /api/search/registry`
+returned the claim while `GET /api/search/connectors` omitted the name, so the two
+endpoints disagreed. Fixed, and `K6` in `test-connector-registry.ps1` now compares the
+flags against the impls so it cannot drift again.
+
+### Two coverage gaps closed
+
+- The **legal journey** (matter -> upload -> extract -> sanitize -> review gate ->
+  KB search -> external search -> connector health -> deer-flow auth -> qm ->
+  OpenViking recall) passed 19/19 while being absent from `run-all-checks.ps1`. A
+  release could have shipped with the entire journey broken and the suite would have
+  said "all green".
+- **No agent->MCP E2E existed.** `smoke-full-stack.ps1` said so in its own text. The
+  measured cost: an unescaped brace in the prompt made every agent run die at
+  construction with `KeyError: '"command"'` and the full suite stayed green.
+  `test-agent-mcp-e2e.ps1` now starts a run that cannot be answered without a tool
+  call and asserts a real advertised tool name appears in the payload, with a result.
+  Verified live: the run calls `pacgate_list_connectors` and `pacgate_kb_search`.
+
+### Baseline for the next release
+
+Connector availability on the shipped `0.2.8` image, measured: **4 of 10** -
+`courtlistener`, `sec_edgar`, `gleif`, `eur-lex`. Firecrawl is registered in this
+change but is not in that image; a rebuild makes it **5 of 11**, and adding
+`FIRECRAWL_API_KEY` makes it available. The rest (`yuandian`, `pkulaw`, `qcc`,
+`fyopen`, `vaquill`, `opencorporates`) need subscriptions only the client can
+provide. Re-measure with:
+
+```powershell
+pwsh -NoProfile -File scripts/test-legal-journey.ps1 2>&1 | Select-String 'connector health'
+```
+
+and correct this paragraph if the number differs - do not leave a claim that was not
+measured.
+
+### 0.2.9 release verification (2026-10-31)
+
+Tag `v0.2.9` = `706845f`. Workflow 41167126785 completed; all five images published
+and the connector is in the shipped binary - verified by grepping the image, not by
+trusting the build log:
+
+```text
+grep -ao "api\.firecrawl\.dev"        /usr/local/bin/pacgate-server  -> api.firecrawl.dev
+grep -ao "Firecrawl (Web Search)"     /usr/local/bin/pacgate-server  -> Firecrawl (Web Search)
+grep -ao "FIRECRAWL_API_KEY"          /usr/local/bin/pacgate-server  -> FIRECRAWL_API_KEY
+```
+
+Live on the 0.2.9 stack, both fixes measured rather than assumed:
+
+| Check | 0.2.8 | 0.2.9 |
+|---|---|---|
+| `/api/search/health` entries | 10 | **11**, now including `firecrawl` |
+| `firecrawl` available | n/a | **false** - correct with no key set |
+| `/api/search/registry` implemented claims | 11 | **10** |
+| `ansvar` marked implemented | true | **false** |
+
+Full suite: **all 61 gates passed**, including the two new e2e gates
+(`test-legal-journey.ps1`, `test-agent-mcp-e2e.ps1`) and `test-rust-workspace.ps1`.
+
+### Why 0.2.9 exists at all
+
+`test-release-provenance.ps1` refused to pass 0.2.8 once
+`pacgate-ai/crates/pacgate-search/src/lib.rs` changed: that path is COPYed into the
+`pacgate-api` image, so editing it after a tag invalidates the release. The gate was
+right and there was no way to argue with it - the connector could not reach a client
+on a 0.2.8 pin. That is the intended behaviour of a provenance check, and it is worth
+recording because the alternative ("just re-push :0.2.8") is exactly what this gate
+exists to prevent.
+
+### Still blocked on this machine, and not a repo defect
+
+- **Docker Hub is unreachable** (`registry-1.docker.io` times out; the configured
+  proxy at 127.0.0.1:7892 is not running). A local `build-images.ps1` cannot resolve
+  `rust:1.94-bookworm`, and `docker compose pull` cannot resolve the `nginx` base
+  image. GHCR itself is fine. Any local rebuild work needs that proxy restored or
+  the egress fixed first.
+- Task 8's "prove it through the container with a real key" step therefore ran at the
+  connector boundary against the live Firecrawl API instead (ignored-by-default test,
+  passes in 1.26s), plus the live stack proving `firecrawl` appears and is correctly
+  unavailable without a key. A real key has not been exercised end to end inside the
+  container because no key exists on this machine and none should be committed.
+
+## Third-party skills and tools (2026-10-31)
+
+Five external repositories were proposed for building into the product:
+`wuyoscar/jev-skill`, `ibelick/ui-skills`, `cobusgreyling/loop-engineering`,
+`wandb/openui`, and `CopilotKit/OpenIntelligentUI`.
+
+All five are structurally mountable and all five are rejected. The reasons are
+not structural, which is why the decision is stable across their future
+releases. Full reasoning in
+`docs/superpowers/plans/2026-10-31-third-party-skill-adoption.md`.
+
+- **Cloud egress is the blocker, not format.** Every `jev-*` skill requires
+  `TYPESAFE_API_KEY` and three name the metered `jev-mcp` server directly.
+  `openui` and `OpenIntelligentUI` each require an OpenAI-compatible key.
+  Mounting any of them makes a closed-box matter send prompts to a third party.
+  `ui-skills` has no egress but no client-facing surface either.
+- **Bundle-sealed seeds are never scanned.** `scan_skill_content` is imported
+  only by `installer.py`, `skill_manage_tool.py`, and `gateway/routers/skills.py`
+  - the install and learn paths. `deer-flow-skills/` is bind-mounted read-only
+  and never passes through it. That is acceptable for three self-authored
+  skills with no executable content. It would not be acceptable for 14
+  imported ones, so an install-time scan in `package-bundle.ps1` is the
+  prerequisite for any externally sourced seed.
+- **Verified conformance anyway.** 14 third-party skills were checked against
+  E4/E5: every `name` matches its directory, none declares `allowed-tools`, and
+  the only keys used (`name, description, license, metadata, version`) are all
+  in `ALLOWED_FRONTMATTER_PROPERTIES`.
+
+### Two gate false-failures found and fixed by this analysis
+
+Neither was caused by the third-party review, but that review is what exposed
+them. Both were reporting correct input as a defect.
+
+- **E4 rejected valid YAML block scalars.** The loader parses frontmatter with
+  `yaml.safe_load`, so `description: >` resolves to the joined text. E4 matched
+  only the first physical line, captured the literal `>`, and failed the skill
+  as too short. `ui-skills/fixing-metadata` is written that way: 340 chars
+  resolved, 1 reported. Fixed; 14/14 third-party skills now pass, a 19-char
+  description still fails.
+- **`test-initialize-gate.ps1` hardcoded its network.** The default
+  `client-bundle_default` only resolves when the bundle directory is named
+  `client-bundle`. Here it is `pacgate-ai-bundle`, so `docker run --network`
+  failed and the gate reported "container starts from 0.1.17" as a product
+  defect. All 8 assertions passed once the network was right. It now resolves
+  from the running stack and exits 2 when it cannot.

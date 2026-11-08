@@ -66,7 +66,21 @@ function Invoke-Psql([string]$sql) {
     # wrong loudly, which is how it was caught. STDIN has no quoting to get wrong.
     $out = $sql | docker exec -i $DbContainer psql -U pacgate -d pacgate -t -A 2>&1
     if ($LASTEXITCODE -ne 0) { return $null }
-    return @($out | Where-Object { $_ -and $_.Trim() })
+    # `2>&1` merges docker's STDERR into this stream as ErrorRecord objects, and an
+    # ErrorRecord has no .Trim(). A warning line (a container-health notice, a psql
+    # NOTICE) therefore threw MethodNotFound inside this filter and the error object
+    # itself survived into the returned array as a counted "match". Measured
+    # 2026-11-02: the audit reported "10 raw match(es)" while printing the exception
+    # above the count. Cast to string first, then filter on CONTENT, so a diagnostic
+    # can never be counted as a leak again.
+    #
+    # Encoding + hard-fail on a rejected query live in the SHARED helper. This script
+    # had the same console-code-page bug as the remediation (see
+    # `Invoke-PacgatePsql`): five patterns carry the full-width colon, which the pipe
+    # replaced with `?` on code page 936, and `[:?]?` is a Postgres syntax error. Two
+    # scripts reading the same patterns must not each own their own psql plumbing -
+    # that is how they drifted apart twice before.
+    return @(Invoke-PacgatePsql -Sql $sql -Container $DbContainer)
 }
 
 # 0. Reachability. Exit 2 rather than reporting a clean bill of health for a
@@ -97,12 +111,41 @@ $totals | ForEach-Object { Write-Output "  $($_.Trim())" }
 Write-Output ''
 
 # 2. The finding: rows LABELLED sanitized whose content matches a raw pattern.
+#
+# The count must EXCLUDE matches that sit inside a token this redactor minted.
+# MEASURED 2026-11-03: counting `content ~ '$rx'` alone reported `cn_landline` 2 and
+# `sg_nric` 1 on documents that were clean - the patterns matched hex payloads
+# inside `[CN_ID_BF05012917050DF0]` and `[CN_MOBILE_C1F3732998EFA823]`. That is the
+# same false-positive class as the Rust rescan's P0-2, one layer further out, and it
+# made the audit unusable in the same way: an alert an operator learns to ignore.
+#
+# SQL ERE has no lookbehind, so the exclusion is expressed as "at least one match
+# whose text is not contained in any token". A row holding BOTH a token and a real
+# leak still counts, because the real match is outside the token.
 $totalLeak = 0
 foreach ($name in $patterns.Keys) {
     $rx = $patterns[$name]
+    # Delegates to the SHARED exclusion, but stays PER-PATTERN.
+    #
+    # Two copies of the exclusion logic existed (here, and the affected-document
+    # query) and each had to be fixed separately. MEASURED 2026-11-03: the zero-run
+    # guard was added to the shared file, this count still had a local copy, and the
+    # audit kept reporting 7 historical format-preserving masks as leaks.
+    #
+    # Note `$rx` is still bound per iteration: substituting the whole-pattern union
+    # here made every class report the same total (measured: 15 classes x 5 = 75),
+    # which is a different wrong answer, not a fix.
     $row = Invoke-Psql @"
-SELECT count(*) FROM kb_chunks
-WHERE sanitization_state = 'sanitized' AND content ~ '$rx'
+SELECT count(*) FROM kb_chunks c
+WHERE c.sanitization_state = 'sanitized'
+  AND EXISTS (
+      SELECT 1 FROM regexp_matches(c.content, '$rx', 'g') AS m(tok)
+      WHERE m.tok[1] !~ '000|111|222|333|444|555|666|777|888|999|XXX'
+        AND NOT EXISTS (
+            SELECT 1 FROM regexp_matches(c.content, '\[?[A-Z][A-Z0-9_]*_[0-9A-F]{8,}\]?', 'g') AS t(tok)
+            WHERE strpos(t.tok[1], m.tok[1]) > 0
+        )
+  )
 "@
     $n = 0
     if ($row -and ($row | Select-Object -First 1).Trim() -match '^\d+$') {
@@ -174,6 +217,13 @@ Write-Output ''
 # four documents, of which ZERO were real leaks - one was the redactor's own
 # placeholder (a guard off-by-one, now fixed), two were checksum-invalid
 # fictional fixtures, and the rest were substring double-counts.
+# The placeholder guard comes from the shared file, not a local copy. Three more
+# copies of the literal `(?!0{16})` lived here and in the remediation script; the
+# 2026-11-02 placeholder change broke all of them at once (index 10 onward eats a
+# leading zero per digit), which is exactly why the value is defined once.
+$idCardPattern = $patterns['cn_id_card']
+$usccPattern   = $patterns['uscc']
+
 $classify = Invoke-Psql @"
 WITH m AS (
   SELECT c.document_id, c.chunk_index, c.content
@@ -182,10 +232,10 @@ WITH m AS (
     AND ($(Get-PacgateRawPiiPredicate 'c.content'))
 )
 SELECT left(document_id::text,8) || '|' || chunk_index || '|' ||
-       (content ~ '(?!0{16})[0-9]{17}[0-9Xx]')::text || '|' ||
-       (content ~ '(?!0{16})[0-9A-HJ-NPQRTUWXY]{18}')::text || '|' ||
+       (content ~ '$idCardPattern')::text || '|' ||
+       (content ~ '$usccPattern')::text || '|' ||
        (content ~ '1[3-9][0-9]{9}')::text || '|' ||
-       (content ~ '0(10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}')::text
+       (content ~ '0(?:10|2[1-9]|[3-9][0-9]{2})-?[0-9]{7,8}')::text
 FROM m
 "@
 $classify = @($classify | Where-Object { $_ -and $_.Trim() })
@@ -205,16 +255,28 @@ if ($classify.Count -gt 0) {
     Write-Output ''
 }
 
-# 2c. Checksum-validate the ID-shaped matches.
+# 2c. Classify the ID-shaped matches by check digit.
 #
-# This is the distinction the audit was missing. The product refuses to call a
-# bare digit run an identifier (spec 8.4), so a checksum-INVALID 18-digit run in
-# a sanitized chunk is the product working as designed, not a leak. Only a
-# checksum-VALID one proves the row was never rewritten.
+# This used to be a LEAK / NO-LEAK decision: the audit concluded that a
+# checksum-invalid 18-digit run was the product working as designed, so a machine
+# whose only matches were invalid IDs got "NO LEAK, exit 0".
 #
-# Measured 2026-10-25: both remaining documents are fixtures whose IDs fail the
-# ISO 7064 MOD 11-2 check (110105199003074512 -> expected 6, got 2;
-# 320102199205067890 -> expected 4, got 0). Zero real leaks.
+# MEASURED 2026-11-02 that conclusion is WRONG and was removed. A resident ID whose
+# shape is well-formed (region prefix plus a real calendar birthdate) is now redacted
+# even when its check digit is wrong, because a mistyped or OCR-damaged ID is still
+# personal data. The client case that forced this: `110105199003074512` has a bad
+# check digit (expected X, got 2), survived the old rule layer, was indexed as
+# searchable, and could be used as a lookup key against the vector store - in a
+# document carrying the `sanitized` label.
+#
+# So this number is now EVIDENCE WEIGHT, not a verdict input:
+#   * checksum-VALID matches are certainly issued identifiers;
+#   * checksum-INVALID matches are identifier-SHAPED values that the current rule
+#     layer redacts anyway, so finding one in a `sanitized` chunk means the chunk was
+#     written before the fix (or by a build without it) and must be re-sanitized.
+#
+# Both are reported as leaks. The distinction survives because an operator triaging a
+# long list wants to know which ones are unambiguous.
 $validIds = Invoke-Psql @"
 CREATE OR REPLACE FUNCTION pg_temp.cn_id_valid(s text) RETURNS boolean AS `$`$
 DECLARE
@@ -234,7 +296,7 @@ END;
 SELECT count(*) FROM kb_chunks c
 WHERE c.sanitization_state = 'sanitized'
   AND EXISTS (
-    SELECT 1 FROM regexp_matches(c.content, '(?!0{16})[0-9]{17}[0-9Xx]', 'g') AS r
+    SELECT 1 FROM regexp_matches(c.content, '$idCardPattern', 'g') AS r
     WHERE pg_temp.cn_id_valid(r[1])
   )
 "@
@@ -242,29 +304,17 @@ $validIds = ($validIds | Where-Object { $_ -and $_.Trim() -match '^\d+$' } | Sel
 if (-not $validIds) { $validIds = '0' }
 $validIds = $validIds.Trim()
 Write-Output "  checksum-VALID resident IDs in sanitized chunks: $validIds"
-Write-Output '  (a checksum-INVALID 18-digit run is NOT a leak - spec 8.4 forbids'
-Write-Output '   identifying an identifier from a bare digit run)'
+Write-Output '  (checksum-INVALID ID-shaped values are ALSO leaks since 2026-11-02:'
+Write-Output '   a mistyped or OCR-damaged ID is still personal data and is now'
+Write-Output '   redacted by the rule layer - see cn_resident_id_shape_ok)'
 Write-Output ''
-
-if ($totalLeak -gt 0 -and $validIds -eq '0') {
-    # Pattern matches exist, but not one of them is a checksum-valid identifier.
-    # This is the product working as designed, not a leak - and calling it one
-    # sends an operator to re-sanitize documents that are already clean.
-    Write-Output "== RESULT: $totalLeak pattern match(es), 0 checksum-valid - NO LEAK =="
-    Write-Output ''
-    Write-Output 'Every match is either a checksum-INVALID digit run (which spec 8.4'
-    Write-Output 'forbids treating as an identifier) or an inner substring of one. The'
-    Write-Output 'sanitizer is behaving as designed; there is nothing to remediate.'
-    Write-Output ''
-    Write-Output 'If these documents are fixtures, this is expected. If one is real'
-    Write-Output 'client material, check whether the ID is genuinely invalid before'
-    Write-Output 'concluding the redactor missed it.'
-    exit 0
-}
 
 if ($totalLeak -gt 0) {
     Write-Output "== RESULT: $totalLeak raw match(es) inside SANITIZED chunks - LEAK PRESENT =="
-    Write-Output "   $validIds of them are checksum-VALID resident IDs - those are real."
+    Write-Output "   $validIds of them are checksum-VALID resident IDs (certain)."
+    Write-Output "   The remaining $(($totalLeak) - [int]$validIds) match(es) still count as leaks: a"
+    Write-Output '   checksum-invalid but well-shaped ID is redacted by the current rule layer,'
+    Write-Output '   so finding one in a sanitized chunk means the row predates the fix.'
     Write-Output ''
     Write-Output 'Remediation, per affected document (choose one):'
     Write-Output '  a) Re-sanitize it. The sanitize job REPLACES the chunk text with the'

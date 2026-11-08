@@ -124,6 +124,7 @@ mod tests {
             // that does not exist - a false claim of coverage is worse than a
             // known gap, because it stops anyone from looking.
             allow_registration: true,
+            sanitizer_key: Some("integration-test-key".to_string()),
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -223,6 +224,12 @@ mod tests {
         struct StubKbStore;
         #[async_trait::async_trait]
         impl KbStore for StubKbStore {
+            async fn sanitised_text(
+                &self,
+                _: &pacgate_core::DocumentId,
+            ) -> pacgate_core::Result<Option<String>> {
+                Ok(None)
+            }
             async fn search(
                 &self,
                 _matter_id: &pacgate_core::MatterId,
@@ -1496,6 +1503,7 @@ mod tests {
             ocr_service_url: None,
             ner_model_dir: None,
             allow_registration: true,
+            sanitizer_key: Some("integration-test-key".to_string()),
         });
 
         // Build minimal state (stubs for everything)
@@ -1560,6 +1568,12 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl KbStore for StubAll {
+            async fn sanitised_text(
+                &self,
+                _: &pacgate_core::DocumentId,
+            ) -> pacgate_core::Result<Option<String>> {
+                Ok(None)
+            }
             async fn search(
                 &self,
                 _: &pacgate_core::MatterId,
@@ -1705,6 +1719,7 @@ mod tests {
             ocr_service_url: None,
             ner_model_dir: None,
             allow_registration: true,
+            sanitizer_key: Some("integration-test-key".to_string()),
         });
 
         let doc_store = Arc::new(pacgate_docx::FsDocumentStore::new(
@@ -1989,6 +2004,12 @@ mod tests {
     struct StubKbForWorkspace;
     #[async_trait::async_trait]
     impl pacgate_core::KbStore for StubKbForWorkspace {
+        async fn sanitised_text(
+            &self,
+            _: &pacgate_core::DocumentId,
+        ) -> pacgate_core::Result<Option<String>> {
+            Ok(None)
+        }
         async fn search(
             &self,
             _: &pacgate_core::MatterId,

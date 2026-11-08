@@ -13,6 +13,7 @@ use pacgate_core::DataLevel;
 use crate::detect::{noise::NoiseFilter, Detector};
 use crate::ledger::RedactionLedger;
 use crate::mapping::{JobId, Mapping, MappingVersion};
+use crate::placeholder::TokenKey;
 use crate::policy::{decide, PolicyDecision};
 use crate::replace::Redactor;
 use crate::RedactResult;
@@ -34,17 +35,36 @@ pub struct Sanitizer {
 
 impl Sanitizer {
     pub fn new(detectors: Vec<Box<dyn Detector>>, version: MappingVersion) -> Self {
-        // One Sanitizer = one job (design 3.1 note). The token is random and
-        // minted once, so no two Sanitizer instances can ever mint the same
-        // placeholder name.
-        let job_token = uuid::Uuid::new_v4().simple().to_string()[..8].to_uppercase();
+        // A fresh random key. The token is minted once per sanitizer, so no two
+        // Sanitizer instances can mint the same tag for the same value - which is
+        // the isolation spec 6.2 asks for.
+        //
+        // This constructor is the one-shot path: one document, one process, no
+        // correlation wanted or possible. A caller that needs a matter's documents
+        // to agree on a subject's token must use `with_key` and pass the same key
+        // for every document in the matter - a per-job random key reproduces the
+        // 2026-11-03 defect (same person, token per document, corpus unjoinable).
+        Self::with_key(detectors, version, TokenKey::random())
+    }
+
+    /// Build a sanitizer whose tokens are derived from `key`.
+    ///
+    /// The key is the MATTER's. Every document in a matter must be sanitized with
+    /// the same key, or two documents holding the same person will not agree on a
+    /// token and the corpus cannot be joined on the identifier.
+    ///
+    /// Two matters must use different keys: that is what stops their corpora
+    /// being joined on a person if the data is ever merged.
+    pub fn with_key(
+        detectors: Vec<Box<dyn Detector>>,
+        version: MappingVersion,
+        key: TokenKey,
+    ) -> Self {
         Self {
             detectors,
             version,
             noise: NoiseFilter::new(),
-            // The token is embedded in every placeholder this job mints, so
-            // two jobs can never mint the same name (spec 6.2).
-            redactor: Redactor::new(&job_token),
+            redactor: Redactor::new(key),
         }
     }
 
@@ -81,40 +101,37 @@ impl Sanitizer {
         // across calls within this job.
         let redaction = self.redactor.redact(text, &matches)?;
 
-        // VERIFY - same detector set, replayed against the output, through the
-        // SAME noise reduction the redaction used, PLUS one exclusion that
-        // only the pipeline can make: any span the redactor itself just wrote.
+        // VERIFY - same detector set, replayed against the output.
         //
-        // Two residue sources are pipeline artefacts, not leaks, and a raw
-        // replay counts both - measured 2026-10-08:
-        //   1. Format-preserving placeholders re-fire their own detector. A
-        //      card 4111111111111111 -> 0000000000000018 is Luhn-VALID by
-        //      construction (placeholder.rs), so the replayed BankCard check
-        //      finds a "surviving card" and the verdict is Block with zero
-        //      real residue. The compliance prompts guide held for review
-        //      with 191 clean replacements on every run for this shape.
-        //   2. Candidates the NoiseFilter dropped (an overlapping inner span
-        //      under a longer one, a public case citation) stay in the text
-        //      ON PURPOSE; the raw replay re-finds them as residue.
-        // Both are the pipeline disagreeing with itself. The reduction
-        // removes exactly those two classes; a REAL survivor (text that the
-        // detectors found but redaction missed) is not inside a minted span
-        // and is not suppressible noise, so it still blocks. Fail-closed
-        // paths (empty detector set, detector error) run BEFORE the
-        // reduction and stay intact (see verify.rs).
+        // The verifier is given exactly two things, and neither of them lets
+        // the redactor excuse itself:
+        //
+        //   1. The spans the redactor itself just wrote. A format-preserving
+        //      placeholder re-fires its own detector (a card
+        //      4111111111111111 -> 0000000000000018 is Luhn-VALID by
+        //      construction, see placeholder.rs), so those spans are excluded
+        //      mechanically. Measured 2026-10-08: the compliance prompts guide
+        //      held for review with 191 clean replacements for this shape.
+        //   2. The MODEL-ONLY suppressor. A model span is a guess, and dropping
+        //      a guess on the way out is a deliberate decision, recorded in the
+        //      notes. `is_suppressible_model_match` returns false for every
+        //      non-model source, so it cannot reach a rule match.
+        //
+        // What the verifier is NO LONGER given is `drop_public_entities` over
+        // the RULE layer. Until 2026-11-02 the whole residue was re-suppressed
+        // with the same function the redaction used, which meant a suppressor
+        // that missed a survivor on the way in necessarily missed it on the way
+        // out - so `pass` was reported while eight identifier classes remained
+        // verbatim in text that was then indexed as searchable (measured on the
+        // client scan: 13 replacements, `verdict: pass`, resident ID still
+        // present and usable as a lookup key).
         //
         // COORDINATES: `AppliedRedaction.start/end` are offsets in the INPUT
         // text, but the replay searches the OUTPUT text. Using them directly
         // only works when no earlier redaction changed the length - with one
         // replacement the offsets coincide, which is why the original
-        // single-card test passed. As soon as a phone (whose placeholder is
-        // longer than the number) precedes a card, every later placeholder's
-        // input offset points somewhere else, the exclusion misses, and the
-        // placeholder is reported as residue. Measured on the live stack
-        // 2026-10-25: `e2e_audit` held for review with
-        // `residue=[BankCard "000000000000000026"]` - the redactor's own
-        // placeholder for `110101199003072316`. So the spans are rebuilt in
-        // OUTPUT coordinates by walking the same splice `redact` performed.
+        // single-card test passed. So the spans are rebuilt in OUTPUT
+        // coordinates by walking the same splice `redact` performed.
         let placeholder_spans: Vec<(usize, usize)> = {
             let mut spans = Vec::new();
             let mut cursor_in = 0usize;
@@ -133,27 +150,14 @@ impl Sanitizer {
             }
             spans
         };
-        let noise = &self.noise;
-        let verification = crate::verify::verify_reduced(&redaction.text, &self.detectors, |r| {
-            let kept: Vec<crate::Match> = r
-                .iter()
-                .filter(|m| {
-                    // Keep anything that is not fully inside a minted
-                    // placeholder span.
-                    !placeholder_spans
-                        .iter()
-                        .any(|(s, e)| m.start >= *s && m.end <= *e)
-                })
-                .cloned()
-                .collect();
-            crate::detect::noise::drop_public_entities(
-                &redaction.text,
-                crate::detect::noise::drop_public_citations(
-                    &redaction.text,
-                    noise.apply(&redaction.text, kept),
-                ),
-            )
-        });
+        let verification = crate::verify::verify(
+            &redaction.text,
+            &self.detectors,
+            crate::verify::VerifyScope {
+                placeholders: &placeholder_spans,
+            },
+            crate::detect::noise::is_suppressible_model_match,
+        );
 
         // Build this job's mapping from the allocator's accumulated state, so
         // documents processed earlier in the job are still restorable.

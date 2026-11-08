@@ -188,7 +188,42 @@ static PUBLIC_ENTITIES: Lazy<Vec<&'static str>> = Lazy::new(|| {
         "泰国",
         "越南",
         "印度尼西亚",
-        "菲律宾",
+        // The short forms. MEASURED 2026-11-03: `印尼` was NOT in this list while
+        // 印度尼西亚 was, so `印尼客商在雅加达签约` redacted the country and left
+        // `马来西亚 / 越南 / 菲律宾` untouched in the same paragraph - the audit read
+        // that as inconsistent, and it was. A country name is public geography in
+        // either spelling; a list that knows the long form and not the short one is
+        // a gap, not a policy.
+        "印尼",
+        "马来",
+        // Capitals and major cities. The list already carried 北京 / 上海 / 天津 /
+        // 重庆, so the asymmetry here was the same defect: a jurisdiction name is
+        // not client identity.
+        "雅加达",
+        "东京",
+        "首尔",
+        "大阪",
+        "新加坡市",
+        "吉隆坡",
+        "曼谷",
+        "河内",
+        "胡志明市",
+        "马尼拉",
+        "纽约",
+        "伦敦",
+        "巴黎",
+        "法兰克福",
+        "苏黎世",
+        "迪拜",
+        "悉尼",
+        "墨尔本",
+        "多伦多",
+        "洛杉矶",
+        "旧金山",
+        "华盛顿",
+        "莫斯科",
+        "孟买",
+        "新德里",        "菲律宾",
         "巴西",
         "墨西哥",
         "阿根廷",
@@ -295,11 +330,64 @@ fn is_vendor(name: &str) -> bool {
 /// suppressed by a model threshold.
 pub const MIN_MODEL_CONFIDENCE: f32 = 0.60;
 
+/// The model-only suppressor used by the verifier.
+///
+/// This is the ONE part of the redaction's suppression the verifier is still
+/// allowed to replay, and the boundary is the point: it can only drop
+/// `MatchSource::Model` spans, so it can never excuse a surviving checksum,
+/// pattern or label match. Before 2026-11-02 the verifier replayed the whole
+/// suppressor - `drop_public_entities` over every match - which is how a
+/// document reported `pass` with eight identifier classes still in the text.
+///
+/// `true` means "this model guess is deliberately not a leak". Two classes:
+///
+///   1. A public body, place or vendor. `国家网信办` is a regulator; redacting it
+///      destroys the document's meaning while protecting nobody. Measured
+///      2026-10-24: five of thirteen firm documents blocked, every survivor a
+///      false positive from this class.
+///   2. A model span below `MIN_MODEL_CONFIDENCE`. Measured the same day: the
+///      false positives that blocked the Firm KB ingest (`杰`, `证`, `欧`, `美`)
+///      were all marginal predictions.
+///
+/// A single-character name-like guess is covered by case 2's intent but not by
+/// its arithmetic, so it is named explicitly.
+pub fn is_suppressible_model_match(m: &Match) -> bool {
+    if m.source != MatchSource::Model {
+        // Not ours to drop. Returning false here is what keeps the verifier
+        // independent on the structural layer.
+        return false;
+    }
+    if is_low_confidence(m) {
+        return true;
+    }
+    if is_public_entity(&m.text) {
+        return true;
+    }
+    let name_like = matches!(
+        m.entity,
+        EntityType::PersonName | EntityType::OrgName | EntityType::Location
+    );
+    name_like && m.text.trim().chars().count() < 2
+}
+
 /// True when a model-produced span is too uncertain to act on.
 pub fn is_low_confidence(m: &Match) -> bool {
     m.source == MatchSource::Model && m.confidence < MIN_MODEL_CONFIDENCE
 }
 
+/// Drop matches that name a public body, place or vendor.
+///
+/// Also drops single-character name-like matches. The tokenizer emits one CJK
+/// character at span edges, and the model will happily label that lone
+/// character `B-ORG` or `B-LOC`; measured survivors on the Firm KB ingest
+/// included `证`, `欧` and `美`. A single character is never an identity, and
+/// redacting one destroys the surrounding word (`欧洲` becomes `[LOCATION]洲`).
+///
+/// Scoped to the name-like entities only. A one-character `BankCard` or
+/// `Credential` is not a thing the detectors produce, and widening this to
+/// every entity would be a hole rather than a fix.
+///
+/// Finally drops low-confidence model spans - see `MIN_MODEL_CONFIDENCE`.
 /// Drop matches that name a public body, place or vendor.
 ///
 /// Also drops single-character name-like matches. The tokenizer emits one CJK

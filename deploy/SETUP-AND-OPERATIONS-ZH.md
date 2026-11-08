@@ -63,30 +63,30 @@ cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 # 旧写法使用 pacgate-ai 的 0.1.3，且前端推送的 0.1.0 标签从未创建，该推送只能失败。
 
 # 构建 pacgate-api（Rust 1.94 多阶段）
-docker build -t ghcr.io/jzkk720/pacgate-api:0.2.6 -f pacgate-ai/Dockerfile ./pacgate-ai
+docker build -t ghcr.io/jzkk720/pacgate-api:0.2.32 -f pacgate-ai/Dockerfile ./pacgate-ai
 
 # 构建 pacgate-mcp 桥接镜像
-docker build -t ghcr.io/jzkk720/pacgate-mcp:0.2.6 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
+docker build -t ghcr.io/jzkk720/pacgate-mcp:0.2.32 -f deploy/pacgate-mcp/Dockerfile ./deploy/pacgate-mcp
 
 # 构建 deer-flow 包装镜像
-docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.2.6 -f deploy/deer-flow-pacgate/Dockerfile .
+docker build -t ghcr.io/jzkk720/deer-flow-pacgate:0.2.32 -f deploy/deer-flow-pacgate/Dockerfile .
 
 # 构建 ocr-service（自 0.1.16 起为一等镜像）
-docker build -t ghcr.io/jzkk720/ocr-service:0.2.6 -f deploy/ocr-service/Dockerfile ./deploy/ocr-service
+docker build -t ghcr.io/jzkk720/ocr-service:0.2.32 -f deploy/ocr-service/Dockerfile ./deploy/ocr-service
 
 # 构建 deer-flow 前端（构建时烘焙网关地址）
 .\deploy\build-frontend.ps1 -Push
 
 # 推送
-docker push ghcr.io/jzkk720/pacgate-api:0.2.6
-docker push ghcr.io/jzkk720/pacgate-mcp:0.2.6
-docker push ghcr.io/jzkk720/deer-flow-pacgate:0.2.6
-docker push ghcr.io/jzkk720/ocr-service:0.2.6
-docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6
+docker push ghcr.io/jzkk720/pacgate-api:0.2.32
+docker push ghcr.io/jzkk720/pacgate-mcp:0.2.32
+docker push ghcr.io/jzkk720/deer-flow-pacgate:0.2.32
+docker push ghcr.io/jzkk720/ocr-service:0.2.32
+docker push ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32
 
 # 验证可拉取
-docker pull ghcr.io/jzkk720/pacgate-api:0.2.6
-docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.2.6
+docker pull ghcr.io/jzkk720/pacgate-api:0.2.32
+docker pull ghcr.io/jzkk720/deer-flow-pacgate:0.2.32
 ```
 
 注意：qm 没有 Docker 镜像，它通过 `deploy/qm-pacgate/` 目录里的 `qm up` 独立运行。
@@ -111,9 +111,16 @@ client-bundle/
     └── README.md              ← 20 个执业领域 + 10 个 SOUL 角色参考
 ```
 
-打包：`Compress-Archive deploy/client-bundle/* pacgate-client-bundle-v0.1.0.zip`
+打包：`pwsh -File scripts/package-bundle.ps1`
 
-另外，请单独复制 `deploy/qm-pacgate/` - 它要和客户端安装包一起放到客户机器上。
+**请勿使用 `Compress-Archive deploy/client-bundle/*`。** 实测 2026-10-29，该命令会把
+活跃密钥与客户数据一并打进压缩包：`.env`、`.deer-flow-credentials`、
+`qm-pacgate/.env`（约 15 个签名密钥）、`openviking/ov.conf`、
+`openviking/workspace/`，以及 `data/`（2.39 GB 的运行数据库与案件文档）。Windows 上
+以点开头的文件并不会被隐藏，因此 `*` 会全部匹配。该脚本改用白名单，逐一断言所列路径
+存在，一旦禁止路径进入暂存目录就拒绝生成压缩包，并按 `setup-qm.ps1` 的做法从受版本控制
+的源目录 `deploy/qm-pacgate` 取 qm 部署。产物为 84 个文件 / 1.47 MB，且只附带
+`.env.example`。
 
 ### 2.3 准备 qm 部署
 
@@ -145,12 +152,18 @@ ollama pull nomic-embed-text:latest
 ollama list   # 验证
 ```
 
-### 3.3 部署客户端安装包
+### 3.3 部署主栈
+
+**AIPC 1 与 AIPC 2 是 git 克隆，不是 zip 解压。** 依据有三处：
+`AIPC-DEPLOYMENT-HANDBOOK.md` 的 Stage 1、`plans/027-hx370-64gb-install-verify.md`
+第 1 条说明（"就地安装…同一 commit、同一 pin"），以及 `README-client.md` 第 3 步。
+本节此前写作 `Expand-Archive ... -DestinationPath C:\pacgate` 与 `cd C:\pacgate`，
+与上述三处均矛盾，会把现场工程师带到一个并不存在的路径。
 
 ```powershell
-# 将 zip 拷贝到 C:\pacgate
-Expand-Archive pacgate-client-bundle-v0.1.0.zip -DestinationPath C:\pacgate
-cd C:\pacgate
+cd C:\
+git clone https://github.com/JZKK720/pacgate-ai-pr.git
+cd pacgate-ai-pr\deploy\client-bundle
 
 # 配置
 copy .env.example .env
@@ -165,6 +178,38 @@ notepad .env    # 填写 PACGATE_DB_PASSWORD、PACGATE_JWT_SECRET、PACGATE_TENA
 docker compose -f compose.prod.yaml ps    # 所有服务都应运行
 curl http://localhost:8089/health    # 返回 ok
 ```
+
+#### 更新已有安装
+
+```powershell
+cd C:\pacgate-ai-pr\deploy\client-bundle
+.\install.ps1 -Update
+```
+
+`-Update` 会：fast-forward 仓库、重新渲染 MCP 配置、拉取新的 GHCR 镜像、启动主栈、
+重载 nginx，并**重启** deer-flow 与前端，使绑定挂载的 `patches/*.py` 与
+`next.config.js` 生效。若机器上存在本地改动，它会拒绝而非猜测：已跟踪文件的未提交修改
+会保持原样并列出清单。
+
+请勿单独执行 `git pull`，也请勿手工修改镜像 pin。
+
+#### zip 路径（仅用于无法 git 的机器）
+
+`pwsh -File scripts/package-bundle.ps1` 为无法克隆的机器生成安装包。**它不是
+AIPC 1 / AIPC 2 的路径。**
+
+```powershell
+Expand-Archive pacgate-client-bundle-v<version>.zip -DestinationPath C:\pacgate
+cd C:\pacgate-ai-pr\deploy\client-bundle
+copy .env.example .env ; notepad .env
+.\install.ps1
+```
+
+切勿使用 `Compress-Archive deploy/client-bundle/*`：Windows 上以点开头的文件并不会被
+隐藏，该通配符会把 `.env`、`.deer-flow-credentials`、`qm-pacgate/.env`（约 15 个签名
+密钥）、`openviking/ov.conf`、`openviking/workspace/` 以及 `data/`（2.39 GB 的运行
+数据库与案件文档）一并打包。该脚本使用白名单，一旦禁止路径进入暂存目录就拒绝生成，
+产物为 84 个文件 / 1.47 MB。
 
 ### 3.4 初始化默认租户
 
@@ -188,17 +233,15 @@ Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -B
 $body = @{email="qm-bridge@pacgate.local"; password="<generate-strong-password>"} | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
 
-# 2. 把 qm-pacgate 复制到客户机器
-Copy-Item -Path qm-pacgate -Destination C:\pacgate\qm-pacgate -Recurse
-
-# 3. 运行启动脚本
-cd C:\pacgate
+# 2. 暂存 qm-pacgate（从 deploy/qm-pacgate 复制，跳过 .env 与 node_modules）
+cd C:\pacgate-ai-pr\deploy\client-bundle
 .\setup-qm.ps1
-# 该脚本会生成签名密钥、创建 .env、提示输入管理员邮箱
-# 和 bridge 凭据，并运行 qm check + sandbox build
+# setup-qm.ps1 会生成签名密钥、创建 qm-pacgate\.env、提示输入管理员邮箱
+# 与 bridge 凭据，并运行 qm check + sandbox build。
+# 不需要手工复制目录——脚本自己完成暂存。
 
-# 4. 启动 qm
-cd C:\pacgate\qm-pacgate
+# 3. 启动 qm
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
 npm exec qm -- up
 
 # 5. 验证
@@ -280,16 +323,16 @@ npm exec qm -- up
 
 ### 6.1 切换模型（deer-flow）
 
-1. 编辑 `C:\pacgate\deer-flow-config.yaml`
+1. 编辑 `C:\pacgate-ai-pr\deploy\client-bundle\deer-flow-config.yaml`
 2. 调整 `models` 列表顺序（第一项即默认模型）
 3. 重启：`docker compose -f compose.prod.yaml restart deer-flow`
 4. 验证：打开 `http://localhost:8089/research/` 并发送测试消息
 
 ### 6.2 切换模型（qm）
 
-1. 编辑 `C:\pacgate\qm-pacgate\qm.config.jsonc`
+1. 编辑 `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\qm.config.jsonc`
 2. 修改 `MODEL_NAME` 为所需的 Ollama 模型
-3. 重启：`cd C:\pacgate\qm-pacgate && npm exec qm -- down && npm exec qm -- up`
+3. 重启：`cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate && npm exec qm -- down && npm exec qm -- up`
 4. 验证：打开 `http://localhost:8182` 并发送测试消息
 
 ### 6.3 新增律师用户
@@ -314,10 +357,51 @@ Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -B
 
 | 内容 | 方法 | 频率 |
 |------|------|------|
-| 事项数据 | 复制 `C:\pacgate\data\tenants\` | 每周 |
+| 事项数据 | 复制 `C:\pacgate-ai-pr\deploy\client-bundle\data\tenants\` | 每周 |
 | 数据库 | `docker exec pacgate-db pg_dump -U pacgate pacgate > backup.sql` | 每周 |
-| qm 状态 | 备份 `C:\pacgate\qm-pacgate\.env`（包含签名密钥） | 安装时一次 |
-| `.env` | 安全备份 `C:\pacgate\.env` | 安装时一次 |
+| qm 状态 | 备份 `C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate\.env`（包含签名密钥） | 安装时一次 |
+| `.env` | 安全备份 `C:\pacgate-ai-pr\deploy\client-bundle\.env` | 安装时一次 |
+
+### 6.6 控制 deer-flow 会话存储的增长
+
+`client-bundle\data\deer-flow\` 是 deer-flow 的绑定挂载（`./data:/data`），
+每次研究会话都会让它增长。该目录被 gitignore，仓库里没有任何检查在监控它，
+磁盘写满时也不会有门禁报红。
+
+有两类内容会增长，且**不能混为一谈**：
+
+| 内容 | 增长方式 | 性质 |
+|------|----------|------|
+| `users/<user>/threads/<id>/` | 每个会话，1 MB 至 500 MB+ | 代理工作区：上传件、生成的文书、临时文件，以及代理自建的 `.venv` |
+| `checkpoints.db-wal` | 每次运行，未做检查点前无上限 | 尚未合并回主库的 SQLite 页 |
+
+2026-10-30 在本机实测：合计 2.4 GB，其中 2026-10-21 的一个会话里有一个
+517 MB 的代理自建 `.venv`，WAL 为 470 MB。
+
+```powershell
+# 仅报告 —— 不删除任何内容
+.\scripts\clean-thread-workspaces.ps1
+
+# 预览某条规则会删除什么，但不实际删除
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -WhatIf
+
+# 删除最后活动时间超过 30 天的会话，保留最近 5 个
+.\scripts\clean-thread-workspaces.ps1 -OlderThanDays 30 -Delete
+
+# 仅回收 WAL，不删除任何会话（请在空闲时段执行）
+.\scripts\clean-thread-workspaces.ps1 -CheckpointWal
+```
+
+**不要手工删除这些目录。** 一个会话由三处记录组成，必须保持一致：目录本身、
+`checkpoints.db` 中的行，以及支撑 `/threads/search` 的 `store` 表中的条目。
+只删目录会留下一个仍然出现在界面上、但下载任何文件都返回 404 的会话。脚本
+通过 `DELETE /api/threads/{id}` 删除，三处一并清除。
+
+**绝不要把 `checkpoints.db-wal` 当作普通文件删除。** 它包含尚未合并回主库的
+已提交页。请使用 `-CheckpointWal`（`PRAGMA wal_checkpoint(TRUNCATE)`），实测
+由 470 MB 降至 0 MB，`integrity_check = ok`，5,955 条检查点记录完整无损。
+
+事项数据、文书和知识库都在 Postgres 中，本节不涉及它们，这里只处理运行历史。
 
 ## 7. 故障排查
 
@@ -355,7 +439,7 @@ ollama ps    # 输出里应该能看到 GPU
 ### qm 启动失败
 
 ```powershell
-cd C:\pacgate\qm-pacgate
+cd C:\pacgate-ai-pr\deploy\client-bundle\qm-pacgate
 npm exec qm -- check    # 校验配置
 # 检查 .env 是否有所有必需密钥（不能留空）
 # 检查签名密钥是否为 64 位十六进制字符串
@@ -379,11 +463,11 @@ docker compose -f compose.prod.yaml logs deer-flow  # 查看日志
 
 | 镜像 | 内容 | 基础镜像 |
 |---|---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.6` | Rust 二进制（pacgate-server）+ SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.6` | deer-flow 后端 + Python 适配器（176 行） | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.6` | pacgate-api MCP 桥接（19 个工具） | `python:3.12-slim` |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.6` | deer-flow Next.js 检索界面 | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.6` | PaddleOCR 抽取服务 | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.32` | Rust 二进制（pacgate-server）+ SQL migrations | `rust:1.94-bookworm` → `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` | deer-flow 后端 + Python 适配器（176 行） | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.32` | pacgate-api MCP 桥接（19 个工具） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` | deer-flow Next.js 检索界面 | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.32` | PaddleOCR 抽取服务 | `python:3.12-slim` |
 
 ### 8.2 数据流
 

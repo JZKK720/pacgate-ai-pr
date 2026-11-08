@@ -107,7 +107,8 @@ $nerDir = Join-Path $repoRoot '.e2e-ner-model'
 $nerMount = if (Test-Path $nerDir) { @("-e", "PACGATE_NER_MODEL_DIR=/models/ner", "-v", "${nerDir}:/models/ner") } else { @() }
 $nerMount = docker run --rm -v pacgate-ner-models:/ner alpine:3.20 sh -c 'ls /ner | head -1' 2>$null
 if (-not $nerMount) { $nerMount = @() } else { $nerMount = @('-v', 'pacgate-ner-models:/ner') }
-Write-Output "ner weights mounted: $($nerMount.Count -gt 0)"
+Write-Output "ner weights: baked into the image at /app/models/ner (legacy volume mount used only as a fallback)"
+if ($nerMount.Count -gt 0) { Write-Output "  legacy pacgate-ner-models volume is present and will be used instead" }
 
 # The API image. This used to be the locally-built `pacgate-api:plan020-test`,
 # which NOTHING builds - so the script could only ever run on the one checkout
@@ -288,9 +289,48 @@ $rawLeft = cmd /c "docker exec pacgate-db psql -U pacgate -d pacgate -t -A -c ""
 Check "no raw id card anywhere in kb_chunks" ([int](($rawLeft | Select-Object -First 1).ToString().Trim()) -eq 0)
 
 # 9. Download gate: BEFORE sanitize the doc was pending; now sanitized, so
-#    download must be ALLOWED. Refusal path is asserted by the status above.
+#    download must be ALLOWED - AND ITS BODY MUST BE THE SANITISED TEXT.
+#
+# WHY THE BODY CHECK IS NOT OPTIONAL (measured 2026-11-03)
+#
+# This assertion used to be `Check ... ($dl.StatusCode -eq 200)` and nothing
+# else. It passed for months while 36 of 37 documents labelled `sanitized`
+# served their FULL ORIGINAL TEXT through this endpoint: the gate refused
+# `pending` but never replaced the bytes. A status-code check cannot tell the
+# difference between "the redacted artifact" and "the original" - both are 200.
+#
+# The user-facing consequence was severe: `pacgate_read_document` (MCP) wraps
+# this endpoint, so the agent read raw client identifiers, reported that
+# sanitisation had not worked, and was CORRECT - while the database and every
+# other gate said clean.
 $dl = Invoke-WebRequest -Uri "http://127.0.0.1:8097/api/documents/$docId/download" -Headers $hdr -UseBasicParsing
 Check "download allowed post-sanitize" ($dl.StatusCode -eq 200)
+
+# `-UseBasicParsing` gives `.Content` as a STRING on PS 5.1 but as a byte array
+# when the response is not text/*. Casting a string to byte[] re-encodes each
+# CHARACTER, which is not the same bytes, so the token pattern then misses
+# against multi-byte content. Handle both shapes and fail the gate loudly if
+# neither works - a null `$body` used to raise InvokeMethodOnNull on the
+# Substring below and let the gate print PASS anyway, which is the exact
+# "the gate says green" problem this suite exists to prevent.
+$body = if ($dl.Content -is [byte[]]) {
+    [System.Text.Encoding]::UTF8.GetString($dl.Content)
+} elseif ($dl.RawContentStream) {
+    $dl.RawContentStream.Position = 0
+    (New-Object System.IO.StreamReader($dl.RawContentStream, [System.Text.Encoding]::UTF8)).ReadToEnd()
+} else {
+    [string]$dl.Content
+}
+if ([string]::IsNullOrEmpty($body)) {
+    throw "download returned an empty body for a 'sanitized' document at $docId - the token assertion below cannot run, and a silently skipped assertion must never report PASS"
+}
+
+$leakedRaw = @('110105199003074512', '9131000060728345XG', '6222020200112345678') |
+    Where-Object { $body -like "*$_*" }
+Check "download body carries NO raw identifier" ($leakedRaw.Count -eq 0) `
+    ("returned raw: " + ($leakedRaw -join ', '))
+Check "download body carries a minted token" ($body -match '\[[A-Z_]+_[0-9A-F]{8,}\]') `
+    ("body was: " + $body.Substring(0, [Math]::Min(120, $body.Length)))
 
 # 10. Restore: role gate. Attorney token must be refused.
 $restoreBody = @{ job_id = $job.job_id; text = $job.sanitized_text } | ConvertTo-Json -Compress

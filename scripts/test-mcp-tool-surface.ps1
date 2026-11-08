@@ -169,16 +169,20 @@ if ($exit -ne 0 -or -not ($raw -match 'TOOLS ')) {
     CannotCheck "the MCP handshake did not complete: $(($raw | Out-String).Trim() -replace '\s+', ' ' | ForEach-Object { $_.Substring(0, [Math]::Min(200, $_.Length)) })"
 }
 
-# PS 5.1's ConvertFrom-Json returns a JSON ARRAY as one Object[] object, so
-# `@($json | ConvertFrom-Json)` yields a single-element array whose only element is
-# the whole list. Every set comparison below then compares a string against an
-# Object[], which is why the first run of this gate reported "advertises 1 tool"
-# and "advertised but not in the source: System.Object[]". PS 7 flattens the same
-# expression, so this only reproduces under 5.1 - the shell the suite runs in.
-# Enumerating explicitly is what makes the count and the set correct on both.
-function ConvertFrom-JsonArray([string]$json) {
-    if ([string]::IsNullOrWhiteSpace($json)) { return @() }
-    $parsed = ConvertFrom-Json -InputObject $json
+# Parse a JSON array portably. Windows PowerShell 5.1's ConvertFrom-Json does NOT
+# unroll a JSON array into a pipeline - it returns the array as ONE object, so
+# `@($json | ConvertFrom-Json)` yields a single-element collection containing the
+# array. Measured on 5.1.26100: '["a","b","c"]' -> count=1, while pwsh 7.6 -> 3.
+#
+# This mattered: the gate FAILED on PS 5.1 while the stack was perfectly healthy
+# (the single "advertised tool" was the nested Object[] itself, hence the
+# `System.Object[]` leaking into every message). A client AIPC may only have 5.1,
+# and a gate that is red on a correct stack is exactly the failure mode this suite
+# warns about. ForEach-Object unrolls the collection under BOTH shells.
+function ConvertFrom-JsonArray {
+    param([string]$Json)
+    $parsed = $Json | ConvertFrom-Json
+    if ($null -eq $parsed) { return @() }
     return @($parsed | ForEach-Object { $_ })
 }
 
