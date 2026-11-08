@@ -43,7 +43,15 @@ Measured on 2026-11-08 before writing this plan.
 
 **2. The `test-agent-mcp-e2e.ps1` E3 fix helps every machine, not just this one.** deer-flow records MCP calls server-qualified (`<server>_<tool>`), so the real name is `pacgate_pacgate_list_connectors` while E3 matched bare names. That gate could never pass for **anyone** downstream.
 
-Both reach clients through the **bind-mounted** patches/scripts path, not through an image: `deploy/client-bundle/compose.bundle.yaml` mounts `./patches/pacgate-adapter-client.py` onto `/app/adapters/pacgate_deerflow_adapter/client.py`, and `install.ps1` ships `patches/*.py`. **No rebuild is required for either fix to land.**
+Both reach clients through the **bind-mounted** patches/scripts path, not through an image: `deploy/client-bundle/compose.bundle.yaml` mounts `./patches/pacgate-adapter-client.py` onto `/app/adapters/pacgate_deerflow_adapter/client.py`, and `install.ps1` ships `patches/*.py`. **No rebuild and no new version are required for either fix to land.**
+
+The delivery step is `install.ps1 -Update`, and it is automatic - not a manual operator chore:
+
+- line 792 runs `git pull --ff-only origin $branch`, so the host checkout gets the patch file;
+- the `if ($Update)` block then runs `docker compose -f compose.prod.yaml restart deer-flow` **because** `patches/*.py` are imported at process start with no hot reload, so restarting is what makes the new file take effect;
+- `scripts/audit-aipc-update-coverage.ps1` reports `covered by -Update : 14 of 14`, with `personas/, patches/*.py -> container restart -> OK` and `repo working tree -> fast-forward pull -> OK`.
+
+One consequence worth stating: `-Update` uses `git pull --ff-only` and **refuses** if the client's checkout has diverged ("Repo has diverged ... Not merging"). A client carrying local commits will not get these fixes from `-Update` and needs a deliberate resolution.
 
 ### What is bundled in that is machine-specific
 
@@ -237,7 +245,7 @@ Expected: both `True`.
 docker exec deer-flow sh -c 'grep -c "for attempt in range(2)" /app/adapters/pacgate_deerflow_adapter/client.py'
 ```
 
-Expected: `1` on this box, because compose mounts it. A client that has pulled the repo gets the same result after `install.ps1`.
+Expected: `1` on this box, because compose mounts it. A client gets the same result after `install.ps1 -Update`, which `git pull`s the checkout and then restarts `deer-flow` for exactly this reason (see Task 6 Step 2).
 
 ---
 
@@ -299,11 +307,13 @@ It rewrites every `ghcr.io/jzkk720/<image>:<version>` pin across the compose fil
 
 Bump only if **all** of these hold - state which is false if you do not bump:
 
-1. A new image is genuinely required (i.e. the fix cannot travel via the mount - **it can**, so this is currently false for both fixes).
-2. Someone will run the `build-ghcr.yml` workflow (tag push `v0.2.33`, or `workflow_dispatch` with `tag=0.2.33`) before any client pulls.
+1. A new image is genuinely required, i.e. the fix cannot travel via the mount. **It can**, and the delivery path is already automatic: `install.ps1 -Update` does `git pull --ff-only` (line 792) and then `restart deer-flow` in its `if ($Update)` block specifically because `patches/*.py` are imported at process start with no hot reload. So this condition is **currently false for both fixes**.
+2. Someone will run the `build-ghcr.yml` workflow (tag push `v0.2.33`, or `workflow_dispatch` with input `tag=0.2.33`) before any client pulls.
 3. The bump and the successful workflow run happen as one sequence, not as two hopeful steps.
 
-Recommended: **do not bump now.** Both fixes reach clients through the repo, and `v0.2.32`'s images remain correctly identified by their tag. Note the two fixes in the next scheduled release instead.
+Recommended: **do not bump now.** Both fixes reach clients through the mount via `-Update`, and `v0.2.32`'s images remain correctly identified by their tag. Note the two fixes in the next scheduled release instead.
+
+If you bump anyway, understand what it costs: `bump-release-version.ps1` rewrites all six `ghcr.io/jzkk720/*:<version>` pins plus `Cargo.toml`. Between the bump and a successful GHCR run, every client install names a tag that does not exist, so a client running `-Update` in that window pulls nothing.
 
 - [ ] **Step 3: If a bump IS decided, do it as one sequence**
 
@@ -337,7 +347,25 @@ Record: the pushed range and the resulting `origin/main` SHA (verified via `gh a
 
 - [ ] **Step 2: State what a client must do to receive the fixes**
 
-The honest answer, so it is not overclaimed: a client that re-clones or `git pull`s and restarts the containers gets **both** fixes, with no image pull and no rebuild, because both travel through the bind-mounted path. A client that only pulls new images and never updates its checkout gets neither. Write that down.
+The honest answer, so it is not overclaimed. A client receives **both** fixes by running:
+
+```powershell
+cd <client-repo>\deploy\client-bundle
+.\install.ps1 -Update
+```
+
+That single command is sufficient and requires **no image pull for these two fixes and no rebuild**:
+
+1. `git pull --ff-only origin $branch` updates the host checkout, which is where the bind-mounted patch file lives.
+2. The `if ($Update)` block runs `docker compose -f compose.prod.yaml restart deer-flow`, because `patches/*.py` are imported at process start with no hot reload. Without that restart the new file sits on disk inert - the repo documents this as the class where a fix "looks shipped and is inert".
+3. `scripts/audit-aipc-update-coverage.ps1` confirms the coverage exists rather than assuming it: `covered by -Update : 14 of 14`.
+
+Write down the two exceptions, because they are the only clients that miss the fixes:
+
+- A client whose checkout has **diverged** (local commits). `git pull --ff-only` refuses by design - "Repo has diverged ... Not merging" - and the update continues with `repo content stays as-is`. That client needs a deliberate resolution, not an update.
+- A client that is **pinned to a specific commit**, or that never runs `-Update` at all (for example, one only re-pulling images). Its mounted patch file never changes, so it keeps the defect even though its images are current.
+
+Do **not** claim the fixes require a new release. They do not, and saying so would invite an unnecessary version bump that points every compose pin at a tag GHCR does not have.
 
 - [ ] **Step 3: Commit**
 
