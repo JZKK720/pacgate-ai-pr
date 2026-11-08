@@ -27,7 +27,7 @@ Measured on 2026-11-08 before writing this plan.
 
 | Claim | Verified result |
 |---|---|
-| Divergence | `git log origin/main..main` -> **14 commits** (13 non-merge + the 1 merge `fd23be0`), `git log main..origin/main` -> **0** |
+| Divergence | `git log origin/main..main` -> **15 commits** (14 non-merge + the 1 merge `fd23be0`), `git log main..origin/main` -> **0** |
 | Push is a fast-forward | `git push --dry-run origin main` -> `17a498e..6aebca3  main -> main`, exit 0 |
 | Push is permitted | `gh auth status` -> account `JZKK720`, scopes include `repo` and `workflow` |
 | Outgoing file count | 13 files across the 14 commits (the merge `fd23be0` itself changes `main` only via its parents) |
@@ -85,7 +85,10 @@ Preconditions decay. These are cheap and they are the ones that would make a pus
 - Consumes: local `main` at `6aebca3`
 - Produces: a go/no-go for Task 2
 
-- [ ] **Step 1: Confirm still fast-forward and still 14 ahead**
+- [ ] **Step 1: Confirm still fast-forward, and read the real count**
+
+This plan's own commit is part of what will be published, so the count moves as this document is
+committed. Read it, do not assume 14.
 
 ```powershell
 cd C:\Users\1\github-pr\pacgate-ai-pr
@@ -94,7 +97,8 @@ git fetch origin
 "behind: " + (git rev-list --count main..origin/main)
 ```
 
-Expected: `ahead: 14`, `behind: 0`. A non-zero `behind` means upstream moved - **stop** and re-run the merge analysis rather than pushing.
+Expected: `ahead: 15`, `behind: 0`. A non-zero `behind` means upstream moved - **stop** and re-run
+the merge analysis rather than pushing.
 
 - [ ] **Step 2: Confirm it is a fast-forward**
 
@@ -188,13 +192,23 @@ A push is not a delivery. This task proves a fresh clone gets the fix without an
 
 - [ ] **Step 1: Confirm the published tree has the bounded retry**
 
+Do **not** check for the bare absence of `return self.get(path, headers=headers)`: the fixed
+version quotes that line inside its own docstring while explaining what the bug was, so a naive
+"is the old string gone" test reports a false failure. Verify the structure instead - the fixed file
+routes every verb through one `_request` helper, and only one self-call remains (in the explanatory
+docstring).
+
 ```powershell
-$remote = git --no-pager show origin/main:deploy/client-bundle/patches/pacgate-adapter-client.py
-"bounded retry present: " + [bool]($remote | Select-String 'for attempt in range\(2\)')
-"unbounded recursion gone: " + (-not [bool]($remote | Select-String 'return self\.get\(path, headers=headers\)'))
+$remote = git --no-pager show origin/main:deploy/client-bundle/patches/pacgate-adapter-client.py | Out-String
+"bounded retry present      : " + $remote.Contains('for attempt in range(2)')
+"_request helper present    : " + $remote.Contains('def _request(')
+"verbs routed through it    : " + ([regex]::Matches($remote,'return self\._request\(')).Count
+"legacy self-recursion left : " + ([regex]::Matches($remote,'return self\.(get|post|put|delete|upload)\(')).Count
 ```
 
-Expected: **both** `True`.
+Expected: `True`, `True`, **`5`**, **`1`**. The two counts are the discriminating part - on the
+`v0.2.32` tree they are `0` and `5`. A `1` for the last line is the docstring, not live code; a `5`
+means the fix did not land.
 
 - [ ] **Step 2: Confirm that patch is bind-mounted by BOTH lanes**
 
