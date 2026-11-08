@@ -78,9 +78,13 @@ Write-Host ("         tools: {0}" -f (($mcpTools | Select-Object -First 6) -join
 function Resolve-DeerFlowPassword {
     if ($Password) { return $Password }
     if ($env:PACGATE_DEERFLOW_PASSWORD) { return $env:PACGATE_DEERFLOW_PASSWORD }
+    if ($env:DEER_FLOW_PASSWORD) { return $env:DEER_FLOW_PASSWORD }
     $f = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.deer-flow-credentials'
     if (Test-Path -LiteralPath $f) {
-        $m = Select-String -LiteralPath $f -Pattern '^\s*PACGATE_DEERFLOW_PASSWORD\s*=\s*(.+?)\s*$' | Select-Object -First 1
+        # Both key names are accepted: machines provisioned before 2026-10-15 wrote
+        # DEER_FLOW_PASSWORD, and the documented format is PACGATE_DEERFLOW_PASSWORD.
+        # Reading only one of them silently turned this gate into CANNOT CHECK.
+        $m = Select-String -LiteralPath $f -Pattern '^\s*(?:PACGATE_DEERFLOW_PASSWORD|DEER_FLOW_PASSWORD)\s*=\s*(.+?)\s*$' | Select-Object -First 1
         if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
     }
     return $null
