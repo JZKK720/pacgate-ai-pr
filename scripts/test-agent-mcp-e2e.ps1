@@ -71,6 +71,46 @@ Check 'E1 the pacgate MCP tool names were derived from source' `
       "derived $($mcpTools.Count) tool name(s) from $ServerFile"
 Write-Host ("         tools: {0}" -f (($mcpTools | Select-Object -First 6) -join ', ')) -ForegroundColor DarkGray
 
+# ── E1c: the names an assistant tool_call ACTUALLY carries are SERVER-QUALIFIED ─
+# MEASURED 2026-11-08, on the 0.2.32 stack. deer-flow registers MCP tools as
+# `<serverName>_<toolName>`, so a call to `pacgate_list_connectors` on the server
+# named `pacgate` is recorded as `pacgate_pacgate_list_connectors`:
+#
+#   deerflow.agents.middlewares.deferred_tool_filter_middleware - INFO -
+#     Auto-promoting deferred tool 'pacgate_pacgate_list_connectors' on first call
+#
+# E3 used to exact-match the bare names above against that recorded name, so it
+# could NEVER pass on a run that called a pacgate tool. The tool loop was working -
+# pacgate-mcp answered 200 and the tool auto-promoted - while the gate reported a
+# failure. A gate that cannot pass is as useless as one that cannot fail, and this
+# one is worse than most because its FAIL message reads exactly like a real
+# regression ("the agent replied without calling one").
+#
+# The prefix is READ from the live extensions config, not hardcoded: renaming the
+# server must change the accepted names with it, and a config that loses the
+# `pacgate` server should fail loudly rather than silently accept bare names.
+$extCfg = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/deer-flow-extensions-config.json'
+$serverNames = @()
+if (Test-Path $extCfg) {
+    try {
+        $srv = (Get-Content $extCfg -Raw | ConvertFrom-Json).mcpServers
+        $serverNames = @($srv.PSObject.Properties.Name)
+    } catch {
+        CannotCheck "could not parse $extCfg ($($_.Exception.Message))"
+    }
+}
+Check 'E1c the extensions config names the pacgate MCP server' `
+      ($serverNames -contains 'pacgate') `
+      "servers: $(($serverNames | Sort-Object) -join ', ')"
+
+# Accept BOTH forms. The qualified form is what is recorded; the bare form is kept
+# so this gate still works against a deer-flow that does not namespace, and so a
+# future upstream change back to bare names does not produce a false FAIL.
+$mcpToolQualified = @($mcpTools | ForEach-Object { "pacgate_$_" })
+$mcpToolsAccepted  = @($mcpTools + $mcpToolQualified | Sort-Object -Unique)
+Write-Host ("         accepted call names: {0} (+{1} server-qualified)" -f `
+    ($mcpTools.Count), ($mcpToolQualified.Count)) -ForegroundColor DarkGray
+
 # ── credentials ──────────────────────────────────────────────────────────────
 # The deer-flow admin is NOT the pacgate-api principal. Resolve exactly as
 # test-model-picker-e2e.ps1 does, including the env-var name, which a first draft of
@@ -255,13 +295,13 @@ foreach ($m in $msgs) {
     if ($m.tool_calls) {
         foreach ($tc in @($m.tool_calls)) {
             $name = if ($tc.name) { $tc.name } elseif ($tc.function -and $tc.function.name) { $tc.function.name } else { $null }
-            if ($name -and $mcpTools -contains $name) { $called += $name; $toolRecord = $true }
+            if ($name -and ($mcpToolsAccepted -contains $name)) { $called += $name; $toolRecord = $true }
         }
     }
     if ($m.additional_kwargs -and $m.additional_kwargs.tool_calls) {
         foreach ($tc in @($m.additional_kwargs.tool_calls)) {
             $name = if ($tc.name) { $tc.name } elseif ($tc.function -and $tc.function.name) { $tc.function.name } else { $null }
-            if ($name -and $mcpTools -contains $name) { $called += $name; $toolRecord = $true }
+            if ($name -and ($mcpToolsAccepted -contains $name)) { $called += $name; $toolRecord = $true }
         }
     }
     if ($m.additional_kwargs -and $m.additional_kwargs.tool_call_id) { $toolRecord = $true }
