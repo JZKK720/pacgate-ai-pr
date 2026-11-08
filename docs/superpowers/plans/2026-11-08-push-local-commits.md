@@ -367,6 +367,15 @@ Write down the two exceptions, because they are the only clients that miss the f
 
 Do **not** claim the fixes require a new release. They do not, and saying so would invite an unnecessary version bump that points every compose pin at a tag GHCR does not have.
 
+**The prompt to hand another machine's agent is
+[`deploy/HANDOFF-SYNC-TO-ORIGIN-MAIN.md`](../../../deploy/HANDOFF-SYNC-TO-ORIGIN-MAIN.md),
+not a verbal "merge and sync from upstream".** That distinction matters and is the
+reason the handoff exists: **the dev box is AHEAD of `origin/main`, not behind it**, so
+a second machine told to "sync from upstream" would pull nothing and conclude it was
+already current. The handoff opens with a push-status check that reads `origin/main`
+directly and stops if the push has not landed, so the instruction cannot be followed out
+of order.
+
 - [ ] **Step 3: Commit**
 
 ```powershell
