@@ -4,7 +4,7 @@
 proxy could help this stack.
 **Status:** FIXED in `deploy/client-bundle/patches/deer-flow-summarization-recovery.py`
 (bind-mounted at the **runtime** module path in both lanes). Gated by
-`scripts/test-summarization-recovery.ps1` (15 assertions).
+`scripts/test-summarization-recovery.ps1` (22 assertions).
 
 ## A correction to the first version of this fix
 
@@ -157,167 +157,87 @@ due soon" to the same turn would contradict what happened.
 | R10 | both compose lanes mount at the **runtime** path |
 | R11a/b | non-reproducible output is excerpted; reproducible output is pointer-only |
 | R12a/b | the hint is silent below the band and fires above it |
+| R13a-e | a fold writes one telemetry row carrying pressure + re-read signal; it never writes message content; it never raises even on garbage input |
+| R14a/b | the hint honours a declared model window, so it fires on window pressure below the trigger |
 
-## Known limits, stated rather than implied
+## Known limits - and what changed since the first version of this doc
 
-- The index recovers **where to look** for reproducible tools. If a file is deleted
-  mid-run, that content is still lost - the excerpt only covers the three live web
-  tools.
-- It does not index code blocks or binary payloads.
-- It does not make the summary itself better. A bad summary stays bad; the index
-  only tells the model what it could re-read.
-- The hint is advisory text. A model may ignore it - that is a prompt-quality
-  question, not a mechanism one, and it is measured by whether long runs stop
-  re-reading rather than by whether the hint appears.
-- **The `-Update` restart covers this patch** via the existing `patches/*.py` ->
-  `restart deer-flow` rule (`audit-aipc-update-coverage.ps1`: 14 of 14).
+### Limit 1: "the hint is advisory; judge it by whether runs stop re-reading"
 
+**This was not a soft limitation, it was an UNINSTRUMENTED one.** Measured
+2026-11-08: neither per-call context size nor a re-read count was answerable from
+any table. `runs.total_input_tokens` is **cumulative** (2,243,116 over 107 calls on
+run `78f2a3c9`), `token_usage_by_model` is an aggregate, and `middleware_tokens`
+is **0**. The test the doc recommended could not be run.
 
-## The observation
+**Now instrumented.** The patch writes one JSONL row per summarization pass to
+`/data/deer-flow/data/pacgate-fold-telemetry.jsonl` (a bind-mounted path, so it
+survives a recreate and needs no migration):
 
-Stock `SummarizationMiddleware.before_model` returns:
-
-```python
-return {
-    "messages": [
-        RemoveMessage(id=REMOVE_ALL_MESSAGES),
-        *new_messages,        # exactly ONE HumanMessage
-        *preserved_messages,
-    ]
-}
+```json
+{"kind":"fold","folded_msgs":40,"preserved_msgs":6,"tokens_at_fold":36120,
+ "trigger_tokens":36000,"window_tokens":null,"hint_band":0.85,
+ "hint_would_fire":true,"tool_names":["read_file","bash"],
+ "tool_calls":90,"distinct_payloads":4,"retouch_ratio":22.5}
 ```
 
-`langchain/agents/middleware/summarization.py`, this container's venv, line 320-330.
-`_build_new_messages` (line 511) builds that single message:
+`scripts/fold_telemetry_report.py` turns those rows into `tokens_at_fold`,
+`retouch_ratio` (**tool_calls / distinct_payloads** - a re-touch loop is many
+calls over few distinct payloads), and whether the hint band was ever reached.
 
-```python
-HumanMessage(content=f"Here is a summary of the conversation to date:\n\n{summary}")
-```
+**It never writes message content.** Counts, token numbers and tool *names* only.
+A telemetry file under a bind mount that captured folded matter text would be
+exactly the second unscoped store this patch refuses. Gated by `R13d`, red-checked
+by making the row carry content.
 
-So the folded range is **not hidden** - it is **removed**. What survives is prose the
-summarizer wrote, plus the preserved suffix. Everything the model did to the folded
-messages is gone: which files it opened, which sections it had already read, which
-URLs it had fetched.
+### Limit 1b: the hint had a blind spot - the TRIGGER is not the WINDOW
 
-That is the shape of the re-read loops this repo already documents. On thread
-`b315a961`, three consecutive runs made **103 / 42 / 52 re-touches of the same
-file**, 3.2-3.5M tokens each, all ending in `GraphRecursionError` with nothing
-delivered. The 0.2.32 release fixed the *reachability* of document structure
-(`pymupdf4llm` installed; `outline=51` where MarkItDown gave 0). This defect is
-the next layer: once a range is folded, even a correct outline is no longer in
-front of the model.
+Found while instrumenting. The hint keyed on `trigger` (36,000), but `trigger` is
+a *summarization threshold*, not the model window. On a model whose window is
+**smaller** than the trigger, the band would never fire before the window itself
+overflowed - the diagnostic silent in exactly the case it exists for.
 
-## Why the obvious fix was rejected
+Measured: **nothing in `deer-flow-config.yaml` declares
+`profile={"max_input_tokens": N}`**, so `window_tokens` is `null` on every fold
+today. That is itself the finding: the hint can only key on the trigger until a
+model profile is declared.
 
-The obvious fix is a persistent archive of folded messages plus a
-`recall_compressed` tool - which is what the external proxy
-([billion-context](https://github.com/ranxianglei/billion-context)) actually is.
+The hint now uses `min(trigger, window)` when a window is declared, and falls back
+to the trigger when none is, so it becomes correct the moment a profile is added
+with no further change. Gated by `R14a`/`R14b`; red-checked by reverting to
+trigger-only, which fails `R14b`.
 
-Rejected, and the reason is not cost. An archive of folded conversation is a
-**second store of matter content, scoped to a session and not to a tenant**. This
-repo is deliberate about exactly that boundary: OpenViking maps
-`TenantId`→`X-OpenViking-Account` and `MatterId`→`X-OpenViking-Actor-Peer`, the
-ethical wall is proven with `PEER_NOT_ALLOWED`, and session capture is kept on
-`PacgateMemoryStore` → pacgate-api specifically so it stays inside that boundary.
-Adding an unscoped archive is a data-residency decision, not a performance
-trade-off, and it is not one this fix needs.
+**Still open:** the band itself is a magic number (`0.85`). It should be derived
+from the fold rows once there are enough of them, not kept as an estimate.
 
-## What the fix does instead
+### Limit 2: excerpts cover only the three live-web tools
 
-**Recoverable handles, not prose.** The patch appends a verbatim index to the
-summary:
+Unchanged and deliberate. `read_file`, `ls`, `glob`, `grep`, `bash`,
+`pacgate_list_*` and the document readers are re-derivable from disk, so a pointer
+is sufficient recovery for them. The excerpt exists only for
+`pacgate_web_scrape` (measured **4,208 tokens** per reply), `pacgate_web_search`
+and `pacgate_connector_search`, where a page can change or 404 and live results
+drift.
 
-```
-Folded range - recoverable handles (verbatim, not paraphrased):
-  tools called: read_file, write_file, pacgate_web_search
-  paths/urls touched:
-    - /data/outputs/handbook.pdf
-    - /data/office/matter-a/nda.docx
-    - https://example.com/a/b.pdf
-  section headings seen:
-    - 1. Scope
-    - 2. Liability
-  These are handles, not content. Re-read a path to recover its text rather than
-  reconstructing it from the summary.
-```
+A file **deleted mid-run** still loses its content. That is accepted, not
+overlooked: excerpting deleted files would reintroduce the store of matter content
+this patch exists to avoid, and nothing measured so far shows it happening.
 
-The artifacts already exist on disk under `/data/outputs`, so a pointer **is**
-sufficient recovery. Nothing new is stored, so there is no new residency surface
-and no new tenant boundary to get wrong.
+### Limit 3: the docx bug and the recursion floor - CLOSED, not gaps
 
-**Measured cost:** 1,318 chars of index against 76,600 chars folded = **1.7%
-overhead**, on a 60-message fold with 60 distinct paths. Bounded by
-`_PACGATE_MAX_TOOL_NAMES` (20), `_PACGATE_MAX_PATHS` (24), `_PACGATE_MAX_HEADINGS`
-(20) so a pathological range cannot invert the saving.
+These were listed as limits. They are not, and saying so is the point of this
+section:
 
-## A second, cheaper gap closed in the same patch
+- **docx tracked-edit nesting** (`DEFECT-docx-tracked-edit-nesting.md`) is **FIXED
+  in source, tested, proven against a live stack, shipped in 0.1.27.** It was a
+  write-side XML bug - tracked edits spliced inside a `<w:t>` text node. Never a
+  context problem, so nothing here was ever going to touch it.
+- **The recursion floor** (`DEFECT-recursion-budget-floor.md`) is **fixed and
+  gated** - `test-run-recursion-cap.ps1` reports 43 passed. The cost was
+  structural (nine middleware hooks per model call), not token pressure.
 
-Context pressure was **invisible**. The `runs` table already stores
-`total_input_tokens`, `total_tokens`, `lead_agent_tokens`, `middleware_tokens` and
-`token_usage_by_model`, so this was a display gap, not a collection gap.
+Both are closed. Neither should be re-opened on the strength of "summarization
+changed".
 
-`pacgate_context_status(middleware, messages)` reports `used_tokens`,
-`trigger_tokens`, `used_pct_of_trigger`, `headroom_tokens`, `should_summarize`
-and `messages` - computed from **the same `token_counter` and `trigger` the
-summarizer uses**, so the number cannot drift from the decision.
 
-It is a **function, not a `@tool`**, deliberately. Every registered tool adds its
-schema to every request, and the unremovable per-call floor is already **14,728
-tokens** (3,220 system prompt + 11,508 across 45 tool schemas) -
-`DEFECT-summarization-treadmill.md` is the record of what happens when a
-threshold sits below that floor. Adding tools to observe a threshold measured
-against that floor would be self-defeating.
 
-## A bug this found in its own first draft
-
-The trigger resolver was written against `deer-flow-config.yaml`, which writes:
-
-```yaml
-trigger:
-  - type: tokens
-    value: 36000
-```
-
-But `SummarizationMiddleware.__init__` validates and **stores**
-`ContextTokens = tuple[Literal["tokens"], int]`, i.e. `("tokens", 36000)`. A
-dict-shaped resolver returns **0** against the live object - which reads as
-"no pressure" on a run that is about to summarize. A silent zero in the one
-number the feature exists to report.
-
-Fixed, and `R6`/`R6b` now assert the runtime tuple and the list-of-tuples shapes.
-`R8` asserts an unrecognised shape returns 0 so callers can distinguish "cannot
-report" from "no pressure".
-
-## Verification
-
-| Assertion | What it proves |
-|---|---|
-| R1 | the patch is a full-file replacement (a diff cannot be bind-mounted over a module) |
-| R2 | the stock single-argument `_build_new_messages("x")` still works - an upstream refactor cannot make summarization raise `TypeError` |
-| R3 | the two-argument path appends the index |
-| R4 | a range with no handles appends **nothing** (no prompt bloat) |
-| R5 | 1.7% overhead against a realistic fold |
-| R6 / R6b | the RUNTIME tuple shape resolves to 36000 |
-| R7 | status numbers agree with the middleware's own `should_summarize` |
-| R8 | an unrecognised trigger shape reports 0, never a confident "no pressure" |
-| R9 | both `before_model` and `abefore_model` pass the folded range |
-| R10 | both compose lanes mount the patch |
-
-Live checks after `--force-recreate deer-flow`:
-`test-agent-mcp-e2e.ps1` 9 passed / 0 failed (a real agent run through the patched
-path); `test-summarization-treadmill.ps1` 6 of 6; `audit-deer-flow-patches.ps1`
-OK; `test-baked-patch-parity.ps1` 16 passed / 0 failed.
-
-## Known limits, stated rather than implied
-
-- The index recovers **where to look**, not what the text said. A model that cannot
-  re-read - e.g. because the file was deleted mid-run - still loses the content.
-- It indexes tool names, paths/urls and markdown headings. It does not summarise
-  code blocks, and it does not index binary payloads.
-- It does **not** make the summary itself better. If the summarizer writes a bad
-  summary, the index only tells the model what it could re-read.
-- `pacgate_context_status` is available to the application layer; it is **not**
-  registered as a model-visible tool, so the model cannot yet query its own
-  pressure. That is the next piece of work, and it should come with a measurement
-  of what one more tool schema costs against the 14,728-token floor - not an
-  assumption that it is free.

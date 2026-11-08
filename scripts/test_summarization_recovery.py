@@ -207,6 +207,37 @@ out["hint_below"] = mw._pacgate_context_hint(
 out["hint_above"] = mw._pacgate_context_hint(
     [HumanMessage(content="word " * int(36000 * 0.92 / per_word))])
 
+# ── R13: fold telemetry ─────────────────────────────────────────────────────
+import os, tempfile, json as _json
+tmp = os.path.join(tempfile.mkdtemp(), "fold.jsonl")
+os.environ["PACGATE_FOLD_LOG"] = tmp
+fold_msgs = [
+    AIMessage(content="", tool_calls=[{"name": "read_file",
+               "args": {"path": "/data/outputs/a.pdf"}, "id": "f1"}]),
+    ToolMessage(content="body", tool_call_id="f1", name="read_file"),
+    AIMessage(content="", tool_calls=[{"name": "read_file",
+               "args": {"path": "/data/outputs/a.pdf"}, "id": "f2"}]),
+    ToolMessage(content="body again", tool_call_id="f2", name="read_file"),
+]
+row = m.pacgate_record_fold(mw, fold_msgs, [HumanMessage(content="keep")])
+out["fold_row"] = row
+out["fold_file_exists"] = os.path.exists(tmp)
+out["fold_file_rows"] = len(open(tmp, encoding="utf-8").read().strip().splitlines()) if os.path.exists(tmp) else 0
+# telemetry must never raise, even on garbage input
+out["fold_garbage_returns_none"] = m.pacgate_record_fold(mw, None, None) is None
+# and it must not write message CONTENT
+raw = open(tmp, encoding="utf-8").read() if os.path.exists(tmp) else ""
+out["fold_leaks_content"] = ("body again" in raw) or ("keep" in raw)
+
+# ── R14: the hint honours a declared model window ───────────────────────────
+# A window SMALLER than the trigger is the case a trigger-only band gets wrong.
+narrow = D(model=MagicMock(profile={"max_input_tokens": 20000}),
+           trigger=("tokens", 36000), keep=("tokens", 6000))
+out["narrow_window"] = narrow._get_profile_limits()
+# 92% of the WINDOW (18,400) but only 51% of the trigger -> must fire on window logic
+out["hint_narrow_fires"] = narrow._pacgate_context_hint(
+    [HumanMessage(content="word " * int(18400 / per_word))])
+
 print(json.dumps(out))
 '''
     rc, raw = run_in_container(script)
@@ -271,6 +302,33 @@ print(json.dumps(out))
     check("R12b the pressure hint FIRES above the band",
           isinstance(res["hint_above"], str) and "context-pressure" in res["hint_above"]
           and "fold budget used" in res["hint_above"], repr(res["hint_above"])[:300])
+
+    # ── R13: fold telemetry is the sensor the hint needs ────────────────────
+    row = res["fold_row"] or {}
+    check("R13a a fold writes one telemetry row",
+          res["fold_file_exists"] and res["fold_file_rows"] == 1, json.dumps(row)[:400])
+    check("R13b the row carries the pressure, counts and re-read signal",
+          row.get("tokens_at_fold", 0) > 0 and row.get("trigger_tokens") == 36000
+          and row.get("folded_msgs") == 4 and row.get("preserved_msgs") == 1
+          and row.get("tool_calls") == 2 and row.get("distinct_payloads") == 1
+          and row.get("retouch_ratio") == 2.0, json.dumps(row)[:600])
+    check("R13c the row records that no model window is declared",
+          row.get("window_tokens") is None, f"window_tokens={row.get('window_tokens')!r}")
+    check("R13d telemetry NEVER writes message content",
+          res["fold_leaks_content"] is False,
+          "a JSONL under the bind mount that captured folded text would be the "
+          "second unscoped store this patch refuses")
+    check("R13e telemetry never raises, even on garbage input",
+          res["fold_garbage_returns_none"] is True, repr(res["fold_garbage_returns_none"]))
+
+    # ── R14: the hint must key on the BINDING limit, not the trigger alone ──
+    check("R14a a declared model window is discovered",
+          res["narrow_window"] == 20000, f"got {res['narrow_window']!r}")
+    check("R14b the hint fires on WINDOW pressure below the trigger",
+          isinstance(res["hint_narrow_fires"], str)
+          and "context-pressure" in res["hint_narrow_fires"],
+          "a trigger-only band is silent here; on a model narrower than the "
+          "trigger the diagnostic would be silent in exactly the case it exists for")
 
     print(f"\nRESULT: {_passed} passed, {_failed} failed")
     return 0 if _failed == 0 else 1

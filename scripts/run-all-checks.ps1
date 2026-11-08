@@ -834,6 +834,22 @@ $liveStackGates = @(
 $measurements = @(
     'scripts/audit-aipc-update-coverage.ps1'
 
+    # IS THE CONTEXT-PRESSURE HINT ACTUALLY HELPING? Registered 2026-11-08.
+    #
+    # The hint is advisory text, so it cannot be asserted the way a clamp can.
+    # MEASURED: that judgement had NO SENSOR - runs.total_input_tokens is
+    # cumulative, token_usage_by_model is an aggregate, and middleware_tokens is 0,
+    # so neither per-call pressure nor a re-read count was answerable.
+    #
+    # The recovery patch now writes one JSONL row per summarization pass and
+    # scripts/fold_telemetry_report.py turns it into tokens_at_fold and
+    # retouch_ratio (tool_calls / distinct_payloads). It belongs in $measurements,
+    # NOT $gates: exit 2 ("no fold recorded yet") is the normal state on a quiet
+    # box and must never fail the suite. A green result here means the sensor
+    # works, not that the hint works - the ratio is read per run against that
+    # run's own work, never against a fixed threshold.
+    'scripts/fold-telemetry-report.ps1'
+
     # Is the convergence prompt actually holding? Six runs were killed by
     # "Recursion limit of 1000 reached" at 115-118 LLM calls. The fix is a PROMPT
     # change, which cannot be asserted the way a clamp can: only a run long enough

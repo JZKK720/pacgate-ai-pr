@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import logging
+import json
+import os
 import re
+import threading
+from datetime import datetime, timezone
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, Protocol, override, runtime_checkable
@@ -227,6 +231,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages_to_summarize, preserved_messages = self._preserve_dynamic_context_reminders(messages_to_summarize, preserved_messages)
         self._fire_hooks(messages_to_summarize, preserved_messages, runtime)
         summary = self._create_summary(messages_to_summarize)
+        pacgate_record_fold(self, messages_to_summarize, preserved_messages)
         new_messages = self._build_new_messages(summary, messages_to_summarize)
 
         return {
@@ -253,6 +258,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages_to_summarize, preserved_messages = self._preserve_dynamic_context_reminders(messages_to_summarize, preserved_messages)
         self._fire_hooks(messages_to_summarize, preserved_messages, runtime)
         summary = await self._acreate_summary(messages_to_summarize)
+        pacgate_record_fold(self, messages_to_summarize, preserved_messages)
         new_messages = self._build_new_messages(summary, messages_to_summarize)
 
         return {
@@ -321,14 +327,32 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         try:
             total = self.token_counter(messages)
             trigger = _pacgate_resolve_trigger_tokens(self)
+            try:
+                window = self._get_profile_limits()
+            except Exception:
+                window = None
         except Exception:  # never let a hint break a run
             return None
-        if not trigger or total < trigger * _PACGATE_HINT_BAND:
+
+        # THE BINDING LIMIT IS min(trigger, window), NOT the trigger alone.
+        #
+        # MEASURED 2026-11-08: nothing in deer-flow-config.yaml declares
+        # `profile={"max_input_tokens": N}`, so `window` is None today and the
+        # trigger is the only reference. But keying ONLY on the trigger is wrong
+        # by construction: on a model whose window is SMALLER than the trigger,
+        # the band would never fire before the window itself overflows - the
+        # diagnostic would be silent in exactly the case it exists for. Honouring
+        # the window when one is declared makes the hint correct the moment a
+        # model profile is added, with no further change here.
+        limit = trigger
+        if window:
+            limit = min(trigger, window) if trigger else window
+        if not limit or total < limit * _PACGATE_HINT_BAND:
             return None
-        pct = int(total / trigger * 100)
+        pct = int(total / limit * 100)
         return (
             f"<context-pressure>{pct}% of the fold budget used "
-            f"({total:,}/{trigger:,} tokens). A compression pass is due soon - "
+            f"({total:,}/{limit:,} tokens). A compression pass is due soon - "
             "finish the current file or section before starting another.</context-pressure>"
         )
 
@@ -758,3 +782,117 @@ def pacgate_context_status(middleware: Any, messages: list[Any]) -> dict[str, An
             "compressed."
         ),
     }
+
+# ---------------------------------------------------------------------------
+# Pacgate patch (2026-11-08): FOLD TELEMETRY - the sensor the hint cannot be
+# judged without.
+#
+# WHY THIS EXISTS. The context-pressure hint is advisory text, so the obvious
+# question is "did it change behaviour?". MEASURED 2026-11-08: that question had
+# NO SENSOR. `runs.total_input_tokens` is CUMULATIVE (2,243,116 over 107 calls on
+# run 78f2a3c9, i.e. ~21k per call but not recorded per call), and
+# `token_usage_by_model` is also an aggregate with `middleware_tokens: 0`. So
+# neither "how full was the window at the moment of a fold" nor "did the model
+# re-read fewer files" was answerable from any table in the system.
+#
+# One row per summarization pass makes both answerable:
+#
+#   folded_msgs / preserved_msgs  -> how much history a pass actually removed
+#   tokens_at_fold                -> the real pressure that triggered it
+#   trigger_tokens                -> what the config said it should be
+#   window_tokens                 -> the model window IF the model declares
+#                                    `profile={"max_input_tokens": N}`; None when
+#                                    it does not (measured: nothing in
+#                                    deer-flow-config.yaml declares one, so this
+#                                    is None today - which is itself the finding
+#                                    that the hint can only key on the trigger)
+#   hint_band / hint_would_fire   -> whether the advisory hint had fired by then
+#   tool_names / distinct_payloads-> the re-read ratio, computed at fold time
+#
+# WHERE THE STORY GOES. A JSONL file under the existing /data bind mount, so it
+# survives a container recreate and needs no schema migration. Deliberately NOT
+# a table: this is diagnostic history, not state the app must query, and adding
+# a migration for telemetry would couple it to the DB version.
+#
+# WHAT IT NEVER WRITES. Message CONTENT. Counts, token numbers and tool NAMES
+# only. A telemetry file under a bind mount that captured folded matter text
+# would be exactly the second unscoped store this patch refuses elsewhere.
+# ---------------------------------------------------------------------------
+
+_PACGATE_FOLD_LOG_ENV = "PACGATE_FOLD_LOG"
+_PACGATE_FOLD_LOG_DEFAULT = "/data/deer-flow/data/pacgate-fold-telemetry.jsonl"
+_PACGATE_FOLD_LOG_LOCK = threading.Lock()
+
+
+def _pacgate_fold_log_path() -> str:
+    return os.environ.get(_PACGATE_FOLD_LOG_ENV, _PACGATE_FOLD_LOG_DEFAULT)
+
+
+def _pacgate_tool_fingerprints(messages: list[Any]) -> tuple[list[str], int]:
+    """Tool names used, and how many DISTINCT (tool, args) calls were made.
+
+    The distinct count is the re-read signal: 103 re-touches of one file is 1
+    distinct payload, so `calls / distinct` (the re-touch ratio) separates
+    productive work from a navigation loop. Measured baseline in this repo: the
+    killed run on bcb69ff8 made 111 model calls across 15 distinct payloads
+    (ratio 7.4), while healthy runs sit near the same structural ratio - so the
+    number has to be read per run, not against a fixed threshold.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for message in messages:
+        for call in getattr(message, "tool_calls", None) or []:
+            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+            args = call.get("args") if isinstance(call, dict) else getattr(call, "args", None)
+            if not name:
+                continue
+            names.append(str(name))
+            try:
+                fingerprint = f"{name}|{json.dumps(args, sort_keys=True, default=str)}"
+            except Exception:
+                fingerprint = f"{name}|<?>"
+            seen.add(fingerprint)
+    return names, len(seen)
+
+
+def pacgate_record_fold(middleware: Any, messages_to_summarize: list[Any],
+                        preserved_messages: list[Any]) -> dict[str, Any] | None:
+    """Append one JSONL row describing a summarization pass. Never raises.
+
+    Never raises on purpose: telemetry that can break a summarization pass turns
+    a diagnostic into an outage. Every failure path returns None.
+    """
+    try:
+        used = int(middleware.token_counter(list(messages_to_summarize) + list(preserved_messages)))
+        trigger = _pacgate_resolve_trigger_tokens(middleware)
+        try:
+            window = middleware._get_profile_limits()
+        except Exception:
+            window = None
+        names, distinct = _pacgate_tool_fingerprints(list(messages_to_summarize))
+
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "kind": "fold",
+            "folded_msgs": len(messages_to_summarize),
+            "preserved_msgs": len(preserved_messages),
+            "tokens_at_fold": used,
+            "trigger_tokens": trigger,
+            "window_tokens": window,
+            "hint_band": _PACGATE_HINT_BAND,
+            "hint_would_fire": bool(trigger and used >= trigger * _PACGATE_HINT_BAND),
+            "tool_names": sorted(set(names)),
+            "tool_calls": len(names),
+            "distinct_payloads": distinct,
+            "retouch_ratio": round(len(names) / distinct, 2) if distinct else None,
+        }
+        path = _pacgate_fold_log_path()
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with _PACGATE_FOLD_LOG_LOCK:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return row
+    except Exception:  # telemetry must never break a run
+        return None
