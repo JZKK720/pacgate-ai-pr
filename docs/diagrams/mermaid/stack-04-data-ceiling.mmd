@@ -1,0 +1,31 @@
+flowchart TB
+    L4["T4 special sensitive<br/>strict isolation"]:::t4
+    L3["T3 matter files<br/>scoped to one matter"]:::t3
+    L2["T2 completed deliverables<br/>client context retained"]:::t2
+    L1["T1 shared templates<br/>no client identity"]:::t1
+
+    Q1["Query at ceiling T1"]:::q
+    Q2["Query at ceiling T2"]:::q
+    Q3["Query at ceiling T3"]:::q
+    Q4["Query at ceiling T4"]:::q
+
+    Q1 --> L1
+    Q2 --> L1
+    Q2 --> L2
+    Q3 --> L1
+    Q3 --> L2
+    Q3 --> L3
+    Q4 --> L1
+    Q4 --> L2
+    Q4 --> L3
+    Q4 --> L4
+
+    L4 --> GATE["Never auto-released<br/>human approval required"]:::gate
+    L3 --> GATE
+
+    classDef t1 fill:#F8FAFF,stroke:#7B8AA8,stroke-width:1.1px,color:#2D3B56;
+    classDef t2 fill:#EEF3FB,stroke:#4B6EA7,stroke-width:1.2px,color:#1D3658;
+    classDef t3 fill:#F7F2E6,stroke:#B89544,stroke-width:1.3px,color:#4D3B18;
+    classDef t4 fill:#F3E7C7,stroke:#8A6D2F,stroke-width:1.6px,color:#3B2F14;
+    classDef q fill:#FFFFFF,stroke:#B7C4DE,stroke-width:1.1px,color:#3A4A66;
+    classDef gate fill:#FFFFFF,stroke:#8A6D2F,stroke-width:1.6px,color:#3B2F14;
