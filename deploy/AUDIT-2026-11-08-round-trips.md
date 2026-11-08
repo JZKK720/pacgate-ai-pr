@@ -189,3 +189,54 @@ Docker Desktop's engine stopped mid-audit (`0xC0000142` / `STATUS_DLL_INIT_FAILE
 in every shell, then no engine at all). It was restarted and all 15 containers
 came back healthy on their existing images. No data was lost. Worth knowing that
 a long sanitizer batch on this box can exhaust the engine.
+
+Upstream has **no** fix for this. Its sanitizer-related changes since `0.2.32`
+are documentation plus a `PACGATE_SANITIZER_KEY` presence gate
+(`audit-e2e-credentials.ps1`), not a batching or engine-pressure fix.
+
+## Upstream merge: 4b4d72e
+
+Merged 26 upstream commits (`17a498e..4b4d72e`) on `sync/upstream-4b4d72e`.
+
+**Upstream does not contain the redactor verdict fix.** Verified directly:
+`git show upstream/main:pacgate-ai/crates/pacgate-redact/src/verify.rs` still
+reads `let verdict = if residue.is_empty() { ... } else { Verdict::Block }`, and
+upstream touches no Rust crate at all in these 26 commits. The fix in `9f0e0c8`
+is ours and stands.
+
+Two content conflicts, both the same shape - each side added a different
+deer-flow patch mount at the same anchor in `compose.bundle.yaml` and
+`compose.prod.yaml`. Kept **both**, because they are independent interceptors on
+different modules:
+
+| Patch | Target module | Origin |
+| --- | --- | --- |
+| `deer-flow-mcp-client.py` | `harness/deerflow/mcp/client.py` | local-only, 900s read + per-server headers |
+| `deer-flow-summarization-recovery.py` | `agents/middlewares/summarization_middleware.py` | upstream, replaces an INERT patch |
+
+Taking either side alone would have silently disabled a fix. Both compose files
+pass `docker compose config`, and no `image:` pin changed versus `17a498e` - the
+summarization recovery is a mounted patch, so it needs no image bump.
+
+`deer-flow` was recreated to pick up the new mount. Verified the patch is live
+inside the container and both summarization gates pass against it:
+`test-summarization-recovery` 22/22, `test-summarization-treadmill` 6/6.
+
+### Suite after the merge
+
+**85 PASS, 1 FAIL.** The failure is `test-release-provenance.ps1`, and it is a
+**true positive**, not a false alarm:
+
+```
+FAIL  2 file(s) that CAN reach a built image changed after the published revision was built:
+        pacgate-ai/crates/pacgate-redact/src/pipeline.rs
+        pacgate-ai/crates/pacgate-redact/src/verify.rs
+```
+
+The gate compares the tag commit against `HEAD`. `v0.2.32` peels to `7a6dd73`,
+which is exactly the revision the published images report, so the tag is
+internally consistent - but our redactor fix landed after it. A rebuild from
+`v0.2.32` would therefore not reproduce what clients pull. That is precisely the
+defect this gate exists to catch, and it is correct to fail.
+
+It clears when the fix ships in a new release. It is not something to suppress.
