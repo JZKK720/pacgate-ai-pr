@@ -317,6 +317,17 @@ services:
       # "yuandian_law_yuandian_rh_ft_search", causing "not a valid tool" loops.
       # Function names must be underscore-separated for reliable tool-calling.
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
+      # Pacgate (2026-11-08): keep a folded range RECOVERABLE, and make context
+      # pressure visible. Stock `SummarizationMiddleware.before_model` returns
+      # `[RemoveMessage(REMOVE_ALL_MESSAGES), *one_summary, *preserved]`, so the
+      # folded range is GONE, not hidden - on a 65-page document the model loses
+      # the only record of which files it read. The patch appends a verbatim
+      # index of tool names, paths/urls and section headings to the summary.
+      # It stores NO message bodies on purpose: a second unscoped copy of matter
+      # conversation is what this repo refuses elsewhere.
+      # See deploy/DEFECT-summarization-recovery.md and
+      # scripts/test-summarization-recovery.ps1.
+      - ./patches/deer-flow-summarization-recovery.py:/app/backend/.venv/lib/python3.12/site-packages/langchain/agents/middleware/summarization.py:ro
       # Pacgate (401 fix 2026-10-09): re-login on 401 in the pacgate adapter.
       # The adapter caches its JWT at construction; a pacgate-api restart
       # invalidates it, so every memory/artifact call 401s until deer-flow

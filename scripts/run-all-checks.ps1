@@ -486,6 +486,25 @@ $gates = @(    'scripts/test-install-render.ps1'
     # reports exit codes but never adds to $failed, so a red gate there cannot
     # fail the suite. A config that treadmills must fail it.
     'scripts/test-summarization-treadmill.ps1'
+    # FOLDED-RANGE RECOVERY, registered 2026-11-08.
+    #
+    # The gate above proves summarization DOES NOT treadmill. It says nothing about
+    # what survives a pass. Stock `SummarizationMiddleware.before_model` returns
+    # `[RemoveMessage(REMOVE_ALL_MESSAGES), *one_summary, *preserved]`, so the folded
+    # range is GONE, not hidden, and the prose summary is lossy - on a 65-page
+    # document the model loses the only record of which files it already read. That
+    # is the measured shape of the re-read loops this repo documents (103 / 42 / 52
+    # re-touches of the same file on thread b315a961).
+    #
+    # The patch keeps a verbatim index of tool names, paths/urls and section
+    # headings, and exposes context pressure via pacgate_context_status. Measured
+    # cost: 1,318 chars of index against 76,600 chars folded = 1.7% overhead.
+    #
+    # It matters that this is gated rather than assumed: the patch replaces a
+    # THIRD-PARTY module inside the container venv, so a `pip install` that moves
+    # the file, or a mount that stops resolving, would keep summarization working
+    # while silently dropping the index. Nothing else in this repo would notice.
+    'scripts/test-summarization-recovery.ps1'
 
     # The lead-agent prompt must explain how to READ an uploaded document, and
     # must warn the agent off `pip install`. Registered 2026-10-24, after a live
