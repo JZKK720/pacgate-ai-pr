@@ -891,12 +891,43 @@ def pacgate_record_fold(middleware: Any, messages_to_summarize: list[Any],
             window = None
         names, distinct = _pacgate_tool_fingerprints(list(messages_to_summarize))
 
+        # THE FOLD IS DECIDED ON TWO DIFFERENT NUMBERS, so recording only the
+        # counter MISREPORTS the cause. Measured 2026-11-08 on the first real fold
+        # this stack ever produced (thread 0207ce2f): the row said
+        # tokens_at_fold=26,935 against a 36,000 trigger - apparently firing 9,065
+        # tokens early. It was not. `_should_summarize` fires on EITHER
+        #   (a) this counter, OR
+        #   (b) `_should_summarize_based_on_reported_tokens`: the provider-reported
+        #       `usage_metadata.total_tokens` of the last AIMessage, which includes
+        #       the unremovable floor (measured 3,220 system prompt + 11,508 tool
+        #       schemas = 14,728).
+        # That split is the same one DEFECT-summarization-treadmill.md documents.
+        #
+        # SCOPE MATTERS, and the first version of this line got it wrong. The
+        # decision reads the last AIMessage of the FULL message list, not of the
+        # folded subset - so reading only `messages_to_summarize` reported 28,155 on
+        # a fold that fired on a newer, larger figure. Both lists are concatenated
+        # here because folded + preserved is the original order.
+        reported = None
+        try:
+            whole = list(messages_to_summarize) + list(preserved_messages)
+            for message in reversed(whole):
+                usage = getattr(message, "usage_metadata", None)
+                if usage and usage.get("total_tokens"):
+                    reported = int(usage["total_tokens"])
+                    break
+        except Exception:
+            reported = None
+        floor_estimate = (reported - used) if (reported is not None and reported > used) else None
+
         row = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "kind": "fold",
             "folded_msgs": len(messages_to_summarize),
             "preserved_msgs": len(preserved_messages),
             "tokens_at_fold": used,
+            "reported_tokens_at_fold": reported,
+            "floor_estimate": floor_estimate,
             "trigger_tokens": trigger,
             "window_tokens": window,
             "hint_band": _PACGATE_HINT_BAND,
