@@ -240,3 +240,9 @@ internally consistent - but our redactor fix landed after it. A rebuild from
 defect this gate exists to catch, and it is correct to fail.
 
 It clears when the fix ships in a new release. It is not something to suppress.
+
+**This failure is accepted, not open.** Cutting a release is upstream's job, not this box's - see
+`docs/superpowers/decisions/2026-11-08-no-local-release-cut.md`. Do not bump the version locally,
+move `v0.2.32`, or add a skip to the gate to make it green. The gate is telling the truth: this
+branch carries an unreleased change to a shipped artifact, and it stays red until upstream cuts a
+release that includes it.
