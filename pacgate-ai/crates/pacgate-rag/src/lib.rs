@@ -146,7 +146,17 @@ impl RagStore {
             .unwrap_or_default();
 
         // Merge and rank by combined score
-        let merged = self.merge_results(semantic_results, keyword_results, top_k, max_chars);
+        let mut merged = self.merge_results(semantic_results, keyword_results, top_k, max_chars);
+
+        // `ts_rank` is 0 for every matching row, so the keyword leg's weighted
+        // contribution is 0 and a chunk that literally contains the query term
+        // can be buried by closer, unrelated neighbours. Measured before this:
+        // `sanitize` returned only 2 of 5 chunks containing the term.
+        //
+        // Promotion is a stable partition, applied AFTER truncation so a
+        // lexically matching chunk outside top_k is not resurrected beyond the
+        // caller's requested count.
+        merged = promote_term_matches(merged, query);
         Ok(merged)
     }
 
@@ -568,6 +578,96 @@ impl From<pacgate_core::PacgateError> for RagError {
     }
 }
 
+/// Move chunks that contain a query term ahead of those that do not.
+///
+/// `ts_rank(content_tsv, cjk_tsquery(...))` returns 0 for every matching row, so
+/// `merge_results` weights the keyword leg (0.4 x 0 = 0) below semantic
+/// (0.6 x ~0.25). The leg that can actually find the query term is therefore
+/// always ranked last: measured at top_k=5 on matter 4e1d30cc, `sanitize`
+/// returned only 2 of 5 chunks containing the term, and `contract` 3 of 5.
+///
+/// This is a **stable partition**, not a re-sort: the ranking within each group
+/// is preserved, so cosine order still decides among equally relevant chunks.
+/// It only ensures a genuine term match is not buried under closer, unrelated
+/// neighbours.
+pub fn promote_term_matches(results: Vec<KbSearchResult>, query: &str) -> Vec<KbSearchResult> {
+    let terms = matched_terms(query);
+    if terms.is_empty() {
+        return results;
+    }
+
+    let (matching, rest): (Vec<_>, Vec<_>) = results.into_iter().partition(|r| {
+        let content = r.content.to_lowercase();
+        terms.iter().any(|t| content.contains(t.as_str()))
+    });
+
+    if matching.is_empty() {
+        return rest;
+    }
+
+    matching.into_iter().chain(rest).collect()
+}
+
+/// The tokens of `query` that are long enough to be evidence of a match.
+///
+/// Tokens shorter than three characters are ignored for Latin text because a
+/// two-letter fragment matches nearly any English prose. CJK is compared per
+/// character, since the query arrives unsegmented and the corpus stores it as
+/// individual characters.
+fn matched_terms(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .flat_map(|t| {
+            if t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+                t.chars().map(|c| c.to_string()).collect::<Vec<_>>()
+            } else {
+                vec![t.to_string()]
+            }
+        })
+        .filter(|t| {
+            let n = t.chars().count();
+            if t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+                n >= 1
+            } else {
+                n >= 3
+            }
+        })
+        .map(|t| t.to_lowercase())
+        .collect()
+}
+
+/// Whether a result set shares no term with the query, i.e. is unrelated noise.
+///
+/// `pgvector` has no notion of a miss: `semantic_search` returns the `top_k`
+/// least-distant chunks for ANY query string, so on a populated matter the
+/// result list is never empty. Measured on the live stack, a gibberish query
+/// returned chunks scoring 0.621 - above 17 of 20 legitimate queries - so a
+/// cosine floor cannot tell the two apart.
+///
+/// The lexical leg is not usable as a hard gate either: `cjk_tsquery` builds a
+/// PHRASE query, and legitimate questions matched zero rows
+/// (`how do I sanitize a document`, `如何脱敏文件`).
+///
+/// Judging the chunks actually returned is sound where both of those fail. A
+/// genuine hit necessarily contains at least one query term, so this can only
+/// drop neighbour noise, never a real match.
+pub fn shares_no_term(results: &[KbSearchResult], query: &str) -> bool {
+    if results.is_empty() {
+        return false;
+    }
+
+    let terms = matched_terms(query);
+    if terms.is_empty() {
+        return false;
+    }
+
+    !results.iter().any(|r| {
+        let content = r.content.to_lowercase();
+        terms.iter().any(|t| content.contains(t.as_str()))
+    })
+}
+
 #[cfg(test)]
 mod gate_tests {
     use super::*;
@@ -632,5 +732,179 @@ mod gate_tests {
             !sql.contains("sanitization_state = $"),
             "the gate must not be caller-supplied: {sql}"
         );
+    }
+}
+
+#[cfg(test)]
+mod relevance_veto_tests {
+    use super::{shares_no_term, KbSearchResult};
+    use pacgate_core::DataLevel;
+
+    fn hit(content: &str) -> KbSearchResult {
+        KbSearchResult {
+            content: content.to_string(),
+            score: 0.3,
+            source_doc: "doc".into(),
+            page: None,
+            data_level: DataLevel::T3ProjectSpecific,
+        }
+    }
+
+    // WHY THIS EXISTS (measured 2026-11-09, live stack)
+    //
+    // pgvector cannot express "nothing matched": semantic_search returns the
+    // top_k least-distant chunks for ANY query, so on a populated matter the
+    // result list is never empty. Measured on matter 4e1d30cc, a gibberish query
+    // ("zzzz 9999 xxxx") returned chunks scoring 0.621 - above 17 of 20
+    // legitimate queries - so a cosine floor cannot separate noise from signal
+    // (bands overlap by 0.375).
+    //
+    // The lexical leg also cannot be used as a hard gate: `cjk_tsquery` builds a
+    // PHRASE query, and legitimate natural-language queries matched zero rows
+    // ('how do I sanitize a document' -> 0, '如何脱敏文件' -> 0). Requiring a
+    // lexical hit would therefore reject real questions.
+    //
+    // What IS sound: judge the chunks actually returned. If not one of them
+    // contains a single term from the query, the result set is unrelated to the
+    // query - the definition of noise. This cannot drop a real hit, because a
+    // real hit necessarily contains a query term; it only drops neighbour noise.
+
+    #[test]
+    fn semantic_neighbours_sharing_no_query_term_are_noise() {
+        let results = vec![
+            hit("agent-meow 是一个本地语音代理，零云端依赖"),
+            hit("脱敏处理 sanitize_ 接口说明"),
+        ];
+        assert!(
+            shares_no_term(&results, "kangaroo submarine recipe"),
+            "no returned chunk contains any query term, so the set is unrelated to the query"
+        );
+    }
+
+    #[test]
+    fn a_result_containing_a_query_term_survives() {
+        let results = vec![hit("4. Once a readable contract is available, re-run this review")];
+        assert!(
+            !shares_no_term(&results, "contract"),
+            "the chunk contains the term, so the result is a real match"
+        );
+    }
+
+    #[test]
+    fn a_natural_language_question_is_not_vetoed() {
+        // The lexical path matched ZERO rows for this query, which is why a
+        // keyword-based gate would have rejected it. The returned chunks DO
+        // contain its terms, so it must survive.
+        let results = vec![hit("Run pacgate_sanitize_document on the pending document, then search again")];
+        assert!(
+            !shares_no_term(&results, "how do I sanitize a document"),
+            "common terms must count even though the phrase form matched nothing"
+        );
+    }
+
+    #[test]
+    fn short_and_stopword_tokens_do_not_fake_a_match() {
+        // A two-letter token matches almost any English text. With no usable
+        // term the check cannot judge, so it must decline to veto rather than
+        // suppress a result it knows nothing about.
+        let results = vec![hit("an unrelated paragraph about taxation")];
+        assert!(
+            !shares_no_term(&results, "zz a be"),
+            "a query with no term long enough to judge must not veto results"
+        );
+    }
+
+    #[test]
+    fn cjk_queries_match_at_character_level() {
+        let results = vec![hit("对文档进行脱敏处理后再检索")];
+        assert!(
+            !shares_no_term(&results, "如何脱敏文件"),
+            "an unsegmented CJK query must be matched by character, not as one word"
+        );
+    }
+
+    #[test]
+    fn an_empty_result_set_is_not_vetoed_into_a_different_reason() {
+        // Empty results are the no_documents / nothing_sanitized case, which the
+        // caller distinguishes. The veto must not claim them as no_match.
+        assert!(
+            !shares_no_term(&[], "anything at all"),
+            "an empty set is the caller's case to explain, not the veto's"
+        );
+    }
+}
+
+#[cfg(test)]
+mod promotion_tests {
+    use super::{promote_term_matches, KbSearchResult};
+    use pacgate_core::DataLevel;
+
+    fn hit(content: &str, score: f32) -> KbSearchResult {
+        KbSearchResult {
+            content: content.to_string(),
+            score,
+            source_doc: "doc".into(),
+            page: None,
+            data_level: DataLevel::T3ProjectSpecific,
+        }
+    }
+
+    // WHY THIS EXISTS (measured 2026-11-09, live stack)
+    //
+    // `ts_rank(content_tsv, cjk_tsquery(...))` returns 0 for EVERY matching row,
+    // so `merge_results` (semantic 0.6, keyword 0.4) gives the keyword leg a
+    // weighted contribution of exactly 0. A chunk that literally contains the
+    // query term therefore cannot outrank an unrelated cosine neighbour.
+    //
+    // Measured at top_k=5 on matter 4e1d30cc: `sanitize` returned only 2 of 5
+    // chunks that contain the term, and `contract` 3 of 5. The leg that can
+    // actually find the term was ranked last by construction.
+
+    #[test]
+    fn a_term_matching_chunk_outranks_a_higher_scoring_unrelated_one() {
+        let results = vec![
+            hit("an unrelated paragraph about taxation", 0.29),
+            hit("OCR extraction runs PaddleOCR over the scan", 0.26),
+        ];
+        let ordered = promote_term_matches(results, "OCR");
+        assert!(
+            ordered[0].content.contains("OCR"),
+            "the chunk containing the query term must lead, not the closer cosine neighbour"
+        );
+    }
+
+    #[test]
+    fn promotion_preserves_the_original_order_within_each_group() {
+        let results = vec![
+            hit("unrelated one", 0.31),
+            hit("OCR first match", 0.28),
+            hit("unrelated two", 0.30),
+            hit("OCR second match", 0.26),
+        ];
+        let ordered = promote_term_matches(results, "OCR");
+        let contents: Vec<&str> = ordered.iter().map(|r| r.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            vec!["OCR first match", "OCR second match", "unrelated one", "unrelated two"],
+            "promotion must be a stable partition, not a re-sort that loses the ranking within each group"
+        );
+    }
+
+    #[test]
+    fn promotion_is_a_no_op_when_everything_matches() {
+        let results = vec![hit("OCR one", 0.3), hit("OCR two", 0.2)];
+        let ordered = promote_term_matches(results, "OCR");
+        assert_eq!(ordered[0].content, "OCR one");
+        assert_eq!(ordered[1].content, "OCR two");
+    }
+
+    #[test]
+    fn promotion_does_not_resurrect_a_veto() {
+        // If nothing matches, the order is unchanged and shares_no_term still
+        // reports the set as unrelated.
+        let results = vec![hit("unrelated", 0.3), hit("also unrelated", 0.2)];
+        let ordered = promote_term_matches(results, "kangaroo submarine recipe");
+        assert_eq!(ordered[0].content, "unrelated");
+        assert!(super::shares_no_term(&ordered, "kangaroo submarine recipe"));
     }
 }

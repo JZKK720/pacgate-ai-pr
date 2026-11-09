@@ -18,7 +18,7 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
 - Auth (JWT + argon2 + SOUL resolver middleware)
 - pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.2.32` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
 - deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.2.32` (public)
-- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.2.32` (public; exposes 22 MCP tools incl. documents/workflows)
+- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.2.32` (public; exposes 26 MCP tools incl. documents/workflows)
 - deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.32` (public; gateway URL baked in at build time)
 - OCR service image: `ghcr.io/jzkk720/ocr-service:0.2.32` (public; PaddleOCR extraction, first-class since 0.1.16)
 - qm collaboration bridge validated (Python CLI, HARNESS=pi, real Ollama)

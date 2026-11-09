@@ -104,6 +104,34 @@ $keepsShape = $body -match 'json\.dumps\(\s*results'
 Check 'E5 non-empty results still return a plain JSON array' $keepsShape `
     "changing the success shape would break every existing consumer; only the empty case should change"
 
+# ── E6: the no_match branch is actually REACHABLE ─────────────────────────────
+#
+# WHY THIS EXISTS (measured 2026-11-09, live stack)
+#
+# E1-E4 passed while `no_match` could never fire. The branch above is gated on
+# `if not results:`, but the API returned `top_k` chunks for ANY query - pgvector
+# always yields nearest neighbours - so `results` was never empty on a matter
+# that had chunks. A gibberish query ("zzzz 9999 xxxx") came back with chunks
+# scoring 0.621, above 17 of 20 legitimate queries.
+#
+# E1-E4's fixture is an EMPTY matter, where `results` genuinely is empty, so all
+# of them pass without ever exercising `no_match`. This assertion is about the
+# API contract that makes the branch reachable at all: the handler must suppress
+# unrelated neighbours so an empty list can be returned for a real miss.
+$server = Get-Content -Path $ServerFile -Raw -Encoding UTF8
+$apiSearch = 'pacgate-ai/crates/pacgate-api/src/search.rs'
+$apiGuard = $false
+if (Test-Path $apiSearch) {
+    $apiText = Get-Content -Path $apiSearch -Raw -Encoding UTF8
+    $guardAt = $apiText.IndexOf('shares_no_term(&results')
+    if ($guardAt -ge 0) {
+        $branch = $apiText.Substring($guardAt, [Math]::Min(400, $apiText.Length - $guardAt))
+        $apiGuard = $branch -match 'Json\(Vec::new\(\)\)'
+    }
+}
+Check 'E6 the API suppresses unrelated neighbours, so no_match is reachable' $apiGuard `
+    "without this the API always returns top_k neighbours, `if not results:` never holds, and the no_match reason is dead code - E1-E4 can all pass while a nonsense query still returns confident-looking chunks"
+
 Write-Host ''
 if ($failed -eq 0) {
     Write-Host "RESULT: $passed of $passed checks passed" -ForegroundColor Green
