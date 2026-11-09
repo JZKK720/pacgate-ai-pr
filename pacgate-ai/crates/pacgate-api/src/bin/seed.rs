@@ -24,9 +24,24 @@ use pacgate_rag::ChunkIngestor;
 use pacgate_tenant::{MatterStore, TenantStore};
 
 /// Files that must never enter the knowledge base.
+///
 /// OPERATOR.md holds real GitHub/RustDesk credentials; render.py and PDFs are
 /// build artifacts; `*_converted.md` are machine-generated duplicates.
-const EXCLUDE_FILENAMES: &[&str] = &["OPERATOR.md", "render.py"];
+///
+/// The two MCP authorization documents were added 2026-11-08. They sit in the
+/// SAME directory as OPERATOR.md and hold a plaintext CourtListener API token
+/// plus five plaintext passwords (元典 / 北大法宝 / 企查查 / overseas databases).
+/// OPERATOR.md was denied but its neighbours were not, so they were chunked: 8
+/// chunks across 6 duplicate documents reached kb_chunks, where the retrieval
+/// gate happened to hide them (all 8 were blocked or pending). That was luck,
+/// not design - a later re-ingest or a state flip would have made them
+/// retrievable. Denying them here is the actual fix.
+const EXCLUDE_FILENAMES: &[&str] = &[
+    "OPERATOR.md",
+    "render.py",
+    "法律数据库MCP.md",
+    "境外法律数据库和网站.md",
+];
 const EXCLUDE_SUFFIXES: &[&str] = &[".pdf", ".docx"];
 
 #[derive(Debug)]
@@ -316,3 +331,58 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+        #[cfg(test)]
+        mod deny_list_tests {
+            use super::{EXCLUDE_FILENAMES, EXCLUDE_SUFFIXES};
+
+            fn would_ingest(name: &str) -> bool {
+                let excluded = EXCLUDE_FILENAMES.contains(&name)
+                    || EXCLUDE_SUFFIXES
+                        .iter()
+                        .any(|s| name.to_lowercase().ends_with(s));
+                !excluded
+            }
+
+            // WHY THIS EXISTS (2026-11-08, found live)
+            //
+            // OPERATOR.md was on the deny-list but its neighbours in the same directory
+            // were not. The two MCP authorization documents hold a plaintext
+            // CourtListener API token and five plaintext passwords; 8 chunks across 6
+            // duplicate documents reached kb_chunks. Only the retrieval gate hid them -
+            // a state flip or a later re-ingest would have made them readable.
+            //
+            // Nothing asserted this list, which is exactly why the omission survived to a
+            // published image. The credential docs live in the same folder as the file
+            // that WAS denied, so the next document dropped there is one edit away from
+            // the same fate.
+
+            #[test]
+            fn the_credential_documents_are_denied() {
+                for name in ["OPERATOR.md", "法律数据库MCP.md", "境外法律数据库和网站.md"] {
+                    assert!(
+                        !would_ingest(name),
+                        "{name} holds plaintext credentials and must never be ingested"
+                    );
+                }
+            }
+
+            #[test]
+            fn ordinary_documents_are_still_ingested() {
+                // A deny-list that rejects everything would pass the test above while
+                // destroying the knowledge base.
+                for name in ["contract-review.md", "notes.txt", "政策摘要.md"] {
+                    assert!(
+                        would_ingest(name),
+                        "{name} is an ordinary document and must be ingested"
+                    );
+                }
+            }
+
+            #[test]
+            fn build_artifacts_and_binaries_stay_denied() {
+                assert!(!would_ingest("render.py"));
+                assert!(!would_ingest("appendix.pdf"));
+                assert!(!would_ingest("memo.DOCX"), "suffix match must be case-insensitive");
+            }
+        }
