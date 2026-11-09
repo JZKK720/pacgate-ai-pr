@@ -472,6 +472,14 @@ jobs:
 
           echo "Verifying ghcr.io/${PREFIX#ghcr.io/}/*:$TAG"
           for img in pacgate-api pacgate-mcp ocr-service laya-serve deer-flow-pacgate deer-flow-frontend-pacgate; do
+            # laya-serve is OPT-IN (compose profile "laya") and its build step is
+            # continue-on-error, so its absence is a legitimate outcome that must not
+            # fail the run. Measured 2026-11-09 on run 42593956222: all five required
+            # images published, the opt-in one did not, and this loop turned a
+            # successful release into `failure` - which trains everyone to ignore a
+            # red build on a good release. It is still checked WHEN PRESENT: an
+            # absent optional image is fine, a present-but-private one is not.
+            case "$img" in laya-serve) is_required=0 ;; *) is_required=1 ;; esac
             ok=0
             for attempt in 1 2 3 4 5; do
               tok=$(curl -s "https://ghcr.io/token?scope=repository:${PREFIX#ghcr.io/}/${img}:pull" | jq -r .token)
@@ -481,12 +489,19 @@ jobs:
                 "https://ghcr.io/v2/${PREFIX#ghcr.io/}/${img}/manifests/${TAG}")
               echo "attempt $attempt: ${PREFIX#ghcr.io/}/${img}:${TAG} => HTTP $code"
               if [ "$code" = "200" ]; then ok=1; break; fi
+              # A 404 on the OPTIONAL image is terminal - it was never pushed, so
+              # five retries only delay the release for no new information.
+              if [ "$is_required" = "0" ] && [ "$code" = "404" ]; then break; fi
               sleep 10
             done
             if [ "$ok" != "1" ]; then
               # 404 = tag absent in this namespace (likely a namespace mismatch
               # between this workflow and the compose pins, or the tag never
               # reached the registry). 401 = the package is still private.
+              if [ "$is_required" = "0" ] && [ "$code" = "404" ]; then
+                echo "::warning::${img}:${TAG} was not published (opt-in image; its build is continue-on-error) - not a release failure."
+                continue
+              fi
               echo "::error::${img}:${TAG} is not anonymously pullable (last HTTP $code)."
               echo "If 404: check that the namespace above matches the image pins in"
               echo "deploy/client-bundle/compose.prod.yaml."
