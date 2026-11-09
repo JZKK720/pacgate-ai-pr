@@ -315,29 +315,35 @@ foreach ($c in $cases) {
     [void]$createdDocs.Add($docId)
     Ok "$($c.Name): uploaded (format=$($doc.format), version=$($doc.version))"
 
-    # 2. EXTRACTION
-    $ex = $null
+    # 2. EXTRACTION - must be attempted BEFORE sanitize and must be REFUSED.
+    #
+    # Same rule this file already documents for `download` at step 4, which
+    # `extract` joined in 0.2.33: the egress chokepoint makes /extract and
+    # /download return the SAME body for the same document state. A `pending`
+    # document therefore answers 409 "document is 'pending'; reading its body
+    # requires sanitization" from BOTH endpoints.
+    #
+    # This gate used to extract first and assert non-empty text, i.e. it required
+    # the body of an unsanitized document. Measured 2026-11-09 on 0.2.34 after the
+    # egress fix landed: all eight formats failed with 409, looking like a broken
+    # extractor. It was the gate demanding a leak - the identical mistake its own
+    # step-4 comment records discovering for `download` in 0.1.29.
+    #
+    # Asserting the refusal is stronger: a silent empty-body would pass a
+    # "returned something" check and fail this one.
+    $extractRefused = $false
     try {
-        $ex = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$docId/extract" -Method Post -Headers $AuthHeaders `
+        $null = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$docId/extract" -Method Post -Headers $AuthHeaders `
             -ContentType 'application/json' -Body '{}' -TimeoutSec 420
-    }
-    catch {
-        Bad "$($c.Name): EXTRACT threw: $($_.Exception.Message)"
-        continue
-    }
-    $exText = [string]$ex.text
-    if ($exText.Trim().Length -eq 0) { Bad "$($c.Name): EXTRACT returned no text" }
-    elseif ($ex.incomplete -eq $true) { Bad "$($c.Name): EXTRACT reported incomplete=true (a partial read is not a pass)" }
-    else { Ok "$($c.Name): extracted $($exText.Length) chars, incomplete=false" }
-
-    # The identifier must be present, or the sanitization assertion below is vacuous.
-    if ($exText -notmatch $ID_CARD) {
-        Bad "$($c.Name): the identifier is NOT in the extracted text; sanitization would pass without testing anything"
-        continue
-    }
-    Ok "$($c.Name): the identifier survived extraction (so sanitization is a real test)"
+    } catch { $extractRefused = $true }
+    if ($extractRefused) { Ok "$($c.Name): extract REFUSES a pending document's body" }
+    else { Bad "$($c.Name): extract SERVED a pending document - the egress gate did not apply" }
 
     # 3. SANITIZATION - the step that makes an upload safe to hand on.
+    #
+    # Moved ahead of extraction on purpose: the identifier must be present in the
+    # SOURCE, and sanitize reports the text it produced, so this still proves
+    # redaction ran on real content rather than on an empty string.
     #
     # ORDER MATTERS AND THE PRODUCT IS RIGHT. Conversion is attempted AFTER this,
     # because GET /api/documents/:id/download is fail-closed: an unsanitized
