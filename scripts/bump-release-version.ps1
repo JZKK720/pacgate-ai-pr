@@ -513,6 +513,36 @@ try {
 
     Write-Output "  OK: all pins now read $To."
     Write-Output ''
+
+    # ── Report the docs this bump just orphaned ─────────────────────────────
+    #
+    # A version bump edits the AIPC handbook .md files (version pins and the
+    # release table) but cannot re-render their PDFs, so the committed renders go
+    # stale. `test-pdf-freshness` compares COMMIT times and fails on exactly that.
+    #
+    # This has now happened twice: 0.2.32 orphaned both PDFs (cleaned up in
+    # 17a498e) and 0.2.33 did it again (cleaned up in 3b2417c). Both times a human
+    # had to notice a red gate and re-render by hand. Saying it here turns a silent
+    # omission into a printed instruction at the moment the cause is applied.
+    #
+    # It does NOT render automatically: safe_markdown_to_pdf.py needs Python with
+    # reportlab, and a bump must not fail on a machine that lacks it. Naming the
+    # command is the honest fix; pretending the docs are fine is not.
+    $orphaned = @(
+        @{ Md = 'deploy/AIPC-DEPLOYMENT-HANDBOOK.md';    Pdf = 'deploy/AIPC-DEPLOYMENT-HANDBOOK.pdf' },
+        @{ Md = 'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.md'; Pdf = 'deploy/AIPC-DEPLOYMENT-HANDBOOK-ZH.pdf' }
+    ) | Where-Object { Test-Path $_.Md }
+
+    if ($orphaned.Count -gt 0) {
+        Write-Output '  ACTION REQUIRED - this bump edited handbook sources; their PDFs are now stale:'
+        foreach ($o in $orphaned) {
+            Write-Output "    python safe_markdown_to_pdf.py $($o.Md) $($o.Pdf)"
+        }
+        Write-Output '    then copy both into deploy/client-delivery/docs/ (test-pdf-freshness'
+        Write-Output '    requires the copies to stay byte-identical to the originals).'
+        Write-Output ''
+    }
+
     Write-Output 'Next:'
     Write-Output "  1. Build and publish $To (fork -> Actions -> build-ghcr, tag=$To)."
     Write-Output '  2. Flip any NEW package to public (UI-only for user accounts).'
