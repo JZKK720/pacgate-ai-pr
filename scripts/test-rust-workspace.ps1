@@ -80,6 +80,33 @@ try {
         exit 1
     }
 
+    # SAY WHETHER THE NER MODEL ROWS ACTUALLY RAN.
+    #
+    # `tests/recall.rs` skips its three `model_layer_*` tests when
+    # PACGATE_NER_MODEL_DIR is unset, and a skipped test still reports `ok`. Measured
+    # 2026-11-10 on 0.2.34: the identical "10 passed" line comes back in 0.08s with no
+    # weights and 279.29s with them. So the suite cannot distinguish "NER verified"
+    # from "NER never ran", and reporting a bare PASS over that is a green claim about
+    # coverage that was not exercised.
+    #
+    # This does NOT fail the build - the weights are 406MB and are baked into the
+    # image, not checked out, so a plain dev box legitimately has none. It prints
+    # which of the two situations this run is, so a reader cannot mistake one for the
+    # other. The real NER proof is `-WithWeights` below, or the deployed stack's own
+    # mapping rows (which carry ORG/PERSON entries when NER fires).
+    $modelDir = $env:PACGATE_NER_MODEL_DIR
+    $haveWeights = $modelDir -and (Test-Path (Join-Path $modelDir 'model.safetensors'))
+    if ($haveWeights) {
+        Write-Host "  NER model rows: EXERCISED (weights at $modelDir)" -ForegroundColor Green
+    } else {
+        Write-Host '  NER model rows: NOT EXERCISED - PACGATE_NER_MODEL_DIR unset or missing.' -ForegroundColor Yellow
+        Write-Host '    The three model_layer_* tests skip and still report ok, so this run' -ForegroundColor DarkGray
+        Write-Host '    proves the RULE layer only. To exercise the model layer:' -ForegroundColor DarkGray
+        Write-Host '      docker cp pacgate-api:/app/models/ner/. $env:TEMP\ner-weights' -ForegroundColor DarkGray
+        Write-Host '      $env:PACGATE_NER_MODEL_DIR="$env:TEMP\ner-weights"' -ForegroundColor DarkGray
+        Write-Host '      cargo test -p pacgate-redact --test recall   # ~280s, not 0.1s' -ForegroundColor DarkGray
+    }
+
     Write-Host '=== Rust gate: pacgate-redact clippy -D warnings ===' -ForegroundColor Cyan
     if (-not (Invoke-Cargo @('clippy', '-p', 'pacgate-redact', '--all-targets', '--', '-D', 'warnings') `
                           'cargo clippy -D warnings -p pacgate-redact')) {
