@@ -342,6 +342,24 @@ jobs:
 
       - name: Build & push laya-serve
         uses: docker/build-push-action@v6
+        # LAYA IS OPT-IN, SO ITS BUILD MUST NOT DECIDE THE RELEASE.
+        #
+        # compose.prod.yaml puts laya behind `profiles: ["laya"]` and states that a
+        # machine without it is NOT broken - pacgate-mcp's clause tools report
+        # available=false and the rest of the stack is unaffected. preflight-install
+        # does not require its tag (measured: it lists exactly pacgate-api,
+        # pacgate-mcp, ocr-service, deer-flow-pacgate and deer-flow-frontend).
+        #
+        # Measured 2026-11-09 on run 42589302623: the staging step finished with
+        # INCOMPLETE weights, this build then failed on COPY, and because a failed
+        # step skips every later step in the job, ocr-service AND both deer-flow
+        # images were skipped - the optional service took down the required ones.
+        # That is strictly worse than not shipping laya at all.
+        #
+        # continue-on-error makes the optional image's failure non-fatal. The
+        # ::warning:: in the staging step (and the step's own log) still records
+        # that laya was skipped, so the absence is visible rather than silent.
+        continue-on-error: true
         with:
           context: deploy/laya-serve
           file: deploy/laya-serve/Dockerfile
