@@ -305,6 +305,14 @@ $gates = @(    'scripts/test-install-render.ps1'
     # Proves the PDF gate can reject. Registered alongside it because a gate
     # whose only evidence is a green run has not been tested at all.
     'scripts/test-pdf-freshness-mutations.ps1'
+    # The three LOCAL-FIRST-LEGAL-AI-STACK-REFERENCE artefacts are GENERATED from
+    # one content module, and nothing asserted they agreed. Measured 2026-11-09:
+    # the module was corrected and the .md stayed stale until someone re-rendered
+    # by hand. test-pdf-freshness above cannot cover it - it compares mtime against
+    # a markdown SOURCE, and here the markdown is itself an output. audit-doc-
+    # freshness cannot cover it either: that gate asserts a doc MENTIONS the
+    # release version, and this reference is deliberately version-free.
+    'scripts/test-legal-ai-reference-freshness.ps1'
     # Gates the Python adapter suite, which nothing ran. Same gap
     # test-rust-workspace.ps1 closed for Rust: 8 adapter assertions - including
     # the 409-vs-422 distinction that exists BECAUSE the two were once collapsed -
