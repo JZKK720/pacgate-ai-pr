@@ -317,19 +317,24 @@ jobs:
         # weights for laya-serve, an OPTIONAL clause judgement service. Measured
         # twice on 2026-11-09: the download is ~1.4 GB from ModelScope at ~0.59 MB/s,
         # it ran past 50 minutes, and while it ran, ocr-service, deer-flow-pacgate
-        # and deer-flow-frontend-pacgate had not started at all. The first release
-        # attempt (42575008129) was still sitting here when it was cancelled as
-        # superseded, having published only 2 of 6 images.
+        # and deer-flow-frontend-pacgate had not started at all.
         #
         # continue-on-error makes a FAILURE harmless; it does nothing about a step
-        # that is merely slow, because no later step runs until it returns. A
-        # timeout turns the slow case into the failure case the warning below
-        # already handles: warn, leave the weights unstaged, let the remaining
-        # images build. 25 minutes is ~1.5x the measured ~40 min at worst-case rate
-        # only if the rate holds; at the documented 0.59 MB/s the 1.4 GB transfer is
-        # ~40 min, so this ceiling will usually trip and skip laya-serve - which is
-        # the right trade, because laya is optional and the other three are not.
-        timeout-minutes: 25
+        # that is merely slow, because no later step runs until it returns. A timeout
+        # turns the slow case into the failure case the warning below already handles.
+        #
+        # 45 MINUTES, NOT 25. The first value was measured against the download alone
+        # and ignored what follows it: the laya Dockerfile re-hashes both checkpoints
+        # against pinned SHA-256s before it will bake them. At 25 minutes the staging
+        # was CUT OFF mid-transfer, so the bake then failed on
+        # "baked weights model.safetensors has sha256 ..., expected ..." - the hash
+        # gate doing exactly its job on a truncated file. The release survived (that
+        # is what continue-on-error is for) but laya-serve silently did not ship.
+        #
+        # 45 min covers the 1.4 GB transfer at the documented rate with room for the
+        # verification pass. A slow transfer still degrades to "laya skipped, warn",
+        # never to "the required images never ran".
+        timeout-minutes: 45
         run: |
           ./scripts/stage-laya-models.ps1 -OutDir deploy/laya-serve/laya-weights
           if ($LASTEXITCODE -ne 0) {
