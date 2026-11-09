@@ -179,17 +179,28 @@ pub async fn assert_readable(
     doc: &pacgate_core::Document,
     ctx: &ReadContext<'_>,
 ) -> Result<ReadAdmission, ApiError> {
-    let data_level: Option<String> = sqlx::query(
-        "SELECT data_level FROM sanitizer_jobs \
-         WHERE document_id = $1 AND tenant_id = $2 \
-         ORDER BY created_at DESC LIMIT 1",
+    let level_row = sqlx::query(
+        // `sanitizer_jobs` is a PER-MATTER table and has no `document_id` column.
+        // The per-document link lives in `redaction_ledger_rows`, which carries
+        // both `job_id` and `document_id`. Joining through it is the only correct
+        // way to reach the level of the job that actually read THIS document.
+        //
+        // Measured 2026-11-09 on the live stack: querying
+        // `sanitizer_jobs WHERE document_id = $1` returned
+        // "column \"document_id\" does not exist" and turned EVERY extract and
+        // download into HTTP 500 - the admission check that exists to protect
+        // reads instead blocked all of them.
+        "SELECT j.data_level FROM sanitizer_jobs j \
+         JOIN redaction_ledger_rows r ON r.job_id = j.id \
+         WHERE r.document_id = $1 AND r.tenant_id = $2 \
+         ORDER BY r.created_at DESC LIMIT 1",
     )
     .bind(ctx.document_id.0)
     .bind(ctx.tenant_id.0)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| ApiError::internal(format!("read admission lookup failed: {e}")))?
-    .map(|r| r.get::<String, _>("data_level"));
+    .map_err(|e| ApiError::internal(format!("read admission lookup failed: {e}")))?;
+    let data_level: Option<String> = level_row.map(|r| r.get::<String, _>("data_level"));
 
     let state_row: String = sqlx::query(
         "SELECT sanitization_state FROM documents WHERE id = $1 AND tenant_id = $2",
@@ -350,6 +361,52 @@ mod tests {
         assert_ne!(
             ReadPurpose::Extract.as_str(),
             ReadPurpose::Download.as_str()
+        );
+    }
+
+    #[test]
+    fn the_admission_lookup_only_names_columns_that_exist() {
+        // WHY THIS EXISTS (found 2026-11-09, on the live 0.2.33 stack)
+        //
+        // `assert_readable` queried `sanitizer_jobs WHERE document_id = $1`, but
+        // `sanitizer_jobs` has no `document_id` column - it is a PER-MATTER job
+        // table (id, tenant_id, matter_id, data_level, mapping, verdict, ...).
+        // The per-document link lives in `redaction_ledger_rows`, which carries
+        // both `job_id` and `document_id`.
+        //
+        // The effect was total, not partial: EVERY extract and EVERY download
+        // returned HTTP 500 "read admission lookup failed ... column
+        // \"document_id\" does not exist". Measured by test-sanitizer-e2e.ps1,
+        // which failed `extract returned text` and `download allowed
+        // post-sanitize`.
+        //
+        // Nothing caught it before release because the module's own tests assert
+        // `admit(...)`, the pure decision - the SQL that FEEDS that decision was
+        // never checked against the schema. This asserts the wiring: the column
+        // the query filters on must be one the table actually has.
+        let src = include_str!("egress.rs");
+        let start = src
+            .find("pub async fn assert_readable")
+            .expect("assert_readable must exist");
+        let rest = &src[start..];
+        let end = rest.find("let outcome = admit(").expect("admit follows the lookups");
+        let body = &rest[..end];
+
+        assert!(
+            !body.contains("sanitizer_jobs \\\n         WHERE document_id"),
+            "sanitizer_jobs has no document_id column; this query cannot succeed"
+        );
+
+        // The two lookups must target tables that actually own the columns they
+        // filter on: `documents` for state, and the ledger join for the level.
+        assert!(
+            body.contains("FROM documents WHERE id = $1"),
+            "document state must come from the documents table: {body}"
+        );
+        assert!(
+            body.contains("redaction_ledger_rows"),
+            "the per-document data level must be reached through \
+             redaction_ledger_rows, the table that has both job_id and document_id"
         );
     }
 }
