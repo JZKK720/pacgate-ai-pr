@@ -238,9 +238,33 @@ $up = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/documents" -Method Post 
 Check "upload ok" ($null -ne $up.id)
 $docId = $up.id
 
-# 6. Extract (cache-warm step for the sanitize job).
-$ex = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/documents/$docId/extract" -Method Post -Headers $hdr -ContentType "application/json" -Body '{}'
-Check "extract returned text" ($ex.text.Length -gt 0)
+# 6. Extract BEFORE sanitize must be REFUSED.
+#
+# The egress chokepoint (egress.rs, added in 0.2.33) makes /extract and /download
+# return the SAME body for the same document state. Before it, this handler checked
+# the tenant and nothing else, so it returned the body text of a `pending` document
+# - content nobody had redacted and which /download already refused by design. That
+# asymmetry was the leak: the safe endpoint looked safe while the other one served
+# the original.
+#
+# This gate used to call /extract here and assert text came back, which is the
+# behaviour that was removed. Measured 2026-11-09 on 0.2.33: that assertion failed
+# with "document is 'pending'; reading its body requires sanitization", i.e. the
+# gate was demanding a leak. Asserting the REFUSAL is the stronger check and the
+# one that matches the design.
+$extractRefused = $false
+$extractMsg = ''
+try {
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/documents/$docId/extract" -Method Post -Headers $hdr -ContentType "application/json" -Body '{}'
+} catch {
+    $extractRefused = $true
+    $extractMsg = $_.ErrorDetails.Message
+}
+Check "extract REFUSES a pending document's body" $extractRefused `
+    'a pending document must not yield text from either endpoint'
+Check "the refusal names sanitization as what unblocks it" `
+    ($extractMsg -match 'sanitiz|pending|conflict') `
+    "refusal said: $extractMsg"
 
 # 7. Sanitize (the plan-020 route).
 $job = Invoke-RestMethod -Uri "http://127.0.0.1:8097/api/documents/$docId/sanitize" -Method Post -Headers $hdr -ContentType "application/json" -Body '{"data_level":"T3"}'
