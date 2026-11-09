@@ -2222,7 +2222,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-agent"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-api"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2281,7 +2281,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-auth"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-citation-check"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "once_cell",
  "regex",
@@ -2318,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-clause-parser"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "once_cell",
  "quick-xml",
@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-core"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-doc-validator"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "quick-xml",
  "serde",
@@ -2362,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-docx"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2383,7 +2383,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-llm"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-persona"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -2414,7 +2414,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-rag"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-redact"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-rule-engine"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "once_cell",
  "regex",
@@ -2466,7 +2466,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-search"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-template"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-tenant"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2511,7 +2511,7 @@ dependencies = [
 
 [[package]]
 name = "pacgate-workflow"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "chrono",

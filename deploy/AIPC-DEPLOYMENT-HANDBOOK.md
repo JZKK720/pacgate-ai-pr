@@ -102,11 +102,11 @@ The runtime is published on GHCR and needs no rebuild on the AIPC.
 
 | Image | Status |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.33` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.33` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.33` | Unchanged this release. |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.33` | Unchanged this release. |
-| `ghcr.io/jzkk720/ocr-service:0.2.33` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
+| `ghcr.io/jzkk720/pacgate-api:0.2.34` | **The sanitizer release.** Fixes the verifier that let a document pass while still holding 身份证号, 统一社会信用代码, 律师执业证号, 银行账号, 港澳通行证, 车牌, 微信号 and 纳税人识别号 (see below). Also adds the matter-workspace rollup and two remediation endpoints: `POST /api/documents/:id/sanitize-rescan` and `PATCH /api/documents/:id/sanitize-reset`. |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | Exposes 24 MCP tools to deer-flow; adds `pacgate_rescan_residue` and `pacgate_reset_sanitization` for the remediation path. Note `server.py` is bind-mounted into the container, so `git pull` delivers these without a new image. |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.34` | Unchanged this release. |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.34` | Unchanged this release. |
+| `ghcr.io/jzkk720/ocr-service:0.2.34` | PaddleOCR extraction; first-class since 0.1.16. Its PP-OCRv4 weights are **baked into the image** from 0.1.28, so extraction needs no external model host and works offline. |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | Pinned by digest in `compose.prod.yaml`. Upstream public image. |
 
 > **0.2.14 is a correctness fix, not a feature release.** A client scan of a real

@@ -1,4 +1,4 @@
-# Handoff Prompt - bring another machine up to 0.2.33
+# Handoff Prompt - bring another machine up to 0.2.34
 
 > **For:** an agent running on a second Pacgate machine (AIPC #1/#2, or the client lane).
 > **Prerequisite:** the release is PUBLISHED. Read "Is the release real?" below before doing anything.
@@ -6,15 +6,15 @@
 
 ## The direction, stated precisely because it is easy to invert
 
-**`v0.2.33` is published and tagged.** Unlike the previous delta, this one is NOT
+**`v0.2.34` is published and tagged.** Unlike the previous delta, this one is NOT
 "fixes that exist only on the dev box" - it is a normal release, and the images
 changed.
 
 | | state |
 |---|---|
-| `origin/main` | contains 0.2.33 |
-| tag `v0.2.33` | annotated, points at `d636174`, and that commit is what the images were built from |
-| GHCR `0.2.33` | **all six images published**, anonymously pullable |
+| `origin/main` | contains 0.2.34 |
+| tag `v0.2.34` | annotated, points at `HEAD_PLACEHOLDER`, and that commit is what the images were built from |
+| GHCR `0.2.34` | **all six images published**, anonymously pullable |
 
 So this machine pulls from the registry like any other release. There is nothing to
 reconcile and nothing waiting on a push.
@@ -26,10 +26,10 @@ Read the answer rather than assuming it:
 ```powershell
 cd <repo>
 git fetch origin --tags
-git rev-parse 'v0.2.33^{commit}'      # expect d636174...
-# Tag FIRST (positional), then the images. `--tag 0.2.33 laya-serve` silently
+git rev-parse 'v0.2.34^{commit}'      # expect HEAD_PLACEHOLDER...
+# Tag FIRST (positional), then the images. `--tag 0.2.34 laya-serve` silently
 # swallows laya-serve as the flag's value and checks only the default five.
-python scripts/check-ghcr-anon.py 0.2.33 pacgate-api pacgate-mcp ocr-service `
+python scripts/check-ghcr-anon.py 0.2.34 pacgate-api pacgate-mcp ocr-service `
     deer-flow-pacgate deer-flow-frontend-pacgate laya-serve
 ```
 
@@ -41,7 +41,7 @@ property that matters.
 `org.opencontainers.image.revision` label and refuses to bless the release unless every
 published image came from the tagged commit.
 
-## What is actually in 0.2.33
+## What is actually in 0.2.34
 
 Four changes worth knowing. 43 commits since `v0.2.32`.
 
@@ -61,9 +61,9 @@ This is the part that changed since the last handoff. Read it before pulling.
 | **Images** (all six) | **YES** - `pacgate-api` and `pacgate-mcp` contain new code, and the tag is new | `docker compose -f compose.prod.yaml pull` **fetches real layers** |
 | **Patches** (`patches/*.py`, `server.py`) | yes, and they are bind-mounted | `git pull` **plus a container restart** - a pull alone is inert |
 
-**Verified 2026-11-09**, the digests GHCR serves for `0.2.33`:
+**Verified 2026-11-09**, the digests GHCR serves for `0.2.34`:
 
-| image | GHCR `0.2.33` |
+| image | GHCR `0.2.34` |
 |---|---|
 | pacgate-api | `sha256:432550ac8840…` |
 | pacgate-mcp | `sha256:deb5942bdd6f…` |
