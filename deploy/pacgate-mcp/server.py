@@ -375,12 +375,15 @@ def pacgate_connector_search(
     doc_type: str | None = None,
     limit: int = 10,
     connector: str | None = None,
-    data_level: str | None = None,
 ) -> str:
     """Search external legal databases (元典, 北大法宝, 企查查, CourtListener, SEC EDGAR, ...).
 
     Fans out across all available legal data source connectors and returns
     matching laws, cases, and filings.
+
+    Results come from third-party databases and carry NO Pacgate data
+    classification, so there is no `data_level` argument: passing one to the
+    API is a 400. Use `pacgate_kb_search` for the classified, filtered corpus.
 
     Args:
         query: The search keywords (e.g. a legal term or company name).
@@ -388,7 +391,6 @@ def pacgate_connector_search(
         doc_type: Optional document type filter (law, case, regulation, ...).
         limit: Maximum results per connector (default 10).
         connector: Optional: restrict to a single connector by name.
-        data_level: Optional data classification tag T1-T4 (audit only).
     """
     client = get_client()
     params: dict[str, Any] = {"q": query, "limit": limit}
@@ -398,8 +400,6 @@ def pacgate_connector_search(
         params["doc_type"] = doc_type
     if connector:
         params["connector"] = connector
-    if data_level:
-        params["data_level"] = data_level
 
     resp = client.get("/api/search", params=params)
     _handle_error(resp)

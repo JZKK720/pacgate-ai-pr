@@ -3,6 +3,7 @@
 mod auth;
 mod chat;
 mod documents;
+mod egress;
 mod error;
 mod extract;
 mod matters;
@@ -14,6 +15,7 @@ mod text_extract;
 mod workflows;
 mod workspace;
 
+pub use egress::{assert_readable, admit, BodySource, ReadAdmission, ReadContext, ReadPurpose};
 pub use error::ApiError;
 pub use memory_scope::{check_memory_scope, MemoryScopeViolation, MEMORY_MAX_BYTES};
 pub use state::{AppConfig, AppState, SANITIZE_MAX_CONCURRENT};

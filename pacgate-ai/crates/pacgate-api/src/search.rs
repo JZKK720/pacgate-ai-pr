@@ -22,9 +22,11 @@ pub struct SearchQueryParams {
     /// Optional: search only a specific connector by name
     pub connector: Option<String>,
     /// Optional data classification level T1-T4.
-    /// When set, results are tagged with this level for downstream filtering.
-    /// External connectors don't filter by data_level yet, but the metadata
-    /// is passed through for audit and future connector-level enforcement.
+    ///
+    /// Refused, not ignored. It was previously accepted and described as
+    /// "tagged for audit" while nothing wrote an audit row and nothing filtered,
+    /// so the honest contract is a 400 until a connector can honour it.
+    /// Unclassified third-party results cannot carry a Pacgate classification.
     pub data_level: Option<String>,
 }
 
@@ -45,6 +47,8 @@ pub struct KbSearchQueryParams {
     /// When set, only chunks at or below this level are returned.
     /// T1 = shared templates only; T3 = templates + seeds + project files (excludes T4).
     /// Default: T3 (returns T1+T2+T3, excludes T4 special sensitive).
+    ///
+    /// A PRESENT but unparseable value is a 400, not a silent fall-back to T3.
     pub max_data_level: Option<String>,
 }
 
@@ -82,11 +86,9 @@ pub struct ConnectorStatus {
 /// Search external legal databases.
 ///
 /// `GET /api/search?q=keyword&jurisdiction=ChinaMainland&limit=10`
-/// `GET /api/search?q=keyword&connector=courtlistener&data_level=T2`
 ///
-/// The `data_level` parameter (T1-T4) tags the search request with a data
-/// classification level. External connectors don't filter by it yet, but
-/// the metadata is available for audit logging and future enforcement.
+/// `data_level` is NOT accepted here - see `SearchQueryParams::data_level`. The
+/// classified corpus lives at `/api/kb/search`, which really does filter.
 pub async fn search(
     State(state): State<AppState>,
     Query(params): Query<SearchQueryParams>,
@@ -95,13 +97,21 @@ pub async fn search(
         return Err(ApiError::bad_request("search query 'q' must not be empty"));
     }
 
-    // Validate data_level if provided
-    if let Some(ref dl) = params.data_level {
-        if pacgate_core::DataLevel::from_code(dl).is_none() {
-            return Err(ApiError::bad_request(
-                "data_level must be one of: T1, T2, T3, T4",
-            ));
-        }
+    // Validate data_level if provided.
+    //
+    // 2026-11-09: this parameter was validated, logged, and then DISCARDED -
+    // `SearchQuery` has no data-level field because an external connector has no
+    // corpus to classify. Keeping it as an accept-then-ignore argument was a
+    // false compliance signal: a caller that sends `data_level=T2` reasonably
+    // reads the response as "filtered to T2". It now refuses, so the parameter
+    // can only ever mean something by being implemented. `tracing::info!` was
+    // also not an audit trail; nothing here wrote to `audit_log`.
+    if params.data_level.is_some() {
+        return Err(ApiError::bad_request(
+            "data_level is not supported on external search: connectors return \
+             third-party results with no Pacgate classification. Use /api/kb/search \
+             for the classified, filtered corpus",
+        ));
     }
 
     let query = pacgate_search::SearchQuery::new(&params.q).with_limit(params.limit.unwrap_or(10));
@@ -117,13 +127,6 @@ pub async fn search(
     } else {
         query
     };
-
-    if let Some(ref dl) = params.data_level {
-        tracing::info!(
-            "external search with data_level={} (tagged for audit, not filtered)",
-            dl
-        );
-    }
 
     let results = if let Some(ref connector_name) = params.connector {
         state.search.search_one(connector_name, &query).await
@@ -146,6 +149,33 @@ pub async fn search(
         .collect();
 
     Ok(Json(response))
+}
+
+/// Resolve the caller's `max_data_level` into a ceiling, refusing anything
+/// unparseable.
+///
+/// Extracted from `kb_search` so the behaviour can be tested without a database.
+/// The distinction this function exists to preserve:
+///
+///  * `None` (parameter absent) -> `T3`, the documented default.
+///  * `Some(valid)`             -> that ceiling.
+///  * `Some(invalid)`           -> 400. NOT `T3`.
+///
+/// The last arm is the fix. It used to be `T3`, which meant a typo in a
+/// data-classification parameter returned MORE sensitive content than the
+/// caller asked for, with a 200 and no warning.
+pub(crate) fn resolve_max_data_level(
+    requested: Option<&str>,
+) -> Result<pacgate_core::DataLevel, ApiError> {
+    match requested {
+        Some(code) => pacgate_core::DataLevel::from_code(code).ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "max_data_level '{code}' is not T1|T2|T3|T4; refusing rather than \
+                 widening the ceiling to the default"
+            ))
+        }),
+        None => Ok(pacgate_core::DataLevel::T3ProjectSpecific),
+    }
 }
 
 /// Search the internal knowledge base (RAG) with data classification filtering.
@@ -182,12 +212,19 @@ pub async fn kb_search(
     // Build SearchFilter from query params
     let mut filter = pacgate_rag::SearchFilter::new();
 
-    // Default max_data_level is T3 (returns T1+T2+T3, excludes T4)
-    let max_dl = params
-        .max_data_level
-        .as_deref()
-        .and_then(pacgate_core::DataLevel::from_code)
-        .unwrap_or(pacgate_core::DataLevel::T3ProjectSpecific);
+    // Default max_data_level is T3 (returns T1+T2+T3, excludes T4).
+    //
+    // 2026-11-09: this used to be
+    //     params.max_data_level.as_deref()
+    //         .and_then(DataLevel::from_code)
+    //         .unwrap_or(T3)
+    // which silently widened an UNPARSEABLE ceiling to T3. A caller asking for
+    // T1 who sent a typo received T3 content - the filter failed open, in the
+    // one direction that discloses more. An absent parameter still defaults to
+    // T3 (that is the documented behaviour); a PRESENT but invalid one is now a
+    // 400, because "we did not understand your security parameter" and "you did
+    // not send one" are different requests and must not share an answer.
+    let max_dl = resolve_max_data_level(params.max_data_level.as_deref())?;
     filter = filter.with_max_data_level(max_dl);
 
     // Optional jurisdiction filter
@@ -424,6 +461,91 @@ mod gate_tests {
         assert!(
             guard_at < body.find("let response").expect("response"),
             "the relevance check must run before the response is built"
+        );
+    }
+
+    /// The 2026-11-09 fail-open. `max_data_level` was parsed with
+    /// `.and_then(from_code).unwrap_or(T3)`, so a value the server did not
+    /// understand was silently replaced by the DEFAULT ceiling: a caller asking
+    /// for T1 with a typo received T3 - the filter failed in the one direction
+    /// that discloses more, and no error said so.
+    ///
+    /// This asserts BEHAVIOUR, not source text. A source-scanning version of
+    /// this test passed when the fail-open was deliberately reintroduced, so it
+    /// was proving nothing.
+    #[test]
+    fn an_unparseable_max_data_level_is_refused_not_widened_to_the_default() {
+        use pacgate_core::DataLevel;
+
+        // Present and invalid: refused, and the message names the bad value.
+        //
+        // `"T3 "` is deliberately NOT in this list: `from_code` trims, so a
+        // trailing space is a valid T3. Being lenient about whitespace in a
+        // query parameter is harmless; being lenient about an unrecognised
+        // LEVEL is what failed open.
+        for bad in ["T9", "t0", "MAX", "3", "T"] {
+            let err = resolve_max_data_level(Some(bad))
+                .expect_err(&format!("{bad:?} must be refused, never widened"));
+            assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+            assert!(
+                err.message.contains(bad.trim()),
+                "the refusal must name the rejected value so it can be fixed: {}",
+                err.message
+            );
+        }
+
+        // Present and valid: honoured exactly, in both spellings `from_code`
+        // accepts. A ceiling of T1 must stay T1.
+        assert_eq!(resolve_max_data_level(Some("T1")).unwrap(), DataLevel::T1SharedTemplate);
+        assert_eq!(resolve_max_data_level(Some("t1")).unwrap(), DataLevel::T1SharedTemplate);
+        assert_eq!(resolve_max_data_level(Some("T4")).unwrap(), DataLevel::T4SpecialSensitive);
+
+        // Absent: the documented default, unchanged.
+        assert_eq!(
+            resolve_max_data_level(None).unwrap(),
+            DataLevel::T3ProjectSpecific,
+            "an ABSENT max_data_level must still default to T3"
+        );
+    }
+
+    /// An invalid level must never resolve to something WIDER than requested.
+    ///
+    /// Stated separately because it is the property that actually matters: a
+    /// refusal and a narrowing are both acceptable outcomes, a widening is not.
+    #[test]
+    fn an_invalid_level_never_resolves_to_a_wider_ceiling() {
+        for bad in ["T9", "", "T1000"] {
+            match resolve_max_data_level(Some(bad)) {
+                Err(_) => {}
+                Ok(dl) => panic!(
+                    "{bad:?} resolved to {dl:?}; an unrecognised ceiling must not \
+                     fall back to a classification the caller did not request"
+                ),
+            }
+        }
+    }
+
+    /// `data_level` on EXTERNAL search was validated, logged, and discarded:
+    /// `SearchQuery` has no data-level field, so nothing filtered. Accepting it
+    /// was a false compliance signal - a caller sending T2 read the response as
+    /// "filtered to T2". It is now a 400 until a connector can honour it.
+    #[test]
+    fn external_search_refuses_data_level_instead_of_accepting_and_ignoring_it() {
+        let src = include_str!("search.rs");
+        let start = src.find("pub async fn search(").expect("search must exist");
+        let rest = &src[start..];
+        let end = rest
+            .find("pub async fn kb_search(")
+            .expect("kb_search must follow");
+        let body = &rest[..end];
+
+        assert!(
+            body.contains("data_level is not supported on external search"),
+            "external search must refuse the parameter it cannot honour"
+        );
+        assert!(
+            !body.contains("not filtered"),
+            "the accept-and-discard behaviour must be gone, not reworded"
         );
     }
 }

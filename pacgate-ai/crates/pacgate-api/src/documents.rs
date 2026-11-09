@@ -138,7 +138,7 @@ pub async fn extract_document_handler(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<crate::extract::ExtractedDocument>, ApiError> {
-    let (tenant_id, _) = claims_to_ids(&claims)?;
+    let (tenant_id, user_id) = claims_to_ids(&claims)?;
     let document_id: DocumentId = id
         .parse()
         .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
@@ -146,6 +146,31 @@ pub async fn extract_document_handler(
     // The document's matter scopes the call; fetch it to enforce the tenant
     // boundary before extracting.
     let doc = fetch_document_for_tenant(&state, &tenant_id, &document_id).await?;
+
+    // THE EGRESS CHOKEPOINT. This handler used to check the tenant and nothing
+    // else, so it returned the body text of a `pending` or `blocked` document -
+    // content nobody had redacted and which `/download` refuses by design. The
+    // decision now comes from `egress::assert_readable`, which also writes the
+    // audit row for both outcomes.
+    let admission = crate::egress::assert_readable(
+        &state,
+        &doc,
+        &crate::egress::ReadContext {
+            tenant_id: &tenant_id,
+            user_id: &user_id,
+            matter_id: &doc.matter_id,
+            document_id: &document_id,
+            purpose: crate::egress::ReadPurpose::Extract,
+            role: &claims.role,
+        },
+    )
+    .await?;
+
+    // The extraction lane still needs to RUN for a document that has never been
+    // extracted - that is what /extract is for, and refusing to extract would
+    // make sanitization impossible. What the admission decided is what gets
+    // RETURNED. `extract_document` is `pub(crate)` and unreachable over HTTP, so
+    // reading an unredacted body here does not disclose it.
     let extracted = crate::extract::extract_document(
         &state,
         &tenant_id,
@@ -153,7 +178,72 @@ pub async fn extract_document_handler(
         &document_id,
     )
     .await?;
-    Ok(Json(extracted))
+
+    Ok(Json(match admission.body {
+        crate::egress::BodySource::RedactedChunks => redacted_extraction(&state, &tenant_id, &doc.matter_id, &document_id, extracted).await?,
+        // `never` - the original is the artifact and this is the one state that
+        // authorises it. Spans are included because, for this state, nothing was
+        // ever promised to be redacted.
+        crate::egress::BodySource::Original => extracted,
+    }))
+}
+
+/// Serve the extraction view of a document whose body may only leave redacted.
+///
+/// ## The `spans` half of this is the 2026-11-09 finding
+///
+/// `document_spans.text` holds the ORIGINAL text as the extractor read it, and a
+/// sanitize job never rewrites it - redaction produces `kb_chunks`, and
+/// `document_spans` keeps the coordinates of text that was never replaced. So
+/// returning the cached spans alongside redacted `text` would have handed back
+/// the unredacted document in `spans[].text` while the `text` field looked
+/// clean. Gating `text` alone would have been a partial fix that a reviewer
+/// reasonably reads as a complete one.
+///
+/// Redacted text has no coordinates to report: the chunks carry offsets in a
+/// different coordinate space than the OCR page boxes. So for a `sanitized`
+/// document the spans are dropped rather than fabricated. That is a real
+/// capability reduction, it is what the redaction actually permits, and it is
+/// stated here rather than left for someone to discover.
+async fn redacted_extraction(
+    state: &AppState,
+    tenant_id: &TenantId,
+    matter_id: &MatterId,
+    document_id: &DocumentId,
+    extracted: crate::extract::ExtractedDocument,
+) -> Result<crate::extract::ExtractedDocument, ApiError> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM kb_chunks \
+         WHERE tenant_id = $1 AND matter_id = $2 AND document_id = $3 \
+         AND sanitization_state = 'sanitized' \
+         ORDER BY chunk_index",
+    )
+    .bind(tenant_id.0)
+    .bind(matter_id.0)
+    .bind(document_id.0)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("redacted extraction lookup failed: {e}")))?;
+
+    if rows.is_empty() {
+        // The label says sanitized but there is no redacted rendering to serve.
+        // Serving `extracted.text` here would be the 2026-11-03 download leak
+        // re-committed in a different handler.
+        return Err(ApiError::conflict(
+            "document is labelled 'sanitized' but has no sanitized chunks to serve; \
+             re-run the sanitize job"
+                .to_string(),
+        ));
+    }
+
+    Ok(crate::extract::ExtractedDocument {
+        text: rows.join("\n"),
+        // Page count is a property of the file, not of the text, so it survives
+        // redaction unchanged.
+        pages: extracted.pages,
+        spans: Vec::new(),
+        incomplete: extracted.incomplete,
+    })
 }
 
 pub async fn delete_document(
@@ -240,29 +330,35 @@ pub async fn download_document(
     Path(id):     Path<String>,
     Query(query): Query<DownloadQuery>,
 ) -> Result<Response, ApiError> {
-    let (tenant_id, _) = claims_to_ids(&claims)?;
+    let (tenant_id, user_id) = claims_to_ids(&claims)?;
     let doc_id: DocumentId = id
         .parse()
         .map_err(|e| ApiError::bad_request(format!("invalid document id: {e}")))?;
 
-    fetch_document_for_tenant(&state, &tenant_id, &doc_id).await?;
+    let doc = fetch_document_for_tenant(&state, &tenant_id, &doc_id).await?;
 
     // Egress gate (design 5.1): export/download refuses anything that is not
     // 'sanitized' or explicitly 'never'. 'pending' is the default state, so a
     // document nobody sanitized cannot leave through the download path.
-    let doc_state: String = sqlx::query(
-        "SELECT sanitization_state FROM documents WHERE id = $1 LIMIT 1",
+    //
+    // 2026-11-09: the admission decision moved into `egress::assert_readable`
+    // so that extract and download cannot disagree. This handler previously
+    // carried its own copy of the rule, which is how `/extract` came to have no
+    // rule at all: two hand-written checks drifted, and the third endpoint added
+    // later had no check to drift from.
+    let admission = crate::egress::assert_readable(
+        &state,
+        &doc,
+        &crate::egress::ReadContext {
+            tenant_id: &tenant_id,
+            user_id: &user_id,
+            matter_id: &doc.matter_id,
+            document_id: &doc_id,
+            purpose: crate::egress::ReadPurpose::Download,
+            role: &claims.role,
+        },
     )
-    .bind(doc_id.0)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| ApiError::internal(e.to_string()))?
-    .get("sanitization_state");
-    if doc_state != "sanitized" && doc_state != "never" {
-        return Err(ApiError::conflict(format!(
-            "document is '{doc_state}'; download requires sanitization (or explicit 'never')"
-        )));
-    }
+    .await?;
 
     let (doc, raw_bytes) = state
         .doc_store
@@ -289,7 +385,10 @@ pub async fn download_document(
     // cannot be rebuilt byte-for-byte from chunks, so they are served as the redacted
     // TEXT rather than as the original file - which is what the conversion surface
     // consumes anyway.
-    let body_plan = download_body_for(&doc_state, &doc.format);
+    let body_plan = match admission.body {
+        crate::egress::BodySource::RedactedChunks => download_body_for("sanitized", &doc.format),
+        crate::egress::BodySource::Original => DownloadBody::OriginalBinary,
+    };
 
     let bytes = match body_plan {
         DownloadBody::SanitisedText => {
@@ -590,5 +689,125 @@ mod download_tests {
                 "state {state:?} must not authorise a download"
             );
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Chokepoint coverage (2026-11-09)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// The handler names that return document BODY CONTENT to a caller.
+    ///
+    /// This list is the whole point of the test below: the 2026-11-09 finding
+    /// was not that `/extract` had a wrong check, it was that `/extract` had NO
+    /// check while `/download` next to it had one. Both were written by hand,
+    /// months apart. A list plus a guard means the next body-returning handler
+    /// fails CI unless it calls the shared decision.
+    ///
+    /// Adding a name here is a deliberate act with a cost: the new handler must
+    /// route through `egress::assert_readable`.
+    const BODY_RETURNING_HANDLERS: &[&str] = &[
+        "extract_document_handler",
+        "download_document",
+    ];
+
+    fn handler_body<'a>(src: &'a str, name: &str) -> &'a str {
+        let marker = format!("pub async fn {name}(");
+        let start = src
+            .find(&marker)
+            .unwrap_or_else(|| panic!("{name} must exist in documents.rs"));
+        let rest = &src[start..];
+        // A handler ends at the next `pub async fn`. Doc comments before it belong
+        // to the next item, which is fine: they cannot contain a call.
+        let end = rest.find("\npub async fn ").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    #[test]
+    fn every_body_returning_handler_goes_through_the_egress_chokepoint() {
+        let src = include_str!("documents.rs");
+        for name in BODY_RETURNING_HANDLERS {
+            let body = handler_body(src, name);
+            assert!(
+                body.contains("crate::egress::assert_readable("),
+                "{name} returns document content but does not call the egress \
+                 chokepoint. Add `assert_readable` (and honour the returned \
+                 BodySource) rather than writing another hand-made state check."
+            );
+        }
+    }
+
+    /// Order matters. A chokepoint consulted AFTER the body is read is a log
+    /// line, not a gate, and it would let a refused read still be performed.
+    #[test]
+    fn the_chokepoint_runs_before_the_document_is_read() {
+        let src = include_str!("documents.rs");
+
+        let extract = handler_body(src, "extract_document_handler");
+        let gate_at = extract
+            .find("crate::egress::assert_readable(")
+            .expect("extract must consult the chokepoint");
+        let read_at = extract
+            .find("crate::extract::extract_document(")
+            .expect("extract must extract");
+        assert!(
+            gate_at < read_at,
+            "extract_document_handler must admit BEFORE extracting"
+        );
+
+        let download = handler_body(src, "download_document");
+        let gate_at = download
+            .find("crate::egress::assert_readable(")
+            .expect("download must consult the chokepoint");
+        let read_at = download
+            .find(".download_bytes(")
+            .expect("download must read bytes");
+        assert!(
+            gate_at < read_at,
+            "download_document must admit BEFORE reading bytes"
+        );
+    }
+
+    /// A `sanitized` document must be served from `kb_chunks`, never from the
+    /// extraction cache.
+    ///
+    /// `document_spans.text` holds the ORIGINAL text as the extractor read it.
+    /// A sanitize job does not rewrite that table - redaction produces
+    /// `kb_chunks` - so returning cached spans for a `sanitized` document
+    /// discloses the unredacted body inside `spans[].text` while the top-level
+    /// `text` field looks clean. Returning `extracted` unchanged, which the
+    /// first draft of this fix did, was that leak.
+    #[test]
+    fn the_redacted_extraction_reads_only_sanitized_chunks_and_clears_spans() {
+        let src = include_str!("documents.rs");
+        let start = src
+            .find("async fn redacted_extraction(")
+            .expect("redacted_extraction must exist");
+        // Slice to the next handler, not to `\n}\n`: this file has CRLF line
+        // endings, so a closing brace is `\r\n}\r\n` and `\n}\n` never matches.
+        // The first version of this test therefore ran its own assertions as
+        // part of the "function body" and failed on its own text.
+        let rest = &src[start..];
+        let end = rest
+            .find("\npub async fn ")
+            .expect("a handler must follow redacted_extraction");
+        let body = &rest[..end];
+
+        assert!(
+            body.contains("sanitization_state = 'sanitized'"),
+            "the redacted rendering must come from sanitized chunks only"
+        );
+        assert!(
+            body.contains("spans: Vec::new()"),
+            "spans hold the pre-redaction text, so they must not be returned"
+        );
+        assert!(
+            !body.contains("spans: extracted.spans"),
+            "returning the cached spans would disclose the original text"
+        );
+        assert!(
+            body.contains("has no sanitized chunks to serve"),
+            "a sanitized document with no redacted chunks must refuse, not \
+             fall back to the original"
+        );
     }
 }
