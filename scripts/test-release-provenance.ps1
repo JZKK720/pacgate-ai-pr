@@ -146,14 +146,31 @@ Info "derived $($pins.Count) published image(s) from compose.prod.yaml"
 
 $revisions = @{}
 $missing = @()
+# Images whose absence is a legitimate, designed outcome rather than a partial
+# release. laya-serve sits behind compose profile "laya" and its build step is
+# continue-on-error, so the release is COMPLETE without it - preflight-install
+# does not require the tag either.
+#
+# Verified 2026-11-09: run 42599365629 published all five required images and
+# succeeded, and this gate then declined to answer (exit 2) because the opt-in
+# image was absent. A gate that cannot bless a complete release is as misleading as
+# one that passes an incomplete one.
+$optionalImages = @('laya-serve')
 foreach ($p in $pins) {
     $ref = "$($p.Ns)/$($p.Repo):$($p.Tag)"
+    $isOptional = $optionalImages -contains $p.Repo
     try {
         $lab = Get-ImageRevisionLabel -Namespace $p.Ns -Repository $p.Repo -Tag $p.Tag
     }
     catch {
-        $missing += $ref
-        Info "registry read failed for $ref : $($_.Exception.Message)"
+        if ($isOptional) {
+            # Reported, never silent: the provenance claim below must not imply the
+            # optional image was verified when it was not.
+            Info "$ref is not published (opt-in image, continue-on-error) - excluded from the provenance comparison"
+        } else {
+            $missing += $ref
+            Info "registry read failed for $ref : $($_.Exception.Message)"
+        }
         continue
     }
     if (-not $lab.Revision) {
