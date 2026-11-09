@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use pacgate_core::{DataLevel, Jurisdiction, MatterId, SourceLevel, TenantId};
+use pacgate_core::{DataLevel, DocumentId, Jurisdiction, MatterId, SourceLevel, TenantId};
 use sqlx::{PgPool, Row};
 use tracing::instrument;
 
@@ -96,6 +96,42 @@ pub struct RagStore {
 impl RagStore {
     pub fn new(db: PgPool, embedding: EmbeddingService) -> Self {
         Self { db, embedding }
+    }
+
+    /// The redacted rendering of one document, reassembled from `kb_chunks`.
+    ///
+    /// Moved here on 2026-11-09 from the `KbStore` adapter in `pacgate-api`, which
+    /// was the only caller. Citation verification needs the same read, and a
+    /// second copy of "which rows constitute this document's sanitised body" is
+    /// the kind of duplicate that drifts: the adapter joins `content` in
+    /// `chunk_index` order and returns `None` when there are no rows, and both
+    /// properties are load-bearing.
+    ///
+    /// `None` means "no sanitised text exists". Callers must refuse in that case
+    /// rather than fall back to `documents.storage_path` - serving the unredacted
+    /// original is the 2026-11-03 egress leak.
+    pub async fn sanitised_text(
+        &self,
+        tenant_id: &TenantId,
+        document_id: &DocumentId,
+    ) -> Result<Option<String>, RagError> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM kb_chunks \
+             WHERE document_id = $1 AND tenant_id = $2 \
+             ORDER BY chunk_index",
+        )
+        .bind(document_id.0)
+        .bind(tenant_id.0)
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| RagError::Database(e.to_string()))?;
+
+        if rows.is_empty() {
+            Ok(None)
+        }
+        else {
+            Ok(Some(rows.join("")))
+        }
     }
 
     /// Search the knowledge base for a matter using hybrid retrieval.

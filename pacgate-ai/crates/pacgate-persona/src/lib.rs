@@ -581,3 +581,126 @@ fn built_in_personas() -> Vec<Persona> {
     },
     ]
 }
+#[cfg(test)]
+mod enforcement_coverage {
+    use super::*;
+    use pacgate_core::enforcement::{evaluate_turn, GateOutcome};
+    use pacgate_core::EnforcementPoint;
+
+    /// The rules this build claims to enforce outside the model, and the ones it
+    /// claims to enforce with a check that exists.
+    ///
+    /// MEASURED 2026-11-09, before the `pacgate_core::enforcement` module existed.
+    /// `EnforcementPoint` was written 35 times across the SOUL definitions and read
+    /// nowhere: a repo-wide search for the field returned only its own declaration.
+    /// A rule tagged `WorkflowGate` therefore behaved exactly like one tagged
+    /// `AgentPrompt`, while reading as a platform control in the persona source.
+    ///
+    /// These assertions pin the honest count so the label cannot silently go back to
+    /// overstating itself. They are meant to be UPDATED, deliberately, when a gate is
+    /// actually built - and to fail loudly if a rule is merely re-labelled.
+    #[test]
+    fn the_number_of_externally_enforced_rules_is_stated_and_does_not_drift() {
+        let souls = list_souls();
+
+        let mut declared_gates = 0usize;
+        let mut prompt_only = 0usize;
+
+        for soul in &souls {
+            for rule in &soul.boundary_rules {
+                match rule.enforcement_point {
+                    EnforcementPoint::WorkflowGate | EnforcementPoint::ApiMiddleware => {
+                        declared_gates += 1
+                    }
+                    EnforcementPoint::AgentPrompt => prompt_only += 1,
+                }
+            }
+        }
+
+        assert_eq!(
+            declared_gates, 16,
+            "the count of rules claiming external enforcement changed. If a rule was \
+             genuinely given a machine check, update this number AND \
+             `built_gates` below in the same commit. If a rule was only re-tagged, \
+             do not."
+        );
+        assert_eq!(
+            prompt_only, 19,
+            "the count of prompt-only rules changed unexpectedly"
+        );
+    }
+
+    /// Of the rules claiming external enforcement, exactly one has a check today:
+    /// the citation gate in `pacgate_core::enforcement`. Every other one is reported
+    /// as `NotImplemented` to a caller, which is the point - the system now says
+    /// which of its advertised controls are real.
+    #[test]
+    fn exactly_one_advertised_gate_is_actually_implemented_today() {
+        let souls = list_souls();
+
+        let mut implemented = 0usize;
+        let mut not_implemented = 0usize;
+
+        for soul in &souls {
+            let report = evaluate_turn(Some(soul), &[], |_| None);
+            for verdict in report.verdicts {
+                match verdict.outcome {
+                    GateOutcome::NotImplemented => not_implemented += 1,
+                    // With no citations the citation gate reports itself as not
+                    // applicable, which is a satisfied machine check, not a pass on
+                    // the work. That distinction is asserted in pacgate-core.
+                    GateOutcome::Satisfied => implemented += 1,
+                    GateOutcome::PromptOnly => {}
+                    GateOutcome::Violated => {
+                        panic!("a gate with no citations must not be violated: {}", verdict.rule)
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            implemented, 1,
+            "expected exactly one implemented gate (the citation gate). Building \
+             another is good news - raise this number and record which rule."
+        );
+        assert_eq!(
+            not_implemented, 15,
+            "the number of advertised-but-unbuilt gates changed"
+        );
+    }
+
+    /// The Sylvie persona is the one the 百宸 white paper's author is modelled on,
+    /// and `\"No legal conclusion without Sylvie's review\"` is the rule her own
+    /// §39 L4 sign-off level corresponds to.
+    ///
+    /// It is still unbuilt. This test exists so that fact is stated in code rather
+    /// than discovered by someone reading the persona file and believing the label.
+    #[test]
+    fn the_sylvie_signoff_gate_is_still_declared_but_not_built() {
+        let sylvie = list_souls()
+            .into_iter()
+            .find(|s| s.name == "Sylvie")
+            .expect("the Sylvie SOUL must exist");
+
+        let rule = sylvie
+            .boundary_rules
+            .iter()
+            .find(|r| r.rule.contains("without Sylvie's review"))
+            .expect("the sign-off rule must be present");
+
+        assert_eq!(rule.enforcement_point, EnforcementPoint::WorkflowGate);
+
+        let report = evaluate_turn(Some(&sylvie), &[], |_| None);
+        let verdict = report
+            .verdicts
+            .iter()
+            .find(|v| v.rule.contains("without Sylvie's review"))
+            .expect("the rule must appear in the report");
+
+        assert_eq!(
+            verdict.outcome,
+            GateOutcome::NotImplemented,
+            "if this gate was built, flip this assertion and move the count above"
+        );
+    }
+}

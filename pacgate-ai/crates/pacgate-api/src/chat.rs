@@ -54,6 +54,96 @@ pub struct ChatResponse {
     pub content: Option<String>,
     pub citations: Vec<pacgate_core::CitationRef>,
     pub tools_used: Vec<String>,
+    /// Verdicts for the persona's boundary rules, when a SOUL was resolved.
+    ///
+    /// Present so a caller can see which declared gates actually ran. A rule
+    /// reported as `not_implemented` is a prompt instruction wearing a gate label;
+    /// that fact is more useful to a reviewer than silence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<pacgate_core::enforcement::EnforcementReport>,
+}
+
+/// Run the persona's boundary gates against a finished turn, writing verdicts to
+/// the audit log.
+///
+/// Verification reads **sanitised** text only, via the same `kb.sanitised_text`
+/// contract the agent tools use: a verifier is another reader, and the 2026-11-03
+/// egress rule applies to it identically. A source that cannot be read makes its
+/// citation unsupported rather than silently trusted.
+///
+/// Failures to *log* are not allowed to fail the request: an audit write error is
+/// a monitoring defect, not a reason to withhold an answer the gates already
+/// judged. The `tracing::error!` is what makes that visible.
+async fn evaluate_boundary_gates(
+    state: &AppState,
+    tenant_id: &TenantId,
+    matter_id: &MatterId,
+    soul: Option<&SoulPersona>,
+    citations: &[pacgate_core::CitationRef],
+) -> Option<pacgate_core::enforcement::EnforcementReport> {
+    let soul = soul?;
+
+    // Resolve every cited document's sanitised body once. The closure is
+    // synchronous, so the async reads happen here rather than inside the checker.
+    let mut bodies: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+
+    for citation in citations {
+        let key = citation.document_id.to_string();
+        if bodies.contains_key(&key) {
+            continue;
+        }
+        let text = match state.rag.as_ref() {
+            Some(rag) => rag.sanitised_text(tenant_id, &citation.document_id).await,
+            None => Ok(None),
+        };
+        bodies.insert(
+            key,
+            match text {
+                Ok(value) => value,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        document_id = %citation.document_id,
+                        "citation verification could not read the source; treating it as unsupported"
+                    );
+                    None
+                }
+            },
+        );
+    }
+
+    let report = pacgate_core::enforcement::evaluate_turn(Some(soul), citations, |id| {
+        bodies.get(&id.to_string()).cloned().flatten()
+    });
+
+    // The gate verdicts belong in the record. A "violated" citation gate is the
+    // evidence §41.8 asks for when an opinion has to be explained later.
+    if let Ok(metadata) = serde_json::to_value(&report) {
+        let action = if report.has_violation() {
+            "chat.boundary_gate.violated"
+        }
+        else {
+            "chat.boundary_gate.evaluated"
+        };
+
+        if let Err(e) = sqlx::query(
+            "INSERT INTO audit_log (tenant_id, user_id, action, resource, scope, metadata) \
+             VALUES ($1, NULL, $2, $3, $4, $5)",
+        )
+        .bind(tenant_id.0)
+        .bind(action)
+        .bind(format!("matter:{matter_id}"))
+        .bind(format!("tenant:{tenant_id}"))
+        .bind(metadata)
+        .execute(&state.db)
+        .await
+        {
+            tracing::error!(error = %e, "failed to write boundary gate verdicts to audit_log");
+        }
+    }
+
+    Some(report)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,16 +170,16 @@ fn compose_persona_prompt(soul: Option<&SoulPersona>, persona_id: Option<&str>) 
         }
 
         // Layer 2: Boundary rules (red lines)
-        if !s.boundary_rules.is_empty() {
-            let rules: Vec<String> = s
-                .boundary_rules
-                .iter()
-                .map(|r| format!("- {}", r.rule))
-                .collect();
-            parts.push(format!(
-                "## BOUNDARY RULES (red lines)\n\n{}",
-                rules.join("\n")
-            ));
+        //
+        // Rendered through `enforcement::render_rules_for_prompt` so a rule with a
+        // real machine check behind it is presented as a control, and a rule
+        // without one is presented as an instruction. Before 2026-11-09 every rule
+        // appeared under one heading with identical formatting, which asserted
+        // sixteen platform-enforced controls that did not exist. Even "No deletion
+        // of archived materials", declared `ApiMiddleware`, is unbuilt: the delete
+        // handler calls `delete_document_family` unconditionally.
+        if let Some(rendered) = pacgate_core::enforcement::render_rules_for_prompt(&s.boundary_rules) {
+            parts.push(rendered);
         }
 
         // Layer 3: Output format
@@ -179,8 +269,16 @@ pub async fn chat_handler(
     Ok(Json(ChatResponse {
         message_id: result.message_id.to_string(),
         content: result.content,
-        citations: result.citations,
+        citations: result.citations.clone(),
         tools_used: result.tool_calls_made,
+        enforcement: evaluate_boundary_gates(
+            &state,
+            &tenant_id,
+            &matter_id,
+            soul.as_ref(),
+            &result.citations,
+        )
+        .await,
     }))
 }
 
@@ -211,6 +309,14 @@ pub enum SsePayload {
     },
     CitationBlock {
         citations: Vec<pacgate_core::CitationRef>,
+    },
+    /// Verdicts for the persona's boundary rules.
+    ///
+    /// Sent on the streaming path for the same reason it is returned on the
+    /// non-streaming path: a gate that only runs when the client happens to call
+    /// the buffered endpoint is not a gate, it is a suggestion with two code paths.
+    Enforcement {
+        report: pacgate_core::enforcement::EnforcementReport,
     },
     Done {
         message_id: String,
@@ -270,6 +376,16 @@ pub async fn chat_stream_handler(
         let history = req.history;
         let message = req.message;
 
+        // The gate needs the store handles after the loop has consumed the request,
+        // so clone what it needs into the task. Without this the streaming path
+        // would ship answers that the buffered path would have flagged.
+        let gate_state = state.clone();
+        let gate_tenant = tenant_id.clone();
+        // `MatterId` is `Clone` but not `Copy`: the spawned task still needs the
+        // original for the agent call, so these must be clones.
+        let gate_matter = matter_id.clone();
+        let gate_soul = soul.clone();
+
         // The turn's own result must travel over the SAME channel as the progress
         // frames, otherwise the answer is lost: the spawned task is detached and
         // its return value is discarded. Emit the terminal frames here.
@@ -301,6 +417,22 @@ pub async fn chat_stream_handler(
                     if let Some(text) = result.content {
                         send(SsePayload::TextDelta { text });
                     }
+
+                    // Gates run for streaming turns too. They are evaluated before
+                    // the citation frame so a client that stops reading early has
+                    // still been told the verdict, not just the citations.
+                    if let Some(report) = evaluate_boundary_gates(
+                        &gate_state,
+                        &gate_tenant,
+                        &gate_matter,
+                        gate_soul.as_ref(),
+                        &result.citations,
+                    )
+                    .await
+                    {
+                        send(SsePayload::Enforcement { report });
+                    }
+
                     if !result.citations.is_empty() {
                         send(SsePayload::CitationBlock {
                             citations: result.citations,
@@ -363,4 +495,145 @@ pub async fn chat_stream_handler(
         .headers_mut()
         .insert(axum::http::header::CACHE_CONTROL, "no-store".parse().unwrap());
     response
+}
+
+#[cfg(test)]
+mod enforcement_wiring {
+    use super::*;
+    use pacgate_core::enforcement::GateOutcome;
+    use pacgate_core::{
+        BoundaryRule, EnforcementPoint, OutputFormat, PersonaId, SecurityLevel,
+    };
+    use uuid::Uuid;
+
+    /// The prompt the model receives must distinguish a rule that has a machine
+    /// check from one that does not.
+    ///
+    /// This is the wiring half of the defect. `pacgate_core::enforcement` can
+    /// classify rules correctly and still be inert if `compose_persona_prompt`
+    /// keeps flattening them into one list - which is exactly what
+    /// `deploy/DEFECT-summarization-recovery.md` documents about a patch that
+    /// imports cleanly and is never called.
+    #[test]
+    fn a_workflow_gate_rule_is_not_rendered_as_a_self_check_instruction() {
+        let soul = SoulPersona {
+            id: PersonaId(Uuid::from_u128(1)),
+            name: "WiringTest".to_string(),
+            user_id: None,
+            identity_modes: vec![],
+            core_values: vec![],
+            boundary_rules: vec![
+                BoundaryRule {
+                    rule: "Block any output with unverified citations".to_string(),
+                    enforcement_point: EnforcementPoint::WorkflowGate,
+                },
+                BoundaryRule {
+                    rule: "Legal accuracy over speed".to_string(),
+                    enforcement_point: EnforcementPoint::AgentPrompt,
+                },
+            ],
+            output_format: OutputFormat::Standard,
+            escalation_rules: vec![],
+            system_preamble: "preamble".to_string(),
+            description: String::new(),
+            model_tier: pacgate_core::LlmTier::Main,
+            security_level: SecurityLevel::LevelA,
+        };
+
+        let prompt = compose_persona_prompt(Some(&soul), None).expect("soul produces a prompt");
+
+        assert!(prompt.contains("enforced outside the model"));
+        assert!(prompt.contains("self-check"));
+
+        // The old single heading must be gone: it is what made the two kinds
+        // indistinguishable.
+        assert!(
+            !prompt.contains("BOUNDARY RULES (red lines)"),
+            "the pre-2026-11-09 heading flattened enforced and prompt-only rules together"
+        );
+
+        // Each rule lands in the right section.
+        let enforced_at = prompt.find("enforced outside the model").unwrap();
+        let self_at = prompt.find("self-check").unwrap();
+        let citation_at = prompt.find("unverified citations").unwrap();
+        let accuracy_at = prompt.find("Legal accuracy over speed").unwrap();
+        assert!(citation_at > enforced_at && citation_at < self_at);
+        assert!(accuracy_at > self_at);
+    }
+
+    #[test]
+    fn a_prompt_only_persona_gets_no_enforced_section() {
+        let soul = SoulPersona {
+            id: PersonaId(Uuid::from_u128(2)),
+            name: "PromptOnly".to_string(),
+            user_id: None,
+            identity_modes: vec![],
+            core_values: vec![],
+            boundary_rules: vec![BoundaryRule {
+                rule: "Ask in multiple-choice format".to_string(),
+                enforcement_point: EnforcementPoint::AgentPrompt,
+            }],
+            output_format: OutputFormat::Standard,
+            escalation_rules: vec![],
+            system_preamble: String::new(),
+            description: String::new(),
+            model_tier: pacgate_core::LlmTier::Main,
+            security_level: SecurityLevel::LevelA,
+        };
+
+        let prompt = compose_persona_prompt(Some(&soul), None).expect("prompt");
+        assert!(prompt.contains("self-check"));
+        assert!(!prompt.contains("enforced outside the model"));
+    }
+
+    /// The report a caller receives must be serialisable and must carry the honest
+    /// `not_implemented` verdict, because that is what a reviewer acts on.
+    #[test]
+    fn the_report_distinguishes_built_from_unbuilt_gates() {
+        use pacgate_core::enforcement::evaluate_turn;
+
+        let soul = SoulPersona {
+            id: PersonaId(Uuid::from_u128(3)),
+            name: "Mixed".to_string(),
+            user_id: None,
+            identity_modes: vec![],
+            core_values: vec![],
+            boundary_rules: vec![
+                BoundaryRule {
+                    rule: "Block any output with unverified citations".to_string(),
+                    enforcement_point: EnforcementPoint::WorkflowGate,
+                },
+                BoundaryRule {
+                    rule: "No legal conclusion without Sylvie's review".to_string(),
+                    enforcement_point: EnforcementPoint::WorkflowGate,
+                },
+            ],
+            output_format: OutputFormat::Standard,
+            escalation_rules: vec![],
+            system_preamble: String::new(),
+            description: String::new(),
+            model_tier: pacgate_core::LlmTier::Main,
+            security_level: SecurityLevel::LevelA,
+        };
+
+        let report = evaluate_turn(Some(&soul), &[], |_| None);
+
+        let citation = report
+            .verdicts
+            .iter()
+            .find(|v| v.rule.contains("unverified citations"))
+            .unwrap();
+        let signoff = report
+            .verdicts
+            .iter()
+            .find(|v| v.rule.contains("Sylvie's review"))
+            .unwrap();
+
+        assert_eq!(citation.outcome, GateOutcome::Satisfied);
+        assert_eq!(signoff.outcome, GateOutcome::NotImplemented);
+        assert!(report.has_unenforced_gates());
+
+        let json = serde_json::to_string(&report).expect("report serialises");
+        assert!(json.contains("not_implemented"));
+    }
 }

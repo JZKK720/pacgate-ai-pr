@@ -6,6 +6,11 @@
 
 ## 版本：v0.2.33（2026年11月9日）
 
+- **边界规则现已有真实执行，并如实报告无法执行的部分。** `EnforcementPoint` 声明了三个变体、每个都带注释说明红线在何处执行，随后在 SOUL 人格定义中被写入 35 次，**却从未被读取**——全仓检索该字段只返回其自身声明。于是所有标记为 `WorkflowGate` 或 `ApiMiddleware` 的规则，实际行为与 `AgentPrompt` 完全相同，但在人格源码中读起来却像一个平台级控制，包括 `"No legal conclusion without Sylvie's review"` 与 `"Block any output with unverified citations"`。两项改动关闭此缺口：
+  - **提示词不再宣称不存在的控制。** `pacgate_core::enforcement::render_rules_for_prompt` 将规则拆分为 `enforced outside the model` 与 `self-check` 两节。此前 35 条规则全部以同一格式置于单一 `BOUNDARY RULES (red lines)` 标题下，等于告诉模型存在 16 个外部闸门。
+  - **现有一道闸门已真正建成：引证与原文核验。** `enforcement::evaluate_turn` 将 `CitationRef.verbatim` 与被引文档的**脱敏**正文比对（沿用智能体工具所用同一 fail-closed 的 `sanitised_text` 契约——核验器也是一个读取方）。引文未找到、或来源无法读取，均判定为不支持。全角/半角标点与抽取产生的空白已归一化，PDF 换行不会造成误判；但数字被篡改仍会判定为不符。
+  - **其余所有对外宣称的闸门均报告为 `not_implemented`，而非通过。** `ChatResponse.enforcement` 与新增的 `SsePayload::Enforcement` 帧携带逐条规则结论，并写入 `audit_log`（`chat.boundary_gate.evaluated` / `.violated`）。流式路径同样执行闸门：只在缓冲端点上生效的闸门，等于有两套代码路径的建议。
+  - 2026-11-09 实测：16 条声明外部执行的规则中，**1 条已建成、15 条未建成**。`pacgate-persona` 锁定这两个数字，使规则无法被悄悄重新贴标——已通过把一条 `AgentPrompt` 规则改标为 `WorkflowGate` 做反向验证，测试套件随即失败。
 - **本地服务代理修复。** 未设置 `*_PROXY` 时，`reqwest` 0.12 会采用操作系统代理，而该配置不带本机回环豁免。由此产生两个后果，现均由 `pacgate_core::http::local_service_client` 关闭（清除平台代理，同时保留运维显式配置的 `HTTP(S)_PROXY` 用于远程供应商）：
   - **在 Windows 上，回环调用直接失效。** 平台设置不会绕过 `127.0.0.0/8`，因此发往 `http://127.0.0.1:<port>` 的调用被送到代理并返回 `502 Bad Gateway`。2026-11-04 实测：`pacgate-agent` 12 个测试中 6 个因此失败，设置 `NO_PROXY` 后 12 个全部通过。现豁免 `localhost`、`127.0.0.0/8`、`::1`、`*.local` 与 `host.docker.internal`。
   - **已部署容器不会继承代理**（实测：运行中的 `pacgate-api` 无任何 `*_PROXY` 变量），因此客户端访问 Ollama、OCR 与向量嵌入的调用并未受影响。为避免某台机器或某个镜像设置了代理后把内部流量静默转走，这些客户端同样改用新的构造函数。

@@ -2,6 +2,7 @@
 //!
 //! Every other crate in the workspace depends on this crate. Keep it dependency-light.
 
+pub mod enforcement;
 pub mod http;
 
 use chrono::{DateTime, Utc};
@@ -679,7 +680,11 @@ pub struct BoundaryRule {
 }
 
 /// Where a boundary rule is enforced.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// `PartialEq`/`Eq` were added on 2026-11-09 so `enforcement::evaluate_turn` can
+/// branch on the declared point. Before that the variant was only ever written,
+/// never compared - which is the same fact the `enforcement` module documents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EnforcementPoint {
     /// Enforced by pacgate-auth middleware before/after API calls

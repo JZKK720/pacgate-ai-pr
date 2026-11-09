@@ -437,7 +437,7 @@ B(("table", {
             ("Role overlay", "角色叠加"),
             ("Whose judgement is being represented, and with what standing authority", "代表谁的判断，以及其固有权限"),
             ("10 identity overlays bound to a user record. Each carries 2 to 3 identity modes switched by document type, and explicit boundary rules each tied to an enforcement point: API middleware, workflow gate, or prompt", "10 个身份叠加，绑定到用户记录。每个含 2 至 3 种按文档类型切换的身份模式，以及逐条绑定强制点的边界规则：接口中间件、工作流闸门或提示层"),
-            ("A rule enforced only by prompting is a rule the model can be talked out of. Boundary rules that matter are marked as middleware or gate rules, and those are the ones a run cannot cross", "仅靠提示执行的规则，模型可以被说服放弃。真正重要的边界规则被标注为中间件或闸门规则，运行无法越过"),
+            ("A rule enforced only by prompting is a rule the model can be talked out of. Boundary rules are therefore split by enforcement point, and the platform reports per rule whether a check actually ran: a gate with no implementation is reported as not implemented rather than assumed to hold", "仅靠提示执行的规则，模型可以被说服放弃。因此边界规则按强制点分流，平台逐条报告检查是否真的执行：尚未实现的闸门会如实报告为未实现，而非假定其成立"),
         ],
         [
             ("Workflow template", "工作流模板"),
@@ -704,7 +704,7 @@ B(("table", {
         ("What a reader should check", "读者应核查之处"),
     ],
     "rows": [
-        [("Who is the agent speaking as, and with what authority?", "智能体以何种身份、何种权限发言？"), ("Role overlay with enforcement points, Table 7", "带强制点的角色叠加，表 7"), ("That boundary rules are marked as middleware or gate rules, not merely as instructions", "边界规则被标注为中间件或闸门规则，而非仅为指示")],
+        [("Who is the agent speaking as, and with what authority?", "智能体以何种身份、何种权限发言？"), ("Role overlay with enforcement points, Table 7", "带强制点的角色叠加，表 7"), ("That boundary rules are split by enforcement point, and that an unimplemented gate is reported as unimplemented rather than assumed to hold", "边界规则按强制点分流，且未实现的闸门如实报告为未实现，而非假定其成立")],
         [("What may it touch, and how much?", "可触及何物，数量几何？"), ("Tool schemas and hard caps, Tables 4 and 7", "工具模式与硬上限，表 4、表 7"), ("That the caps are constants in code, not configuration a run can raise", "上限为代码常量，而非运行可自行提高的配置")],
         [("What evidence survives the run?", "一次运行后留下何种证据？"), ("Lifecycle evidence column, Table 3; ledger and restore, Table 9", "生命周期中的证据列，表 3；台账与还原，表 9"), ("That every step leaves a named artefact rather than a log line", "每步留下的是具名产物，而非仅一行日志")],
         [("What is honestly not finished?", "哪些确实尚未完成？"), ("State table with distinct words for distinct states, Table 13", "以不同措辞区分不同状态的状态表，表 13"), ("That failures are visible rather than silent", "失败是可见的，而非静默的")],
