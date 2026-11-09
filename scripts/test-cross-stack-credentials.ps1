@@ -371,6 +371,81 @@ if ($SkipLive) {
 }
 
 # ---------------------------------------------------------------------------
+# C5. Every variable compose.prod.yaml requires must actually be satisfied.
+#
+# WHY THIS EXISTS (2026-11-09)
+#
+# The 2026-10-17 incident (INCIDENT-2026-10-17-cross-stack-credential-divergence.md)
+# was a credential that diverged between two .env files. It was found by hand
+# after the fact. The opposite failure is equally silent: a compose variable with
+# NO default that is simply absent from .env. Docker Compose interpolates it to
+# an empty string with only a warning, the container starts and reports healthy,
+# and the breakage appears later as an auth failure or a 404 on a model tag -
+# typically right after pulling a release that added the variable.
+#
+# The requirement list is DERIVED from compose.prod.yaml, never hardcoded. A
+# hardcoded list is exactly the blindness that let a required variable be
+# absent in the first place, and it goes stale the moment compose gains a key.
+Write-Host ''
+Write-Host 'C5  every variable compose requires is satisfied' -ForegroundColor Cyan
+
+$composePath = Join-Path $repoRoot 'deploy/client-bundle/compose.prod.yaml'
+$requiredNow = @()
+if (Test-Path $composePath) {
+    $composeText = [System.IO.File]::ReadAllText($composePath)
+    # Strip comments FIRST. A `${VAR}` inside a `#` line is documentation, not a
+    # requirement - LAYA_HF_CACHE appears only in an explanatory comment, and
+    # scanning raw text made this check demand a variable compose never reads.
+    # A gate that goes red on a healthy machine is its own defect.
+    $composeText = ($composeText -split "`n" |
+        ForEach-Object { ($_ -replace '(^|\s)#.*$', '$1') }) -join "`n"
+    # ${VAR} has no default -> compose errors/warns and substitutes empty.
+    # ${VAR:-default} and ${VAR-default} carry a fallback, so they are not required.
+    $bare = [regex]::Matches($composeText, '\$\{([A-Za-z_][A-Za-z0-9_]*)\}') |
+        ForEach-Object { $_.Groups[1].Value }
+    $withDefault = [regex]::Matches($composeText, '\$\{([A-Za-z_][A-Za-z0-9_]*)(:-|-)') |
+        ForEach-Object { $_.Groups[1].Value }
+    $requiredNow = @($bare | Where-Object { $_ -notin $withDefault } | Sort-Object -Unique)
+}
+
+if (-not (Test-Path $composePath)) {
+    Write-Warn 'compose.prod.yaml not found - C5 not evaluated'
+} elseif ($requiredNow.Count -eq 0) {
+    Write-Pass 'compose declares no variable without a default'
+} else {
+    # Values that legitimately ship empty in .env.example. Each entry states WHY,
+    # so a new empty-looking requirement cannot be waved through by adding it here
+    # without an argument.
+    $mayBeEmpty = @{
+        'PACGATE_JWT_TOKEN'    = 'a per-run token, not a configured secret; the adapter logs in instead'
+        'OPENVIKING_CONF_CONTENT' = 'rendered by install.ps1 from OPENVIKING_ROOT_API_KEY; may be set at runtime'
+    }
+    $missing = @()
+    $empty   = @()
+    foreach ($k in $requiredNow) {
+        if (-not $pac.Contains($k)) { $missing += $k; continue }
+        if ([string]::IsNullOrWhiteSpace($pac[$k]) -and -not $mayBeEmpty.ContainsKey($k)) {
+            $empty += $k
+        }
+    }
+
+    Write-Host ("  compose requires {0} variable(s) with no default" -f $requiredNow.Count) -ForegroundColor DarkGray
+    if ($missing.Count -eq 0 -and $empty.Count -eq 0) {
+        Write-Pass "all $($requiredNow.Count) required variable(s) are present and non-empty"
+    } else {
+        foreach ($k in $missing) {
+            Write-Fail "$k is required by compose.prod.yaml but ABSENT from $PacgateEnv - compose will substitute an empty string and the service will fail at runtime, not at start"
+        }
+        foreach ($k in $empty) {
+            Write-Fail "$k is required by compose.prod.yaml but EMPTY in $PacgateEnv - same consequence as absent"
+        }
+        if ($mayBeEmpty.Count -gt 0) {
+            Write-Host ("  (deliberately empty, documented: {0})" -f (($mayBeEmpty.Keys) -join ', ')) -ForegroundColor DarkGray
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "FAIL: $($script:failures) credential problem(s) across the two stacks." -ForegroundColor Red

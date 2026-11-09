@@ -220,6 +220,26 @@ pub async fn kb_search(
         .await
         .map_err(|e| ApiError::internal(format!("RAG search failed: {e}")))?;
 
+    // pgvector returns the `top_k` least-distant chunks for ANY query, so on a
+    // populated matter this is never empty - a query sharing no term with the
+    // corpus still comes back looking like an answer. Cosine score cannot
+    // separate the two on this workload (measured bands overlap by 0.375), so
+    // the returned chunks are checked instead: if not one contains a query
+    // term, the set is noise and the honest answer is "nothing matched".
+    //
+    // Returning an empty list here is what makes the caller's `no_match` branch
+    // reachable. It cannot drop a real hit: a hit that answers the query
+    // contains a query term by construction.
+    if pacgate_rag::shares_no_term(&results, &params.q) {
+        tracing::debug!(
+            matter_id = %matter_id.as_str(),
+            query = %params.q,
+            "kb_search suppressed {} unrelated neighbour(s)",
+            results.len()
+        );
+        return Ok(Json(Vec::new()));
+    }
+
     let response: Vec<KbSearchResultResponse> = results
         .iter()
         .map(|r| KbSearchResultResponse {
@@ -369,6 +389,41 @@ mod gate_tests {
         assert!(
             claims_at < search_at,
             "the tenant must be resolved before the search executes"
+        );
+    }
+
+    #[test]
+    fn irrelevant_neighbours_are_suppressed_so_no_match_is_reachable() {
+        // The gap this guards (measured 2026-11-09): pgvector returns top_k
+        // neighbours for any query, so on a populated matter the list was never
+        // empty. The caller's `no_match` branch therefore could not fire, and a
+        // gibberish query came back looking like an answer.
+        let body = kb_search_source();
+        assert!(
+            body.contains("shares_no_term(&results"),
+            "kb_search must judge the returned chunks before responding"
+        );
+        // Presence alone is not enough: a guard written `if false && ...` or a
+        // guard whose body falls through satisfies a substring check while doing
+        // nothing. Assert that the branch RETURNS EMPTY, which is the behaviour
+        // that makes the caller's no_match reachable.
+        //
+        // Anchor on the fully-qualified call: the bare name also appears in this
+        // test's own assertion strings, which would slice the wrong region and
+        // pass on a broken guard.
+        let guard_at = body
+            .find("if pacgate_rag::shares_no_term(&results")
+            .expect("the guard must be present in kb_search");
+        let tail = &body[guard_at..];
+        let branch_end = tail.find("let response").expect("response follows the guard");
+        let branch = &tail[..branch_end];
+        assert!(
+            branch.contains("Json(Vec::new())"),
+            "the guard must return an empty list, not merely be present: {branch}"
+        );
+        assert!(
+            guard_at < body.find("let response").expect("response"),
+            "the relevance check must run before the response is built"
         );
     }
 }
