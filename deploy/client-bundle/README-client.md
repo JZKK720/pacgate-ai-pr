@@ -27,7 +27,9 @@ see `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`.
 | OpenViking | 1933 | Long-term memory lane (MCP) |
 | Postgres | 5432 (internal) | Metadata database |
 
-QM (co-working workspace) runs **separately** via `qm up` on port 8182.
+QM (co-working workspace) runs **separately** via `qm up`. Its front door is port
+**8181** - sign in there. That port proxies to web-ui (8182) and admin (8183);
+opening 8182 directly skips authentication.
 
 ## Setting up qm (co-working workspace)
 
@@ -51,7 +53,23 @@ qm runs separately from the main Docker Compose stack. To set it up:
 4. Run the qm bootstrap: `.\setup-qm.ps1`
    - This generates signing secrets, creates `.env`, and validates the config
 5. Start qm: `cd qm-pacgate && npm exec qm -- up`
-6. Access qm at: `http://localhost:8182`
+6. Sign in at the URL printed by `setup-qm.ps1` (step 4). It is derived from
+   `QM_PUBLIC_URL`, which `setup-qm.ps1` sets to `http://<this-machine>:8181`.
+
+   Use **exactly** that host, even when you are sitting at the machine. The name
+   resolves to this box locally too, so it works for both local and remote staff. The
+   auth service accepts a sign-in POST only from the one Origin in `QM_PUBLIC_URL`;
+   `localhost` is a *different* origin and gets `403 cross-origin request refused`
+   even though it reaches the same container. One host, not a list.
+
+   Prefer the hostname over `localhost` for a second reason: OAuth is a **browser**
+   redirect, so a `localhost` issuer sends every remote user to their own loopback and
+   sign-in can never complete - with no server-side error at all. `test-origin-coherence`
+   fails that case when this machine publishes LAN origins.
+
+   Sign-in is a **magic link**, not a password. Open `http://localhost:8025`
+   (Mailpit) to collect it; links are not delivered to a real inbox. Mailpit has no
+   volume, so links are lost when it restarts.
 
 ## Switching models
 
@@ -152,21 +170,28 @@ Both directions have shipped broken, which is why the value is not a detail:
 Measured 2026-11-10 on 0.2.34: `Origin: http://localhost:8181` → **403**;
 `Origin: http://<hostname>:8181` → **200**.
 
-**To sign in from this machine** set it to the localhost form and recreate:
+**Use the hostname form, including from this machine.** `http://<this-machine>:8181`
+resolves to this box's own addresses (measured: the hostname resolves to the LAN IP,
+so a local browser reaches the same container), which means one value serves both
+local and remote staff. `localhost` only serves local users - and worse, OAuth is a
+*browser* redirect, so a `localhost` issuer sends every remote user to their own
+loopback and sign-in can never complete, with no server-side error to diagnose.
+`scripts/test-origin-coherence.ps1` fails that case once this machine publishes LAN
+origins.
 
 ```powershell
 # deploy/client-bundle/qm-pacgate/.env
-QM_PUBLIC_URL=http://localhost:8181
+QM_PUBLIC_URL=http://<this-machine>:8181
 cd qm-pacgate; docker compose -f compose.qm.yaml up -d --force-recreate auth portal
 ```
 
-**To sign in from other computers instead**, set the hostname form
-(`http://<this-machine>:$port`) and recreate the same two services. Pick the one that
-matches how staff will actually reach the portal — you cannot have both.
+Set `localhost` here only for a deliberately single-machine install that nobody else
+reaches. Pick deliberately - you cannot have both, and silently choosing localhost is
+what broke remote sign-in before.
 
-`install.ps1` now prints whichever host is configured, and `scripts/test-qm-currentness.ps1`
-fails if the printed URL cannot actually submit the form, so the two cannot drift apart
-again.
+`install.ps1` and `setup-qm.ps1` now both print whichever host is configured, and
+`scripts/test-qm-currentness.ps1` fails if either script prints a hardcoded URL or if
+the configured URL cannot actually submit the form, so the two cannot drift apart again.
 
 > **Sign-in is magic link, not a password.** There is no admin password to type: the
 > form asks only for an email and mails a link. With the shipped development mail

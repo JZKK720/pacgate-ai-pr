@@ -59,6 +59,33 @@ function Invoke-WithNativeStderr {
     try { & $Script } finally { $ErrorActionPreference = $previous }
 }
 
+# The address the operator must actually open, read from the value the stack is
+# running with rather than written into the message.
+#
+# The auth service accepts a sign-in POST only from the single Origin derived from
+# QM_PUBLIC_URL; every other host is refused with "403 cross-origin request refused".
+# That makes the printed URL load-bearing, not cosmetic. Measured on 0.2.34 with
+# QM_PUBLIC_URL=http://laptop-<x>:8181: localhost:8181 -> 403, 127.0.0.1:8181 -> 403,
+# laptop-<x>:8181 -> 200. This function previously did not exist, so the message
+# said localhost while the .env said the hostname - the installer's own instructions
+# were guaranteed to be refused exactly when the fix was working.
+#
+# Falls back to compose's own default (${QM_PUBLIC_URL:-http://localhost:8181}) when
+# the key is absent, because that is then the origin the auth service really enforces.
+# Printing the key when present and the default when absent keeps the message honest
+# in both cases; it never reports a host the service would refuse.
+function Get-PortalUrl {
+    $fallback = 'http://localhost:8181'
+    $envPath = Join-Path $QmDir '.env'
+    if (-not (Test-Path $envPath)) { return $fallback }
+    try { $raw = [System.IO.File]::ReadAllText($envPath) } catch { return $fallback }
+    $m = [regex]::Match($raw, '(?m)^\s*QM_PUBLIC_URL\s*=\s*(.+?)\s*$')
+    if (-not $m.Success) { return $fallback }
+    $value = $m.Groups[1].Value.Trim().Trim('"').Trim("'").TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($value)) { return $fallback }
+    return $value
+}
+
 # $PSScriptRoot = <repo>\deploy\client-bundle, so the repo root is two levels up
 # and the tracked deployment definition lives in deploy/qm-pacgate.
 if (-not $QmSourceDir) { $QmSourceDir = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'deploy/qm-pacgate' }
@@ -495,7 +522,10 @@ try {
         Write-Host "  Start/refresh the stack with:" -ForegroundColor White
         Write-Host "    cd qm-pacgate" -ForegroundColor Gray
         Write-Host "    docker compose -f compose.qm.yaml up -d" -ForegroundColor Gray
-        Write-Host "  Portal: http://localhost:8181" -ForegroundColor White
+        Write-Host "  Sign in at: $(Get-PortalUrl)" -ForegroundColor White
+        Write-Host "  (The auth service accepts ONE origin - the one in QM_PUBLIC_URL. A" -ForegroundColor Gray
+        Write-Host "   different host is refused with 403 cross-origin, so use this URL" -ForegroundColor Gray
+        Write-Host "   exactly as shown.)" -ForegroundColor Gray
         return
     }
 
@@ -764,10 +794,13 @@ QM_PUBLIC_URL=$qmPublicUrl
     Write-Host "     curl $PacgateApiUrl/api/auth/login -d '{`"email`":`"$bridgeEmail`",`"password`":`"...`"}'" -ForegroundColor Gray
     Write-Host "  2. Start qm:" -ForegroundColor White
     Write-Host "     npm exec qm -- up" -ForegroundColor Gray
-    Write-Host "  3. Open: http://localhost:8181" -ForegroundColor White
+    Write-Host "  3. Open: $(Get-PortalUrl)" -ForegroundColor White
     Write-Host "     (8181 is the portal FRONT DOOR - sign in there; it proxies to" -ForegroundColor Gray
     Write-Host "      web-ui 8182 and admin 8183. Opening 8182 directly skips auth.)" -ForegroundColor Gray
     Write-Host "  4. Sign in with: $adminEmail" -ForegroundColor White
+    Write-Host "     Sign-in is MAGIC LINK, not a password. The link is delivered to Mailpit" -ForegroundColor Gray
+    Write-Host "     at http://localhost:8025, not to a real inbox. Use the SAME host shown" -ForegroundColor Gray
+    Write-Host "     in step 3 - any other host is refused with 403 cross-origin." -ForegroundColor Gray
 
 }
 finally {

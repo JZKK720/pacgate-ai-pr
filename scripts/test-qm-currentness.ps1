@@ -255,7 +255,51 @@ if (-not $publicUrl) {
         # a browser at localhost:8181 got 403 "cross-origin request refused".
         #
         # So ask the question the operator asks: open the printed URL and submit.
-        $printed = 'http://localhost:8181'
+        #
+        # The printed URL is READ FROM THE PRINTER, not assumed. It was a hardcoded
+        # localhost literal here, and that made the assertion blind in the one case
+        # that still existed: setup-qm.ps1 derives QM_PUBLIC_URL from the hostname but
+        # printed "Portal: http://localhost:8181" in two places (the re-run path and
+        # the completion banner). A constant expectation and a constant message agree
+        # with each other by construction, so both were wrong together and the gate
+        # passed. Each printer is now read, and its output must survive a real POST.
+        # `if (` is avoided so this is one line per site and cannot drift.
+        $printers = @(
+            @{ Name = 'install.ps1';   File = Join-Path $repoRoot 'deploy/client-bundle/install.ps1' },
+            @{ Name = 'setup-qm.ps1';  File = Join-Path $repoRoot 'deploy/client-bundle/setup-qm.ps1' }
+        )
+        $printedUrls = @()
+        foreach ($pr in $printers) {
+            if (-not (Test-Path $pr.File)) { continue }
+            # Only executable lines: a comment explaining the bug must not be read as
+            # the bug. A derived print ($(...)) is trusted to follow QM_PUBLIC_URL and
+            # is skipped here; a literal is what this assertion exists to catch.
+            #
+            # Narrowed to the PORTAL ports (8181/8182/8183). The origin rule governs the
+            # auth service only; docs.docker.com, ollama.com, Mailpit:8025 and the
+            # pacgate-api:8089 banner are not sign-in surfaces and are not this gate's
+            # business. Requiring the port on the same line keeps that boundary honest.
+            $hits = Select-String -Path $pr.File -Pattern '^\s*Write-Host\s+.*:818[0-9]'
+            foreach ($h in $hits) {
+                $line = $h.Line.Trim()
+                if ($line.StartsWith('#')) { continue }
+                if ($line -match '\$\(') { continue }
+                $lit = [regex]::Match($line, 'https?://[^"''\s)]+:818[0-9]')
+                if ($lit.Success) {
+                    $printedUrls += [pscustomobject]@{ Site = "$($pr.Name):$($h.LineNumber)"; Url = $lit.Value.TrimEnd('/') }
+                }
+            }
+        }
+
+        if ($printedUrls.Count -gt 0) {
+            foreach ($p in $printedUrls) {
+                Write-Fail "$($p.Site) prints a hardcoded sign-in URL '$($p.Url)'. Derive it from QM_PUBLIC_URL instead; a literal is refused with 403 whenever it names a different host than the one the stack enforces."
+            }
+        } elseif ($publicUrl -eq '') {
+            Write-Skip 'no printer literal to compare'
+        }
+
+        $printed = $publicUrl
         $origin = $printed
         # Read the redirect with curl. Invoke-WebRequest's 302 handling differs by
         # PowerShell version (5.1 vs 7), and this gate must read the same status a
@@ -285,7 +329,7 @@ if (-not $publicUrl) {
                 } catch {
                     $body = $_.ErrorDetails.Message
                     if ($body -match 'cross-origin') {
-                        Write-Fail "a browser at $origin is REFUSED as cross-origin (the form lives at $formHost). install.ps1 prints '$printed', so the operator cannot sign in. Set QM_PUBLIC_URL=$printed in deploy/client-bundle/qm-pacgate/.env and recreate auth+portal."
+                        Write-Fail "a browser at $origin is REFUSED as cross-origin (the form lives at $formHost). QM_PUBLIC_URL names $publicUrl, so that is the host staff must type - set it to whatever staff actually use in deploy/client-bundle/qm-pacgate/.env, recreate auth+portal, and make sure the installer prints the same host rather than a literal."
                     } else {
                         Write-Pass "a browser at $origin can submit the sign-in form (later guard spoke: $($body -replace '\s+',' '))"
                     }
