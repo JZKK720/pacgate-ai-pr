@@ -40,6 +40,13 @@ qm runs separately from the main Docker Compose stack. To set it up:
    Invoke-RestMethod -Uri "http://localhost:8089/api/auth/register" -Method POST -Body $body -ContentType "application/json"
    ```
    This account is used by the qm sandbox bridge tool to authenticate with pacgate-api.
+   **It is a machine credential, not a portal login.** The staff portal signs in only
+   the address in `AUTH_ALLOWED_EMAILS` (the admin email), by magic link; a bridge
+   address submitted there is silently not emailed -
+   `[auth] sign-in link suppressed: <addr> is not on the permitted list` - and the page
+   still says "Check your email", so it looks like a delivery problem rather than a
+   refusal. Do not add the bridge address to the allow-list to "fix" this: it would
+   grant a non-human service account interactive staff access.
 3. Copy the `qm-pacgate/` directory next to this bundle
 4. Run the qm bootstrap: `.\setup-qm.ps1`
    - This generates signing secrets, creates `.env`, and validates the config
