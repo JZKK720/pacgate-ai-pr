@@ -640,6 +640,28 @@ try {
     }
     $qmPublicUrl = $qmPublicUrl.TrimEnd('/')
 
+    # PUBLIC_API_URL must name the SAME host the browser is served from, because the
+    # portal's cross-origin guard compares the request's Origin against the single
+    # origin derived from QM_PUBLIC_URL (portal /app/src/index.ts:241 sameOriginRequest,
+    # enforced on every proxied POST at :1017). "localhost:8180" on a hostname-served
+    # page is a cross-origin call: the browser sends Origin http://<machine>:8181, the
+    # server expects exactly that, and the POST is refused - which the UI surfaces as
+    # an LLM error, not as an address problem.
+    #
+    # Only the HOST is shared with QM_PUBLIC_URL. The port stays 8180 (core), because
+    # reusing the portal's port here would point the API calls at the portal itself.
+    # Derived from qmPublicUrl when the operator set that explicitly, so a
+    # deliberately different public host (a reverse proxy, say) carries over instead
+    # of being overwritten with this machine's name.
+    $qmPublicUri = $null
+    if ([Uri]::TryCreate($qmPublicUrl, [UriKind]::Absolute, [ref]$qmPublicUri) -and $qmPublicUri.Host) {
+        $qmHostForEnv = $qmPublicUri.Host
+    } else {
+        $qmHostForEnv = try { ([System.Net.Dns]::GetHostName()).ToLower() } catch { 'localhost' }
+        if ([string]::IsNullOrWhiteSpace($qmHostForEnv)) { $qmHostForEnv = 'localhost' }
+    }
+    $qmCorePort = if ($env:QM_CORE_PORT) { $env:QM_CORE_PORT } else { '8180' }
+
     $envContent = @"
 ADMIN_GRANTS=$adminEmail
 AUTH_ALLOWED_EMAILS=$adminEmail
@@ -663,7 +685,7 @@ POSTGRES_PASSWORD=$pgPassword
 OPENVIKING_ROOT_API_KEY=$ovRoot
 OPENVIKING_API_KEY=$ovApi
 FIRECRAWL_API_KEY=$fcKey
-PUBLIC_API_URL=http://localhost:8180
+PUBLIC_API_URL=http://${qmHostForEnv}:${qmCorePort}
 PACGATE_API_EMAIL=$bridgeEmail
 PACGATE_API_PASSWORD=$plainPassword
 QM_PUBLIC_URL=$qmPublicUrl

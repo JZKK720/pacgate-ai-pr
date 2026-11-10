@@ -340,6 +340,73 @@ if (-not $publicUrl) {
 }
 
 # ---------------------------------------------------------------------------
+# The portal's cross-origin guard covers EVERY proxied POST, not only sign-in.
+#
+# portal /app/src/index.ts:241 derives ORIGIN from QM_PUBLIC_URL and :1017 refuses every
+# non-GET through sameOriginRequest. The sign-in assertion above therefore does not
+# prove the app works: the browser reaches the portal through the same route table for
+# chat, uploads and settings. Measured 2026-11-10, same session and same path:
+#
+#     POST <hostname>:8181/api/sessions  Origin http://<hostname>:8181  -> reaches app
+#     POST <hostname>:8181/api/sessions  Origin http://localhost:8181   -> 403 refused
+#
+# A one-host mismatch is consequently a total lockout - the page loads, so the portal
+# looks alive, and every action fails. The user sees it as an LLM error because the chat
+# POST is the action they were performing, which names neither the origin nor the host.
+#
+# POST /api/sessions is the cheapest probe: it goes through the catch-all guard at
+# portal index.ts:1017, whose refusal body includes "cross-origin request refused".
+# The specific handlers (e.g. /auth/logout at :843) return a bare {"error":"forbidden"},
+# which is indistinguishable from an auth failure and made an earlier version of this
+# The probe must be a route whose origin check runs BEFORE its session check, and whose
+# refusal NAMES the reason. Three probes were measured on 0.2.34 rather than assumed:
+#   /auth/logout       refuses with a bare {"error":"forbidden"} - indistinguishable from
+#                      an auth failure, so a 403 read as PASS.
+#   /api/sessions      401s unauthenticated, so an anonymous probe never reaches the guard
+#                      and the check silently stops testing anything.
+# /auth/impersonate/stop checks sameOriginRequest first (portal index.ts:911) and names
+# the reason: 200 {"ok":true} when the origin is accepted, 403 "cross-origin request
+# refused" when it is not. Only that explicit acceptance counts as a pass; a 401 or a
+# bare forbidden is reported as unproven rather than quietly treated as healthy.
+Write-Host ''
+Write-Host 'POST reachability (the origin guard covers every proxied POST)' -ForegroundColor Cyan
+if (-not $publicUrl) {
+    Write-Skip 'QM_PUBLIC_URL is not set; the origin the guard enforces cannot be derived'
+} else {
+    $probeBody = & curl.exe -s -w "`n%{http_code}" --max-time 20 -X POST "$publicUrl/auth/impersonate/stop" `
+        -H "Origin: $publicUrl" -H 'Content-Type: application/json' -H 'sec-fetch-site: same-origin' --data '{}' 2>$null
+    $probeText = ($probeBody | Select-Object -SkipLast 1) -join "`n"
+    $probeCode = ($probeBody | Select-Object -Last 1)
+    if ($probeText -match 'cross-origin') {
+        Write-Fail "a browser at $publicUrl is REFUSED as cross-origin, so chat, uploads and settings all fail while the page still loads. The portal enforces ONE origin derived from QM_PUBLIC_URL; the host in the address bar must be exactly $publicUrl."
+    } elseif ($probeCode -eq '000' -or -not $probeCode) {
+        Write-Skip "could not reach $publicUrl to exercise the origin guard"
+    } elseif ($probeText -match '"ok"\s*:\s*true') {
+        Write-Pass "a browser at $publicUrl passes the origin guard (accepted, HTTP $probeCode)"
+    } else {
+        Write-Warn "the origin guard at $publicUrl answered HTTP $probeCode without accepting or refusing, so POST reachability is UNPROVEN: $($probeText -replace '\s+',' ')"
+    }
+
+    # The mirror: a DIFFERENT host for the same portal must be refused. If it were
+    # accepted, the portal would be multi-origin by accident and this gate's premise
+    # would be wrong - worth knowing rather than assuming.
+    $otherOrigin = if ($publicUrl -match '://localhost(:|/|$)') { ($publicUrl -replace '://localhost', '://127.0.0.1') }
+                   elseif ($publicUrl -match '://127\.0\.0\.1(:|/|$)') { ($publicUrl -replace '://127\.0\.0\.1', '://localhost') }
+                   else { ($publicUrl -replace '://[^/:]+', '://localhost') }
+    if ($otherOrigin -ne $publicUrl) {
+        $altBody = & curl.exe -s -w "`n%{http_code}" --max-time 20 -X POST "$publicUrl/auth/impersonate/stop" `
+            -H "Origin: $otherOrigin" -H 'Content-Type: application/json' -H 'sec-fetch-site: same-origin' --data '{}' 2>$null
+        $altText = ($altBody | Select-Object -SkipLast 1) -join "`n"
+        $altCode = ($altBody | Select-Object -Last 1)
+        if ($altText -match 'cross-origin') {
+            Write-Pass "$otherOrigin is refused by the origin guard, confirming the one-host rule is real"
+        } else {
+            Write-Warn "$otherOrigin was NOT refused (HTTP $altCode); the guard is not enforcing a single origin, so the assumption behind the sign-in check may not hold"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # The portal signs in one kind of identity. The stack ships two, and they are
 # not interchangeable: the admin address is a staff login, the bridge address is
 # a machine credential for pacgate-api. Submitting the bridge address to the
