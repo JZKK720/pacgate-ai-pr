@@ -281,6 +281,23 @@ Notes worth knowing before you run it:
 - **Documents that are not sanitized are not copied.** The API refuses to export
   unsanitized material, and the tool reports which documents were held back
   rather than working around it. Sanitize them first if they need to travel.
+- **Sanitization is on demand - nothing sweeps the backlog.** A newly ingested
+  document starts at `sanitization_state = 'pending'`, and until someone calls
+  `POST /api/documents/{id}/sanitize` with a `data_level`, it is **not
+  retrievable**: `kb_search` joins on `sanitization_state = 'sanitized'`, so a
+  pending document is silently absent from every search while still being listed
+  in the matter. There is no worker, cron or retry loop - the only triggers are
+  the HTTP handlers (`sanitize`, `restore`, `approve`).
+  This is quiet by design (the privacy gate must fail closed) but it means
+  "uploaded" does not imply "searchable". Measured on 0.2.34: 40 of 57 documents
+  pending, oldest 28 days, while the search index held 142 chunks - so a lawyer
+  searching a matter could see roughly a third of it and get no warning that the
+  rest existed. If search results look thin, check the state first:
+
+  ```sql
+  SELECT sanitization_state, count(*) FROM documents GROUP BY 1;
+  ```
+
 - **Passwords do not travel.** Accounts that do not exist on the target are not
   created. Create them there, or the imported matters will be owned by a
   different account.
