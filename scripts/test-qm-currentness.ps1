@@ -180,6 +180,117 @@ if ($running.Count -eq 0) {
 }
 
 # ---------------------------------------------------------------------------
+# SIGN-IN REACHABILITY
+#
+# WHY THIS EXISTS (measured 2026-11-10, on the live 0.2.34 stack)
+#
+# The portal authenticates by magic link, and the auth service refuses a form POST
+# whose Origin does not match the single host it derives from QM_PUBLIC_URL:
+#
+#     Origin: http://localhost:8181        -> 403 {"error":"forbidden",
+#                                                 "message":"cross-origin request refused"}
+#     Origin: http://laptop-hh9v75mk:8181  -> 200 (accepted)
+#
+# install.ps1 prints "Sign in at http://localhost:8181", so an operator following the
+# installer's own instruction is refused. This has now shipped broken in BOTH
+# directions: an older release hardcoded localhost and broke remote users, and the
+# -Update repair writes this machine's hostname and breaks local ones. One host string
+# cannot serve both, and nothing noticed either time.
+#
+# The assertion is deliberately about REACHABILITY, not about which host is chosen:
+# whatever QM_PUBLIC_URL names must actually serve the sign-in form, so the printed
+# instruction and the working instruction cannot diverge again.
+Write-Host ''
+Write-Host 'SIGN-IN reachability (the host the installer prints)' -ForegroundColor Cyan
+
+$qmEnvPath = Join-Path $repoRoot (Join-Path $StagedDir '.env')
+$publicUrl = $null
+if (Test-Path $qmEnvPath) {
+    $m = [regex]::Match((Get-Content $qmEnvPath -Raw), '(?m)^\s*QM_PUBLIC_URL\s*=\s*(\S+)')
+    if ($m.Success) { $publicUrl = $m.Groups[1].Value.Trim().TrimEnd('/') }
+}
+
+if (-not $publicUrl) {
+    Write-Skip 'QM_PUBLIC_URL is not set; the sign-in host cannot be derived'
+} else {
+    # Derive the authorize URL from the service itself so this tests the origin rule
+    # and not a hardcoded redirect_uri that goes stale when the host changes.
+    $loginUrl = "$publicUrl/auth/login"
+    $landed = $null
+    # PowerShell's Invoke-WebRequest treats a 302 as success only when it follows it.
+    # With -MaximumRedirection 0 it raises instead, and the Location is on the
+    # response, not on an exception the way a hard error would be. Read it both ways.
+    try {
+        $r = Invoke-WebRequest $loginUrl -MaximumRedirection 0 -UseBasicParsing -TimeoutSec 15
+        $landed = $r.Headers['Location']
+    } catch {
+        $resp = $_.Exception.Response
+        if ($resp) {
+            $landed = $resp.Headers['Location']
+            if (-not $landed) {
+                # .NET may hand back a relative or comma-joined value.
+                $loc = $resp.Headers.Location
+                if ($loc) { $landed = $loc.ToString() }
+            }
+        }
+    }
+    if ($landed -and $landed -notmatch '^https?://') { $landed = ([Uri]::new([Uri]$loginUrl, $landed)).AbsoluteUri }
+
+    if (-not $landed) {
+        Write-Fail "QM_PUBLIC_URL=$publicUrl but /auth/login gave no redirect to a sign-in form"
+    } else {
+        Write-Pass "/auth/login on $publicUrl redirects to a sign-in form"
+
+        # THE ASSERTION THAT MATTERS: does the host the INSTALLER PRINTS work?
+        #
+        # Checking QM_PUBLIC_URL against itself is circular - a hostname config is
+        # self-consistent and still refuses the operator, because install.ps1 says
+        # "Sign in at http://localhost:8181". Measured 2026-11-10: with
+        # QM_PUBLIC_URL=http://laptop-hh9v75mk:8181 the config-only check passed while
+        # a browser at localhost:8181 got 403 "cross-origin request refused".
+        #
+        # So ask the question the operator asks: open the printed URL and submit.
+        $printed = 'http://localhost:8181'
+        $origin = $printed
+        # Read the redirect with curl. Invoke-WebRequest's 302 handling differs by
+        # PowerShell version (5.1 vs 7), and this gate must read the same status a
+        # browser would see. curl is already a dependency of this repo's gates.
+        $pLand = $null
+        $hdr = & curl.exe -s -i --max-time 15 "$printed/auth/login" 2>$null
+        foreach ($line in $hdr) {
+            if ($line -match '^(?i)location:\s*(\S+)') { $pLand = $Matches[1].Trim(); break }
+        }
+        if (-not $pLand) {
+            Write-Fail "the URL install.ps1 prints ($printed) does not redirect to a sign-in form"
+        } else {
+            $formHost = ([Uri]$pLand).Authority
+            try {
+                $page2 = (Invoke-WebRequest $pLand -UseBasicParsing -TimeoutSec 20).Content
+            } catch { $page2 = $null }
+            if (-not $page2 -or $page2 -notmatch 'name="request"\s+value="([^"]+)"') {
+                Write-Fail "the sign-in form at $pLand has no request token; sign-in cannot proceed"
+            } else {
+                $req2 = $Matches[1]
+                $post2 = ($pLand -split '\?')[0]
+                try {
+                    $null = Invoke-WebRequest $post2 -Method Post -UseBasicParsing -TimeoutSec 25 `
+                        -Body @{ request = $req2; email = 'probe@example.invalid' } `
+                        -Headers @{ Origin = $origin; Referer = $pLand }
+                    Write-Pass "a browser at $origin can submit the sign-in form (Origin: $origin)"
+                } catch {
+                    $body = $_.ErrorDetails.Message
+                    if ($body -match 'cross-origin') {
+                        Write-Fail "a browser at $origin is REFUSED as cross-origin (the form lives at $formHost). install.ps1 prints '$printed', so the operator cannot sign in. Set QM_PUBLIC_URL=$printed in deploy/client-bundle/qm-pacgate/.env and recreate auth+portal."
+                    } else {
+                        Write-Pass "a browser at $origin can submit the sign-in form (later guard spoke: $($body -replace '\s+',' '))"
+                    }
+                }
+            }
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "STALE: $($script:failures) qm dimension(s) are behind. The co-working stack needs a restart." -ForegroundColor Red

@@ -126,8 +126,45 @@ are additive: an existing value is never overwritten, and no secret is touched.
 
 | Value | Why it matters |
 |---|---|
-| `GATEWAY_CORS_ORIGINS` in `.env` | Sign-in is refused with **403 "cross-site auth request denied"** if the browser's address is not listed. Older installs listed port 8089 only, so signing in on port 8090 failed. `-Update` adds the missing origins. |
-| `QM_PUBLIC_URL` in `qm-pacgate/.env` | The staff portal's OAuth issuer. Older installs hardcoded `http://localhost:8181`, so anyone signing in from **another computer** was redirected to their own machine and could never complete sign-in. `-Update` sets it to this machine's hostname. |
+| `GATEWAY_CORS_ORIGINS` in `.env` | Sign-in is refused with **403 "cross-site auth request denied"** if the browser's address is not listed. Older installs listed port 8089 only, so signing in on port 8090 failed. `-Update` adds the missing origins. It is a comma-separated LIST, so several hosts can be trusted at once. |
+| `QM_PUBLIC_URL` in `qm-pacgate/.env` | The staff portal's OAuth issuer, and the **single** origin the auth service will accept a sign-in POST from. Any other `Origin` is refused with **403 `{"error":"forbidden","message":"cross-origin request refused"}`**. `-Update` sets it to this machine's hostname. |
+
+### `QM_PUBLIC_URL` is one host, and that host is the only one that can sign in
+
+Unlike `GATEWAY_CORS_ORIGINS`, this is **not a list**. Whichever host it names is the
+only host whose sign-in form will submit; every other address for the same portal
+renders the form and then refuses the POST.
+
+Both directions have shipped broken, which is why the value is not a detail:
+
+- An older release hardcoded `http://localhost:8181`, so anyone signing in from
+  **another computer** was redirected to their own machine and could never finish.
+- The `-Update` repair writes **this machine's hostname**, so an operator following the
+  installer's printed `http://localhost:8181` is now the one refused.
+
+Measured 2026-11-10 on 0.2.34: `Origin: http://localhost:8181` → **403**;
+`Origin: http://<hostname>:8181` → **200**.
+
+**To sign in from this machine** set it to the localhost form and recreate:
+
+```powershell
+# deploy/client-bundle/qm-pacgate/.env
+QM_PUBLIC_URL=http://localhost:8181
+cd qm-pacgate; docker compose -f compose.qm.yaml up -d --force-recreate auth portal
+```
+
+**To sign in from other computers instead**, set the hostname form
+(`http://<this-machine>:$port`) and recreate the same two services. Pick the one that
+matches how staff will actually reach the portal — you cannot have both.
+
+`install.ps1` now prints whichever host is configured, and `scripts/test-qm-currentness.ps1`
+fails if the printed URL cannot actually submit the form, so the two cannot drift apart
+again.
+
+> **Sign-in is magic link, not a password.** There is no admin password to type: the
+> form asks only for an email and mails a link. With the shipped development mail
+> transport the link lands in **Mailpit at `http://localhost:8025`**, not a real inbox,
+> and Mailpit has no volume, so links are lost whenever the qm stack restarts.
 
 After `-Update`, recreate the affected services so they pick the new values up:
 

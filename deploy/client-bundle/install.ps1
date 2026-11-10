@@ -2671,9 +2671,34 @@ Write-Host "QM (co-working workspace):" -ForegroundColor Cyan
 if (Test-Path (Join-Path $PSScriptRoot 'qm-pacgate/compose.qm.yaml')) {
     $qmCount = @(Invoke-WithNativeStderr { docker ps --filter 'name=qm-pacgate-' --format '{{.Names}}' 2>$null }).Count
     if ($qmCount -ge 6) {
-        Write-Host "  Running ($qmCount containers). Sign in at http://localhost:8181" -ForegroundColor Gray
+        # PRINT THE HOST THAT ACTUALLY WORKS, not a hardcoded localhost.
+        #
+        # The auth service accepts a sign-in POST only from the ONE origin it derives
+        # from QM_PUBLIC_URL; any other Origin is refused with 403
+        # {"error":"forbidden","message":"cross-origin request refused"}. This line
+        # used to say http://localhost:8181 unconditionally, so on any machine where
+        # -Update had written this machine's hostname (which is exactly what the
+        # repair above does), the installer told the operator to open a URL that is
+        # guaranteed to fail.
+        #
+        # Measured 2026-11-10 on the live 0.2.34 stack: Origin localhost:8181 -> 403,
+        # Origin <hostname>:8181 -> 200. Both directions have now shipped broken - an
+        # older release hardcoded localhost and broke remote users; the hostname
+        # repair broke local ones. Printing the configured value means the instruction
+        # and the working instruction cannot diverge again.
+        $qmSignIn = 'http://localhost:8181'
+        $qmEnvForUrl = Join-Path $PSScriptRoot 'qm-pacgate/.env'
+        if (Test-Path $qmEnvForUrl) {
+            $mQm = [regex]::Match((Get-Content $qmEnvForUrl -Raw), '(?m)^\s*QM_PUBLIC_URL\s*=\s*(\S+)')
+            if ($mQm.Success) { $qmSignIn = $mQm.Groups[1].Value.Trim().TrimEnd('/') }
+        }
+        Write-Host "  Running ($qmCount containers). Sign in at $qmSignIn" -ForegroundColor Gray
         Write-Host "  (8181 is the portal FRONT DOOR - it proxies to web-ui 8182 and" -ForegroundColor Gray
         Write-Host "   admin 8183. Opening 8182 directly skips auth.)" -ForegroundColor Gray
+        Write-Host "  Sign-in is MAGIC LINK, not a password: enter the admin email, then open" -ForegroundColor Gray
+        Write-Host "  http://localhost:8025 (Mailpit) - links are delivered there, not to a real" -ForegroundColor Gray
+        Write-Host "  inbox. Use the SAME host shown above; a different one is refused as" -ForegroundColor Gray
+        Write-Host "  cross-origin (403). Change QM_PUBLIC_URL to switch hosts." -ForegroundColor Gray
     }
     else {
         Write-Host "  NOT running ($qmCount of 6 containers up). To bring it up:" -ForegroundColor Yellow
