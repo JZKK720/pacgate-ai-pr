@@ -47,9 +47,14 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 
 $script:failures = 0
 $script:warnings = 0
+# Failures that a restart cannot fix. Kept separate because this gate's footer
+# used to offer one remedy for every failure, which sent config errors to a
+# container bounce that cannot possibly help.
+$script:configFailures = 0
 
 function Write-Pass([string]$m) { Write-Host "  [PASS] $m" -ForegroundColor Green }
 function Write-Fail([string]$m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; $script:failures++ }
+function Write-ConfigFail([string]$m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; $script:failures++; $script:configFailures++ }
 function Write-Warn([string]$m) { Write-Host "  [warn] $m" -ForegroundColor Yellow; $script:warnings++ }
 function Write-Skip([string]$m) { Write-Host "  [skip] $m" -ForegroundColor Yellow }
 
@@ -291,8 +296,51 @@ if (-not $publicUrl) {
 }
 
 # ---------------------------------------------------------------------------
+# The portal signs in one kind of identity. The stack ships two, and they are
+# not interchangeable: the admin address is a staff login, the bridge address is
+# a machine credential for pacgate-api. Submitting the bridge address to the
+# portal is silently suppressed ("not on the permitted list") behind a
+# "Check your email" page, which reads as a mail problem rather than a refusal.
+Write-Host ''
+Write-Host 'qm identity kinds'
+$envFile = Join-Path $PSScriptRoot '..\deploy\client-bundle\qm-pacgate\.env'
+if (-not (Test-Path $envFile)) {
+    Write-Skip 'no qm .env, so the two identity kinds cannot be compared'
+} else {
+    $envLines = Get-Content $envFile
+    function Get-QmEnvValue([string]$name) {
+        $line = $envLines | Where-Object { $_ -match "^\s*$name\s*=" } | Select-Object -First 1
+        if (-not $line) { return $null }
+        return (($line -replace "^\s*$name\s*=", '') -replace '^["'']|["'']$', '').Trim()
+    }
+    $allowed = @((Get-QmEnvValue 'AUTH_ALLOWED_EMAILS') -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+    $apiMail = Get-QmEnvValue 'PACGATE_API_EMAIL'
+
+    if (-not $allowed -or $allowed.Count -eq 0) {
+        Write-ConfigFail 'AUTH_ALLOWED_EMAILS is unset, so nobody can sign in to the portal'
+    } else {
+        Write-Pass "the portal accepts $($allowed.Count) allow-listed address(es): $($allowed -join ', ')"
+    }
+
+    if (-not $apiMail) {
+        Write-Skip 'no PACGATE_API_EMAIL, so there is no bridge identity to compare'
+    } elseif ($allowed -contains $apiMail.Trim().ToLower()) {
+        Write-ConfigFail "$apiMail is BOTH the pacgate-api bridge account (PACGATE_API_EMAIL) and a portal login (AUTH_ALLOWED_EMAILS). A machine credential must not hold interactive staff access. Remove it from AUTH_ALLOWED_EMAILS."
+    } else {
+        Write-Pass "$apiMail is a pacgate-api machine credential and is correctly absent from the portal allow-list"
+    }
+}
+
+# ---------------------------------------------------------------------------
 Write-Host ''
 if ($script:failures -gt 0) {
+        if ($script:failures -eq $script:configFailures) {
+            Write-Host "CONFIG: $($script:failures) qm identity definition(s) are wrong. A restart cannot fix these." -ForegroundColor Red
+            Write-Host ''
+            Write-Host '  Edit deploy/client-bundle/qm-pacgate/.env, then recreate core:' -ForegroundColor DarkGray
+            Write-Host '    docker compose -f compose.qm.yaml up -d --force-recreate core' -ForegroundColor DarkGray
+            exit 1
+        }
     Write-Host "STALE: $($script:failures) qm dimension(s) are behind. The co-working stack needs a restart." -ForegroundColor Red
     Write-Host ''
     Write-Host '  -Update deliberately does NOT restart qm, because staff may be mid-session.' -ForegroundColor DarkGray
