@@ -836,6 +836,24 @@ $liveStackGates = @(
     # the gate does not fail on drift; it fails when a baked patch has NO mount
     # (which would make the stale bake live) and warns when the bake is stale.
     'scripts/test-baked-patch-parity.ps1'
+    # PROVES the /initialize setup-token gate actually discriminates. Registered
+    # 2026-11-11: an audit of the setup-token surface found this gate existed,
+    # passed, and was wired into no suite, so nothing would have noticed it
+    # breaking. That is the failure mode test-mcp-401-retry.ps1 was created for.
+    #
+    # It matters more here. POST /api/v1/auth/initialize creates the FIRST admin
+    # and is necessarily unauthenticated; if the token check regressed, a fresh
+    # install would be claimable by anyone who can reach it, and every other gate
+    # would stay green. It starts its own throwaway container because env cannot be
+    # injected into a running one, and exits 2 - never 0 - when it cannot resolve a
+    # network, so "cannot check" is not reported as a pass.
+    'scripts/test-initialize-gate.ps1'
+    # PROVES self-registration is refused on BOTH ports - through nginx and directly
+    # against the frontend - so a bypass cannot hide behind the proxied path.
+    # Registered 2026-11-11 for the same reason as the gate above. It asserts the
+    # user count is UNCHANGED, so it proves nothing was created rather than only
+    # that the response looked like a refusal. Needs the stack up.
+    'scripts/test-auth-registration-gate.ps1'
 )
 
 
