@@ -82,6 +82,11 @@ if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 # That strictness is intended; the fixtures must not fight it.
 $ID_CARD = '11010519491231002X'
 $PHONE   = '13812345678'
+# Non-identifying text that every fixture contains. Its survival through sanitize is
+# the only available proof the body was actually READ, because /extract now refuses a
+# pending document (103f608) and so cannot be used as the read check any more. Absence
+# of the identifiers alone would also be true of empty output.
+$SCRIPT_MARKER = 'Client intake record'
 
 $script:failures = 0
 $script:checks = 0
@@ -594,12 +599,31 @@ function Invoke-RefusalCase {
     Check "$Label - upload returns 2xx" $true ''
     $script:createdDocs += $doc.id
 
-    $extract = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$($doc.id)/extract" -Method Post `
-        -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' -TimeoutSec 300
-    Write-Host "     extract incomplete=$($extract.incomplete)"
-    Check "$Label - extract reports incomplete=true (REFUSED, not silently read)" `
-        ("$($extract.incomplete)" -eq 'true') `
-        "incomplete=$($extract.incomplete); NUL-interleaved text must never be treated as a complete read"
+    # 3. Extract is REFUSED. Two properties hold at once here and the gate must not
+    #    conflate them:
+    #      - the egress rule: a pending body is never readable over HTTP (409), which
+    #        is true of every format since 103f608, and
+    #      - the scan-quality rule this case exists for: NUL-interleaved UTF-16 must
+    #        never be certified as a complete read.
+    #    The old assertion looked for `incomplete=true` in a 200 body. That shape is
+    #    gone: the handler now refuses before it can report anything. A 200 here would
+    #    mean an unsanitised body was egressed, which is worse than the bug this case
+    #    was written for.
+    $extractStatus = $null
+    $extractBody = ''
+    try {
+        $extractStatus = (Invoke-WebRequest -Uri "$BaseUrl/api/documents/$($doc.id)/extract" -Method Post `
+            -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' `
+            -TimeoutSec 300 -UseBasicParsing).StatusCode
+    } catch {
+        $e2 = Get-HttpError $_
+        $extractStatus = $e2.status
+        $extractBody = $e2.body
+    }
+    Write-Host "     extract status=$extractStatus (409 = refused while pending, by design)"
+    Check "$Label - extract REFUSES the body (409, neither incomplete nor complete)" `
+        ($extractStatus -eq 409) `
+        "status=$extractStatus $extractBody; a 200 would mean NUL-interleaved text was readable"
 
     $sanitizeStatus = $null
     try {
@@ -629,6 +653,13 @@ function Invoke-Case {
         [Parameter(Mandatory)][string]$FixturePath,
         [Parameter(Mandatory)][string]$Filename,
         [Parameter(Mandatory)][string]$ContentType,
+        # Non-identifying text this fixture's body must retain through sanitize. This
+        # is the proof-of-read: it differs per fixture (T4/T8 bodies carry a different
+        # sentence than T1-T3), so it is a parameter rather than one global constant.
+        # Pass empty for a fixture that deliberately carries ONLY identifiers (the PDF
+        # control); the check then falls back to requiring a redaction token, which is
+        # equally strong evidence that read text was rewritten.
+        [string]$BodyMarker = '',
         # The minimum plausible size for THIS format. See the note below.
         [Parameter(Mandatory)][int]$MinBytes
     )
@@ -702,35 +733,38 @@ function Invoke-Case {
     $docId = $doc.id
     $script:createdDocs += $docId
 
-    # 3. Extract.
+    # 3. Extract. A `pending` document's body may NOT be read over HTTP.
+    #
+    #    This assertion used to require extract 200 + incomplete=false. That contract
+    #    no longer exists: 103f608 (2026-11-09) routed this handler through
+    #    egress::assert_readable, and egress::admit refuses `pending` outright
+    #    ("reading its body requires sanitization"). The refusal is the SECURITY
+    #    property - before that commit the endpoint returned the body of a pending or
+    #    blocked document, which is exactly the leak the chokepoint closed.
+    #
+    #    So the gate now asserts the refusal instead of the read. Requiring the read
+    #    back would demand restoring the leak.
+    #
+    #    The "was the text actually READ and REDACTED" proof moves to assertions 4/5,
+    #    which still carry the same weight: sanitize returns the redacted text inline,
+    #    and it must contain the surrounding fixture text with neither identifier.
     $extractStatus = $null
-    $extract = $null
     $extractErr = ''
     try {
-        $extract = Invoke-RestMethod -Uri "$BaseUrl/api/documents/$docId/extract" -Method Post `
-            -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' -TimeoutSec 300
-        $extractStatus = 200
+        $extractStatus = (Invoke-WebRequest -Uri "$BaseUrl/api/documents/$docId/extract" -Method Post `
+            -Headers $AuthHeaders -ContentType 'application/json' -Body '{}' `
+            -TimeoutSec 300 -UseBasicParsing).StatusCode
+        $extractText = ''
     } catch {
         $err = Get-HttpError $_
         $extractStatus = $err.status
         $extractErr = $err.body
         if (-not $extractErr) { $extractErr = $_.Exception.Message }
     }
-    $extractedText = if ($extract) { [string]$extract.text } else { '' }
-    $extractChars = $extractedText.Length
-    $incomplete = if ($extract) { "$($extract.incomplete)" } else { '(no body)' }
-    Write-Host "     extract status=$extractStatus incomplete=$incomplete chars=$extractChars"
-    Check "$Label - extract 200 with incomplete=false" `
-        (($extractStatus -eq 200) -and ($incomplete -eq 'false')) `
-        "status=$extractStatus incomplete=$incomplete chars=$extractChars $extractErr"
-
-    # 4. The text is not merely non-empty -- it CONTAINS what the fixture wrote.
-    #    An emptiness check passes on a document nobody read; a content check does
-    #    not. This is the assertion that catches a converter skipping a part.
-    $hasId = $extractedText.Contains($ID_CARD)
-    $hasPhone = $extractedText.Contains($PHONE)
-    Check "$Label - extracted text CONTAINS both identifiers" ($hasId -and $hasPhone) `
-        "id_present=$hasId phone_present=$hasPhone chars=$extractChars"
+    Write-Host "     extract status=$extractStatus (409 = refused while pending, by design)"
+    Check "$Label - extract REFUSES a pending body (409, not the raw text)" `
+        ($extractStatus -eq 409) `
+        "status=$extractStatus $extractErr (a 200 here would mean an unsanitised body was egressed)"
 
     # 5. Sanitize.
     $sanStatus = $null
@@ -754,14 +788,31 @@ function Invoke-Case {
         (($sanStatus -eq 200) -and ($verdict -eq 'pass') -and ($redactions -ge 2)) `
         "status=$sanStatus verdict=$verdict redaction_count=$redactions $sanErr"
 
-    # 6. Egress check -- and it must NOT be vacuous.
-    #    `-not ''.Contains('x')` is TRUE, so a bare absence check passes when the
-    #    sanitize call failed and produced no text at all. Require a successful
-    #    sanitize AND non-empty output before the absence means anything.
+    # 4/5. Sanitize carries the proof that the text was READ, not just tokenised away.
+    #    sanitize extracts internally (there is no HTTP path to the original for a
+    #    pending document), so its output is the only observable. Require:
+    #      - the fixture's NON-identifying text survives (proves the body was read,
+    #        including for the header/footer case in T4),
+    #      - redaction_count >= 2 (both identifiers were found),
+    #      - neither identifier survives.
+    #    Without the survival check, a converter that read nothing would pass: no
+    #    identifiers present is trivially true on empty text.
     $sanText = if ($san) { [string]$san.sanitized_text } else { '' }
     $sanLen = $sanText.Length
     $leaksId = $sanText.Contains($ID_CARD)
     $leaksPhone = $sanText.Contains($PHONE)
+    $sawMarker = $sanText.Contains($BodyMarker)
+    $sawToken = $sanText -match '\[CN_[A-Z]+_[0-9A-F]+\]'
+    # Proof-of-read, two accepted forms. A fixture that carries ordinary prose must
+    # show that prose surviving. A fixture that carries ONLY identifiers (the PDF
+    # control) has no prose to survive, so a redaction TOKEN is the evidence that the
+    # read text was rewritten rather than dropped - equally strong, and it is the only
+    # honest option for that fixture.
+    $readProof = if ($BodyMarker) { $sawMarker } else { $sawToken }
+    $proofWhat = if ($BodyMarker) { "'$BodyMarker' survived" } else { 'redaction token present' }
+    Check "$Label - sanitize READ the body ($proofWhat alongside redaction)" `
+        (($sanStatus -eq 200) -and $readProof) `
+        "marker_present=$sawMarker token_present=$sawToken sanitized_chars=$sanLen (empty output means nothing was read)"
     Check "$Label - sanitized text is non-empty and carries NEITHER identifier" `
         (($sanStatus -eq 200) -and ($sanLen -gt 0) -and (-not $leaksId) -and (-not $leaksPhone)) `
         "sanitized_chars=$sanLen id_present=$leaksId phone_present=$leaksPhone (a failed sanitize has no text, so absence alone proves nothing)"
@@ -810,14 +861,14 @@ $CT_PPTX  = 'application/vnd.openxmlformats-officedocument.presentationml.presen
 $CT_PDF   = 'application/pdf'
 $CT_HTML  = 'text/html'
 
-Invoke-Case -Label 'T1 plain text (.txt)'      -FixturePath $fixtures.T1.Path      -Filename 't1.txt'      -ContentType $CT_TXT    -MinBytes 8
-Invoke-Case -Label 'T2 markdown (.md)'         -FixturePath $fixtures.T2.Path      -Filename 't2.md'       -ContentType $CT_MD     -MinBytes 8
-Invoke-Case -Label 'T3 docx body (.docx)'      -FixturePath $fixtures.T3.Path      -Filename 't3.docx'     -ContentType $CT_DOCX   -MinBytes 1000
-Invoke-Case -Label 'T4 docx HEADER ONLY (.docx)' -FixturePath $fixtures.T4.Path    -Filename 't4.docx'     -ContentType $CT_DOCX   -MinBytes 1000
-Invoke-Case -Label 'T5 spreadsheet (.xlsx)'    -FixturePath $fixtures.T5.Path      -Filename 't5.xlsx'     -ContentType $CT_XLSX   -MinBytes 1000
-Invoke-Case -Label 'T6 presentation (.pptx)'   -FixturePath $fixtures.T6.Path      -Filename 't6.pptx'     -ContentType $CT_PPTX   -MinBytes 1000
-Invoke-Case -Label 'T7 html (.html)'           -FixturePath $fixtures.T7.Path      -Filename 't7.html'     -ContentType $CT_HTML   -MinBytes 8
-Invoke-Case -Label 'T8 docx field codes + tracked deletion (.docx)' -FixturePath $fixtures.T8.Path -Filename 't8.docx' -ContentType $CT_DOCX -MinBytes 1000
+Invoke-Case -Label 'T1 plain text (.txt)'      -FixturePath $fixtures.T1.Path      -Filename 't1.txt'      -ContentType $CT_TXT    -BodyMarker 'Client intake record' -MinBytes 8
+Invoke-Case -Label 'T2 markdown (.md)'         -FixturePath $fixtures.T2.Path      -Filename 't2.md'       -ContentType $CT_MD     -BodyMarker 'Client intake record' -MinBytes 8
+Invoke-Case -Label 'T3 docx body (.docx)'      -FixturePath $fixtures.T3.Path      -Filename 't3.docx'     -ContentType $CT_DOCX   -BodyMarker 'Client intake record' -MinBytes 1000
+Invoke-Case -Label 'T4 docx HEADER ONLY (.docx)' -FixturePath $fixtures.T4.Path    -Filename 't4.docx'     -ContentType $CT_DOCX   -BodyMarker 'Agreement between the parties.' -MinBytes 1000
+Invoke-Case -Label 'T5 spreadsheet (.xlsx)'    -FixturePath $fixtures.T5.Path      -Filename 't5.xlsx'     -ContentType $CT_XLSX   -BodyMarker 'Client intake record' -MinBytes 1000
+Invoke-Case -Label 'T6 presentation (.pptx)'   -FixturePath $fixtures.T6.Path      -Filename 't6.pptx'     -ContentType $CT_PPTX   -BodyMarker 'Client intake record' -MinBytes 1000
+Invoke-Case -Label 'T7 html (.html)'           -FixturePath $fixtures.T7.Path      -Filename 't7.html'     -ContentType $CT_HTML   -BodyMarker 'Client intake record' -MinBytes 8
+Invoke-Case -Label 'T8 docx field codes + tracked deletion (.docx)' -FixturePath $fixtures.T8.Path -Filename 't8.docx' -ContentType $CT_DOCX -BodyMarker 'Agreement between the parties.' -MinBytes 1000
 
 # T9 is the one case whose correct outcome is a REFUSAL, not a redaction. A
 # BOM-less UTF-16 .txt is valid UTF-8 (every byte < 0x80), so from_utf8 accepts it
@@ -826,7 +877,7 @@ Invoke-Case -Label 'T8 docx field codes + tracked deletion (.docx)' -FixturePath
 # incomplete=true rather than pass/redact is the whole point.
 Invoke-RefusalCase -Label 'T9 BOM-less UTF-16 text (.txt)' -FixturePath $fixtures.T9.Path -Filename 't9.txt' -ContentType $CT_TXT -MinBytes 8
 
-Invoke-Case -Label 'CONTROL readable pdf (.pdf)' -FixturePath $fixtures.CONTROL.Path -Filename 'control.pdf' -ContentType $CT_PDF  -MinBytes 1000
+Invoke-Case -Label 'CONTROL readable pdf (.pdf)' -FixturePath $fixtures.CONTROL.Path -Filename 'control.pdf' -ContentType $CT_PDF  -BodyMarker '' -MinBytes 1000
 
 # ── Cleanup ──
 if (-not $KeepArtifacts) {
