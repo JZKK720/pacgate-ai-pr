@@ -192,6 +192,12 @@ services:
       - mailpit
     environment:
       CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
+      # Required here, not optional. Without it the chassis signs portal-identity
+      # tokens with CORE_SIGNING_SECRET (its own dev fallback, which it logs), a
+      # DIFFERENT key from the one portal/web-ui/core verify with - so any identity
+      # this service mints is silently rejected downstream. The other four consumers
+      # were wired and this one was missed.
+      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
       AUTH_SIGNING_JWK: ${AUTH_SIGNING_JWK}
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
       AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
