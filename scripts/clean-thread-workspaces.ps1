@@ -138,8 +138,12 @@ if (@($running) -notcontains $Container) {
 # ── Credential. deer-flow keeps its own identity store, so this cannot be derived
 # ── from PACGATE_API_PASSWORD. Same resolution contract as run-benchmark.ps1.
 $dfPassword = $env:PACGATE_DEERFLOW_PASSWORD
+if (-not $dfPassword) { $dfPassword = $env:DEER_FLOW_PASSWORD }
 if (-not $dfPassword -and (Test-Path -LiteralPath $CredFile)) {
-    $m = Select-String -LiteralPath $CredFile -Pattern '^\s*PACGATE_DEERFLOW_PASSWORD\s*=\s*(.+?)\s*$' | Select-Object -First 1
+    # Both key names are accepted: machines provisioned before 2026-10-15 wrote
+    # DEER_FLOW_PASSWORD, and the documented format is PACGATE_DEERFLOW_PASSWORD.
+    # Reading only one of them silently turned this gate into CANNOT CHECK.
+    $m = Select-String -LiteralPath $CredFile -Pattern '^\s*(?:PACGATE_DEERFLOW_PASSWORD|DEER_FLOW_PASSWORD)\s*=\s*(.+?)\s*$' | Select-Object -First 1
     if ($m) { $dfPassword = $m.Matches[0].Groups[1].Value.Trim() }
 }
 if (-not $dfPassword) {

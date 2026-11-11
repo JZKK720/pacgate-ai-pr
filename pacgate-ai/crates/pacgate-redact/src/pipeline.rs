@@ -222,6 +222,37 @@ mod tests {
         assert!(!out.decision.allow_auto_pass);
     }
 
+    /// The production regression, verbatim.
+    ///
+    /// This is a real chunk from the Firm KB's `presented-pacgate-ai-平台实战教程`
+    /// document, which was `blocked` with `chunks_promoted=0` and re-blocked on
+    /// every re-sanitize. It is a published tutorial chapter about a retrieval
+    /// pitfall, and the text it quotes as noise is a vendor name and three public
+    /// bodies. Nothing here is client identity.
+    ///
+    /// The block was circular: the model layer re-fired on text the redactor had
+    /// already handled, and a model guess was allowed to be the decisive evidence.
+    /// This test exists so the exact production string cannot regress into
+    /// unqueryable again.
+    #[test]
+    fn a_published_tutorial_naming_public_bodies_is_not_blocked() {
+        let mut s = sanitizer();
+        let out = s
+            .sanitize(
+                "坑三：中文检索会命中大量地方规范性文件查「不可抗力 免责 民法典」，\
+                 yuandian 返回的前三条是：保定市国资委监管企业资产出租管理办法（试行）第十一条\
+                 平潭综合实验区国有资产管理局……指导意见黄山市人民政府……通知",
+                DataLevel::T3ProjectSpecific,
+            )
+            .unwrap();
+        assert_eq!(
+            out.ledger.verdict(),
+            Verdict::Pass,
+            "public bodies and a vendor name are not client identity; notes={:?}",
+            out.ledger.verification_notes
+        );
+    }
+
     #[test]
     fn the_ledger_never_carries_the_original_value() {
         let mut s = sanitizer();

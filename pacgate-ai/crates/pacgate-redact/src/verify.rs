@@ -187,7 +187,34 @@ pub fn verify(
     residue.extend(model_kept);
     residue.sort_by_key(|m| (m.start, m.end));
 
-    let verdict = if residue.is_empty() {
+    // Only structural evidence may refuse a document on its own.
+    //
+    // A `MatchSource::Model` span is a guess, and it is being made about text
+    // that has already been through the redactor. Measured 2026-11-08: the Firm
+    // KB's own prompt guides were `blocked` with the ledger naming `张三` (a
+    // textbook placeholder name), `yuandian` (a registered connector name) and
+    // public bodies as the surviving "residue" - text that is either not an
+    // identity or no longer present. Making a guess decisive there meant two
+    // substantive firm documents were unqueryable and reproduced the block on
+    // every re-sanitize.
+    //
+    // The model spans stay in `residue` and in `notes`, so a reviewer still sees
+    // them; they simply cannot be the sole reason to refuse. This is the same
+    // split by evidence the module draws everywhere else, applied to the verdict
+    // instead of only to suppression. `structural` is untouched, so a surviving
+    // checksum, pattern or context match still blocks unconditionally.
+    let has_structural = !residue.is_empty() && residue.iter().any(|m| m.source != MatchSource::Model);
+    let has_model = residue.iter().any(|m| m.source == MatchSource::Model);
+
+    let verdict = if has_structural {
+        Verdict::Block
+    } else if has_model {
+        notes.push(format!(
+            "model layer: {} surviving model match(es) did not block - a guess alone is not evidence of a leak; recorded for review",
+            residue.len()
+        ));
+        Verdict::Pass
+    } else {
         if model_dropped == 0 {
             notes.push(format!(
                 "{} detector(s) reported no residue",
@@ -195,8 +222,6 @@ pub fn verify(
             ));
         }
         Verdict::Pass
-    } else {
-        Verdict::Block
     };
 
     Verification {
@@ -431,5 +456,106 @@ mod tests {
                 assert!(crate::is_placeholder(&m.text), "{:?} '{}'", m.entity, m.text);
             }
         }
+    }
+
+    /// A model span that the redactor already replaced must not be able to block
+    /// the document.
+    ///
+    /// Measured 2026-11-08 on the Firm KB: `合规律师实用Prompts指南` (144 chunks)
+    /// and `基金律师实用Prompts指南` (108 chunks) were `blocked` with
+    /// `chunks_promoted=0`, and re-sanitizing them reproduced the block exactly.
+    /// The ledger named the cause: the model layer reported surviving spans for
+    /// text the redactor had ALREADY tokenized - `张三` (a textbook placeholder
+    /// name), `yuandian` (a registered connector name, not a person), and public
+    /// bodies (`黄山市人民政府`, `保定市国资委`).
+    ///
+    /// The verifier re-runs the detectors over the redacted text. A model
+    /// detector is free to re-fire on the token it just wrote, or on a fragment
+    /// beside it, and `inside_placeholder` only excludes a span wholly inside one
+    /// placeholder. So a model guess about text that is no longer there became
+    /// the reason a document was refused - the exact circularity the module docs
+    /// say is confined to the model layer, except here it was not confined, it
+    /// was decisive.
+    ///
+    /// The fix is the same split by evidence the module already draws: a model
+    /// span is a guess, so it may not be the sole reason to block. Structural
+    /// survivors still block unconditionally.
+    #[test]
+    fn a_model_guess_alone_does_not_block_a_document() {
+        struct Guessy;
+        impl Detector for Guessy {
+            fn detect(&self, _t: &str) -> crate::RedactResult<Vec<crate::Match>> {
+                Ok(vec![Match {
+                    start: 0,
+                    end: 9,
+                    entity: EntityType::PersonName,
+                    text: "yuandian ".to_string(),
+                    confidence: 0.99,
+                    source: MatchSource::Model,
+                }])
+            }
+            fn name(&self) -> &'static str {
+                "guessy"
+            }
+        }
+        // The suppressor declines to drop it, so it reaches the verdict as a
+        // surviving model match - the production shape.
+        let v = verify(
+            "yuandian 检索",
+            &[Box::new(Guessy)],
+            VerifyScope::default(),
+            |_| false,
+        );
+        assert_eq!(
+            v.verdict,
+            Verdict::Pass,
+            "a model guess must not be the sole reason to refuse a document; notes={:?}",
+            v.notes
+        );
+        assert!(
+            v.notes.iter().any(|n| n.contains("model")),
+            "the surviving model span must still be recorded for the reviewer: {:?}",
+            v.notes
+        );
+    }
+
+    /// The counterpart: a structural survivor beside a model guess still blocks.
+    /// The relaxation above must not become a hole.
+    #[test]
+    fn a_structural_survivor_still_blocks_beside_a_model_guess() {
+        struct Guessy;
+        impl Detector for Guessy {
+            fn detect(&self, _t: &str) -> crate::RedactResult<Vec<crate::Match>> {
+                Ok(vec![Match {
+                    start: 0,
+                    end: 9,
+                    entity: EntityType::PersonName,
+                    text: "yuandian ".to_string(),
+                    confidence: 0.99,
+                    source: MatchSource::Model,
+                }])
+            }
+            fn name(&self) -> &'static str {
+                "guessy"
+            }
+        }
+        let mut detectors: Vec<Box<dyn Detector>> = vec![Box::new(Guessy)];
+        detectors.extend(tier_one_detectors());
+        let v = verify(
+            "yuandian 身份证 110105199003074512",
+            &detectors,
+            VerifyScope::default(),
+            |_| false,
+        );
+        assert_eq!(
+            v.verdict,
+            Verdict::Block,
+            "a resident id is structural evidence and must still block; notes={:?}",
+            v.notes
+        );
+        assert!(v
+            .residue
+            .iter()
+            .any(|m| m.entity == EntityType::CnResidentId));
     }
 }

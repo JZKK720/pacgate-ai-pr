@@ -660,6 +660,13 @@ if ($Update -and -not $SkipRepoPull) {
                 # previous release. Measured 2026-10-27 on a clone with one edited
                 # tracked file: the update reported success and the loop-guard patch
                 # was never applied.
+                # Every git call here is wrapped: this script runs with
+                # $ErrorActionPreference = "Stop", and on Windows PowerShell 5.1 a
+                # native command that writes to stderr becomes a TERMINATING error
+                # as soon as a redirection is attached. `git rev-parse` on a
+                # detached HEAD or a missing remote writes to stderr, so the bare
+                # form would kill the installer at the exact moment it is trying to
+                # explain a skipped pull - the failure would replace the diagnosis.
                 $behindRef = $null
                 # Same shape the update path above uses: resolve the branch first,
                 # then compare, and never nest a native call inside a string -

@@ -433,6 +433,14 @@ services:
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix (see compose.bundle.yaml for the rationale).
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
+      # Pacgate (2026-10-11): raise MCP HTTP client timeouts. The MCP SDK
+      # defaults (30s connect/write/pool, 300s read) killed long tool calls:
+      # a workflow execute that COMPLETED server-side at 01:46:00 was torn
+      # down at 01:47:41 with "Server disconnected without sending a
+      # response" (run 53720ae5). The patch injects an httpx client with
+      # read=900s (covers the 700s sanitize ceiling + headroom) via
+      # httpx_client_factory, avoiding the deprecated timeout kwargs.
+      - ./patches/deer-flow-mcp-client.py:/app/backend/packages/harness/deerflow/mcp/client.py:ro
       # Pacgate (2026-11-08): keep a folded range RECOVERABLE, and make context
       # pressure visible. Stock `SummarizationMiddleware.before_model` returns
       # `[RemoveMessage(REMOVE_ALL_MESSAGES), *one_summary, *preserved]`, so the

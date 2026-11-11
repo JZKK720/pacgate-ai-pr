@@ -411,3 +411,93 @@ Every number in this plan was produced on 2026-10-23 on the HX370 dev box:
 - `gemma4:12b-it-qat` tool-choice matrix → 0/5, 4/5, 3/5, 3/5 as tabulated
 - `git ls-remote --heads origin` → `main` only
 - `curl` on `raw.githubusercontent.com/.../docs/index.html` → 200
+
+---
+
+## 9. AIPC #2 sync verification (2026-10-23, this box)
+
+Plan 030 was written on the HX370 box. This section records what happened when the
+same three gates were merged into the AIPC #2 stack and run against **its** live
+services - because a gate that passes on the machine that wrote it has not been
+tested, only demonstrated.
+
+### 9.1 The merge
+
+`origin/main` (`b5fa7dd`) merged into the AIPC #2 `main` with **one** overlapping
+file (`.gitignore`), auto-merged. No code conflict: every upstream change is a
+script, a plan, or an ignore rule, so no image rebuild and no version bump. v0.2.3
+remains the release, exactly as §5a argued.
+
+### 9.2 Three defects in the new gates, found by running them here
+
+All three are the same class plan 030 exists to close: **a gate reporting green (or
+CANNOT CHECK) about something it never measured.**
+
+| # | Gate | Defect | Evidence |
+| --- | --- | --- | --- |
+| 1 | `check-tracked-file-size.ps1` | skipped every non-ASCII path | 772 of 829 tracked files inspected, 57 skipped |
+| 2 | `test-mcp-tool-surface.ps1` | parsed SSE only; this server answers JSON | exit 2, "tools/list returned no tools array" |
+| 3 | `test-mcp-tool-surface.ps1` | PS 5.1 `ConvertFrom-Json` returns an array as ONE `Object[]` | "advertises 1 tool", "advertised but not in the source: System.Object[]" |
+
+**Defect 1 is the serious one.** `git ls-files` quotes any path containing a
+non-ASCII byte, emitting `"docs/\351\241\271..."` with literal backslash escapes.
+`Test-Path -LiteralPath` rejects that as an illegal path, so the bare `continue`
+swallowed it. One of the 57 skipped files is a **37.66 MB tracked PDF** - i.e. the
+guard reported PASS while the exact class of file it exists to catch was invisible
+to it. Fixed with `-z` plus `core.quotepath=false`; the skip count is now printed
+rather than hidden.
+
+That fix then surfaced a real pre-existing finding, and it **contradicts the
+ceiling comment in the gate**: the largest tracked file in this repo is not "well
+under 1 MB". It is `20201215_..._Haiwen_....pdf` at 37.66 MB, tracked since
+`01a4644a` and read by `seed.rs` as RAG corpus, so it cannot simply be deleted from
+the index. It is recorded in an explicit allowlist with its reason, matched by
+**ASCII-only regex** - this script is BOM-less UTF-8 and PS 5.1 decodes it as GBK
+on a Chinese-locale host, so the first version embedded the CJK path and the gate
+reported its own entry as stale. A stale entry fails the gate, so the list cannot
+rot into a blanket exemption.
+
+**Defect 2** meant the MCP gate could never have failed on this stack regardless of
+the tool surface. **Defect 3** only reproduces under PS 5.1 - the shell the suite
+runs in - because PS 7 flattens the same expression.
+
+Also fixed: a source file that exists but declares no tools now exits **1**, not 2.
+Exiting 2 let a renamed decorator be reported as CANNOT CHECK.
+
+### 9.3 Mutation tests, re-run here
+
+| Gate | Mutation | Before fix | After fix |
+| --- | --- | --- | --- |
+| `test-mcp-tool-surface.ps1` | `@mcp.tool(` → `@mcp.tool_removed(` | exit 2 (CANNOT CHECK) | **exit 1** |
+| `check-tracked-file-size.ps1` | stage a 12 MB binary | not detected (skipped) | **exit 1**, names the file |
+| `check-tracked-file-size.ps1` | run unmodified | PASS (vacuous) | PASS, 829/829 inspected |
+
+### 9.4 A fourth defect, in the `.gitignore` rule
+
+The large-binary rule was `docker-*`, which matches any basename starting with
+`docker-`. Verified with `git check-ignore`: `deploy/client-bundle/docker-entrypoint.sh`
+and `scripts/docker-build.ps1` were both reported **IGNORED**. The failure mode is
+silent and delayed - the file is simply absent from the next clone - which is worse
+than the 42 MB binary the rule was written for, since that at least shows in a diff.
+Narrowed to binary shapes only (`docker-cli`, `docker-cli-*`, `docker-*-linux`,
+`docker-*-amd64`, `docker-*-arm64`); all six binary shapes still ignored, and the
+source files are no longer.
+
+### 9.5 Result on this stack
+
+```
+scripts/run-all-checks.ps1
+  ALL 48 GATES PASSED (14 live-stack gate(s) checked separately)
+```
+
+| Surface | Verified |
+| --- | --- |
+| `pacgate-api` | `/build-info` → `0.2.3` @ `d33553e` |
+| `pacgate-mcp` | 19 tools, source == advertised, all with description + schema |
+| `openviking` | 15 tools with `X-API-Key`; 401 without it |
+| `deer-flow` | consumer view of pacgate-mcp → 19 tools |
+| `qm` | `test-qm-currentness.ps1` → current, 0 warnings |
+| all five release services | `test-stack-version-coherence.ps1` → 14/14, all on `0.2.3` |
+
+The three gates plan 030 added are now proven on a **second** machine, which is the
+only evidence that they generalise rather than fitting the box they were written on.

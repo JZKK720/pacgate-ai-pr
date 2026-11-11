@@ -46,9 +46,13 @@ param(
 function Resolve-DeerFlowPassword {
     if ($DfPassword) { return $DfPassword }
     if ($env:PACGATE_DEERFLOW_PASSWORD) { return $env:PACGATE_DEERFLOW_PASSWORD }
+    if ($env:DEER_FLOW_PASSWORD) { return $env:DEER_FLOW_PASSWORD }
     $f = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.deer-flow-credentials'
     if (Test-Path -LiteralPath $f) {
-        $m = Select-String -LiteralPath $f -Pattern '^\s*PACGATE_DEERFLOW_PASSWORD\s*=\s*(.+?)\s*$' | Select-Object -First 1
+        # Both key names are accepted: machines provisioned before 2026-10-15 wrote
+        # DEER_FLOW_PASSWORD, and the documented format is PACGATE_DEERFLOW_PASSWORD.
+        # Reading only one of them silently turned the deer-flow lane into ERR 401.
+        $m = Select-String -LiteralPath $f -Pattern '^\s*(?:PACGATE_DEERFLOW_PASSWORD|DEER_FLOW_PASSWORD)\s*=\s*(.+?)\s*$' | Select-Object -First 1
         if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
     }
     return $null
@@ -153,7 +157,10 @@ $df = 'SKIP'
 $dfs = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 try {
     $null = Invoke-WebRequest -Uri "$NginxUrl/api/v1/auth/login/local" -Method Post `
-        -Body @{ username = $DfEmail; password = $DfPassword } -WebSession $dfs -UseBasicParsing -TimeoutSec 25
+        -Headers @{ Origin = $NginxUrl } `
+        -ContentType 'application/x-www-form-urlencoded' `
+        -Body "username=$([uri]::EscapeDataString($DfEmail))&password=$([uri]::EscapeDataString($DfPassword))" `
+        -WebSession $dfs -UseBasicParsing -TimeoutSec 25
     $csrf = ($dfs.Cookies.GetCookies($NginxUrl) | Where-Object { $_.Name -eq 'csrf_token' } | Select-Object -First 1).Value
     $H = @{ 'X-CSRF-Token' = $csrf }
     $t = (Invoke-WebRequest -Uri "$NginxUrl/api/threads" -Method Post -Body '{}' -ContentType 'application/json' `
@@ -232,6 +239,24 @@ if ($notes.Count -gt 0) {
 }
 Write-Output '## Verdict'
 Write-Output ''
-$bad = @($rows | Where-Object { $_.Status -eq 'ERR' })
-if ($bad.Count -eq 0) { Write-Output 'All measured lanes responded. No lane errored.' }
-else { Write-Output "$($bad.Count) lane(s) errored: $(($bad | ForEach-Object { $_.Label }) -join ', ')" }
+# The verdict must see EVERY lane it reports, not just the HTTP table.
+#
+# Measured 2026-10-15: it read only `$rows`, so the deer-flow lane - whose value
+# lives in `$df`, appended to section 2 as a bare string - was invisible to it. A
+# report whose section 2 read `deer-flow generation ... ERR 401` therefore carried
+# the verdict "All measured lanes responded. No lane errored." The LLM lanes had
+# the same hole (`Ms = 'ERR'` and never inspected). Both now feed the check.
+$bad = @($rows | Where-Object { $_.Status -eq 'ERR' } | ForEach-Object { $_.Label })
+$bad += @($llm | Where-Object { "$($_.Ms)" -match 'ERR' } | ForEach-Object { "$($_.Lane) (ollama)" })
+if ("$df" -match 'ERR') { $bad += "deer-flow generation through nginx ($DfModel)" }
+$bad = @($bad | Where-Object { $_ })
+if ($bad.Count -eq 0) {
+    Write-Output 'All measured lanes responded. No lane errored.'
+} else {
+    Write-Output "$($bad.Count) lane(s) errored: $($bad -join ', ')"
+    Write-Output ''
+    Write-Output 'An ERR in the deer-flow lane has been a STALE CREDENTIAL in this script,'
+    Write-Output 'not a deer-flow fault, every time it has been seen. Check'
+    Write-Output 'deploy/client-bundle/.deer-flow-credentials against -DfPassword before'
+    Write-Output 'reading it as a stack failure.'
+}

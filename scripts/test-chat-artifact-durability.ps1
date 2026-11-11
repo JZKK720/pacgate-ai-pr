@@ -119,10 +119,14 @@ else { Ok "real artifact files on disk ($($diskList.Count) sampled)" }
 # ── authenticate ─────────────────────────────────────────────────────────────
 if (-not (Test-Path $EnvFile)) { Die "credentials file not found: $EnvFile" 2 }
 $email = if ($Email) { $Email } else { $null }
-$password = $null
+$password = if ($env:PACGATE_DEERFLOW_PASSWORD) { $env:PACGATE_DEERFLOW_PASSWORD }
+            elseif ($env:DEER_FLOW_PASSWORD) { $env:DEER_FLOW_PASSWORD } else { $null }
 foreach ($line in Get-Content $EnvFile) {
-    if (-not $email   -and $line -match '^PACGATE_DEERFLOW_EMAIL=(.+)$')    { $email    = $Matches[1].Trim() }
-    if (-not $password -and $line -match '^PACGATE_DEERFLOW_PASSWORD=(.+)$') { $password = $Matches[1].Trim() }
+    if (-not $email    -and $line -match '^(?:PACGATE_DEERFLOW_EMAIL|DEER_FLOW_EMAIL)=(.+)$')       { $email    = $Matches[1].Trim() }
+    # Both key names are accepted: machines provisioned before 2026-10-15 wrote
+    # DEER_FLOW_PASSWORD, and the documented format is PACGATE_DEERFLOW_PASSWORD.
+    # Reading only one of them silently turned this gate into CANNOT CHECK.
+    if (-not $password -and $line -match '^(?:PACGATE_DEERFLOW_PASSWORD|DEER_FLOW_PASSWORD)=(.+)$') { $password = $Matches[1].Trim() }
 }
 # The deer-flow local provider signs in by EMAIL; the default is the account
 # install.ps1 provisions. Only the password is machine-specific, so a missing

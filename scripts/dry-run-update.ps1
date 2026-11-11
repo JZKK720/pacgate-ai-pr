@@ -103,21 +103,23 @@ $repoTop = (git rev-parse --show-toplevel).Trim()
 $dirty = @(git -C $repoTop status --porcelain)
 Pop-Location
 
-# The installer's guard is `$dirty = git status --porcelain; if ($dirty)`. That
-# means it treats UNTRACKED files as dirty too, and skips the repo refresh on a
-# tree git itself would happily fast-forward. This is a real behaviour worth
-# knowing before a client update: an operator who left a scratch file behind
-# gets "skipping the repo update" and only images move. It is a WARN in the
-# installer, not a failure - but the repo silently stays behind.
+# The installer's guard is `git status --porcelain --untracked-files=no`, so it
+# blocks only on TRACKED edits. Untracked files are reported and kept, and the
+# refresh proceeds - unless one of them collides with a path the incoming commit
+# adds, which git itself refuses and the installer pre-checks.
 #
-# Counted separately so the report distinguishes the two cases.
+# This note used to claim the opposite ("the installer's guard skips the repo
+# pull for these"). That was true of an older bare `git status --porcelain`
+# guard and stopped being true when it was narrowed; a stale note here is worse
+# than none, because it tells an operator their update is image-only when the
+# repo is in fact refreshing.
 $untracked = @($dirty | Where-Object { $_ -match '^\?\?' })
 $tracked = @($dirty | Where-Object { $_ -notmatch '^\?\?' })
 Check 'no TRACKED local edits (which would truly block a fast-forward)' ($tracked.Count -eq 0) `
     ("{0} tracked change(s)" -f $tracked.Count)
 if ($untracked.Count -gt 0) {
-    Note "$($untracked.Count) untracked file(s) present - the installer's guard skips the repo pull for these" `
-        'harmless for git --ff-only, but it means ONLY images update; commit or remove them for a full refresh'
+    Note "$($untracked.Count) untracked file(s) present - kept, and they do NOT block the repo refresh" `
+        'the installer narrows its guard to tracked state; only a name collision with an incoming path blocks'
 }
 
 # ── 3. The repo is already at origin/main (pull would be a no-op) ──────────
@@ -126,8 +128,28 @@ Write-Host '--- 3. repo refresh would be a no-op ---' -ForegroundColor Cyan
 $head = (git rev-parse HEAD).Trim()
 $remote = ''
 try { $remote = (git ls-remote origin refs/heads/main 2>$null | ForEach-Object { $_.Split()[0] }).Trim() } catch { }
-Check 'local HEAD equals origin/main' ($remote -and $head -eq $remote) `
-    ("local {0} vs origin {1}" -f $head.Substring(0, 7), $(if ($remote) { $remote.Substring(0, 7) } else { 'unreachable' }))
+
+# The property is "a pull would change nothing", not "HEAD is byte-identical to
+# origin/main". A machine that carries local commits ahead of origin is ALSO a
+# no-op for `git pull --ff-only` - it fast-forwards nothing and exits 0 - and
+# that is the normal state of a dev box that has committed a local fix. Testing
+# equality instead reported a healthy ahead-by-N tree as a failure, which is the
+# same class of defect as a gate that can never fail: it trains the reader to
+# ignore the line.
+$behind = 0
+if ($remote) {
+    # Compare against the LOCAL remote-tracking ref, not the ls-remote SHA.
+    # `git pull --ff-only` fast-forwards to origin/main, so that ref is the
+    # authority; the ls-remote SHA may not exist in this clone yet (a fetch
+    # that has not run), and `rev-list HEAD...<unknown-sha>` exits 128 with
+    # "Invalid symmetric difference expression". That is what made this line
+    # fail under Windows PowerShell 5.1, where native stderr becomes a
+    # terminating error (see test-ps51-native-stderr.ps1).
+    $counts = (git rev-list --left-right --count 'HEAD...origin/main' 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $counts -match '^\s*(\d+)\s+(\d+)\s*$') { $behind = [int]$Matches[2] }
+}
+Check 'a pull would be a no-op (local is not behind origin/main)' ($remote -and $behind -eq 0) `
+    ("local {0} vs origin {1}; behind by {2} commit(s)" -f $head.Substring(0, 7), $(if ($remote) { $remote.Substring(0, 7) } else { 'unreachable' }), $behind)
 
 # ── 4. The staleness probe (step 7e) reports the TRUE state ────────────────
 Write-Output ''

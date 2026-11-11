@@ -68,7 +68,16 @@ $expected = @([regex]::Matches($src, '(?m)^@mcp\.tool\([^\r\n]*\r?\n(?:@[^\r\n]*
     ForEach-Object { $_.Groups['name'].Value } | Sort-Object -Unique)
 
 Check 'the server source declares tools' ($expected.Count -gt 0) "no @mcp.tool functions parsed from $ServerFile"
-if ($expected.Count -eq 0) { CannotCheck 'could not parse any tools from the server source' }
+# A source file that EXISTS but declares no tools is a real failure, not CANNOT
+# CHECK. Exiting 2 here would let a mutation - every decorator renamed, an import
+# that stops registering, a refactor that drops the decorators - be reported as
+# "cannot check", which the runner does not count as a failure. Mutation-tested:
+# renaming `@mcp.tool(` to `@mcp.tool_removed(` produced exit 2 before this fix.
+if ($expected.Count -eq 0) {
+    Write-Host ''
+    Write-Host "RESULT: $passed passed, $failed failed" -ForegroundColor Red
+    exit 1
+}
 Write-Host ("         source declares {0} tool(s)" -f $expected.Count) -ForegroundColor DarkGray
 
 # The container must be running. A stopped server has no surface to assert, and
@@ -97,9 +106,29 @@ def post(body, sid=None):
     return urllib.request.urlopen(req, timeout=30)
 
 def parse(raw):
-    """SSE frames split across multiple data: lines; take the last JSON payload."""
+    """Accept BOTH transports the MCP spec allows for streamable-http.
+
+    A server may answer with a plain `application/json` body or with an SSE stream
+    of `data:` frames, and it may choose per request. This gate originally parsed
+    SSE only, so against a server that answers JSON it found no payload, reported
+    "tools/list returned no tools array", and exited 2 (CANNOT CHECK) - which the
+    runner treats as "not a failure". Measured on this box: pacgate-mcp answers
+    `Content-Type: application/json`, so the gate could never have failed here no
+    matter what the tool surface did. A gate that cannot fail is not a gate.
+
+    JSON is tried first because it is the cheaper and more common case; SSE is the
+    fallback, taking the LAST complete frame (a stream may carry progress
+    notifications before the result).
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
     out = None
-    for line in raw.splitlines():
+    for line in text.splitlines():
         if line.startswith("data:"):
             chunk = line[5:].strip()
             if not chunk:

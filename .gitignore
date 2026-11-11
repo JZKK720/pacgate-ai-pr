@@ -29,7 +29,16 @@ pacgate-ai/**/target/
 # because .gitignore cannot express "any file over N MB".
 docker.exe
 docker-linux
-docker-*
+# NOT `docker-*`. That pattern also matches `docker-entrypoint.sh`,
+# `docker-build.ps1`, and `docker-compose.yaml` - real files this repo has or will
+# have - so it would silently ignore a legitimate source file and the loss would
+# only surface when someone noticed it missing from a clone. The incident produced
+# a bare CLI binary, so the rule names binary shapes only.
+docker-cli
+docker-cli-*
+docker-*-linux
+docker-*-amd64
+docker-*-arm64
 !docker-compose*.yml
 !docker-compose*.yaml
 !Dockerfile*
@@ -75,6 +84,13 @@ deploy/client-bundle/openviking/ov.conf.bak.*
 # untracked .bak in the repo dir makes `git status --porcelain` non-empty, and the
 # next `install.ps1 -Update` then silently skips the repo refresh.
 deploy/qm-pacgate/qm.config.jsonc.bak.*
+
+# The static docker CLI that compose.qm.yaml bind-mounts into the sandbox.
+# setup-qm.ps1 FETCHES it (43 MB, SHA-256 verified) rather than vendoring it, so
+# it is present on every machine that has run the setup and absent from a fresh
+# clone. Without this rule it shows as untracked forever, and an untracked file
+# in the repo dir is exactly what makes `git status --porcelain` non-empty.
+deploy/qm-pacgate/patch/docker-cli/docker
 
 # Deer-flow admin login credentials (per-machine, created at runtime in the
 # container's local SQLite DB; NOT in .env). Never commit.
@@ -216,6 +232,13 @@ sync-fork-after.png
 /_*.sh
 /_*.md
 
+# Local access sheets and credential handover pages. These are generated per
+# machine and contain LIVE secrets (deer-flow admin password, OpenViking root
+# key, pacgate-api password). This repo is public, so the whole directory is
+# ignored rather than relying on a filename pattern - a sheet can be named
+# anything and still must never be tracked.
+/local-credentials/
+
 # VS Code task scratch (tasks.json + probe scripts written during a session;
 # they carry machine-absolute paths and are not part of the build contract)
 /.vscode/
@@ -227,6 +250,14 @@ sync-fork-after.png
 # A zero-byte file PowerShell creates from an unexpanded ${input...} in a command.
 # Committed by accident twice; this makes the third time impossible.
 /${input*
+
+# Pre-upgrade safety snapshots (deer-flow SQLite data + .env). Machine-local,
+# can be hundreds of MB, and carries live credentials - never tracked.
+/_local-backup-*/
+
+# Gate-suite and upgrade transcripts written during a session.
+/checks-*.log
+/upgrade-*.log
 
 # Staged laya weights (staged per machine, never committed). laya-weights/ is the
 # staging target for the laya-serve BUILD CONTEXT: the weights are baked into that

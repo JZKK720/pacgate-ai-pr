@@ -74,12 +74,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pacgate_mcp")
 
-# Bind the streamable HTTP transport on 0.0.0.0 so the deer-flow container on
-# the compose network can reach it. Host must not stay 127.0.0.1.
+# Pacgate 2026-10-11: return tool-call results as JSON on the POST itself
+# (json_response=True) instead of deferring them over a silent SSE stream.
+# In default SSE mode a long call (workflow execute ran 174s live; sanitize
+# up to ~655s) leaves the POST stream with NOTHING to send until completion,
+# and any client/lb read-timeout in the chain then kills the call as
+# "Server disconnected without sending a response" (observed 01:47:41 on
+# run 53720ae5: the workflow COMPLETED at 01:46:00 but the call errored at
+# 01:47:41). With JSON responses the POST stays a plain request/response -
+# the only timeout that applies is the client's own httpx read timeout,
+# which deer-flow's side of this fix raises to cover full-document runs.
+# Statefulness is preserved (stateless_http stays False); only the response
+# mode changes.
 mcp = FastMCP(
     "pacgate",
     host="0.0.0.0",
     port=int(os.environ.get("PACGATE_MCP_PORT", "8000")),
+    json_response=True,
 )
 
 
@@ -203,6 +214,18 @@ class PacgateApi:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
+        # `headers` exists for the memory write's If-Match revision guard.
+        #
+        # MEASURED 2026-10-15, on the published 0.1.31 image: without this kwarg
+        # `pacgate_write_memory` raised `TypeError: PacgateApi.post() got an
+        # unexpected keyword argument 'headers'` on EVERY call, so no agent could
+        # write matter memory through the MCP server. Reproduced deterministically
+        # against the running container, and present in the tag, origin/main and
+        # this tree - not a local regression.
+        #
+        # The value is merged INSIDE `_request`, which rebuilds auth headers on the
+        # 401-retry path; passing a caller-built dict straight to httpx would resend
+        # an expired token after a re-login.
         return self._request("POST", path, json=json, headers=headers, timeout=timeout)
 
     def delete(self, path: str) -> httpx.Response:
