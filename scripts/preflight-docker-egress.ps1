@@ -184,7 +184,14 @@ if ($dockerFailed.Count -gt 0) {
 
 Write-Host ''
 if ($fail -eq 0) {
-    Write-Host 'RESULT: Docker egress is healthy for every build target.' -ForegroundColor Green
+    if ($hostDown.Count -gt 0) {
+        Write-Host 'RESULT: Docker egress is healthy for every build target.' -ForegroundColor Green
+        Write-Host ("        (the host shell alone could not reach: {0})" -f ($hostDown -join ', ')) -ForegroundColor DarkGray
+        Write-Host '        A build is not blocked by a host-only egress difference.' -ForegroundColor DarkGray
+    }
+    else {
+        Write-Host 'RESULT: Docker egress is healthy for every build target.' -ForegroundColor Green
+    }
     $ErrorActionPreference = $prevEap
     exit 0
 }
@@ -223,9 +230,30 @@ if ($hostDown.Count -eq 0) {
     Write-Host '  or add the missing hostnames to ProxyOverride, then re-run this.' -ForegroundColor Yellow
 }
 else {
-    Write-Host "DIAGNOSIS: neither the host nor Docker can reach: $($hostDown -join ', ')" -ForegroundColor Yellow
-    Write-Host '  This is a genuine network outage (or DNS failure), not a proxy or' -ForegroundColor Yellow
-    Write-Host '  registry-policy issue. Fix connectivity and retry.' -ForegroundColor Yellow
+    # The host half is a CONTROL, and this file already says so at §2: "a failure
+    # here is not by itself a build blocker on a box whose host shell uses a
+    # different egress path than the daemon." This branch contradicted that. It
+    # fired whenever ANY host probe failed - even when Docker reached every
+    # target - and declared a genuine network outage.
+    #
+    # Measured 2026-11-12: host curl reached registry-1.docker.io 0/5 while
+    # `docker pull` from the same host SUCCEEDED, because Docker Desktop's daemon
+    # relays through its own proxy (http.docker.internal:3128) and the host goes
+    # via WinINET. The verdict said "a build would fail"; a build would have
+    # worked. Report what is actually known, and never upgrade a host-only
+    # failure into a daemon verdict.
+    $dockerDown = @($dockerFailed)
+    if ($dockerDown.Count -eq 0) {
+        Write-Host 'NOTE: Docker reached every build target, so a build would work.' -ForegroundColor Yellow
+        Write-Host "  The HOST shell alone could not reach: $($hostDown -join ', ')" -ForegroundColor Yellow
+        Write-Host '  That is a host egress difference (system proxy / DNS), not a build' -ForegroundColor Yellow
+        Write-Host '  blocker. The host half is a control, not a gate - see section 2.' -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "DIAGNOSIS: neither the host nor Docker could reach: $($dockerDown -join ', ')" -ForegroundColor Yellow
+        Write-Host '  This is a genuine network outage (or DNS failure), not a proxy or' -ForegroundColor Yellow
+        Write-Host '  registry-policy issue. Fix connectivity and retry.' -ForegroundColor Yellow
+    }
 }
 Write-Host ''
 Write-Host ("RESULT: {0} of {1} build target(s) unreachable from Docker." -f $fail, $Targets.Count) -ForegroundColor Red
