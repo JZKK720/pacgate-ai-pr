@@ -222,27 +222,38 @@ if (-not $publicUrl) {
     # and not a hardcoded redirect_uri that goes stale when the host changes.
     $loginUrl = "$publicUrl/auth/login"
     $landed = $null
-    # PowerShell's Invoke-WebRequest treats a 302 as success only when it follows it.
-    # With -MaximumRedirection 0 it raises instead, and the Location is on the
-    # response, not on an exception the way a hard error would be. Read it both ways.
-    try {
-        $r = Invoke-WebRequest $loginUrl -MaximumRedirection 0 -UseBasicParsing -TimeoutSec 15
-        $landed = $r.Headers['Location']
-    } catch {
-        $resp = $_.Exception.Response
-        if ($resp) {
-            $landed = $resp.Headers['Location']
-            if (-not $landed) {
-                # .NET may hand back a relative or comma-joined value.
-                $loc = $resp.Headers.Location
-                if ($loc) { $landed = $loc.ToString() }
-            }
-        }
+    # Read the 302 with curl, for the same reason stated further down for the
+    # installer-printed probe: Invoke-WebRequest's redirect handling differs
+    # between Windows PowerShell 5.1 and PowerShell 7.
+    #
+    # Measured on PowerShell 7.6.9: `Invoke-WebRequest -MaximumRedirection 0`
+    # throws System.Net.Http.HttpRequestException whose .Exception.Response is
+    # $null, so the catch block below found neither header and the gate reported
+    # "no redirect to a sign-in form" for a portal that DOES redirect (curl shows
+    # 302 with a Location). A false FAIL against a working stack.
+    $hdr = & curl.exe -s -i --max-time 15 $loginUrl 2>$null
+    foreach ($line in $hdr) {
+        if ($line -match '^(?i)location:\s*(\S+)') { $landed = $Matches[1].Trim(); break }
     }
-    if ($landed -and $landed -notmatch '^https?://') { $landed = ([Uri]::new([Uri]$loginUrl, $landed)).AbsoluteUri }
-
     if (-not $landed) {
-        Write-Fail "QM_PUBLIC_URL=$publicUrl but /auth/login gave no redirect to a sign-in form"
+        # curl honours HTTP(S)_PROXY/the Windows system proxy. A stale proxy makes
+        # every local probe fail with HTTP 000 against a portal that is serving, so
+        # separate "the portal is not reachable from THIS shell" from "the portal
+        # does not redirect" before calling it a failure.
+        $probe = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 15 $loginUrl 2>$null | Out-String).Trim()
+        if ($probe -eq '000') {
+            $pxy = "$env:HTTPS_PROXY$env:HTTP_PROXY".Trim()
+            if (-not $pxy) {
+                $pxy = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue).ProxyServer
+            }
+            if ($pxy) {
+                Write-Warn "could not reach $loginUrl from this shell (HTTP 000) while a proxy is configured ($pxy). A stale proxy fails local probes and also fails the staff browser that shares it - fix the proxy, or clear it for this shell, before reading this as a portal defect"
+            } else {
+                Write-Warn "could not reach $loginUrl from this shell (HTTP 000) - the sign-in redirect was not checked"
+            }
+        } else {
+            Write-Fail "QM_PUBLIC_URL=$publicUrl but /auth/login answered HTTP $probe with no redirect to a sign-in form"
+        }
     } else {
         Write-Pass "/auth/login on $publicUrl redirects to a sign-in form"
 
@@ -313,11 +324,21 @@ if (-not $publicUrl) {
             Write-Fail "the URL install.ps1 prints ($printed) does not redirect to a sign-in form"
         } else {
             $formHost = ([Uri]$pLand).Authority
-            try {
-                $page2 = (Invoke-WebRequest $pLand -UseBasicParsing -TimeoutSec 20).Content
-            } catch { $page2 = $null }
-            if (-not $page2 -or $page2 -notmatch 'name="request"\s+value="([^"]+)"') {
-                Write-Fail "the sign-in form at $pLand has no request token; sign-in cannot proceed"
+            # Fetch with curl, for the same reason the redirect above is read with
+            # curl: Invoke-WebRequest follows the WINDOWS SYSTEM PROXY setting, so a
+            # host with a stale proxy (measured here: ProxyEnable=1 pointing at a
+            # dead 127.0.0.1:7890) throws before any page is seen. The old code
+            # swallowed that into $page2 = $null and then asserted the form "has no
+            # request token" - reporting a missing token on a form that renders one,
+            # which is a false FAIL caused by a transport error, not by the portal.
+            # A failed fetch must say it could not check, never that the token is
+            # absent.
+            $page2 = (& curl.exe -s --max-time 20 $pLand 2>$null | Out-String)
+            if (-not $page2) {
+                Write-Warn "could not fetch the sign-in form at $pLand (transport), so the request token was not checked"
+            } elseif ($page2 -notmatch 'name="request"\s+value="([^"]+)"') {
+                $why = if ($page2 -match '<h1[^>]*>(?<h>[^<]{3,80})</h1>') { " The page returned: '$($Matches['h'].Trim())'" } else { '' }
+                Write-Fail "the sign-in form at $pLand has no request token; sign-in cannot proceed.$why"
             } else {
                 $req2 = $Matches[1]
                 $post2 = ($pLand -split '\?')[0]
@@ -328,10 +349,20 @@ if (-not $publicUrl) {
                     Write-Pass "a browser at $origin can submit the sign-in form (Origin: $origin)"
                 } catch {
                     $body = $_.ErrorDetails.Message
+                    $msg = "$($_.Exception.Message) $body" -replace '\s+', ' '
                     if ($body -match 'cross-origin') {
                         Write-Fail "a browser at $origin is REFUSED as cross-origin (the form lives at $formHost). QM_PUBLIC_URL names $publicUrl, so that is the host staff must type - set it to whatever staff actually use in deploy/client-bundle/qm-pacgate/.env, recreate auth+portal, and make sure the installer prints the same host rather than a literal."
+                    } elseif ($msg -match 'actively refused|No connection could be made|timed out|proxyconnect') {
+                        # A transport failure is NOT a sign-in result. This branch used
+                        # to write PASS with the transport text attached, so a dead
+                        # proxy ("No connection could be made because the target
+                        # machine actively refused it") was reported as
+                        # "a browser can submit the sign-in form". That is a green on
+                        # no evidence - the same class of error as the false FAIL
+                        # above, pointing the other way.
+                        Write-Warn "could not POST the sign-in form at $post2 (transport: $msg) - form submission was not checked"
                     } else {
-                        Write-Pass "a browser at $origin can submit the sign-in form (later guard spoke: $($body -replace '\s+',' '))"
+                        Write-Pass "a browser at $origin can submit the sign-in form (later guard spoke: $msg)"
                     }
                 }
             }
