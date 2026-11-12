@@ -31,7 +31,14 @@
 
 [CmdletBinding()]
 param(
-    [string]$Image  = 'ghcr.io/jzkk720/deer-flow-pacgate:0.1.17',
+    # Defaults are derived below from the release under test, never pinned here.
+    #
+    # This used to default to `deer-flow-pacgate:0.1.17`. By 0.2.34 that tag was a
+    # dozen releases stale, so the gate asked its question of an image nobody
+    # ships: `docker run` failed, and it reported "container starts from
+    # ghcr.io/...0.1.17" as a product defect. The defect was the pin. Pass -Image
+    # explicitly to test a specific build instead.
+    [string]$Image  = '',
     [string]$Network = 'client-bundle_default',
     [string]$DbFrom = 'pacgate-api',
     [string]$Token  = 'test-gate-token-abc123'
@@ -39,6 +46,30 @@ param(
 
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
+
+if (-not $Image) {
+    $ver = Get-ReleaseVersion -RepoRoot (Split-Path -Parent $PSScriptRoot)
+    $compose = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/compose.prod.yaml'
+    $ns = ''
+    if (Test-Path $compose) {
+        $ns = [regex]::Match((Get-Content $compose -Raw),
+              'ghcr\.io/(?<ns>[A-Za-z0-9._-]+)/deer-flow-pacgate:\d+\.\d+\.\d+').Groups['ns'].Value
+    }
+    if (-not $ver -or -not $ns) {
+        Write-Host '  cannot derive the release deer-flow image (no Cargo.toml version or compose pin)' -ForegroundColor Red
+        exit 2
+    }
+    $Image = "ghcr.io/$ns/deer-flow-pacgate:$ver"
+
+    # An absent image is NOT YET ASSERTABLE, not a failure - the release window
+    # rule this repo already applies to every other version-pinned gate. The
+    # helper predates this caller and is named for ocr-service, but it only does
+    # "local tag, else anonymous GHCR manifest" and is image-agnostic.
+    if ((Test-ReleaseOcrImagePresent -Reference $Image) -eq 'absent') {
+        Exit-NotYetAssertable "$Image is not published or not present locally; nothing to assert about the initialize gate yet"
+    }
+}
 
 # The default network name encodes the compose project directory (`client-bundle`),
 # but the project is named after whatever directory compose is run from. On a box
@@ -57,6 +88,16 @@ if ($LASTEXITCODE -ne 0) {
         Write-Host '  start the bundle first, or pass -Network explicitly' -ForegroundColor Red
         exit 2
     }
+}
+
+# EVERY assertion below probes the throwaway container from a SIDECAR, because the
+# deer-flow image ships no curl. That sidecar is `curlimages/curl`, a docker.io
+# image: on a box that cannot reach the registry the container would start fine and
+# every probe would return transport text, so the gate reported "gateway became
+# ready" as FAILED against a gateway that had already logged "Application startup
+# complete". Absent probe tooling is NOT YET ASSERTABLE, not a defect.
+if ((Test-ImageTagLocally -Reference 'curlimages/curl:latest') -eq 'absent') {
+    Exit-NotYetAssertable 'curlimages/curl:latest is not present locally and cannot be pulled; the sidecar every probe needs is unavailable'
 }
 
 $script:pass = 0

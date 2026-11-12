@@ -153,6 +153,10 @@ Line "Cargo workspace version" $cv ($cv -eq $V)
 Write-Output ''
 Write-Host '=== GHCR images (anonymous pull) ==='
 Write-Output ''
+# Snapshot the LOCAL verdict before the registry half runs. The carve-outs below
+# must never excuse a real local defect, and must never turn "no egress" into a
+# pass - they only apply when the local half is entirely green.
+$localOk = $ok
 $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 # Five images from 0.1.16 onward; ocr-service was missing from this list.
 #
@@ -166,12 +170,17 @@ $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distr
 # there is a real delivery defect to report.
 $missing = @()
 $tlsRelaxed = @()
+$unreachable = @()
 foreach ($img in @('pacgate-api', 'pacgate-mcp', 'deer-flow-pacgate', 'deer-flow-frontend-pacgate', 'ocr-service')) {
     $repo = "$ns/$img"
     $probe = Get-ManifestStatus $repo $V $accept
     $status = $probe.Status
     if ($probe.Via -eq 'no-revoke') { $tlsRelaxed += $img }
     if ($status -eq '404') { $missing += $img }
+    # ERROR is a transport verdict, not a registry verdict. Counting it as "not
+    # 200" is right for $ok, but it must never be folded into $missing: that would
+    # turn "this host has no egress" into "the release was never published".
+    if ($status -eq 'ERROR') { $unreachable += $img }
     Line "${img}:$V" $status ($status -eq '200')
 }
 
@@ -191,9 +200,27 @@ if ($ok) {
     Write-Host 'ALL CHECKS PASSED' -ForegroundColor Green
     exit 0
 }
+# Nothing was answered by the registry: report CANNOT CHECK and say why, rather
+# than "SOME CHECKS FAILED" on a host that simply has no route to ghcr.io.
+#
+# Same carve-out the 404 branch below already makes, and for the same reason: a
+# registry half that could not be interrogated must not be reported as a
+# delivery fault. The LOCAL half is still authoritative - if it found a real
+# defect, that is reported as a failure, because there IS something to answer.
+if ($unreachable.Count -eq 5 -and $localOk) {
+    Write-Host 'SKIP: NOT YET ASSERTABLE - ghcr.io was unreachable for every probe, so the registry half cannot be checked.' -ForegroundColor Yellow
+    Write-Host '      Local state is in order. Restore egress (or fix the proxy), then re-run.' -ForegroundColor Yellow
+    exit 2
+}
 # Every failure is an unpublished tag and nothing else is wrong: the release has
 # not been built yet, so there is nothing to deliver and this is not a fault.
-if ($missing.Count -gt 0 -and $missing.Count -eq 5) {
+#
+# Gated on $localOk, as the header above already promises. It previously tested
+# only $missing, and $ok is necessarily false by this point (the five probes just
+# marked themselves red), so this branch would exit 2 even with a genuinely broken
+# local half - reporting "local state is in order" about a local state it never
+# consulted.
+if ($missing.Count -gt 0 -and $missing.Count -eq 5 -and $localOk) {
     Write-Host ("SKIP: NOT YET ASSERTABLE - no {0} image is published yet, so the registry half cannot be checked." -f $V) -ForegroundColor Yellow
     Write-Host '      Local state is in order. Push the release tag, wait for build-ghcr.yml, then re-run.' -ForegroundColor Yellow
     exit 2

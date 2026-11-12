@@ -193,6 +193,19 @@ try {
     #
     # A readiness probe must extract the STATUS, never the transport chatter:
     # otherwise it measures its own output instead of the target's state.
+    #
+    # The probe container is also a HARNESS dependency. When `curlimages/curl`
+    # cannot be obtained, `docker run` prints its pull error and the last line is
+    # not a status code at all, so this reported "server never became ready" - and
+    # printed "last /health code: Run 'docker run --help' for more information" -
+    # against a server that had already logged a clean boot. Verify the probe image
+    # exists first and report CANNOT CHECK instead of inventing a product fault.
+    if (-not (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains 'curlimages/curl:latest')) {
+        $null = & docker pull curlimages/curl:latest 2>&1
+    }
+    if (-not (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains 'curlimages/curl:latest')) {
+        throw "SKIP-HARNESS: probe image curlimages/curl:latest is unavailable (cannot be pulled) - the /health and /build-info probes cannot run"
+    }
     $code = (@(& docker run --rm --network $Network curlimages/curl:latest `
             -s -o /dev/null -w '%{http_code}' `
             --retry 40 --retry-delay 1 --retry-connrefused --max-time 3 `
@@ -260,8 +273,18 @@ try {
     }
 }
 catch {
-    Write-Host ("  [FAIL] harness error: {0}" -f $_.Exception.Message) -ForegroundColor Red
-    $failed++
+    # Same distinction as test-version-marker.ps1: the probes run from a
+    # `curlimages/curl` sidecar (this image has no curl). When that sidecar cannot
+    # be obtained the server may well be healthy - it logged a clean boot - and the
+    # gate used to report "server never became ready", which reads as a product
+    # fault. Absent probe tooling is NOT YET ASSERTABLE (exit 2 = SKIP).
+    if ($_.Exception.Message -match 'Unable to find image|failed to resolve reference|no matching manifest|pull access denied|proxyconnect|dial tcp|SKIP-HARNESS') {
+        Write-Host ("  [skip] CANNOT CHECK: a harness image is unavailable ({0})" -f ($_.Exception.Message -replace '\s+', ' ')) -ForegroundColor Yellow
+    }
+    else {
+        Write-Host ("  [FAIL] harness error: {0}" -f $_.Exception.Message) -ForegroundColor Red
+        $failed++
+    }
 }
 finally {
     Cleanup
@@ -269,6 +292,10 @@ finally {
 
 Write-Output ''
 if ($failed -eq 0) {
+    if ($passed -eq 0) {
+        Write-Host 'CANNOT CHECK - nothing was asserted' -ForegroundColor Yellow
+        exit 2
+    }
     Write-Host ("{0} passed, 0 failed" -f $passed) -ForegroundColor Green
     exit 0
 }

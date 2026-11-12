@@ -124,15 +124,21 @@ $mutations = @(
     # is decoration by this file's own rule. The mutation above targets COMPOSE;
     # nothing above targets a SCRIPT reference, which is the new scan's job.
     #
-    # The anchor is a real default-image literal in a real script under
-    # scripts/, so flipping its namespace makes it reference an image the release
-    # does not publish - exactly the defect class $buildScripts could not see.
+    # The anchor is a real image reference in a real script under scripts/, so
+    # flipping its namespace makes it reference an image the release does not
+    # publish - exactly the defect class $buildScripts could not see.
     # Deliberately NOT a comment line: the scan strips comments, so a mutation
     # there would not apply and would be reported as a failure, not a pass.
+    #
+    # This anchored on the literal 'deer-flow-pacgate:0.1.17' default that
+    # test-initialize-gate.ps1 used to carry. That default was itself a defect (a
+    # dozen releases stale by 0.2.34), and fixing it moved the gate to a derived
+    # reference, so the anchor tracks the CURRENT code rather than being pinned to
+    # a value that no longer exists.
     @{ N = 'a script references a non-publishing namespace'
        File = 'scripts/test-initialize-gate.ps1'
-       From = 'ghcr.io/jzkk720/deer-flow-pacgate:0.1.17'
-       To   = 'ghcr.io/pacgate-ai/deer-flow-pacgate:0.1.17'
+       From = '$Image = "ghcr.io/$ns/deer-flow-pacgate:$ver"'
+       To   = '$Image = "ghcr.io/pacgate-ai/deer-flow-pacgate:$ver"'
        Want = 'no local script references a GHCR namespace other than jzkk720' }
 )
 

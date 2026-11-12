@@ -350,14 +350,47 @@ echo "`$ns|`$src|`$warn|`$cred|`$cwarn"
     if ($parts.Count -lt 5) {
         # Could not check. Say so explicitly rather than letting a truncated line
         # flow into the assertions and surface as "got <docker error text>".
-        Fail "the alpine probe produced no parseable result after 3 attempts - cannot check the docker path. Raw: $line"
-        return [pscustomobject]@{ Ns = ''; Src = ''; Warn = ''; Cred = ''; CredWarn = ''; Raw = $line }
+        #
+        # This called a bare `Fail`, which this file never defines (it has only
+        # Assert-True and Resolve-Ns). The error path therefore threw
+        # "The term 'Fail' is not recognized" and the gate reported 1 FAILED on a
+        # tree where nothing was wrong - red for the wrong reason, the exact
+        # failure mode this suite's header warns about.
+        #
+        # It must not record a FAIL per caller either: Resolve-Ns has ~30 callers,
+        # so one missing probe image used to turn into 30 failed assertions. The
+        # caller pre-flights the image and stops with CANNOT CHECK before any of
+        # this runs; this raise is the backstop for a probe that failed for any
+        # other reason at runtime.
+        throw "the alpine probe produced no parseable result after 3 attempts - cannot check the docker path. Raw: $line"
     }
     return [pscustomobject]@{ Ns = $parts[0]; Src = $parts[1]; Warn = $parts[2]; Cred = $parts[3]; CredWarn = $parts[4]; Raw = $line }
 }
 
 $script:base = Join-Path ([System.IO.Path]::GetTempPath() -replace 'CUBECL~1', 'cubecloud-io') ('ns-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
 New-Item -ItemType Directory -Force -Path $script:base | Out-Null
+
+# The docker-path assertions execute the workflow's resolution script inside
+# `alpine:3.20`. If that image is absent and un-pullable, every one of those
+# callers raises, and the run reports a wall of assertion failures that are all
+# one absent artefact. Pre-flight it: absent tooling is CANNOT CHECK (exit 2),
+# which run-all-checks.ps1 reports as SKIP rather than FAILURE.
+if (-not (@(docker images --format '{{.Repository}}:{{.Tag}}' 2>$null) -contains 'alpine:3.20')) {
+    $pull = (& docker pull alpine:3.20 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $script:base -Recurse -Force -ErrorAction SilentlyContinue
+        # ONLY when nothing has failed yet. A recorded failure must reach the normal
+        # summary and exit 1: exiting 2 here would relabel a real assertion failure as
+        # "cannot check", and test-workflow-mutations.ps1 would then read an
+        # undetected mutation as merely skipped.
+        if ($failed -eq 0) {
+            Write-Host '  [skip] CANNOT CHECK: alpine:3.20 is unavailable, so the docker-path assertions cannot run' -ForegroundColor Yellow
+            Write-Host ("         {0}" -f (($pull -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1))) -ForegroundColor DarkGray
+            exit 2
+        }
+        Write-Host '  [skip] the docker-path assertions could not run (alpine:3.20 unavailable); failures above stand' -ForegroundColor Yellow
+    }
+}
 
 try {
     $r = Resolve-Ns -InputNs 'pacgate-ai' -Pinned 'something-else' -Owner 'jzkk720'
