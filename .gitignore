@@ -249,7 +249,17 @@ sync-fork-after.png
 
 # A zero-byte file PowerShell creates from an unexpanded ${input...} in a command.
 # Committed by accident twice; this makes the third time impossible.
-/${input*
+#
+# Written as /\$\{input* and NOT /${input*: git accepts the bare form and ignores
+# the file, but the brace reads as an unterminated alternation to ripgrep, which
+# then REFUSES TO START on this repo -
+#   rg: .gitignore: line 252: error parsing glob '/${input*': unclosed alternate
+#   group; missing '}' (maybe escape '{' with '[{]'?)
+# A gitignore rule that breaks every ripgrep search in the tree is a worse defect
+# than the stray file it guards. Escaped, both agree: git still ignores
+# ${input/${input2, and rg parses. Verified 2026-11-14 against git check-ignore
+# and a live rg invocation.
+/\$\{input*
 
 # Pre-upgrade safety snapshots (deer-flow SQLite data + .env). Machine-local,
 # can be hundreds of MB, and carries live credentials - never tracked.
