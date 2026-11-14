@@ -231,30 +231,46 @@ Write-Host '--- 5. qm re-stage (installer step 7f) ---' -ForegroundColor Cyan
 $qmSrc = 'deploy/qm-pacgate'
 $qmDst = 'deploy/client-bundle/qm-pacgate'
 if ((Test-Path $qmSrc) -and (Test-Path $qmDst)) {
-    # `git diff --no-index` writes warnings to STDERR and exits 1 WHENEVER the
-    # trees differ - which is the normal case it exists to report. Under
-    # $ErrorActionPreference='Stop' in PS 5.1 a native stderr write is a
-    # terminating error, so the whole script aborted here and the final
-    # "nothing moved" proof in section 6 never ran. Same defect class the
-    # installer already solves with Invoke-WithNativeStderr, so use that shape:
-    # lower the preference for the duration of the call and treat the output as
-    # text.
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $qmRaw = & git diff --no-index --name-only $qmSrc $qmDst 2>&1 | ForEach-Object { "$_" }
-    }
-    finally { $ErrorActionPreference = $prevEap }
-
-    $qmDiff = @($qmRaw | Where-Object {
-        # __pycache__ is interpreter output, not content: the sandbox writes .pyc
-        # beside the sources on first import, so it always "differs" from the
-        # tracked tree and would make this check permanently red. It is gitignored
-        # for the same reason.
-        $_ -and $_ -notmatch '^(warning|At line|git :|\s*$)|LF will be replaced|^time Git touches|\.env$|node_modules|__pycache__|\.pyc$|\.generated|\.bak\.'
+    # Compare in the SAME DIRECTION the installer copies.
+    #
+    # This check used to run `git diff --no-index --name-only $qmSrc $qmDst`, a
+    # SYMMETRIC tree diff, while step 7f is asymmetric: it enumerates files under
+    # the SOURCE and copies those. A file that exists only in the runtime copy is
+    # never read, never overwritten, and never deleted - so a symmetric diff
+    # reports it as "re-stage needed" and the check can never pass.
+    #
+    # Measured 2026-11-14: the only differing path was
+    # deploy/client-bundle/qm-pacgate/patch/docker-cli/docker, a 42 MB docker CLI
+    # the sandbox fetches at run time. The tracked source has that directory EMPTY
+    # (`git ls-files deploy/qm-pacgate/patch/docker-cli` returns nothing), so step
+    # 7f copies zero files and has nothing to converge. The verdict was a false
+    # positive that made every dry run end red, which is the failure mode this
+    # whole script exists to avoid: a red that a reader learns to ignore.
+    $qmExcludeTop = @('.env', 'node_modules', '.generated')
+    $qmDiff = @()
+    # Same filter as step 7f, and the same DIRECTION: source -> runtime. Because
+    # only SOURCE files are enumerated, interpreter output the sandbox writes into
+    # the runtime copy (__pycache__/*.pyc) can no longer appear here at all - the
+    # old symmetric diff needed an exclusion list for it. No exclusion is needed
+    # now, and adding one would let a real source change slip through.
+    $srcFiles = @(Get-ChildItem -LiteralPath $qmSrc -Recurse -File -Force | Where-Object {
+        $rel = $_.FullName.Substring((Resolve-Path $qmSrc).Path.Length).TrimStart('\', '/')
+        $top = ($rel -split '[\\/]')[0]
+        ($qmExcludeTop -notcontains $top) -and ($_.Name -notmatch '\.bak\.')
     })
-    Check 'the qm runtime copy already matches the tracked source (no re-stage needed)' ($qmDiff.Count -eq 0) `
-        ("{0} differing file(s) outside the excluded set{1}" -f $qmDiff.Count, $(if ($qmDiff.Count) { ': ' + (($qmDiff | Select-Object -First 5) -join ', ') } else { '' }))
+    foreach ($f in $srcFiles) {
+        $rel = $f.FullName.Substring((Resolve-Path $qmSrc).Path.Length).TrimStart('\', '/')
+        $destPath = Join-Path $qmDst $rel
+        if (-not (Test-Path -LiteralPath $destPath)) { $qmDiff += "$rel (missing from the runtime copy)"; continue }
+        # Hash, not mtime: a git checkout rewrites mtimes on byte-identical files.
+        $a = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+        $b = (Get-FileHash -LiteralPath $destPath -Algorithm SHA256).Hash
+        if ($a -ne $b) { $qmDiff += $rel }
+    }
+    Check 'step 7f would find nothing to re-stage (the files it copies already match)' ($qmDiff.Count -eq 0) `
+        ("{0} of {1} source file(s) differ{2}" -f $qmDiff.Count, $srcFiles.Count, $(if ($qmDiff.Count) { ': ' + (($qmDiff | Select-Object -First 5) -join ', ') } else { '' }))
+    Note 'files present ONLY in the runtime copy are not compared' `
+        'step 7f copies source -> runtime and never deletes, so such a file cannot be re-staged'
 }
 elseif (-not (Test-Path $qmDst)) {
     # Expected on a box where setup-qm.ps1 has not been run: the runtime copy is
