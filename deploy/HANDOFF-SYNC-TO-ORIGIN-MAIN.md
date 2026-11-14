@@ -12,7 +12,7 @@ changed.
 
 | | state |
 |---|---|
-| `origin/main` | contains 0.2.34, and is **67 commits past the tag** (see the gap below) |
+| `origin/main` | contains 0.2.34, and is dozens of commits past the tag (see the gap below) |
 | tag `v0.2.34` | annotated, peels to `5956639fa1c9f987ae20a471c63f86bfa34d56f0`, and that commit is what the images were built from |
 | GHCR `0.2.34` | **all six images published**, anonymously pullable, all labelled revision `5956639fa1c9` |
 
@@ -45,12 +45,17 @@ half and `FAIL` on one file-level difference - see "The one thing 0.2.34 does no
 
 ## The one thing 0.2.34 does not contain
 
-`origin/main` is **not** the same tree as the release. Verified 2026-11-14:
+`origin/main` is **not** the same tree as the release. Measured 2026-11-14:
 
 ```
-git rev-list --count 'v0.2.34^{commit}'..origin/main                     ->  67  (16 first-parent)
-git diff --name-only 'v0.2.34^{commit}'..origin/main -- pacgate-ai/     ->  only the two files below
+git rev-list --count 'v0.2.34^{commit}'..origin/main        ->  69 at the time of writing
+git diff --name-only 'v0.2.34^{commit}'..origin/main -- pacgate-ai/   ->  only the two files below
 ```
+
+The commit count is a moving target - it grows with every commit that lands on `main`, including
+the doc-only fixes in this handoff - so re-read it rather than trusting the number here. The line
+that stays true is the second one: **exactly two Rust files differ**, and they are the redactor
+fix below.
 
 The redactor verdict fix `9f0e0c8` ("a model guess alone cannot block a document") is on
 `origin/main` and in **no** published image: `git merge-base --is-ancestor 9f0e0c8 <tag>` is
