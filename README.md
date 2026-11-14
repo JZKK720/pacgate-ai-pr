@@ -95,7 +95,7 @@ Pacgate runtime images are **public** (anonymous pull verified). The source repo
 | Image | Contents | Base |
 |-------|----------|------|
 | `ghcr.io/jzkk720/pacgate-api:0.2.34` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | pacgate-api MCP bridge (19 tools incl. documents/workflows) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | pacgate-api MCP bridge (26 tools incl. documents/workflows) | `python:3.12-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.2.34` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
 | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.34` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
 | `ghcr.io/jzkk720/ocr-service:0.2.34` | PaddleOCR extraction service (first-class since 0.1.16) | `python:3.12-slim` |

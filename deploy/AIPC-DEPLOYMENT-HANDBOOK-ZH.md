@@ -109,7 +109,7 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 | 镜像 | 状态 |
 |---|---|
 | `ghcr.io/jzkk720/pacgate-api:0.2.34` | **脱敏修复版本。** 修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | 向 deer-flow 暴露 24 个 MCP 工具；新增 `pacgate_rescan_residue` 与 `pacgate_reset_sanitization` 供补救流程使用。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 即可获得这些工具，无需新镜像。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | 向 deer-flow 暴露 26 个 MCP 工具，其中 `pacgate_rescan_residue` 与 `pacgate_reset_sanitization` 供补救流程使用。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 加 `pacgate-mcp` 重启即可获得这些工具，无需新镜像。 |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.2.34` | 本版本未变更。 |
 | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.34` | 本版本未变更。 |
 | `ghcr.io/jzkk720/ocr-service:0.2.34` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |

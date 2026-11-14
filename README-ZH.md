@@ -96,7 +96,7 @@ Pacgate 运行时镜像均为**公开**（已验证匿名拉取）。源码仓�
 | 镜像 | 内容 | 基础镜像 |
 |-------|----------|------|
 | `ghcr.io/jzkk720/pacgate-api:0.2.34` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | pacgate-api MCP 桥接（19 个工具，含文档/工作流） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | pacgate-api MCP 桥接（26 个工具，含文档/工作流） | `python:3.12-slim` |
 | `ghcr.io/jzkk720/deer-flow-pacgate:0.2.34` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
 | `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.34` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
 | `ghcr.io/jzkk720/ocr-service:0.2.34` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |

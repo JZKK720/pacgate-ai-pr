@@ -12,12 +12,13 @@ changed.
 
 | | state |
 |---|---|
-| `origin/main` | contains 0.2.34 |
-| tag `v0.2.34` | annotated, points at `HEAD_PLACEHOLDER`, and that commit is what the images were built from |
-| GHCR `0.2.34` | **all six images published**, anonymously pullable |
+| `origin/main` | contains 0.2.34, and is **67 commits past the tag** (see the gap below) |
+| tag `v0.2.34` | annotated, peels to `5956639fa1c9f987ae20a471c63f86bfa34d56f0`, and that commit is what the images were built from |
+| GHCR `0.2.34` | **all six images published**, anonymously pullable, all labelled revision `5956639fa1c9` |
 
-So this machine pulls from the registry like any other release. There is nothing to
-reconcile and nothing waiting on a push.
+So this machine pulls from the registry like any other release. There is nothing to reconcile
+and nothing waiting on a push - but there IS one fix on `main` that no published image carries
+yet, and you should know that before you read a green health check as a complete stack.
 
 ## Is the release real?
 
@@ -26,7 +27,7 @@ Read the answer rather than assuming it:
 ```powershell
 cd <repo>
 git fetch origin --tags
-git rev-parse 'v0.2.34^{commit}'      # expect HEAD_PLACEHOLDER...
+git rev-parse 'v0.2.34^{commit}'      # expect 5956639fa1c9f987ae20a471c63f86bfa34d56f0
 # Tag FIRST (positional), then the images. `--tag 0.2.34 laya-serve` silently
 # swallows laya-serve as the flag's value and checks only the default five.
 python scripts/check-ghcr-anon.py 0.2.34 pacgate-api pacgate-mcp ocr-service `
@@ -39,11 +40,47 @@ property that matters.
 
 `scripts/test-release-provenance.ps1` is the stronger check: it reads each image's
 `org.opencontainers.image.revision` label and refuses to bless the release unless every
-published image came from the tagged commit.
+published image came from the tagged commit. It currently reports `PASS` on the tag/registry
+half and `FAIL` on one file-level difference - see "The one thing 0.2.34 does not contain".
+
+## The one thing 0.2.34 does not contain
+
+`origin/main` is **not** the same tree as the release. Verified 2026-11-14:
+
+```
+git rev-list --count 'v0.2.34^{commit}'..origin/main                     ->  67  (16 first-parent)
+git diff --name-only 'v0.2.34^{commit}'..origin/main -- pacgate-ai/     ->  only the two files below
+```
+
+The redactor verdict fix `9f0e0c8` ("a model guess alone cannot block a document") is on
+`origin/main` and in **no** published image: `git merge-base --is-ancestor 9f0e0c8 <tag>` is
+false for every tag from `v0.2.30` through `v0.2.34`. It reached `main` on 2026-11-11 through
+`1822746` (merge of `fork/main`), two days after `v0.2.34` was cut. It touches
+`pacgate-ai/crates/pacgate-redact/src/{pipeline,verify}.rs`, which are compiled into
+`pacgate-api`, so it cannot travel by `git pull` - it needs a new image.
+
+Consequences, stated rather than smoothed over:
+
+- `scripts/test-release-provenance.ps1` **fails today** on exactly those two files. That is a
+  true positive: a rebuild from `v0.2.34` would not reproduce what clients pull. It stays red
+  until a release containing `9f0e0c8` is published. Do not suppress it and do not move
+  `v0.2.34` - `scripts/preflight-release-tag.ps1` refuses to re-tag a live tag, and moving a
+  published tag is the 0.1.28 defect this gate was written from.
+- Until then, documents blocked **on model-only evidence** stay blocked on a client machine.
+  On the dev box that is 397 of 868 admin-tenant chunks across four documents. This is an
+  accepted, recorded cost - `docs/superpowers/decisions/2026-11-08-no-local-release-cut.md`.
+- Everything else that changed after the tag reaches clients through a bind mount
+  (`deploy/pacgate-mcp/server.py`, `deploy/client-bundle/patches/*.py`,
+  `deploy/client-bundle/deer-flow-config.yaml`, the qm compose lane), which is why `-Update`
+  pulls **and restarts**. Those are not waiting on a release.
+
+So: pulling 0.2.34 on another machine is correct and complete **for 0.2.34**, and it does not
+carry `9f0e0c8`.
 
 ## What is actually in 0.2.34
 
-Four changes worth knowing. 43 commits since `v0.2.32`.
+Four changes worth knowing. 52 commits since `v0.2.32` (46 on the first-parent line, which is
+the count that matches a reviewable log).
 
 | # | Change | Verify with |
 |---|---|---|
@@ -61,16 +98,21 @@ This is the part that changed since the last handoff. Read it before pulling.
 | **Images** (all six) | **YES** - `pacgate-api` and `pacgate-mcp` contain new code, and the tag is new | `docker compose -f compose.prod.yaml pull` **fetches real layers** |
 | **Patches** (`patches/*.py`, `server.py`) | yes, and they are bind-mounted | `git pull` **plus a container restart** - a pull alone is inert |
 
-**Verified 2026-11-09**, the digests GHCR serves for `0.2.34`:
+**Verified 2026-11-14**, the manifest digests GHCR serves for `0.2.34` (index digest, and the
+`linux/amd64` child the bundle actually runs):
 
-| image | GHCR `0.2.34` |
-|---|---|
-| pacgate-api | `sha256:432550ac8840…` |
-| pacgate-mcp | `sha256:deb5942bdd6f…` |
-| ocr-service | `sha256:ebbb77186b71…` |
-| deer-flow-pacgate | `sha256:7f0a46b74d57…` |
-| deer-flow-frontend-pacgate | `sha256:6f6faf7fd2a3…` |
-| laya-serve | `sha256:1542feb38b30…` |
+| image | GHCR `0.2.34` index | `linux/amd64` |
+|---|---|---|
+| pacgate-api | `sha256:15564c8da44ce1ed…` | `sha256:c55c78e4b160dd11…` |
+| pacgate-mcp | `sha256:546a8e061135b5fd…` | `sha256:d4e1c564ff67ddaf…` |
+| ocr-service | `sha256:660a84bbe8a21aa2…` | `sha256:d81e3f1323e5d2ee…` |
+| deer-flow-pacgate | `sha256:27ddc825ad6f89fa…` | `sha256:0d03b53399190fc1…` |
+| deer-flow-frontend-pacgate | `sha256:78f9b83580b61dad…` | `sha256:350f6ec747945775…` |
+| laya-serve | `sha256:f959f58fda401d9b…` | `sha256:85e5729521e49ba6…` |
+
+The digests in the previous revision of this file (`432550ac8840…` and friends) **no longer
+resolve** - a registry lookup against them returns 404. Do not carry them forward; re-read the
+table above, or re-derive it with `scripts/report-ghcr-digests.ps1 -Version 0.2.34`.
 
 The previous handoff said "no image pull at all" and that pulling would report
 *"up to date"*. **That was true of the 0.2.32 delta and is false of this one.** An
