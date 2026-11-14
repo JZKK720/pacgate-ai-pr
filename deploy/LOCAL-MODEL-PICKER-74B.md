@@ -3,6 +3,14 @@
 Written 2026-11-05. This describes files that are **gitignored on purpose** and exist only on
 this machine. Nothing here is part of the shipped client contract.
 
+> **Updated 2026-11-11 - the 74B is now this box's picker DEFAULT.** It is `models[0]`, and
+> every auxiliary lane (memory / title / summarization / routing) was repointed to it. That
+> reverses the 2026-11-05/11-08 "must never be first" rule *for this machine only*, on
+> measured grounds: Ollama here cannot hold two models at once, so leaving the lanes on the
+> e4b would evict and cold-reload the 74B on every turn. See
+> [The 74B is the default (2026-11-11)](#the-74b-is-the-default-2026-11-11). The shipped
+> config and every client are still untouched.
+
 ## The premise this corrects
 
 The question was whether we could add the 74B to the picker *instead of baking it into an image
@@ -54,13 +62,74 @@ an HX370 / RX 7600 XT client would not, whatever its DIMM count.
 
 | File | Tracked? | Purpose |
 |---|---|---|
-| `deer-flow-config.local.yaml` | **no** (gitignored) | Byte-for-byte the tracked config, except the 74B block is uncommented in place. Same position: not first, not an escalation target. |
+| `scripts/regen-local-model-override.py` | yes | **The generator.** Rewrites the two files below from the current tracked config. |
+| `deer-flow-config.local.yaml` | **no** (gitignored) | Generated: tracked config + the 74B first in `models:` + a 74B memory lane + lanes repointed to the 74B. |
 | `compose.local-model-override.yaml` | **no** (gitignored) | Rebinds only `deer-flow` → `/app/backend/config.yaml` to the file above. |
 | `.gitignore` entries | yes | The two paths above, so a `git add -A` cannot publish them. |
 
 The tracked `deer-flow-config.yaml`, `ollama-models.txt`, both compose lanes, and every image
 are untouched. That is deliberate: it keeps `audit-model-tags.ps1` green for clients while this
 machine gets the extra option.
+
+**Generate it, do not hand-edit it.** A hand-made copy is a snapshot and rots silently: the
+copy written on 2026-11-08 was still missing the tracked file's glm-5.3
+`when_thinking_enabled: reasoning_effort: none` fix by 2026-11-11, so it would have served the
+known-broken glm behaviour to anyone who picked glm. The generator fails loudly instead of
+guessing when the tracked file moves:
+
+```powershell
+python scripts/regen-local-model-override.py
+# then, because the bind-mounted file changed:
+cd deploy/client-bundle
+docker compose -f compose.prod.yaml -f compose.local-model-override.yaml up -d deer-flow
+```
+
+## The 74B is the default (2026-11-11)
+
+Earlier revisions of this file said the 74B "must never be the first entry". That rule exists
+to protect the **client** class, and it still does. On this box the argument inverts, for a
+reason that is a property of the hardware and was measured rather than assumed.
+
+`models[0]` is the picker default in deer-flow (`agent.py`:
+`default_model_name = app_config.models[0].name`; the frontend falls back to `models[0]` for a
+thread with no model yet). Making the 74B default moves four lanes onto it: chat, title,
+memory, summarization - plus `model_routing`.
+
+**Why all of them, and not just chat.** Ollama evicts on *system* memory here, not on
+`OLLAMA_MAX_LOADED_MODELS` (which is 2):
+
+```
+"model predicted to exceed available memory, evicting"
+predicted="20.6 GiB" predicted_num_ctx=131072 available="2.4-8.8 GiB" system_limited=true
+```
+
+Windows sees **31.6 GiB** and the 74B asks for **20.6 GiB** of it, so exactly one model is
+resident at a time. Verified in both directions on 2026-11-11: loading the 74B unloaded the
+e4b, and loading the e4b unloaded the 74B. Left on the e4b, the title lane alone would evict
+the 74B after every reply and pay the cold reload (measured 61-120 s) on the next turn.
+Converging every lane on one tag is the same property the tracked config already describes for
+its e4b pins.
+
+**Live result.** Same run, twice through nginx: first (cold) **67.6 s**, second (warm)
+**3.3 s**, both `HTTP 200`, reply `PONG`. The difference is exactly the model reload that the
+lane convergence removes.
+
+**Measured cost of the 74B here.** Cold load 61-120 s; `json_schema` tool call 41 s; 2048-token
+memory extraction 43 s; title 2.8-3.3 s warm. It satisfies the structured-output requirement
+the tracked config demands of a default (valid JSON, `done_reason=stop`).
+
+**The caveat.** Picking a non-74B model in the picker re-introduces the thrash, because the
+auxiliary lanes stay on the 74B - the mirror image of what the e4b pins do in the shipped
+config. Use a 7.5B entry when speed matters more than depth.
+
+**Second caveat, outside deer-flow's control.** Converging *deer-flow's* lanes does not make the
+74B exclusive on this box. Other services use the e4b tag and will evict it when they generate:
+`PACGATE_MODEL_MID` and `PACGATE_MODEL_LOW` are both `nemotron-3.5-bolt:e4b-q8_0` in
+`deploy/client-bundle/.env`, and `open-webui` also lists it. Measured 2026-11-11: e4b loads
+appeared in Ollama's log mid-run while deer-flow's own logs showed no request for that tag. So
+an occasional cold reload of the 74B caused by a *different* container is expected and is not a
+deer-flow config fault. Fixing it would mean moving those tiers to the 74B too, which trades
+their latency for residency - a separate decision, not made here.
 
 ## Use it
 
@@ -102,45 +171,48 @@ OS-visible RAM.
 | Residency | `ollama ps` reports **2.8 GB**, `100% GPU`, context 131072 |
 | Free RAM before load | ~3 GiB, which is why the model is unloaded between uses |
 
-The 67.5 s e2e figure is the honest number to quote: it is request -> agent -> Ollama -> reply
-through the nginx path a client actually uses, on a warm model, with the 74B selected by
-`context.model_name`. It is a *correctness* result, not a latency result - see the 278 s vs
-22.3 s comparison above for why this model is not a default.
+Measured again 2026-11-11 after the 74B became the default: cold **67.6 s**, then **3.3 s** on a
+warm repeat, same `PONG` reply through nginx. The warm number is the one to expect in normal use
+now that the auxiliary lanes no longer evict the model between turns.
 
 Reasoning burns the whole `num_predict` budget before producing content if you cap it low: with
 `num_predict: 24` the reply came back with `content: ""` and `done_reason: "length"` because all
 24 tokens went to `thinking`. That is the behaviour the entry's `when_thinking_disabled:
-reasoning_effort: none` exists to prevent. The entry also carries `stream_chunk_timeout: 600`
-because slow first tokens are expected here, not a hang.
+reasoning_effort: none` exists to prevent, and it matters more now that the memory lane is the
+74B too - a 2048-token cap with the reasoning channel live would return nothing. The entry also
+carries `stream_chunk_timeout: 600` because slow first tokens are expected here, not a hang.
 
-## The one caveat: this file is a snapshot
+## Regenerate after any update
 
-`deer-flow-config.local.yaml` is a **copy**, not an include. If upstream later changes
-`deer-flow-config.yaml` (new model, changed routing, changed `max_tokens`), this local copy will
-**not** pick the change up and will silently keep serving the old settings - the same class of
-drift `deploy/AIPC-UPDATE-GAP-ANALYSIS.md` documents for the OpenViking config.
+The local file is **generated**, so it cannot drift - but it also does not update itself. After
+any `git pull` / `install.ps1 -Update`, run the generator so the local override is rebuilt from
+the new tracked config:
 
-After any `git pull` / `install.ps1 -Update`, regenerate it rather than editing it:
+```powershell
+python scripts/regen-local-model-override.py
+```
+
+It fails loudly (non-zero exit, no write) when the tracked config moves under it - for example
+if the commented 74B block is renamed, or if the lane pins stop matching. That is deliberate: a
+silent skip would leave this box serving a stale config, which is exactly the failure the
+2026-11-08 snapshot suffered.
+
+Then recreate the container, because a changed bind-mounted file does not restart it:
 
 ```powershell
 cd deploy/client-bundle
-# re-apply the one-block uncomment on top of the NEW tracked config
-$src  = Get-Content deer-flow-config.yaml
-$out  = for ($i = 0; $i -lt $src.Count; $i++) {
-    $line = $src[$i]
-    $inBlock = ($line -match '^  # - name: nemotron-bolt-74b-local') -or $line -match '^  #   '
-    if ($inBlock) { $line -replace '^(\s*)# ', '$1' } else { $line }
-}
-# NOTE: verify the block bounds against the new file before trusting this; the tracked
-# config states the block explicitly between its "OPTIONAL: heavier local option" and
-# "on the 8060S iGPU" markers.
+docker compose -f compose.prod.yaml -f compose.local-model-override.yaml up -d deer-flow
 ```
 
-Simplest reliable check after any update:
+Verify, rather than trusting the merge:
 
 ```powershell
-git --no-pager diff --no-index --stat -- deer-flow-config.yaml deer-flow-config.local.yaml
+docker inspect deer-flow --format '{{range .Mounts}}{{if eq .Destination "/app/backend/config.yaml"}}{{.Source}}{{end}}{{end}}'
+# expect ...\deer-flow-config.local.yaml
+
+cd ../.. ; pwsh -NoProfile -File scripts/test-model-picker-e2e.ps1 -NginxUrl http://localhost:8089
+# expect: roster starts with nemotron-bolt-74b-local, and "generating with: nemotron-bolt-74b-local"
 ```
 
-Expect exactly the 74B hunk plus the comment rewrite. Anything else means the tracked config
-moved and the local copy needs regenerating.
+`test-model-picker-e2e.ps1` validates the tracked config statically and this file only through
+the live roster, which is why the live section is the check that matters here.

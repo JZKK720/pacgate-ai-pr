@@ -69,19 +69,33 @@ documented in `LOCAL-MODEL-PICKER-74B.md`; it is a usage constraint, not a defec
    and the e4b measured faster on both axes here.
 2. **MAIN stays `deepseek-v4.1-flash:cloud`.** Cloud chat is the recorded 2026-08-30 decision; it is
    not drift.
-3. **The 74B stays a machine-local picker option** and must **never** enter
-   `deploy/client-bundle/ollama-models.txt`. That file is the client pre-pull contract;
-   `test-aipc-capacity-fit.ps1` budgets the client class at 16 GB and records the 74B at 24.0 GB,
-   i.e. OVER_CAP. Adding it would make every AIPC download 24.8 GB it cannot hold.
-4. **The 74B must never be the first picker entry**, because the first entry is what an unpinned run
-   inherits and the 74B is ~12x slower per token for a run that never asked for it.
+3. **The 74B stays out of `deploy/client-bundle/ollama-models.txt`.** That file is the client
+   pre-pull contract; `test-aipc-capacity-fit.ps1` budgets the client class at 16 GB and records
+   the 74B at 24.0 GB, i.e. OVER_CAP. Adding it would make every AIPC download 24.8 GB it cannot
+   hold. This still holds.
+4. **SUPERSEDED 2026-11-11 - the 74B is now this machine's picker default.** The original rule
+   ("the 74B must never be the first picker entry") exists to stop an unpinned run on a *client*
+   inheriting a 12x slowdown. On this box the trade-off inverts, because Ollama evicts on system
+   memory here (measured: `predicted="20.6 GiB" available="2.4-8.8 GiB" system_limited=true`),
+   so only one model is resident at a time. With the 74B first and the lanes left on the e4b,
+   every turn evicted the 74B and paid a 61-120 s cold reload. `models[0]` = 74B and all lanes
+   converged on that tag instead: measured warm e2e 3.3 s vs 67.6 s cold. The client contract is
+   unaffected - only the gitignored local override changed. See
+   `deploy/LOCAL-MODEL-PICKER-74B.md`, and `scripts/regen-local-model-override.py` which
+   generates it.
 
 ## Known gap in the gates
 
 `scripts/test-model-picker-e2e.ps1` reads only the **tracked** `deploy/client-bundle/deer-flow-config.yaml`
-(`$cfg`, line 128). It never reads the local variant, so the 74B entry and the local config are
-validated by nothing. That is why `docs/superpowers/plans/2026-11-08-upstream-sync-v0.2.32-runtime-upgrade.md`
-Task 3 verifies the regenerated file by hand, with assertions, instead of trusting a green suite.
+(`$cfg`, line 128). It never reads the local variant, so the local config's *static* content is
+validated by nothing - only its effect is, through the live roster section. That is why
+`docs/superpowers/plans/2026-11-08-upstream-sync-v0.2.32-runtime-upgrade.md` Task 3 verifies the
+regenerated file by hand, with assertions, instead of trusting a green suite.
+
+This gap is now partly mitigated: the local file is **generated** by
+`scripts/regen-local-model-override.py` from the tracked config, so it cannot drift the way the
+2026-11-08 hand-copy did (that copy was still missing the glm fix on 2026-11-11), and the
+generator exits non-zero instead of producing a stale file when the tracked config moves.
 
 Worth a gate. Deliberately not added here: it is a separate change, and folding it into a runtime
 upgrade would mix an unverified new gate with a verification whose whole value is that its checks are
