@@ -10,12 +10,25 @@
 These were discovered during the AIPC #1 pilot and are **already fixed in this repo**.
 AIPC #2 must pull the **updated** code (see Stage 1) so it gets these fixes.
 
-> **Update 2026-09-23 (supersedes the 2026-09-15 "clone either" note).** The two
-> repos are **NO LONGER identical** — `pacgate-ai/pacgate-ai-pr` is 26 commits behind
-> and missing the workflow-wiring fixes (`b7fc540`, `039afdc`), so a fork clone serves
-> **10 built-in workflows instead of the firm's 222**, with no error shown anywhere.
-> **Clone `JZKK720/pacgate-ai-pr`** (see Stage 1). Which repo you push a release tag to
-> still decides the GHCR namespace — see `plans/012-master-release-namespace.md`.
+> **Update 2026-09-23 (supersedes the 2026-09-15 "clone either" note).**
+> **Clone `JZKK720/pacgate-ai-pr`** (see Stage 1) - that recommendation stands. The
+> reason given for it here was wrong and is corrected below.
+>
+> `pacgate-ai/pacgate-ai-pr` is a legacy mirror and **does lag**, but it is no longer
+> 26 commits behind and it does **not** serve 10 workflows. Measured 2026-11-14:
+> **44 commits behind**, and it **does** contain the workflow-wiring fixes
+> (`b7fc540`, `039afdc` are both ancestors of its `main`), so the
+> `/app/workflows` mount is present and it serves the full library. What it is
+> actually missing is the newer work: its compose pins **0.2.32**, and it does not
+> carry the 0.2.33/0.2.34 releases or the doc and gate fixes that followed.
+>
+> So the conclusion ("clone `JZKK720`") is right and the measurement is stale. That
+> ordering - a correct verdict resting on a number nobody re-read - is the same
+> defect class as asserting two repos are in sync.
+>
+> The namespace difference is unchanged, and it still matters: which repo you push a
+> release tag to decides the GHCR namespace - see
+> `plans/012-master-release-namespace.md`.
 
 1. **deer-flow agent could not query pacgate's legal databases.** Root cause: no tool was
    wired to pacgate-api's `/api/kb/search` (RAG) or `/api/search` (legal connectors), and the
@@ -84,8 +97,9 @@ If you later want shared matter data across both machines, connect them with a p
 ## What you need before starting
 
 - GitHub access to the source repo — **`JZKK720/pacgate-ai-pr`** (public; a plain
-  clone needs no auth). **Do not clone the `pacgate-ai` fork** — it is 26 commits
-  behind and serves 10 workflows instead of 222 (see Stage 1). A PAT or
+  clone needs no auth). **Use `JZKK720`; do not clone the `pacgate-ai` mirror** - it
+  is 44 commits behind and its compose still pins 0.2.32, so a mirror clone deploys
+  the previous release (see Stage 1). A PAT or
   `gh auth login` is only required if you intend to push.
 - Docker Desktop running on both AIPCs
 - Ollama running on both AIPCs (`install.ps1` pulls the models it needs)
@@ -257,16 +271,19 @@ cd pacgate-ai-pr
 git remote -v   # origin MUST be JZKK720/pacgate-ai-pr
 ```
 
-> **AIPC #2 note (CORRECTED 2026-09-23):** the two repos are **NO LONGER IDENTICAL**,
-> so "either clone works" is no longer true. **Clone `JZKK720`.**
+> **AIPC #2 note (CORRECTED 2026-11-14).** The verdict below is unchanged -
+> **clone `JZKK720`** - but the evidence it rested on was wrong, so it is restated.
 >
-> `pacgate-ai/pacgate-ai-pr` is **26 commits behind** (last checked 2026-09-23) and is
-> missing `b7fc540` and `039afdc`, so it still carries the **original
-> workflow-wiring defect**. The 15 workflow YAMLs are present in the fork but are not
-> wired into `pacgate-api`, so the API serves **10 built-in workflows instead of the
-> firm's 222** — with no error shown anywhere. The identity claim above was accurate
-> when written; the divergence came afterwards, which is exactly why a doc must not
-> assert two things are in sync without a check that can fail.
+> `pacgate-ai/pacgate-ai-pr` is a legacy mirror and does lag: measured 2026-11-14 it
+> is **44 commits behind** `main` and its compose pins **0.2.32**. It **does** carry
+> the workflow-wiring fixes (`b7fc540` and `039afdc` are ancestors of its `main`), so
+> the older claim that a fork clone "serves 10 built-in workflows instead of 222" is
+> no longer true and has been removed. What a mirror clone actually gives you is the
+> **previous release**, which is the real reason not to use it.
+>
+> The lesson from the original note still holds and is worth keeping: this document
+> once asserted the two repos were identical with nothing checking it. It is now
+> checked by measurement, and the measurement moved without the verdict changing.
 >
 > The namespace difference is unchanged — which repo you push a release tag to
 > decides which GHCR namespace the images publish into. See

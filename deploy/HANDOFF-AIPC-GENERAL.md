@@ -8,9 +8,11 @@
 
 ## Identity facts (do not get these wrong)
 
-- **Clone `JZKK720/pacgate-ai-pr`. NOT the `pacgate-ai` fork.** The fork is
-  26 commits behind and serves 10 built-in workflows instead of the firm's
-  222, with no error shown anywhere. Every compose file pins
+- **Clone `JZKK720/pacgate-ai-pr`. NOT the `pacgate-ai` mirror.** The mirror is a
+  read-only lagging copy: measured 2026-11-14 it is 44 commits behind and its compose
+  still pins 0.2.32, so a mirror clone deploys the **previous release**. It does now
+  carry the workflow-wiring fixes, so the older "serves 10 workflows instead of 222"
+  warning no longer applies - the release pin is the reason. Every compose file pins
   `ghcr.io/jzkk720/*`.
 - **Images are PUBLIC. Never run `docker login ghcr.io` on a client machine.**
   A failed anonymous pull means the package visibility flipped private or the
@@ -171,7 +173,7 @@ pwsh -File scripts\audit-false-sanitized.ps1
 | `/version` returns 401 | the running image predates the version marker; the image is stale, the probe is fine |
 | register returns 500 `default tenant not found` | tenant slug does not match `PACGATE_TENANT_ID` |
 | register returns 403 "Cross-site auth request denied" | missing `/pacgate` prefix (or Origin not allowlisted — step 4c derives it; never hand-edit over an operator value) |
-| only 10 workflows visible | cloned the fork instead of JZKK720 — reclone |
+| only 10 workflows visible | cloned a pre-`b7fc540` checkout (both repos have the fix now) - re-clone `JZKK720` and re-run `install.ps1` |
 | login works on localhost but 403 from a LAN browser | `GATEWAY_CORS_ORIGINS` missing the LAN origin; re-run step 4c derivation |
 | `docker compose pull` "reverts" behavior | expected — it restores the pinned published images over any local retag |
 | MCP tools = 0 in agent chat | the rendered extensions config is stale; `install.ps1` step 2 re-renders it, then `docker compose restart deer-flow` |
