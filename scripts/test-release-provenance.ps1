@@ -426,7 +426,32 @@ if ($affecting.Count -gt 0) {
     Fail "$($affecting.Count) file(s) that CAN reach a built image changed after the published revision was built:"
     $affecting | ForEach-Object { Info "  $_" }
     Info 'the tag does not identify the published artifacts: a rebuild from the tag would differ from what clients pull'
-    Info "fix: re-point $tag at the commit the images were built from, or rebuild so they match the tag"
+
+    # The remedy depends on WHICH of the two faults this is, and the old text
+    # named the wrong one unconditionally.
+    #
+    # It said "re-point $tag at the commit the images were built from". Measured
+    # 2026-11-14 on v0.2.34: the tag ALREADY peels to 5956639fa1c9, which is exactly
+    # the revision every published image reports. Following that instruction is a
+    # no-op, so an operator reads a red gate with an impossible remedy and learns
+    # to ignore the gate - the failure mode this file exists to prevent.
+    #
+    # The real distinction:
+    #   * tag != built revision -> the tag is wrong, re-point it (the 0.1.28 defect,
+    #     where a dispatch moved the artifacts without moving the tag).
+    #   * tag == built revision -> the tag is RIGHT and the tree has since moved.
+    #     Nothing about the tag can fix it; only a NEW release containing the
+    #     change can, because the images are immutable build outputs.
+    $tagIsBuiltRev = $tagCommit -and ($tagCommit -eq $resolved)
+    if ($tagIsBuiltRev) {
+        Info "$tag already peels to the built revision ($($builtRev)), so re-pointing it is not the fix and would move a published tag."
+        Info 'this is an UNRELEASED change to a shipped artifact: cut a new release containing it, then re-run this gate against the new tag.'
+        Info "do not move $tag, do not suppress this gate, and do not bump the version to make it green - see docs/superpowers/decisions/2026-11-08-no-local-release-cut.md"
+    }
+    else {
+        Info "fix: re-point $tag at the commit the images were built from, or rebuild so they match the tag"
+        Info "measured: tag peels to $tagCommit, published images report $resolved - these disagree"
+    }
 } else {
     Pass "no image-affecting file changed between $($builtRev) and HEAD, so the tag still describes the published artifacts"
     # Reported, not hidden: this is the evidence that the diff was read, and it
