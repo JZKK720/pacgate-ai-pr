@@ -156,6 +156,22 @@ $missing = @()
 # image was absent. A gate that cannot bless a complete release is as misleading as
 # one that passes an incomplete one.
 $optionalImages = @('laya-serve')
+# ABSENT and UNREADABLE are different answers, and conflating them silently
+# downgrades a real failure to a skip.
+#
+# Measured 2026-11-14: this gate FAILS on the v0.2.34 tree (two redactor files
+# changed after the tag was built). Run through run-all-checks.ps1 while ghcr.io was
+# slow, two images timed out, both were counted as "not published yet", and the gate
+# exited 2 - which the runner reports as SKIP CANNOT CHECK and does NOT count as a
+# failure. The suite then printed "ALL 69 GATES PASSED" over a known-red gate. A
+# timeout had turned a provenance defect into missing coverage.
+#
+# lib/Release-ImageState.ps1 already states the contract this violated: "404 -> tag
+# absent ... NOT YET ASSERTABLE; other/transport error -> UNKNOWN; never silently
+# read as 'absent'". So 404 stays a skip (that is the genuine release window), and
+# anything else is reported as UNKNOWN and FAILS, because a gate that cannot read
+# the registry cannot claim the release is coherent.
+$unknown = @()
 foreach ($p in $pins) {
     $ref = "$($p.Ns)/$($p.Repo):$($p.Tag)"
     $isOptional = $optionalImages -contains $p.Repo
@@ -163,13 +179,26 @@ foreach ($p in $pins) {
         $lab = Get-ImageRevisionLabel -Namespace $p.Ns -Repository $p.Repo -Tag $p.Tag
     }
     catch {
-        if ($isOptional) {
-            # Reported, never silent: the provenance claim below must not imply the
-            # optional image was verified when it was not.
-            Info "$ref is not published (opt-in image, continue-on-error) - excluded from the provenance comparison"
-        } else {
-            $missing += $ref
-            Info "registry read failed for $ref : $($_.Exception.Message)"
+        $status = $null
+        try { $status = [int]$_.Exception.Response.StatusCode } catch { $status = $null }
+        if ($status -eq 404) {
+            if ($isOptional) {
+                # Reported, never silent: the provenance claim below must not imply
+                # the optional image was verified when it was not.
+                Info "$ref is not published (opt-in image, continue-on-error) - excluded from the provenance comparison"
+            } else {
+                $missing += $ref
+                Info "$ref is not published (404) - a genuine release-window absence"
+            }
+        }
+        elseif ($isOptional) {
+            Info "$ref could not be read ($($_.Exception.Message)) - optional image, excluded"
+        }
+        else {
+            # Not 404: a transport error, a timeout, a 401/403, or a malformed
+            # manifest. This is NOT evidence the image is absent.
+            $unknown += $ref
+            Info "$ref could not be read: $($_.Exception.Message)"
         }
         continue
     }
@@ -181,6 +210,23 @@ foreach ($p in $pins) {
     if ($lab.Version -ne $p.Tag) {
         Fail "$ref carries version label '$($lab.Version)' but is pinned as '$($p.Tag)'"
     }
+}
+
+# A FAIL must never be downgraded to a skip. Settle the UNKNOWN verdict BEFORE the
+# missing-image skip, because Exit-NotYetAssertable terminates the script: doing it
+# the other way round would let an unreadable image hide the failures collected
+# above. This ordering is the same rule the "settled first and terminally" comment
+# below applies to the multi-revision check.
+if ($unknown.Count -gt 0) {
+    Fail "$($unknown.Count) published image(s) could not be READ, so the release cannot be verified:"
+    $unknown | ForEach-Object { Info "  $_" }
+    Info 'this is NOT "not published yet" - the registry did not answer. Re-run; if it persists, the release state is unknown, not green.'
+    Info 'the run is deliberately FAILED rather than skipped: a skip here would hide any real provenance defect found above.'
+}
+if ($script:failures -gt 0) {
+    Write-Host ''
+    Write-Host "FAILED: $($script:failures) provenance defect(s) in the published artifacts" -ForegroundColor Red
+    exit 1
 }
 
 # A release window legitimately has unpublished images. Decline to answer rather
