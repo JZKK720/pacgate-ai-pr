@@ -112,6 +112,20 @@ while every health check stays green.
 
 ## Bring this machine up
 
+**Clone `JZKK720/pacgate-ai-pr`. Not `pacgate-ai/pacgate-ai-pr`.** The latter is a read-only
+mirror that is **53 commits behind and still pins 0.2.32** (measured 2026-11-15), so a mirror
+clone deploys the release *before* the one this document is about, with every health check
+green. It carries no `v0.2.35` tag. This warning is repeated here because it is the one mistake
+that produces a stack which looks correct and is a version behind.
+
+Re-measure rather than trusting that number, because it moves with every commit:
+
+```powershell
+git fetch fork
+git rev-list --count fork/main..origin/main        # how far the mirror is behind
+git show fork/main:deploy/client-bundle/compose.prod.yaml | Select-String 'pacgate-api:'
+```
+
 ```powershell
 cd <repo>
 git rev-parse --abbrev-ref HEAD      # must print: main
