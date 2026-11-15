@@ -544,9 +544,16 @@ try {
     }
 
     Write-Output 'Next:'
-    Write-Output "  1. Build and publish $To (fork -> Actions -> build-ghcr, tag=$To)."
+    Write-Output "  1. Push the TAG (preferred):  git tag -a v$To -m '<message>' HEAD; git push origin v$To"
+    Write-Output "     The workflow fires on 'push: tags: v0.2.*' and labels images with github.sha, so tag and"
+    Write-Output "     artifact are identical by construction. A workflow_dispatch also works but publishes from"
+    Write-Output "     the selected REF while accepting any tag input, so verify the pairing afterwards."
     Write-Output '  2. Flip any NEW package to public (UI-only for user accounts).'
-    Write-Output "  3. .\scripts\check-ghcr-pull.ps1 -Targets 'pacgate-ai/pacgate-api:$To','pacgate-ai/pacgate-mcp:$To','pacgate-ai/deer-flow-pacgate:$To','pacgate-ai/deer-flow-frontend-pacgate:$To'"
+    # NAMESPACE: jzkk720 is the release authority and the only namespace clients pull
+    # from. This line named the retired `pacgate-ai` mirror, so following it verbatim
+    # checked the wrong namespace and reported 404s that looked like a broken release.
+    Write-Output "  3. python scripts/check-ghcr-anon.py $To pacgate-api pacgate-mcp ocr-service deer-flow-pacgate deer-flow-frontend-pacgate laya-serve"
+    Write-Output "  4. pwsh -File scripts/test-release-provenance.ps1 -Version $To   # the objective done-signal"
 }
 finally {
     Pop-Location

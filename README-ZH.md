@@ -4,7 +4,16 @@
 
 **English:** [README.md](README.md) | [Staff Handbook](docs/PACGATE-LAW-STAFF-HANDBOOK.md)
 
-## 版本：v0.2.34（2026年11月9日）
+## 版本：v0.2.35（2026年11月15日）
+
+- **校验器不再把模型猜测当作残留证据。** `verdict()` 对**任何**存活片段都返回 `Block`，因此一个 `MatchSource::Model` 片段本身即可定案。循环性在于：`verify()` 会针对**已脱敏**文本重新运行检测器，模型检测器可能对脱敏器早已替换掉的文本、或其相邻碎片重新命中，而 `VerifyScope::inside_placeholder` 只排除完全落在占位符内部的片段。于是一个针对"已不存在的文本"的猜测，成了拒绝整份文档的理由。现按**证据类型**区分：规则命中（校验和、模式、上下文）属结构性证据，无条件阻断；模型命中属猜测，不再单独阻断。模型片段仍保留在 `residue` 与 `notes` 中，审核者依然可见。
+- **解除了什么限制。** 此前因"仅有模型证据"而被 `blocked` 的文档，现在可以通过脱敏。修复前在本机实测：**868 个分块中有 397 个被阻断，涉及四份文档**，包括《合规律师实用Prompts指南》(144)、《基金律师实用Prompts指南》(108)、《presented-pacgate-ai-平台实战教程》(docx 73 + pdf 70)。台账记录的存活片段是教科书式的占位人名（张三）、已注册的连接器名称（yuandian）与公开机构（黄山市人民政府、保定市国资委、平潭综合实验区国有资产管理局），均非客户身份信息。
+- **客户需要做什么。** 拉取 `ghcr.io/jzkk720/pacgate-api:0.2.35`，然后**重新脱敏**受影响的文档：`POST /api/documents/:id/sanitize-rescan`。判定结果在脱敏时计算并存储，因此既有的 `blocked` 记录在重新脱敏前仍为阻断状态——仅拉取镜像不会解除。
+- **未变更的部分。** 无 API 变更、无 schema 变更、无配置变更、无新增接口。本次为判定规则修复。其余镜像内容未变，仅因流水线没有按路径过滤而一并重建。
+
+### 承接自 v0.2.34（上一个版本，本次未改动）
+
+以下内容已随 0.2.34 发布并继续有效，单列于此，不再作为 0.2.35 的变更重复陈述。
 
 - **文档正文读取统一为一个准入判断。** `/api/documents/:id/download` 会拒绝 `pending` 文档，而 `/api/documents/:id/extract` 却返回其正文——租户校验是它唯一的校验。二者现均调用 `pacgate_api::egress::assert_readable`，且**每次读取与每次拒绝都写入审计行**（`document.read`，含 `purpose`、`document_state`、`data_level` 与 `outcome`）。根因是结构性的而非笔误：每个 handler 各自维护一条规则，因此后来新增的第三个 handler 无规则可继承。`documents.rs` 现已锁定返回正文的 handler 清单，新增而未接入该统一入口者会导致测试失败。
 - **`/extract` 不再返回脱敏前的 spans。** `document_spans.text` 保存的是抽取器当时读到的文本，而去标识任务从不重写该表——脱敏产物写入 `kb_chunks`。因此 `sanitized` 文档的缓存抽取会在 `spans[].text` 中返回**原始正文**，而顶层 `text` 字段看起来却是干净的；仅对 `text` 加闸会得到一个"读起来像已修完"的半修结果。现在已脱敏文档的抽取只从 `kb_chunks` 返回脱敏后的 `text`，且不返回 spans，因为脱敏文本没有可对应的页面坐标。这是真实的能力收缩，在此明示，而非留给使用者自行发现。
@@ -25,11 +34,11 @@
 - RAG 检索（pgvector + tsvector + Ollama 嵌入，T1-T4 数据分级过滤）— 完全本地运行
 - OpenViking 记忆模块：经 qm 桥接的 ov-remember / ov-search / ov-read，deer-flow 内 MCP 召回
 - 认证体系（JWT + argon2 + SOUL 解析中间件）
-- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.34`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
-- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.34`（公开）
-- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.34`（公开；暴露 26 个 MCP 工具，含文档/工作流）
-- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.34`（公开；构建时烘焙网关地址）
-- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.34`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
+- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.35`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
+- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.35`（公开）
+- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.35`（公开；暴露 26 个 MCP 工具，含文档/工作流）
+- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.35`（公开；构建时烘焙网关地址）
+- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.35`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
 - qm 协作桥接已验证（Python CLI，HARNESS=pi，真实 Ollama）
 - 客户部署包已入库：`deploy/client-bundle/` — 全新克隆安装路径已验证
 - 知识图谱：935 节点、2220 条边、49 个社区
@@ -95,11 +104,11 @@ Pacgate 运行时镜像均为**公开**（已验证匿名拉取）。源码仓�
 
 | 镜像 | 内容 | 基础镜像 |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.2.34` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.34` | pacgate-api MCP 桥接（26 个工具，含文档/工作流） | `python:3.12-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.34` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.34` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.34` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.35` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.35` | pacgate-api MCP 桥接（26 个工具，含文档/工作流） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.35` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.35` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.35` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
 
 每个镜像同时带有 `:latest` 标签，与版本标签保持同步。
 
