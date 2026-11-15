@@ -107,21 +107,54 @@ function Get-ImageRevisionLabel {
     $idxAccept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'
     $manAccept = 'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
     $host_ = 'https://ghcr.io'
-    $tok = (Invoke-RestMethod -Uri "$host_/token?scope=repository:$repo`:pull&service=ghcr.io" -Method Get -TimeoutSec 20).token
-    $man = Invoke-RestMethod -Uri "$host_/v2/$repo/manifests/$Tag" -Method Get -TimeoutSec 20 `
-        -Headers @{ Authorization = "Bearer $tok"; Accept = $idxAccept }
+
+    # Retry transport failures, because ghcr.io drops them intermittently and this
+    # gate now REPORTS an unreadable registry as a FAILURE (it used to skip).
+    # Without this, one flaky second turns every run red with a message about
+    # provenance that is really about the network.
+    #
+    # Measured 2026-11-14 on this box: `python scripts/check-ghcr-anon.py` (which
+    # retries) succeeded while four consecutive gate runs timed out at 20 s, and a
+    # bare `Invoke-RestMethod` to the same token URL then answered in 1.3-2.3 s.
+    # The registry was fine; a single unretried GET was not.
+    #
+    # A 404 is NOT retried: it is a definite answer ("tag absent"), and retrying it
+    # just delays the release-window SKIP that answer is supposed to produce.
+    $netRetries = 6
+    function Invoke-Ghcr {
+        param([string]$Uri, [hashtable]$Headers, [string]$Accept)
+        for ($attempt = 1; $attempt -le $netRetries; $attempt++) {
+            try {
+                $h = @{}
+                if ($Headers) { foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] } }
+                if ($Accept) { $h['Accept'] = $Accept }
+                return Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 20 -Headers $h -ErrorAction Stop
+            }
+            catch {
+                $st = $null
+                try { $st = [int]$_.Exception.Response.StatusCode } catch { $st = $null }
+                if ($st -eq 404) { throw }
+                if ($attempt -eq $netRetries) { throw }
+                # DNS failures ("No such host") and read timeouts both recover on a
+                # second look on this network, so back off across the whole window
+                # (~7 s) rather than assuming the first answer is final.
+                Start-Sleep -Milliseconds ([Math]::Min(2000, 300 * $attempt))
+            }
+        }
+    }
+
+    $tok = (Invoke-Ghcr -Uri "$host_/token?scope=repository:$repo`:pull&service=ghcr.io").token
+    $man = Invoke-Ghcr -Uri "$host_/v2/$repo/manifests/$Tag" -Headers @{ Authorization = "Bearer $tok" } -Accept $idxAccept
     if ($man.manifests) {
         # Prefer linux/amd64 - the platform the bundle ships. `unknown/unknown`
         # entries appear in these indexes (attestation/SBOM) and are not images.
         $child = @($man.manifests | Where-Object { $_.platform.os -eq 'linux' -and $_.platform.architecture -eq 'amd64' } | Select-Object -First 1)
         if (-not $child) { $child = @($man.manifests | Where-Object { $_.platform.os -eq 'linux' } | Select-Object -First 1) }
         if (-not $child) { throw "no linux child manifest in the index for $repo`:$Tag" }
-        $man = Invoke-RestMethod -Uri "$host_/v2/$repo/manifests/$($child[0].digest)" -Method Get -TimeoutSec 20 `
-            -Headers @{ Authorization = "Bearer $tok"; Accept = $manAccept }
+        $man = Invoke-Ghcr -Uri "$host_/v2/$repo/manifests/$($child[0].digest)" -Headers @{ Authorization = "Bearer $tok" } -Accept $manAccept
     }
     if (-not $man.config.digest) { throw "manifest for $repo`:$Tag carries no config digest" }
-    $blob = Invoke-RestMethod -Uri "$host_/v2/$repo/blobs/$($man.config.digest)" -Method Get -TimeoutSec 20 `
-        -Headers @{ Authorization = "Bearer $tok" }
+    $blob = Invoke-Ghcr -Uri "$host_/v2/$repo/blobs/$($man.config.digest)" -Headers @{ Authorization = "Bearer $tok" }
     return [pscustomobject]@{
         Revision = $blob.config.Labels.'org.opencontainers.image.revision'
         Version  = $blob.config.Labels.'org.opencontainers.image.version'
@@ -306,6 +339,41 @@ if (-not $resolved) {
     # fallback is a short/absent one. Not being able to diff is NOT a failed
     # release; say what could not be checked instead of guessing.
     Exit-NotYetAssertable "published revision label '$builtRev' does not resolve to a commit in this clone (label present but truncated/unknown), so the tag-to-artifact file diff cannot be computed."
+}
+
+# THE TAG MUST POINT AT THE COMMIT THE IMAGES WERE BUILT FROM.
+#
+# This assertion was MISSING, and its absence made the file's own headline claim
+# false. Everything below diffs `$resolved..HEAD` - the BUILT revision against the
+# working tree - and never compares `$tagCommit` to `$resolved`. So a tag sitting on
+# some unrelated commit while the images come from a different commit passed, as
+# long as nothing image-affecting had changed since the build.
+#
+# That is precisely the 0.1.28 defect described in this file's header: a dispatch
+# moved the artifacts without moving the tag. The header says the tag "must
+# identify the artifacts that were actually PUBLISHED", and the code never tested
+# it. Measured 2026-11-14 in a throwaway clone: checked out 5956639 (the real build
+# commit), moved v0.2.34 to an unrelated later commit, and the tag-vs-artifact
+# comparison had nothing to run - the gate's verdict depended entirely on the
+# `$resolved..HEAD` diff, not on where the tag pointed.
+#
+# This matters most for the recommended release path. `workflow_dispatch` publishes
+# from whatever commit the branch points at while accepting ANY tag input, so a
+# dispatch followed by a forgotten tag is exactly how the two fall out of step.
+if ($tagCommit -ne $resolved) {
+    Fail "tag $tag peels to $($tagCommit.Substring(0,12)) but the published images were built from $($resolved.Substring(0,12))"
+    Info 'the tag does not identify the published artifacts: re-deriving this release from its own tag would build DIFFERENT images.'
+    Info "fix: move $tag to $($resolved.Substring(0,12)) and re-run - but only if that revision is an ancestor of the release branch, and never after clients have pulled."
+    Info 'a dispatch publishes from the selected ref while accepting any tag input, so verify this pairing before announcing a release.'
+} else {
+    Pass "tag $tag peels to the same commit the images were built from ($($resolved.Substring(0,12)))"
+}
+
+# Fail now rather than continuing to a diff whose base is already known wrong.
+if ($script:failures -gt 0) {
+    Write-Host ''
+    Write-Host "FAILED: $($script:failures) provenance defect(s) in the published artifacts" -ForegroundColor Red
+    exit 1
 }
 
 # Per-image build inputs, derived from each Dockerfile's `file:` + `context:` in
