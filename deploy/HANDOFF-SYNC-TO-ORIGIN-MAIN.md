@@ -1,4 +1,4 @@
-# Handoff Prompt - bring another machine up to 0.2.34
+# Handoff Prompt - bring another machine up to 0.2.35
 
 > **For:** an agent running on a second Pacgate machine (AIPC #1/#2, or the client lane).
 > **Prerequisite:** the release is PUBLISHED. Read "Is the release real?" below before doing anything.
@@ -6,19 +6,21 @@
 
 ## The direction, stated precisely because it is easy to invert
 
-**`v0.2.34` is published and tagged.** Unlike the previous delta, this one is NOT
-"fixes that exist only on the dev box" - it is a normal release, and the images
-changed.
+**`v0.2.35` is published and tagged, and it closes the gap the previous handoff described.**
+Unlike the 0.2.34 delta, `origin/main` and the published images now agree, and the gate that
+proves it passes.
 
 | | state |
 |---|---|
-| `origin/main` | contains 0.2.34, and is dozens of commits past the tag (see the gap below) |
-| tag `v0.2.34` | annotated, peels to `5956639fa1c9f987ae20a471c63f86bfa34d56f0`, and that commit is what the images were built from |
-| GHCR `0.2.34` | **all six images published**, anonymously pullable, all labelled revision `5956639fa1c9` |
+| `origin/main` | contains 0.2.35; the tag points INTO main, not past it |
+| tag `v0.2.35` | annotated, peels to `2924798cb44a3dd66bf08d2ecfde8b78f351f872`, which is what the images were built from |
+| GHCR `0.2.35` | **all six images published**, anonymously pullable, all labelled revision `2924798cb44a` |
 
-So this machine pulls from the registry like any other release. There is nothing to reconcile
-and nothing waiting on a push - but there IS one fix on `main` that no published image carries
-yet, and you should know that before you read a green health check as a complete stack.
+`scripts/test-release-provenance.ps1` -> **exit 0**. That is the first time this gate has been
+green since 0.2.33, and it is the objective evidence that tag, pin and artifact agree.
+
+So this machine pulls from the registry like any other release. Nothing is waiting on a push,
+and no fix is stranded outside a published image.
 
 ## Is the release real?
 
@@ -27,10 +29,10 @@ Read the answer rather than assuming it:
 ```powershell
 cd <repo>
 git fetch origin --tags
-git rev-parse 'v0.2.34^{commit}'      # expect 5956639fa1c9f987ae20a471c63f86bfa34d56f0
-# Tag FIRST (positional), then the images. `--tag 0.2.34 laya-serve` silently
+git rev-parse 'v0.2.35^{commit}'      # expect 2924798cb44a3dd66bf08d2ecfde8b78f351f872
+# Tag FIRST (positional), then the images. `--tag 0.2.35 laya-serve` silently
 # swallows laya-serve as the flag's value and checks only the default five.
-python scripts/check-ghcr-anon.py 0.2.34 pacgate-api pacgate-mcp ocr-service `
+python scripts/check-ghcr-anon.py 0.2.35 pacgate-api pacgate-mcp ocr-service `
     deer-flow-pacgate deer-flow-frontend-pacgate laya-serve
 ```
 
@@ -40,84 +42,68 @@ property that matters.
 
 `scripts/test-release-provenance.ps1` is the stronger check: it reads each image's
 `org.opencontainers.image.revision` label and refuses to bless the release unless every
-published image came from the tagged commit. It currently reports `PASS` on the tag/registry
-half and `FAIL` on one file-level difference - see "The one thing 0.2.34 does not contain".
+published image came from the tagged commit. On 0.2.35 it reports **PASSED, exit 0** -
+all six images on `2924798cb44a`, the tag peeling to that same commit, and nothing
+image-affecting changed since.
 
-## The one thing 0.2.34 does not contain
+## The gap 0.2.35 closes, kept here on purpose
 
-`origin/main` is **not** the same tree as the release. Measured 2026-11-14:
+Read this before you decide a green health check means a complete stack. The previous handoff
+said it and was right about 0.2.34:
 
 ```
-git rev-list --count 'v0.2.34^{commit}'..origin/main        ->  69 at the time of writing
-git diff --name-only 'v0.2.34^{commit}'..origin/main -- pacgate-ai/   ->  only the two files below
+git merge-base --is-ancestor 9f0e0c8 v0.2.34   ->  false  (and false for v0.2.30..v0.2.34)
 ```
 
-The commit count is a moving target - it grows with every commit that lands on `main`, including
-the doc-only fixes in this handoff - so re-read it rather than trusting the number here. The line
-that stays true is the second one: **exactly two Rust files differ**, and they are the redactor
-fix below.
+The redactor verdict fix `9f0e0c8` ("a model guess alone cannot block a document") reached
+`main` on 2026-11-11, two days after `v0.2.34` was cut. It touches
+`pacgate-ai/crates/pacgate-redact/src/{pipeline,verify}.rs`, which compile into `pacgate-api`,
+so it could not travel by `git pull` or by a bind mount - only a new image could carry it.
+For two releases the tag named artifacts that did not include it.
 
-The redactor verdict fix `9f0e0c8` ("a model guess alone cannot block a document") is on
-`origin/main` and in **no** published image: `git merge-base --is-ancestor 9f0e0c8 <tag>` is
-false for every tag from `v0.2.30` through `v0.2.34`. It reached `main` on 2026-11-11 through
-`1822746` (merge of `fork/main`), two days after `v0.2.34` was cut. It touches
-`pacgate-ai/crates/pacgate-redact/src/{pipeline,verify}.rs`, which are compiled into
-`pacgate-api`, so it cannot travel by `git pull` - it needs a new image.
+**`v0.2.35` contains it**, and the fix was verified on the live stack rather than inferred: a
+document that had been `blocked` with 16 chunks on model-only evidence re-sanitized to
+`verdict: pass` with `chunks_promoted: 15`, leaving the residue a reviewer still sees as public
+bodies (欧盟法院, 北大) rather than client identity.
 
-Consequences, stated rather than smoothed over:
+**That is why the re-sanitize step below is mandatory, not optional.** The verdict is computed
+at sanitize time and stored, so a machine that pulls 0.2.35 keeps its old `blocked` rows until
+each one is re-sanitized. The images are immutable; the verdicts already written are not
+retroactively recomputed.
 
-- `scripts/test-release-provenance.ps1` **fails today** on exactly those two files. That is a
-  true positive: a rebuild from `v0.2.34` would not reproduce what clients pull. It stays red
-  until a release containing `9f0e0c8` is published. Do not suppress it and do not move
-  `v0.2.34` - `scripts/preflight-release-tag.ps1` refuses to re-tag a live tag, and moving a
-  published tag is the 0.1.28 defect this gate was written from.
-- Until then, documents blocked **on model-only evidence** stay blocked on a client machine.
-  On the dev box that is 397 of 868 admin-tenant chunks across four documents. This is an
-  accepted, recorded cost - `docs/superpowers/decisions/2026-11-08-no-local-release-cut.md`.
-- Everything else that changed after the tag reaches clients through a bind mount
-  (`deploy/pacgate-mcp/server.py`, `deploy/client-bundle/patches/*.py`,
-  `deploy/client-bundle/deer-flow-config.yaml`, the qm compose lane), which is why `-Update`
-  pulls **and restarts**. Those are not waiting on a release.
+## What is actually in 0.2.35
 
-So: pulling 0.2.34 on another machine is correct and complete **for 0.2.34**, and it does not
-carry `9f0e0c8`.
-
-## What is actually in 0.2.34
-
-Four changes worth knowing. 52 commits since `v0.2.32` (46 on the first-parent line, which is
-the count that matches a reviewable log).
+One behavioural change, plus everything 0.2.34 already carried. Unlike the 0.2.34 delta, there
+is no "fix that never shipped" left over.
 
 | # | Change | Verify with |
 |---|---|---|
-| 1 | **`kb_search` no longer presents unrelated neighbours as results.** pgvector returns the nearest chunks for ANY query, so a query sharing no term with the corpus used to come back looking like an answer. The API now suppresses a result set in which no chunk contains a query term, which is what makes the caller's `no_match` branch reachable. | `scripts/test-kb-search-empty-signal.ps1` - **6 of 6**, including the new E6 |
-| 2 | **The KB ingester denies the two MCP authorization documents.** They hold a plaintext CourtListener token and five plaintext passwords and sit beside `OPERATOR.md`, which was already denied. Compiled into the image, so it needed a rebuild to take effect - which is why it is in this release and was not in 0.2.32. | the `pacgate-ai` unit test `the_credential_documents_are_denied` |
-| 3 | **Boundary rules no longer overstate themselves.** `EnforcementPoint` was written on 35 rules and read nowhere. The prompt now separates rules enforced outside the model from self-check; one gate (citation verification against sanitised text) is genuinely built, and the other 15 report `not_implemented` instead of passing silently. | `cargo test -p pacgate-persona` |
-| 4 | Carry-over bind-mounted fixes: bounded 401 re-login, fold-recovery index, context-pressure hint, fold telemetry | `scripts/test-summarization-recovery.ps1` - **22 of 22** |
+| 1 | **The verifier no longer treats a model guess as proof of residue.** A `MatchSource::Model` span was decisive on its own, and because `verify()` re-runs detectors over the REDACTED text, a guess about absent text refused whole documents. Rule matches still block unconditionally; model spans stay in `residue`/`notes` for the reviewer. | `cargo test -p pacgate-redact` - **178 passed**; live: the blocked document re-sanitized to `verdict: pass`, `chunks_promoted: 15` |
+| 2 | **Re-sanitize is required on this machine, not optional.** The verdict is stored at sanitize time, so old `blocked` rows stay blocked after the pull. | `POST /api/documents/:id/sanitize` with `{"data_level":"T3"}` - see step 6 below |
+
+Carried unchanged from 0.2.34: the `kb_search` empty-signal suppression, the ingester denying
+the two MCP authorization documents, the boundary-rule enforcement split (`not_implemented`
+instead of silent passes), and the bind-mounted summarization/401-recovery fixes.
 
 ## The images and the patches travel DIFFERENTLY
 
-This is the part that changed since the last handoff. Read it before pulling.
-
 | | What changed? | How it reaches you |
 |---|---|---|
-| **Images** (all six) | **YES** - `pacgate-api` and `pacgate-mcp` contain new code, and the tag is new | `docker compose -f compose.prod.yaml pull` **fetches real layers** |
-| **Patches** (`patches/*.py`, `server.py`) | yes, and they are bind-mounted | `git pull` **plus a container restart** - a pull alone is inert |
+| **Images** (all six) | **YES** - `pacgate-api` carries the verdict fix; the other five are content-identical but republished under the new tag | `docker compose -f compose.prod.yaml pull` **fetches real layers** |
+| **Patches** (`patches/*.py`, `server.py`) | carried from 0.2.34 | `git pull` **plus a container restart** - a pull alone is inert |
 
-**Verified 2026-11-14**, the manifest digests GHCR serves for `0.2.34` (index digest, and the
-`linux/amd64` child the bundle actually runs):
+**Verified 2026-11-15**, the digests GHCR serves for `0.2.35`:
 
-| image | GHCR `0.2.34` index | `linux/amd64` |
-|---|---|---|
-| pacgate-api | `sha256:15564c8da44ce1ed…` | `sha256:c55c78e4b160dd11…` |
-| pacgate-mcp | `sha256:546a8e061135b5fd…` | `sha256:d4e1c564ff67ddaf…` |
-| ocr-service | `sha256:660a84bbe8a21aa2…` | `sha256:d81e3f1323e5d2ee…` |
-| deer-flow-pacgate | `sha256:27ddc825ad6f89fa…` | `sha256:0d03b53399190fc1…` |
-| deer-flow-frontend-pacgate | `sha256:78f9b83580b61dad…` | `sha256:350f6ec747945775…` |
-| laya-serve | `sha256:f959f58fda401d9b…` | `sha256:85e5729521e49ba6…` |
+| image | GHCR `0.2.35` index |
+|---|---|
+| pacgate-api | `sha256:a154813306724ce9445c37e8f5dceafac8aadfc0e1135b81d1371ac42bfcbf4b` |
+| pacgate-mcp | `sha256:51b72…` |
+| ocr-service | `sha256:01ce5…` |
+| deer-flow-pacgate | `sha256:038ed…` |
+| deer-flow-frontend-pacgate | `sha256:721b2…` |
 
-The digests in the previous revision of this file (`432550ac8840…` and friends) **no longer
-resolve** - a registry lookup against them returns 404. Do not carry them forward; re-read the
-table above, or re-derive it with `scripts/report-ghcr-digests.ps1 -Version 0.2.34`.
+Re-derive rather than carry these forward: `scripts/report-ghcr-digests.ps1 -Version 0.2.35`.
+The truncated entries are the script's own output; it prints full digests per image.
 
 The previous handoff said "no image pull at all" and that pulling would report
 *"up to date"*. **That was true of the 0.2.32 delta and is false of this one.** An
@@ -207,6 +193,44 @@ pwsh -NoProfile -File scripts/audit-e2e-credentials.ps1         # exit 2 = CANNO
 still serves the old code, because the patch is mounted and loaded at process start. If
 either `docker exec` prints `0`, the restart did not take - re-run
 `docker compose -f compose.prod.yaml restart deer-flow` and check again.
+
+## Then re-sanitize the blocked documents - 0.2.35 is inert without it
+
+The verdict is computed at sanitize time and STORED. Pulling 0.2.35 replaces the code that
+computes it; it does not recompute verdicts already written. A machine can therefore run
+0.2.35 with a fully green stack and still have documents blocked by the old rule.
+
+Find them:
+
+```sql
+select d.id, d.name, count(*) as blocked
+from kb_chunks c join documents d on d.id = c.document_id
+where c.sanitization_state = 'blocked'
+group by d.id, d.name order by blocked desc;
+```
+
+```powershell
+docker exec pacgate-db psql -U pacgate -d pacgate -c "<the query above>"
+```
+
+For each one, re-run the sanitize. `data_level` is REQUIRED - omitting it returns
+`422 missing field data_level`, which reads like a broken endpoint but is a validation error:
+
+```powershell
+# from inside the compose network, so nginx's browser-origin gate does not apply
+docker exec pacgate-mcp python /tmp/san.py <admin-password> <document-id>
+# POST /api/documents/<id>/sanitize  {"data_level":"T3"}
+```
+
+Expect `verdict: pass` and a non-zero `chunks_promoted`. If `verdict` stays `block`, the
+remaining residue is **rule** evidence (checksum/pattern/context) and is *supposed* to block -
+that is a real identifier, not this release's false positive, and it needs a human, not a retry.
+
+Measured on the dev box: the one blocked document went from 16 blocked chunks to 15 sanitized
+(one chunk was fully redacted away), leaving a residue of public bodies only.
+
+`POST .../sanitize-rescan` is the read-only inspection: it reports `chunks_offending: 0` when
+the new rule is satisfied, but it does NOT promote. Use `/sanitize` to actually reopen.
 
 ## Two things that will differ on another machine, and are not defects
 
