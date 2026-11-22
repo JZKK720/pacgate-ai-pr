@@ -95,7 +95,9 @@ function Measure-Probe([string]$Layer, [string]$Name, [scriptblock]$Probe) {
     $spread = if ($med -gt 0) { [math]::Round((($max - $min) / $med) * 100, 0) } else { 0 }
     Write-Host ("  [  ok] {0} / {1,-34} median {2,8:N1} ms   spread {3,4}%   n={4}" -f `
             $Layer, $Name, $med, $spread, $samples.Count) -ForegroundColor Green
-    Record $Layer $Name $med "spread $spread%% ($([math]::Round($min,1))-$([math]::Round($max,1)) ms)$(if ($note) { "; $note" })"
+    # No '%%' here: Write-Host's -f operator is .NET string formatting, not printf, so
+    # '%%' printed literally in the JSON report while the console showed a bare '%'.
+    Record $Layer $Name $med ("spread {0}% ({1}-{2} ms){3}" -f $spread, [math]::Round($min, 1), [math]::Round($max, 1), $(if ($note) { "; $note" } else { '' }))
 }
 
 Write-Host '=== pacgate-ai round-trip benchmark ===' -ForegroundColor White
@@ -185,36 +187,82 @@ if (-not $dfPassword) {
 }
 Write-Host ''
 
-# ── L2: the MCP tool surface over the stdio bridge ─────────────────────────────
-# READ THIS NUMBER CORRECTLY. This probe spawns a NEW python process per sample, so it
-# is dominated by cold-start cost, not by the tool call. Measured on 0.2.37 2026-10-05:
+# ── L2: the MCP tool surface, in-network, over streamable HTTP ─────────────────
+# READ THIS NUMBER CAREFULLY. Two things it is NOT:
 #
-#   docker exec + python3 -c "print(1)"   233 ms
-#   docker exec + python3 -c "import server"   791 ms   <- docx-scalpel, mcp, httpx
-#   full handshake + tools/list          1133 ms
+#   1. It is NOT a stdio handshake. My first version piped JSON-RPC at
+#      `python3 /app/server.py` and counted `"name"` occurrences in the output. That
+#      measured nothing: server.py BOOTS AN HTTP SERVER ("Starting pacgate MCP server
+#      on :8000"), it does not speak stdio, so the probe counted 0 tools while
+#      reporting [ok]. A probe that cannot fail is not a probe.
+#   2. It is NOT the tool-call latency. The process is cold each sample, so this is
+#      dominated by start-up. Measured decomposition on 0.2.37: docker exec +
+#      python3 -c pass = 233 ms, + `import server` = 791 ms, full handshake = ~860 ms.
+#      ~70% is import cost (docx-scalpel, mcp, httpx), ~20% is container exec. A
+#      long-lived client pays it once.
 #
-# So ~70% of the figure is import cost and ~20% is container exec; the protocol
-# round trip itself is a small remainder. That is fine for what this probe is for - it
-# proves the bridge answers and that the 29 tools are advertized - but it must NOT be
-# read as "the MCP tool call takes 1.1 s". A long-lived client pays the import ONCE.
-# The steady-state tool latency is L4's business, where the process is already up.
-Write-Host 'L2  pacgate-mcp tools/list (cold process - startup-dominated, see note)' -ForegroundColor Cyan
+# The handshake below is copied from scripts/test-mcp-tool-surface.ps1, which is the
+# gate that actually proves the 29-tool surface: initialize -> mcp-session-id ->
+# tools/list, run from INSIDE the network (deer-flow has the client stack) so the
+# path under test is the real one.
+Write-Host 'L2  pacgate-mcp handshake + tools/list (in-network, cold process)' -ForegroundColor Cyan
 
-$initReq = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"benchmark","version":"1"}}}'
-$listReq = '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-Measure-Probe 'L2' 'mcp cold start + handshake + tools/list' {
-    $body = Join-Path ([IO.Path]::GetTempPath()) ("bench-mcp-{0}.jsonl" -f ([guid]::NewGuid().ToString('N')))
-    @($initReq, $listReq) | Set-Content -LiteralPath $body -Encoding ASCII
-    try {
-        # A FILE body, not an inline argument: PowerShell re-quotes a JSON literal passed
-        # to a native command and strips the inner quotes, which is what made the smoke
-        # lane report 400 against a healthy stack.
-        $out = (Get-Content $body | docker exec -i pacgate-mcp python3 /app/server.py 2>&1 | Out-String)
-        $n = ([regex]::Matches($out, '"name"\s*:')).Count
-        @{ Note = "$n tool entries" }
-    } finally {
-        Remove-Item -LiteralPath $body -ErrorAction SilentlyContinue
+$mcpProbe = @'
+import json, sys, urllib.request
+
+URL = "http://pacgate-mcp:8000/mcp"
+H = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+
+def post(body, sid=None):
+    h = dict(H)
+    if sid:
+        h["mcp-session-id"] = sid
+    req = urllib.request.Request(URL, data=json.dumps(body).encode(), headers=h)
+    return urllib.request.urlopen(req, timeout=30)
+
+def parse(raw):
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    out = None
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            chunk = line[5:].strip()
+            if chunk:
+                try:
+                    out = json.loads(chunk)
+                except Exception:
+                    pass
+    return out
+
+try:
+    r = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2024-11-05", "capabilities": {},
+        "clientInfo": {"name": "round-trip-benchmark", "version": "1"}}})
+    sid = r.headers.get("mcp-session-id")
+    if not sid:
+        print("ERROR no session id"); sys.exit(3)
+    r.read()
+    r2 = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, sid)
+    payload = parse(r2.read().decode())
+    if not payload or "result" not in payload or "tools" not in payload["result"]:
+        print("ERROR no tools array"); sys.exit(3)
+    print("TOOLS " + str(len(payload["result"]["tools"])))
+except Exception as e:
+    print("ERROR " + str(e)[:160]); sys.exit(3)
+'@
+
+Measure-Probe 'L2' 'mcp handshake + tools/list (cold)' {
+    $raw = ($mcpProbe | docker exec -i deer-flow python - 2>&1 | Out-String)
+    $m = [regex]::Match($raw, 'TOOLS\s+(\d+)')
+    if (-not $m.Success) {
+        throw ("mcp handshake did not complete: " + (($raw -replace '\s+', ' ').Trim()))
     }
+    @{ Note = "$($m.Groups[1].Value) tools" }
 }
 Write-Host ''
 
