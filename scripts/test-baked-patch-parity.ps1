@@ -33,11 +33,31 @@
 # Exit 2 means CANNOT CHECK and must never be read as a failure.
 [CmdletBinding()]
 param(
-    [string]$Image = 'ghcr.io/jzkk720/deer-flow-pacgate:0.2.8'
+    # Default to the tag the bundle pins rather than a literal. A hardcoded tag here
+    # goes stale on every release AND the failure mode looks like a real finding:
+    # measured 2026-10-05, this defaulted to 0.2.8 (thirty releases old) and warned
+    # that two baked copies were STALE, while the actual 0.2.37 image matched all
+    # three exactly. An advisory check that indicts a good image is worse than no
+    # check, because it trains the reader to ignore the warning.
+    [string]$Image = ''
 )
 
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
+
+if (-not $Image) {
+    $bundle = 'deploy/client-bundle/compose.bundle.yaml'
+    $pin = if (Test-Path $bundle) {
+        Select-String -Path $bundle -Pattern 'image:\s*\S*deer-flow-pacgate:(?<v>\d+\.\d+\.\d+)' |
+            Select-Object -First 1
+    }
+    $Image = if ($pin) {
+        "ghcr.io/jzkk720/deer-flow-pacgate:$($pin.Matches[0].Groups['v'].Value)"
+    } else {
+        'ghcr.io/jzkk720/deer-flow-pacgate:0.2.8'
+    }
+    Write-Host "  comparing against $Image (derived from the bundle pin)" -ForegroundColor DarkGray
+}
 
 $dockerfile = 'deploy/deer-flow-pacgate/Dockerfile'
 $composes = @('deploy/client-bundle/compose.prod.yaml',
