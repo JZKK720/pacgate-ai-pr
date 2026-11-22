@@ -39,7 +39,6 @@ param(
     [string]$NginxUrl = 'http://localhost:8089',
     [string]$FrontendUrl = 'http://localhost:8090',
     [string]$QmUrl = 'http://localhost:8181',
-    [string]$OllamaUrl = 'http://localhost:11434',
     [string]$Email = 'admin@pacgate-law.com',
     [string]$Password = '',
     [int]$TimeoutSec = 300,
