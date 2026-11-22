@@ -108,7 +108,7 @@ Measured: the **identical** command returned `200` from an interactive shell and
 400 with the body supplied via `--data-binary @file`; a rejected key returns 401, so
 this cannot mask an auth failure, and a missing key is still a SKIP.
 
-### 3.3 The redline tools cannot reach a `.docx` through pacgate-api (OPEN)
+### 3.3 The redline tools cannot reach a `.docx` through pacgate-api (RESOLVED in 0.2.37)
 
 **This is the significant finding, and it invalidates the end-to-end usefulness of
 the feature as shipped.**
@@ -166,6 +166,37 @@ egress, so it is recorded here rather than implemented unilaterally.
 CJK granularity, the author stamping, and the MCP surface (29 tools, correct schemas)
 all work. What is *not* proven is a real client workflow, because no client workflow
 can exist until the transport question above is settled.
+
+#### 3.3.1 Resolution (0.2.37)
+
+None of the three options was taken, because a fourth exists that needs no egress
+change at all: **let the tool work with what the platform is willing to release.**
+
+`pacgate_redline_compare` is now dual-mode:
+
+| Reachable state | What the tool does | `format` |
+| --- | --- | --- |
+| both `.docx` packages downloadable | full Word redline via `docx-scalpel` | `"docx"` |
+| sanitized text only | script-aware text diff, `[-deleted-]` / `{+inserted+}` | `"text"` |
+| `pending` | **sanitizes on demand** via `_ensure_sanitized_text`, then the row above | `"text"` |
+| neither readable | structured failure carrying `repair_hint` | `null` |
+
+The caller is never left guessing which artifact it holds: `format` names it on every
+path, and the `text` path carries an explicit `note` saying a Word redline needs both
+original packages.
+
+This does not weaken the egress design — the text lane is *exactly* the lane the
+design permits, and the docx lane only ever runs when pacgate-api was already willing
+to hand over the binary (an unsanitized document, or a future `never`). Option 1
+(rewrite the `.docx` package so a sanitized binary is genuinely redacted) is still the
+better *long-term* answer for producing Word redlines from sanitized documents, and is
+noted as such rather than closed. Option 2 remains unimplemented.
+
+The gate that would have caught the original defect now exists:
+`scripts/test-docx-redline.ps1` **section 0** calls the MCP *tool*, not the engine.
+Against the 0.2.36 image it fails (`409 conflict`, `format=None`); against 0.2.37 it
+passes. That split is the whole point — the engine passing 8/8 while the tool could
+not reach a document is precisely the boundary error that let this ship.
 
 ---
 
