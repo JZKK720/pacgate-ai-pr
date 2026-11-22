@@ -54,7 +54,14 @@ param(
     # measurable fact, and this gate should not make it silently.
     [switch]$Strict,
     # Print the size table being used, so the numbers are never a black box.
-    [switch]$Report
+    [switch]$Report,
+    # The VRAM budget to judge against, in GB. Defaults to the REFERENCE CLIENT class
+    # (16 GB RX 7600 XT), because that is what ships. Pass the value for the machine
+    # you are actually on when the question is "can THIS host run the roster" - the
+    # answer differs: measured 2026-10-05 on a 4 GB Radeon 8060S, every active entry
+    # including the 6.6 GB ornith is OVER_CAP, while this gate reported FITS for all
+    # of them because it was judging a 16 GB card that was not present.
+    [int]$VramGB = 16
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,7 +76,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 # come out of the same pool, and a legal deployment must not be one driver
 # update away from spilling to CPU.
 # ---------------------------------------------------------------------------
-$AipcVramGB   = 16
+$AipcVramGB   = $VramGB
 $ComfortRatio = 0.75   # <= 12 GB: fits with headroom
 # > 0.75 and <= 1.0 is MARGINAL; above 1.0 is OVER_CAP.
 

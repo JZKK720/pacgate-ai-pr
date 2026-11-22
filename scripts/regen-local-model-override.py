@@ -1,10 +1,28 @@
 """Regenerate deploy/client-bundle/deer-flow-config.local.yaml (machine-local override).
 
     python scripts/regen-local-model-override.py
+    python scripts/regen-local-model-override.py --promote glm-5.3-flash-cloud
 
 THIS GENERATES A GITIGNORED FILE. Nothing here changes the shipped client contract:
 `deploy/client-bundle/deer-flow-config.yaml`, `ollama-models.txt`, both compose lanes
 and every image are untouched. See deploy/LOCAL-MODEL-PICKER-74B.md for the reasoning.
+
+TWO MODES:
+
+  (default)   Activate the commented-out 74B entry and make it `models[0]`. For a box
+              with a large unified-memory carve-out. See the banner below.
+
+  --promote   Move an ALREADY-ACTIVE roster entry to `models[0]` and converge the five
+              auxiliary lane pins on it. Nothing is added, because the tracked config
+              already carries the cloud entries and keeps the tracked file the single
+              source of truth. This is the correct mode when no LOCAL tag fits the
+              host's VRAM - measured 2026-10-05 on a 4 GB Radeon 8060S, where the
+              shipped default is 9.09 GB and the smallest local tag is 6.10 GB, so
+              every local run died at load and audit-post-deploy stage 8 could not be
+              evaluated at all. A cloud tag loads by definition: no weights on disk.
+
+Which mode? Run `scripts/test-aipc-capacity-fit.ps1 -Vram <host GB>` first. If it says
+every local entry is OVER_CAP for this host, use --promote.
 
 Why a generator instead of a hand-edited copy: the tracked config keeps moving, and a
 snapshot silently rots. The previous hand-made copy was already stale on 2026-11-11 -
@@ -123,12 +141,173 @@ POINTER = """\
   # top of this file). It is deliberately NOT left here too - one entry, one place.
 """
 
+# ── capacity mode ────────────────────────────────────────────────────────────
+#
+# The 74B mode above exists for THIS box class (96 GiB unified carve-out). It is the
+# wrong answer on a small GPU, and on 2026-10-05 that mattered: this machine has an
+# AMD Radeon 8060S with 4 GB of VRAM, so the shipped picker default
+# (nemotron-3.5-bolt:e4b-q8_0, 9.09 GB) and every other local tag (6.10-24.24 GB)
+# fails to load. Direct probes died both on the GPU path and on the CPU fallback,
+# and audit-post-deploy stage 8 could not be evaluated at all.
+#
+# `--promote <entry>` is the general form: it does not ADD a model, it MOVES an
+# already-active roster entry to `models[0]` and converges the five auxiliary lane
+# pins on it. That is all that is needed to promote a cloud entry, because the cloud
+# entries already exist and are already active - they are simply not first. Nothing
+# in the shipped contract changes; this still writes a gitignored file.
+#
+# The lane convergence is the same requirement the 74B mode documents: a lane left on
+# a different tag forces an evict + cold reload. For cloud tags the reload is a network
+# round trip rather than a disk load, but the wasted turn time is the same class of bug.
+
+
+def _entry_bounds(lines: list[str], name: str) -> tuple[int, int]:
+    """Return the [start, end] line span of an active roster entry named `name`."""
+    try:
+        start = next(
+            i for i, line in enumerate(lines) if line.strip() == f"- name: {name}"
+        )
+    except StopIteration:
+        raise SystemExit(
+            f"no ACTIVE roster entry named {name!r}. --promote only moves entries that "
+            "already exist in the tracked config, so that the tracked config stays the "
+            "single source of truth. Available entries:\n  "
+            + "\n  ".join(
+                ln.strip().removeprefix("- name: ")
+                for ln in lines
+                if re.match(r"^  - name: ", ln)
+            )
+        ) from None
+    end = start
+    while end + 1 < len(lines) and re.match(r"^  [\s\S]*\S", lines[end + 1]):
+        end += 1
+    return start, end
+
+
+def promote_entry(lines: list[str], name: str) -> list[str]:
+    """Move an existing active entry to models[0] and converge the lane pins on it."""
+    start, end = _entry_bounds(lines, name)
+    block = lines[start : end + 1]
+    tag_line = next((l for l in block if re.match(r"^\s+model:\s", l)), None)
+    if not tag_line:
+        raise SystemExit(f"entry {name!r} has no `model:` line; refusing to promote it")
+    tag = tag_line.split("model:", 1)[1].strip()
+
+    # Relabel: the tracked copy may call a cloud entry "requires ollama signin" and a
+    # local one "fits a 16 GB AIPC card" - both misleading where it is now the default.
+    # The value is QUOTED because it contains a colon, and an unquoted `foo: bar` inside
+    # a YAML scalar is a parse error ("mapping values are not allowed here"). Measured
+    # 2026-10-05: without the quotes deer-flow refused to start at all.
+    new_desc = (
+        f"LOCAL MACHINE DEFAULT. Promoted to models[0] because no local tag fits "
+        f"this host VRAM. Backing tag {tag}."
+    )
+    block = [
+        f'    description: "{new_desc}"'
+        if re.match(r"^\s+description:", line)
+        else line
+        for line in block
+    ]
+
+    lines = lines[:start] + lines[end + 1 :]
+    models_idx = lines.index("models:")
+    entry = [
+        "",
+        f"  # ── MACHINE-LOCAL DEFAULT: {name} ─────────────────────────────────────────",
+        "  # FIRST entry on purpose: `models[0]` IS the picker default (agent.py takes",
+        "  # default_model_name = app_config.models[0].name, and the frontend falls back",
+        "  # to models[0] when a thread has no model yet).",
+        "",
+        *block,
+        "",
+    ]
+    lines = lines[: models_idx + 1] + entry + lines[models_idx + 1 :]
+
+    # Converge every auxiliary lane onto the promoted entry, including the
+    # `cloud_model: nemotron-bolt-7b-local` pin - the tracked config uses that name as
+    # its "heavy lift" alias, and the promoted entry serves that role here.
+    pins = [
+        ("model_name", "nemotron-bolt-7b-memory", 1),
+        ("model_name", "nemotron-bolt-7b-local", 2),
+        ("local_model", "nemotron-bolt-7b-local", 1),
+        ("cloud_model", "nemotron-bolt-7b-local", 1),
+    ]
+    for key, old, expected in pins:
+        pattern = re.compile(rf"^(\s+){key}: {re.escape(old)}$")
+        hits = 0
+        for i, line in enumerate(lines):
+            if pattern.match(line):
+                lines[i] = pattern.sub(rf"\g<1>{key}: {name}", line)
+                hits += 1
+        if hits != expected:
+            raise SystemExit(
+                f"{key}: {old!r}: expected {expected} hit(s), got {hits}. The tracked "
+                "config's lane pins moved - update this generator deliberately."
+            )
+    return lines
+
+
 
 def main() -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Generate the gitignored machine-local deer-flow config override."
+    )
+    ap.add_argument(
+        "--promote",
+        metavar="ENTRY",
+        help="Move an ALREADY-ACTIVE roster entry (e.g. glm-5.3-flash-cloud) to "
+        "models[0] and converge the auxiliary lane pins on it. Use this when no local "
+        "tag fits the host's VRAM.",
+    )
+    args = ap.parse_args()
+
     if not SRC.exists():
         raise SystemExit(f"tracked config not found: {SRC}")
 
+    # The output is a YAML file consumed by deer-flow at gateway startup, so a parse
+    # error is not cosmetic: measured 2026-10-05, one unquoted `description:` containing
+    # "tag: glm-5.3-flash-cloud" crash-looped the container with
+    #   RuntimeError: Failed to load configuration during gateway startup:
+    #   mapping values are not allowed here
+    # Validate before writing so this class of bug cannot leave a broken mount behind.
+    def _require_valid_yaml(text: str, label: str) -> None:
+        try:
+            import yaml  # type: ignore
+        except ImportError:
+            return  # optional; the guard is best-effort on machines without PyYAML
+        try:
+            yaml.safe_load(text)
+        except Exception as exc:  # noqa: BLE001 - surface any parser error verbatim
+            raise SystemExit(f"refusing to write {label}: invalid YAML ({exc})") from exc
+
     lines = SRC.read_text(encoding="utf-8").split("\n")
+
+    if args.promote:
+        lines = promote_entry(lines, args.promote)
+        header = f"""\
+# {"=" * 78}
+# MACHINE-LOCAL OVERRIDE - NOT SHIPPED, NOT FOR CLIENTS. Generated file.
+#
+# Regenerate with: python scripts/regen-local-model-override.py --promote {args.promote}
+# Read by deer-flow only when compose.local-model-override.yaml is merged in.
+#
+# WHY: no LOCAL model tag fits this host's VRAM, so the shipped picker default cannot
+# load at all and every agent run fails at model startup. `{args.promote}` is an
+# already-active entry in the tracked config; this file only moves it to `models[0]`
+# (the picker default) and converges the five auxiliary lane pins onto it, so a lane
+# left on a different tag cannot force an evict on every turn.
+#
+# The tracked config, ollama-models.txt, the images and every client are untouched.
+# {"=" * 78}
+
+"""
+        _require_valid_yaml(header + "\n".join(lines), DST.name)
+        DST.write_text(header + "\n".join(lines), encoding="utf-8")
+        print(f"wrote {DST} (promoted {args.promote} to models[0])")
+        return 0
+
 
     # 1. Extract the commented 74B block out of the tracked config.
     try:
@@ -205,6 +384,7 @@ def main() -> int:
     retarget(r"^(\s+)local_model: nemotron-bolt-7b-local$", r"\1local_model: " + BOLT74, 1)
     retarget(r"^(\s+)cloud_model: nemotron-bolt-7b-local$", r"\1cloud_model: " + BOLT74, 1)
 
+    _require_valid_yaml(BANNER + "\n".join(lines), DST.name)
     DST.write_text(BANNER + "\n".join(lines), encoding="utf-8")
     print(f"wrote {DST}")
     return 0
