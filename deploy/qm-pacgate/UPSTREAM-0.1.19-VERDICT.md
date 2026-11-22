@@ -1,0 +1,222 @@
+# qm upstream 0.1.4 → 0.1.19: verified verdict
+
+**Date:** 2026-10-05
+**Pinned:** `@yc-software/qm` 0.1.4 (running: `qm-pacgate-core` `bee03e7f2271`)
+**Upstream head:** 0.1.19 (latest published; npm list ends at 0.1.19)
+**Verdict: DO NOT upgrade. 0.1.16–0.1.19 is a re-architecture, not a version bump.**
+
+Everything below was measured, not read from a changelog. Upstream publishes no
+changelog, so each claim names the command that produced it.
+
+---
+
+## 1. Why this is not a bump
+
+`qm check` against our unmodified `qm.config.jsonc`:
+
+| Version | Result |
+| --- | --- |
+| 0.1.4 (pinned) | `check passed` |
+| 0.1.6 – **0.1.15** | `check passed` |
+| **0.1.16** | `error: unknown service "admin"` |
+| **0.1.17 – 0.1.19** | `error: unknown service "web-ui"` |
+
+The last release with an unbroken config surface is **0.1.15**; 0.1.16 is the
+first hard failure. But `check` is not the whole contract — §9.1 shows it goes
+silently wrong from **0.1.10**. The last *correct* release is **0.1.9**.
+
+## 2. The topology collapsed 5 services → 2
+
+From `manifest.json` inside the 0.1.19 package and
+`dist/src/services.js`:
+
+```js
+export const SERVICE_NAMES = ["core", "egress-proxy"];
+export const VIRTUAL_SERVICE_NAMES = ["slack", "auth"];
+```
+
+| We run | 0.1.19 | Fate |
+| --- | --- | --- |
+| `core` | `core` | kept, greatly enlarged |
+| `auth` | `auth` | kept (virtual, runs inside core) |
+| `web-ui` | — | folded into core: `/app/plugins/web-ui/dist-web` is a **prebuilt bundle baked into the image** |
+| `portal` | — | removed as a service |
+| `admin` | — | removed as a service |
+| — | `egress-proxy` | **new** |
+| — | `sandbox-base` | **new** image (`ghcr.io/yc-software/qm/sandbox-base`) |
+
+`contract` is **still 1**. That number no longer describes the topology, which is
+exactly why `check` fails on service names rather than a contract bump — a
+migration cannot be detected from the contract value.
+
+## 3. The harness moved inside core
+
+The `pi` harness is no longer a selectable runtime. In the 0.1.19 core image:
+
+| Token | Pinned 0.1.4 | 0.1.19 |
+| --- | --- | --- |
+| `HARNESS` | 43 | **4** (all `HARNESS_SECURITY_POSTURE` / `HARNESS_SHARING_POSTURE`) |
+| `MODEL_BASE_URL` | 1 | **0** |
+| `PI_MODEL` | — | 14 (still wired) |
+| `opencode` | — | **453** |
+
+`env.core.HARNESS` is gone, and with it `MODEL_PROVIDER_HARNESSES`
+(`anthropic: [pi, opencode, claude, mock]`, …) that used to reject a
+provider/harness mismatch. Agent execution is now `/app/src/agent` +
+`/app/src/sandbox` inside core. `opencode` at 453 references is the agent
+runtime that replaced the `pi` harness.
+
+Measured with:
+`docker run --rm --entrypoint sh <core-image> -c "grep -ro 'TOKEN' /app | wc -l"`
+
+## 4. The Ollama bridge survives — under a new name
+
+`MODEL_BASE_URL` is gone, but the capability is not:
+
+```ts
+// /app/src/model/provider-endpoints.ts
+const PROVIDER_BASE_URL_ENV: Record<ModelProvider, string> = {
+  anthropic: "ANTHROPIC_BASE_URL",
+  openai: "OPENAI_BASE_URL",
+  openrouter: "OPENROUTER_BASE_URL",
+};
+```
+
+So `"MODEL_BASE_URL": "http://host.docker.internal:11434/v1"` becomes
+`"OPENAI_BASE_URL": "http://host.docker.internal:11434/v1"`. `parseProviderBaseUrl`
+accepts `http(s)`, strips trailing slashes, and rejects credentials/query/fragment —
+our value passes. qm does not care that the endpoint is Ollama rather than OpenAI;
+only `modelProvider: "openai"` and `PI_MODEL` matter, and both still work.
+
+**This is the one piece of our config that needs no redesign, only a rename.**
+
+## 5. The sandbox architecture changed
+
+`config.js:1357` now warns:
+
+> `"sandbox.image" is retired and ignored — sandboxes boot the platform's stock image; remove the key`
+
+and `doctor.js:130` reports `sandbox: sprites boot the platform's stock image`.
+`qm sandbox publish` no longer exists.
+
+Our `qm.config.jsonc` pins
+`sandbox.image = ghcr.io/jzkk720/pacgate-sandboxes@sha256:…`, and
+`deploy/DEFECT-qm-sandbox-image-unobtainable.md` plus the REPINNED 2026-10-04
+comment in the config exist purely to keep that image resolvable for clients.
+
+**Upgrading deletes the reason that entire defect and its pin exist.** The
+replacement is a bind-mounted layer (`DEPLOYMENT_LAYER=/layer`,
+`existingLayerSubdirs()` mounts `sandbox/<sub>:/layer/<sub>:ro`), i.e. our
+`sandbox/` directory is mounted into the stock image rather than built into a
+published one. That is arguably better for the client-install story — the whole
+GHCR-visibility problem for `pacgate-sandboxes` evaporates — but it is a
+different deployment model that must be re-proven end to end.
+
+## 6. The open MCP question is now answered — and it inverts
+
+Previously recorded as "the highest-value unknown". It is closed:
+
+- **0.1.4 (what we run):** the npm CLI has zero `mcp` references; the *core
+  image* has some. Our agents cannot be given MCP servers declaratively.
+- **0.1.19:** MCP is a **first-class admin feature**.
+  - `/app/src/mcp/mcp-server-store.ts` — persistent server store
+  - `/app/src/api/routes/admin/mcp-servers.ts` — admin CRUD, 283 lines, with
+    `AUTH_MODES = ["none","bearer","client-credentials","oauth-user"]`,
+    `APPROVAL_POLICIES = ["annotations","all","none"]`, OAuth discovery and
+    dynamic client registration
+  - `/app/src/mcp/oauth-discovery.ts`
+  - `mcpServers` appears 172× in the image
+
+So qm gains the ability to call pacgate-mcp as an MCP server. It is configured
+**at runtime through the admin API**, not in `qm.config.jsonc` — the config file
+still has no `mcp` key.
+
+## 7. Images are public and client-pullable
+
+All three 0.1.19 images resolve anonymously:
+
+```
+qm/core          -> EXISTS (public, pullable)
+qm/egress-proxy  -> EXISTS (public, pullable)
+qm/sandbox-base  -> EXISTS (public, pullable)
+```
+
+Verified with `docker manifest inspect`. Note that a hand-rolled
+`curl` to the GHCR `/v2/…/manifests/…` endpoint returned 404 **even for the
+image we are running today**, so that probe is unusable on this account —
+`docker manifest inspect` is the reliable check.
+
+---
+
+## 8. What an upgrade actually costs
+
+Not a version bump. A re-architecture with these work items:
+
+1. **`qm.config.jsonc`** — `services` → `["core", "auth"]` (+ `egress-proxy` if we
+   want the egress control plane); delete the `portal`/`web-ui`/`admin` env
+   blocks; delete `sandbox.image`; rename `MODEL_BASE_URL` → `OPENAI_BASE_URL`;
+   drop `HARNESS`.
+2. **`compose.qm.yaml` (both copies)** — 5 image refs → 2, plus `egress-proxy`;
+   every healthcheck, dependency, network and port mapping re-derived. `web-ui`
+   `:3000`, `portal`, `admin` ports disappear; core serves the UI from
+   `/app/plugins/web-ui/dist-web`.
+3. **Secrets set shrinks** — `AUTH_EMAIL_FROM`, `SMTP_HOST`, `SMTP_PASSWORD`,
+   `SMTP_USERNAME` move to *optional* (sign-in email is `disabled` by default;
+   `qm admin-login` replaces the one-time-link flow). The Mailpit catcher and
+   the `AUTH_EMAIL_TRANSPORT=smtp` wiring go away.
+4. **Sandbox delivery re-proof** — `sandbox/` is now a mounted layer. Must
+   re-verify that `pacgate-qm` and `firecrawl-qm` tools and the three skills
+   still load, and that `sandbox.sourceFingerprint` is still meaningful.
+5. **Client bundle** — `deploy/client-bundle/qm-pacgate/compose.qm.yaml` and the
+   handbooks (`deploy/handbooks/qm-openviking-pacgate-handbook.zh.md`) all
+   describe the 5-service topology and must be rewritten together, bilingual.
+6. **`DEFECT-qm-sandbox-image-unobtainable.md`** becomes obsolete — archive it
+   with a pointer to this document rather than silently deleting it.
+7. **Re-run the whole gate set** — `qm check`, `test-stack-version-coherence.ps1`,
+   smoke, post-deploy audit — plus a fresh-clone install test, because the
+   client path is what actually changes.
+
+## 9. Recommendation
+
+**Stay on 0.1.15 at most; do not go to 0.1.19 for this release.** Concretely:
+
+- The only thing pulling us forward is the MCP admin surface (§6). That is a
+  real capability we want, but it arrives attached to a topology rewrite that
+  invalidates the client install path, the compose files, the handbooks and the
+  sandbox-image workaround.
+- 0.1.16–0.1.19 remove the sign-in email flow we deliberately built (Mailpit +
+  SMTP + one-time links). That is a product decision for the firm, not a
+  mechanical migration.
+- Nothing we run today is broken. `qm check` passes on 0.1.4.
+
+**If the firm decides the MCP reach is worth it**, take it as its own release
+with its own plan: 0.1.4 → 0.1.19 in one step (there is no incremental path,
+because 0.1.16 already breaks the config), behind a new bundle minor version,
+with the client bundle re-proven from a fresh clone. Do not fold it into a
+patch release.
+
+### 9.1 The intermediate option does not exist
+
+My first draft recommended "0.1.15, config-compatible, free bugfix pickup". That
+was wrong, and bisecting the published packages shows why. Two **independent**
+contract changes land at two different versions:
+
+| Version | `sandbox.image` | services | `qm check` |
+| --- | --- | --- | --- |
+| 0.1.4 (pinned) | **honored** | 5 | pass |
+| 0.1.9 | honored | 5 | pass |
+| **0.1.10** | **retired & ignored** | 5 | pass |
+| 0.1.15 | retired & ignored | 5 | pass (but sign-in email already `disabled` by default) |
+| **0.1.16** | retired & ignored | **admin removed** | **fail** |
+
+`qm check` passing at 0.1.15 is a **false green**. It passes because
+`sandbox.image` became a *warning*, not an error — so `check` does not catch
+that our published `pacgate-sandboxes` pin is now silently ignored and clients
+would boot the stock image instead of ours. The `DEFECT-qm-sandbox-image-unobtainable`
+workaround breaks at **0.1.10**, four releases before `check` starts complaining.
+
+**No version above 0.1.9 preserves everything we depend on.** 0.1.4 → 0.1.9 is
+the only safe window, and 0.1.9 is six releases behind head with no changelog to
+say what it fixes. That is not worth a release either.
+
+So: stay on **0.1.4** until the firm commits to the re-architecture.

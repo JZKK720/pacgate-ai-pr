@@ -189,6 +189,42 @@ including Univer's `engine-formula`, stays rejected.
   **no source, no LICENSE**, 0 stars, and its site's MIT/CI/bundled-model claims
   are false. **Do not use.**
 
+### qm upstream: pinned 0.1.4, and why we are not moving (2026-10-05)
+
+`deploy/qm-pacgate/UPSTREAM-0.1.19-VERDICT.md`. Upstream publishes **no
+changelog**, so every boundary below was bisected from the published packages.
+Two **independent** contract breaks, at two different versions:
+
+| Version | `sandbox.image` | services | `qm check` |
+| --- | --- | --- | --- |
+| **0.1.4** (pinned) | honored | 5 | pass |
+| 0.1.9 | honored | 5 | pass |
+| **0.1.10** | **retired & ignored** | 5 | pass |
+| 0.1.15 | retired & ignored | 5 | pass |
+| **0.1.16** | retired & ignored | **`admin` removed** | **fail** |
+| 0.1.17–0.1.19 | retired & ignored | `core` + `egress-proxy` only | **fail** |
+
+**`qm check` is a false green from 0.1.10 to 0.1.15.** `sandbox.image` became a
+*warning*, so `check` passes while our published `pacgate-sandboxes` pin is
+silently ignored and clients would boot the platform's stock image. The
+`DEFECT-qm-sandbox-image-unobtainable` workaround therefore breaks four releases
+before `check` complains. **The last correct release is 0.1.9**, six behind head.
+
+0.1.17+ is a re-architecture, not a bump: 5 services → `core` + `egress-proxy`,
+`web-ui`/`portal`/`admin` folded in or dropped, the `pi` harness replaced by an
+embedded `opencode` agent (`HARNESS` 43→4 refs, `MODEL_BASE_URL` 1→0,
+`opencode` 453), and `contract` **still 1** — so the topology change is invisible
+to any contract check.
+
+The one thing that *does* survive: the Ollama bridge, renamed. `MODEL_BASE_URL`
+→ **`OPENAI_BASE_URL`** (`src/model/provider-endpoints.ts`), same value, same
+`modelProvider: "openai"` + `PI_MODEL`. And the previously-open question is
+answered: 0.1.19 makes **MCP a first-class admin feature**
+(`/app/src/mcp/mcp-server-store.ts`, admin CRUD with OAuth discovery) — the CLI
+still has no `mcp` config key, so it is configured at runtime, not in
+`qm.config.jsonc`. That capability is the only reason to move, and it is not
+worth the client-install rewrite it is attached to.
+
 ### Shipping rule learned from the 0.1.28 defect (plan 035 §6)
 
 **Never publish onto an existing version tag.** `scripts/test-release-provenance.ps1`
