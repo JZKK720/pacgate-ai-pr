@@ -4,7 +4,7 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
 
 **中文文档：** [README-ZH.md](README-ZH.md) | [员工使用手册](docs/PACGATE-LAW-STAFF-HANDBOOK-ZH.md)
 
-## Release: v0.2.36 (2026-11-22)
+## Release: v0.2.37 (2026-11-22)
 
 - **DOCX redlines with native Word tracked changes.** Three new MCP tools —
   `pacgate_redline_compare`, `pacgate_redline_accept`, `pacgate_redline_reject` —
@@ -75,11 +75,11 @@ heading rather than repeated as 0.2.35 changes.
 - RAG retrieval (pgvector + tsvector + Ollama embeddings, T1-T4 data level filtering) — fully on-device
 - OpenViking memory lane: ov-remember / ov-search / ov-read bridge via qm, MCP recall in deer-flow
 - Auth (JWT + argon2 + SOUL resolver middleware)
-- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.2.36` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
-- deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.2.36` (public)
-- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.2.36` (public; exposes **29** MCP tools incl. documents/workflows and DOCX redlines)
-- deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.36` (public; gateway URL baked in at build time)
-- OCR service image: `ghcr.io/jzkk720/ocr-service:0.2.36` (public; PaddleOCR extraction, first-class since 0.1.16)
+- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.2.37` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
+- deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.2.37` (public)
+- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.2.37` (public; exposes **29** MCP tools incl. documents/workflows and DOCX redlines)
+- deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37` (public; gateway URL baked in at build time)
+- OCR service image: `ghcr.io/jzkk720/ocr-service:0.2.37` (public; PaddleOCR extraction, first-class since 0.1.16)
 - qm collaboration bridge validated (Python CLI, HARNESS=pi, real Ollama)
 - Client deployment bundle checked in at `deploy/client-bundle/` — fresh-clone install path verified
 - Knowledge graph: 935 nodes, 2220 edges, 49 communities
@@ -144,11 +144,11 @@ Pacgate runtime images are **public** (anonymous pull verified). The source repo
 
 | Image | Contents | Base |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.2.36` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.36` | pacgate-api MCP bridge (**29** tools incl. documents/workflows/redlines) | `python:3.12-slim` + `libicu` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.36` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.36` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.36` | PaddleOCR extraction service (first-class since 0.1.16) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.37` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.37` | pacgate-api MCP bridge (**29** tools incl. documents/workflows/redlines) | `python:3.12-slim` + `libicu` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.37` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.37` | PaddleOCR extraction service (first-class since 0.1.16) | `python:3.12-slim` |
 
 Every image also carries `:latest`, kept in lockstep with the version tag.
 

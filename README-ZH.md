@@ -4,7 +4,7 @@
 
 **English:** [README.md](README.md) | [Staff Handbook](docs/PACGATE-LAW-STAFF-HANDBOOK.md)
 
-## 版本：v0.2.36（2026年11月22日）
+## 版本：v0.2.37（2026年11月22日）
 
 - **DOCX 红线修订，带 Word 原生修订标记。** 新增三个 MCP 工具——`pacgate_redline_compare`、`pacgate_redline_accept`、`pacgate_redline_reject`——把两份已存文档合成为带真实 `<w:ins>`/`<w:del>` 标记的 `.docx`，审核律师可在 Word 中逐条接受或拒绝修订，而无需阅读叙述式 diff。pacgate-mcp 桥接镜像的对外工具数由 **26 增至 29**。
   - **产物在返回前已通过校验。** `compare()` 会断言：接受全部修订后**精确**还原新文档，拒绝全部修订后**精确**还原原文档。任一不成立即**拒绝返回**，因为这种失败对审核者不可见——他们看到的是看似合理的差异，进而批准了两份文档都不存在的文本。
@@ -45,11 +45,11 @@
 - RAG 检索（pgvector + tsvector + Ollama 嵌入，T1-T4 数据分级过滤）— 完全本地运行
 - OpenViking 记忆模块：经 qm 桥接的 ov-remember / ov-search / ov-read，deer-flow 内 MCP 召回
 - 认证体系（JWT + argon2 + SOUL 解析中间件）
-- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.36`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
-- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.36`（公开）
-- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.36`（公开；暴露 **29** 个 MCP 工具，含文档/工作流与 DOCX 红线）
-- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.36`（公开；构建时烘焙网关地址）
-- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.36`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
+- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.37`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
+- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.37`（公开）
+- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.37`（公开；暴露 **29** 个 MCP 工具，含文档/工作流与 DOCX 红线）
+- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37`（公开；构建时烘焙网关地址）
+- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.37`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
 - qm 协作桥接已验证（Python CLI，HARNESS=pi，真实 Ollama）
 - 客户部署包已入库：`deploy/client-bundle/` — 全新克隆安装路径已验证
 - 知识图谱：935 节点、2220 条边、49 个社区
@@ -115,11 +115,11 @@ Pacgate 运行时镜像均为**公开**（已验证匿名拉取）。源码仓�
 
 | 镜像 | 内容 | 基础镜像 |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.2.36` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.36` | pacgate-api MCP 桥接（**29** 个工具，含文档/工作流/红线） | `python:3.12-slim` + `libicu` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.36` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.36` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.36` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.37` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.37` | pacgate-api MCP 桥接（**29** 个工具，含文档/工作流/红线） | `python:3.12-slim` + `libicu` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.37` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.37` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
 
 每个镜像同时带有 `:latest` 标签，与版本标签保持同步。
 
