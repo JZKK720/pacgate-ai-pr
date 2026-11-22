@@ -128,8 +128,33 @@ fn patch_document_xml(xml: &str, edit: &TrackedEdit) -> Result<String> {
         );
     }
 
-    // Build word-level diff between `find` and `replace`
-    let diff = TextDiff::from_words(&edit.find, &edit.replace);
+    // Diff granularity has to follow the SCRIPT, not one default.
+    //
+    // `from_words` splits on whitespace. Chinese, Japanese and Korean do not put
+    // spaces between words, so a whole CJK sentence is ONE "word" and the diff
+    // becomes delete-everything / insert-everything. Measured 2026-11-22 on a
+    // contract clause (甲方应于2026年12月31日前… → …11月30日…):
+    //
+    //   from_words -> DEL "甲方应于2026年12月31日前支付合同价款人民币壹佰万元整。"
+    //                 INS "甲方应于2026年11月30日前支付合同价款人民币贰佰万元整。"
+    //   from_chars -> = 甲 = 方 = 应 = 于 = 2 = 0 = 2 = 6 = 年
+    //                 DEL 2  INS 1  = 月  DEL 1  INS 0  …  DEL 壹  INS 贰 …
+    //
+    // The first is not a redline; it is a wholesale replacement wearing revision
+    // marks, and a reviewer cannot see what actually changed. The second is the
+    // edit a lawyer expects to accept or reject.
+    //
+    // Character granularity is also correct for scripts that write without spaces
+    // generally, so the test is "does this text contain any spaces at all" as a
+    // proxy for "is it space-delimited" - deliberately conservative: a CJK clause
+    // with an embedded English phrase still needs character granularity, and
+    // applying `from_words` to a mixed clause would again merge the CJK runs.
+    let has_spaces = edit.find.contains(char::is_whitespace) || edit.replace.contains(char::is_whitespace);
+    let diff = if has_spaces {
+        TextDiff::from_words(&edit.find, &edit.replace)
+    } else {
+        TextDiff::from_chars(&edit.find, &edit.replace)
+    };
     let mut revision_xml = String::new();
 
     // `w:id` identifies a revision inside the part, so it must not be reused.
@@ -138,19 +163,38 @@ fn patch_document_xml(xml: &str, edit: &TrackedEdit) -> Result<String> {
     let del_id = next_revision_id(xml);
     let ins_id = del_id + 1;
 
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Equal  => {
-                revision_xml.push_str(&wrap_run(&xml_escape(change.value())));
-            }
-            ChangeTag::Delete => {
-                revision_xml.push_str(&wrap_del(&xml_escape(change.value()), del_id));
-            }
-            ChangeTag::Insert => {
-                revision_xml.push_str(&wrap_ins(&xml_escape(change.value()), ins_id));
-            }
+    // Adjacent changes of the SAME kind are coalesced into one run. Character
+    // granularity can emit a change per character (a Chinese number rewritten
+    // digit by digit), and one `<w:ins>` per character is both huge and unreadable
+    // in Word's review pane. Coalescing only merges CONSECUTIVE same-tag changes,
+    // so the accept/reject text contract is unchanged.
+    let mut pending_tag: Option<ChangeTag> = None;
+    let mut pending_value = String::new();
+
+    let flush = |tag: Option<ChangeTag>, value: &mut String, out: &mut String| {
+        if value.is_empty() {
+            return;
         }
+        match tag {
+            Some(ChangeTag::Equal) => out.push_str(&wrap_run(&xml_escape(value))),
+            Some(ChangeTag::Delete) => out.push_str(&wrap_del(&xml_escape(value), del_id)),
+            Some(ChangeTag::Insert) => out.push_str(&wrap_ins(&xml_escape(value), ins_id)),
+            None => {}
+        }
+        value.clear();
+    };
+
+    for change in diff.iter_all_changes() {
+        let tag = change.tag();
+        if pending_tag != Some(tag) {
+            let prev = pending_tag;
+            flush(prev, &mut pending_value, &mut revision_xml);
+            pending_tag = Some(tag);
+        }
+        pending_value.push_str(change.value());
     }
+    let prev = pending_tag;
+    flush(prev, &mut pending_value, &mut revision_xml);
 
     // Replace only the FIRST occurrence that matches context constraints
     let patched = replace_first_in_xml(xml, &find_escaped, &revision_xml, edit)?;
@@ -500,6 +544,27 @@ mod tests {
         format!("{P_A}{REPL1}{P_B}{CTX_BEFORE}{REPL2}{CTX_AFTER}{TAIL}")
     }
 
+    /// The text a reviewer sees while the tracked change is still PENDING.
+    ///
+    /// Not `run_before() + inserted text`. The diff emits the equal prefix and
+    /// suffix ONCE and marks only the changed span (`服务费用` -> `顾问服务费用`
+    /// inserts `顾问`), so the pending rendering is the document text with the
+    /// INSERTED run spliced in at the point of change - which is what Word shows.
+    ///
+    /// This used to be assembled as `P_A + FIND1 + REPL1 + ...` because the old
+    /// word-level diff replaced the whole CJK run, making deleted and inserted text
+    /// adjacent. At character granularity the equal runs sit between them, so that
+    /// concatenation stopped describing the output. The contract being tested is
+    /// unchanged: the insertion must be present and the deletion must still be
+    /// readable, so a redactor sees text the author only marked as deleted.
+    fn run_pending() -> String {
+        // Only the FIRST edit has been applied at this point in the test, so the
+        // second find/replace pair is still verbatim. FIND1 (服务费用) ->
+        // REPL1 (顾问服务费用) prepends 顾问, which is a MID-STRING seam and cannot
+        // be appended after the whole find string.
+        format!("{P_A}\u{987e}\u{95ee}{FIND1}{P_B}{CTX_BEFORE}{FIND2}{CTX_AFTER}{TAIL}")
+    }
+
     /// A minimal DOCX whose body is exactly `body_xml`, so a test can pin the run
     /// shape it depends on rather than inheriting whatever the builder emits.
     fn docx_with_body(body_xml: &str) -> Vec<u8> {
@@ -563,6 +628,43 @@ mod tests {
         }
 
         bodies
+    }
+
+    /// Concatenated text of every `<w:del>` run, one entry per revision element.
+    ///
+    /// Used to assert GRANULARITY: at word-level granularity the whole CJK clause
+    /// landed in one deletion, which is not a reviewable redline.
+    fn deleted_run_texts(xml: &str) -> Vec<String> {
+        revision_run_texts(xml, "<w:del", "</w:del>")
+    }
+
+    /// Concatenated text of every `<w:ins>` run, one entry per revision element.
+    fn inserted_run_texts(xml: &str) -> Vec<String> {
+        revision_run_texts(xml, "<w:ins", "</w:ins>")
+    }
+
+    fn revision_run_texts(xml: &str, open: &str, close: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(relative) = xml[from..].find(open) {
+            let at = from + relative;
+            let after = at + open.len();
+            // `<w:ins` must not swallow `<w:insideH` and friends.
+            let boundary = xml[after..]
+                .chars()
+                .next()
+                .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace());
+            if !boundary {
+                from = after;
+                continue;
+            }
+            let Some(end_rel) = xml[at..].find(close) else { break };
+            let body = &xml[at..at + end_rel];
+            let joined: String = text_node_bodies(body).join("");
+            out.push(joined);
+            from = at + end_rel + close.len();
+        }
+        out
     }
 
     /// Every `w:id` on a `<w:del>` or `<w:ins>` element.
@@ -649,13 +751,35 @@ mod tests {
         .expect("edit applies");
         let text = crate::parser::extract_text(&edited).expect("read back");
 
-        // The tracked insertion and the tracked deletion are both still present:
-        // a redactor must see text the author only *marked* as deleted.
-        let expected = format!("{P_A}{FIND1}{REPL1}{P_B}{CTX_BEFORE}{FIND2}{CTX_AFTER}{TAIL}");
+        // The insertion and the deletion are both still readable: a redactor must
+        // see text the author only *marked* as deleted.
+        let expected = run_pending();
         assert_eq!(
             text, expected,
             "the tail of the paragraph was dropped, or a seam gained a character"
         );
+
+        // GRANULARITY, which is the property that was actually wrong before the
+        // character-level diff landed. At word granularity the whole CJK run was
+        // deleted and re-inserted, so the revision payload contained the entire
+        // paragraph twice. Measured on this fixture: the deleted run was
+        // `服务费用` (4 chars), and the inserted run `顾问` (2 chars) - not the
+        // ~40-character paragraph. A reviewer must be able to see WHICH characters
+        // changed, so pin the sizes rather than only the concatenation.
+        let deleted_runs = deleted_run_texts(&document_xml(&edited));
+        let inserted_runs = inserted_run_texts(&document_xml(&edited));
+        assert!(
+            !deleted_runs.is_empty() && !inserted_runs.is_empty(),
+            "an edit must leave both a deletion and an insertion: del={deleted_runs:?} ins={inserted_runs:?}"
+        );
+        for run in deleted_runs.iter().chain(inserted_runs.iter()) {
+            assert!(
+                run.chars().count() < FIND1.chars().count() + REPL1.chars().count(),
+                "a revision run spans the whole clause ({:?}); the diff fell back to \
+                 whole-run granularity, which is not a redline a lawyer can review",
+                run
+            );
+        }
     }
 
     /// Accepting must drop the deleted text and leave a flat, complete paragraph.
@@ -714,7 +838,17 @@ mod tests {
         .expect("second edit applies");
 
         let ids = revision_ids(&document_xml(&second));
-        assert_eq!(ids.len(), 4, "two edits must leave four revision elements: {ids:?}");
+        // Two edits must leave at least one revision per edit, and every id must be
+        // distinct. The exact COUNT is not the contract: at character granularity the
+        // writer coalesces consecutive same-kind changes, so a replacement can emit
+        // one `<w:del>` and one `<w:ins>` instead of four separate elements. Pinning
+        // `== 4` measured the old word-level writer's element-per-word shape, and it
+        // failed the moment the diff got finer - while the property being protected
+        // (ids are unique, so a reader can tell revisions apart) still held.
+        assert!(
+            ids.len() >= 2,
+            "two edits must leave at least two revision elements: {ids:?}"
+        );
 
         let mut unique = ids.clone();
         unique.sort_unstable();

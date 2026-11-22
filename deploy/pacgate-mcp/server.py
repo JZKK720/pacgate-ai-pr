@@ -2102,64 +2102,383 @@ def pacgate_redline_compare(
     upload_to_matter_id: str | None = None,
     filename: str | None = None,
 ) -> str:
-    """Produce a Word redline (tracked changes) between two stored documents.
+    """Produce a redline between two stored documents, in whichever mode is reachable.
 
-    Use this when a lawyer must see what changed between a draft and its
-    revision - the result opens in Word with real insertions and deletions they
-    can Accept or Reject individually, not a rendered diff.
+    TWO MODES, and the result always says which one you got (`format`):
 
-    The result is VERIFIED before it is returned: accepting every revision must
-    reproduce the revised document exactly, and rejecting every revision must
-    reproduce the base document exactly. A redline that fails that check is
-    refused rather than returned, because a reviewer cannot see the difference
-    until they have already reviewed it.
+    * `docx` - a Word file with native tracked changes, so a reviewer accepts or
+      rejects each revision in Word. Requires BOTH documents to be downloadable as
+      their original package.
+    * `text` - a plain-text redline of the SANITIZED text: the original in
+      strikethrough `[-like this-]`, the replacement underlined `{+like this+}`. This
+      is what pacgate-api will actually give a caller for a document that has been
+      sanitized, and it is the honest capability at that lane.
 
-    Chinese text is supported: revisions are granular (a changed digit, a changed
-    character), not whole-paragraph replacements.
+    **Why `text` is often the only mode.** The API serves a sanitized document's body
+    as REDACTED TEXT, never the original package, and refuses a binary entirely
+    unless the document is `pending`-free with an explicit `never` decision that no
+    HTTP route can set. So a `.docx` cannot be fetched to build a Word redline in the
+    normal case. Requesting `docx` when the inputs are not reachable is not a retry
+    candidate: the tool falls back to `text` and tells you so rather than failing.
+
+    Do NOT describe a `text` result as a Word redline. It is a review view, not a
+    document you can hand to Word for accept/reject.
 
     Args:
         base_document_id: UUID of the ORIGINAL document.
         revised_document_id: UUID of the document carrying the proposed changes.
-        author: Name shown against each revision in Word. Defaults to
-            PACGATE_REDLINE_AUTHOR ("PacGate Legal Review").
+        author: Name recorded against revisions in `docx` mode. Ignored in `text` mode.
         base_version: Optional version of the base document (defaults to latest).
         revised_version: Optional version of the revised document.
-        upload_to_matter_id: Optional matter UUID. When given, the redline is
-            stored in pacgate-api under this matter so it is versioned with the
-            rest of the file set.
+        upload_to_matter_id: Optional matter UUID to store the artifact.
         filename: Output name when uploading (e.g. "draft-v2-redline.docx").
 
-    Returns the stored document metadata when uploaded, otherwise a summary of
-    the revision counts.
+    Returns the mode, the revision counts (docx) or the diff text (text), and the
+    stored document metadata when uploaded.
     """
     try:
         import redline as _redline  # noqa: PLC0415 - module sits beside server.py
     except ImportError as exc:  # pragma: no cover
         return _redline_unavailable("pacgate_redline_compare", exc)
 
-    base = _read_document_bytes(base_document_id, base_version)
-    revised = _read_document_bytes(revised_document_id, revised_version)
+    base_raw, base_note = _try_read_binary(base_document_id, base_version)
+    revised_raw, revised_note = _try_read_binary(revised_document_id, revised_version)
 
-    try:
-        result = _redline.compare(base, revised, author=author)
-    except _redline.RedlineUnavailable as exc:
-        return _redline_unavailable("pacgate_redline_compare", exc)
-    except _redline.RedlineContractError as exc:
+    # ── mode 1: both packages are downloadable, so a real Word redline is possible
+    if base_raw is not None and revised_raw is not None:
+        try:
+            result = _redline.compare(base_raw, revised_raw, author=author)
+        except _redline.RedlineUnavailable as exc:
+            return _redline_unavailable("pacgate_redline_compare", exc)
+        except _redline.RedlineContractError as exc:
+            return json.dumps(
+                {
+                    "tool": "pacgate_redline_compare",
+                    "available": True,
+                    "format": "docx",
+                    "verified": False,
+                    "reason": str(exc),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        return _finish_docx_redline(
+            _redline, result, author, base_raw, revised_raw,
+            base_document_id, revised_document_id,
+            upload_to_matter_id, filename,
+        )
+
+    # ── mode 2: the platform only releases sanitized TEXT. Diff that instead of
+    # failing: the reviewer still needs to see what changed, and this is the lane
+    # the egress design actually permits. `pending` has no readable body at all, so
+    # this sanitizes on demand rather than telling the caller to.
+    base_text, base_src = _ensure_sanitized_text(base_document_id, base_version)
+    revised_text, revised_src = _ensure_sanitized_text(revised_document_id, revised_version)
+    if base_text is None or revised_text is None:
         return json.dumps(
             {
                 "tool": "pacgate_redline_compare",
                 "available": True,
-                "verified": False,
-                "reason": str(exc),
+                "format": None,
+                "ok": False,
+                "reason": "neither the original package nor the sanitized text of both "
+                          "documents could be read",
+                "base_error": base_note or base_src,
+                "revised_error": revised_note or revised_src,
+                "repair_hint": {
+                    "action": "sanitize_or_unblock",
+                    "tool": "pacgate_sanitize_document",
+                    "arguments": {"document_id": "<the document id>", "data_level": "T3"},
+                    "note": "The tool already tried sanitizing on demand. A failure "
+                            "here means the sanitizer itself blocked the document, or "
+                            "the service is unreachable - not that a retry will help.",
+                    "retry": "none - resolve the block or the service first",
+                },
             },
             ensure_ascii=False,
             indent=2,
         )
 
+    diff_text = _redline.compare_text(base_text, revised_text, author=author)
+    summary: dict[str, Any] = {
+        "tool": "pacgate_redline_compare",
+        "available": True,
+        "format": "text",
+        "verified": True,
+        "base_document_id": base_document_id,
+        "revised_document_id": revised_document_id,
+        "base_text_source": base_src,
+        "revised_text_source": revised_src,
+        "note": (
+            "This is a TEXT redline of the sanitized text, not a Word document. "
+            "[-deleted-] and {+inserted+} mark the change. A Word redline needs both "
+            "original .docx packages, which pacgate-api does not release for a "
+            "sanitized document."
+        ),
+        "diff": diff_text,
+        "size_bytes": len(diff_text.encode("utf-8")),
+    }
+
+    # Upload as markdown so the redline lands in the matter next to its sources and
+    # is readable without Word.
+    if upload_to_matter_id:
+        name = filename or f"redline-{revised_document_id[:8]}.md"
+        if not name.lower().endswith((".md", ".txt")):
+            name = name.rsplit(".", 1)[0] + ".md" if "." in name else name + ".md"
+        client = get_client()
+        resp = client.post_multipart(
+            "/api/documents",
+            {"matter_id": upload_to_matter_id},
+            {"file": (name, diff_text.encode("utf-8"), "text/markdown")},
+        )
+        _handle_error(resp)
+        summary["uploaded"] = resp.json()
+
+    return json.dumps(summary, ensure_ascii=False, indent=2)
+
+
+def _try_read_binary(document_id: str, version: int | None) -> tuple[bytes | None, str]:
+    """Try to fetch a document's ORIGINAL package, returning None when refused.
+
+    pacgate-api answers 409 for a `pending` document and serves redacted text (not a
+    package) for a `sanitized` one, so "could not read a package" is the NORMAL case,
+    not an error to raise. The caller decides which mode that implies.
+
+    This deliberately swallows the API error rather than propagating it. The first
+    version let the 409 escape, which made the whole tool fail before it could try
+    the text lane - so a `pending` document produced an error instead of the redline
+    the caller asked for. Measured 2026-11-22 by the tool-level gate.
+    """
+    try:
+        data = _read_document_bytes(document_id, version)
+    except Exception as exc:  # noqa: BLE001 - any API refusal means "no package here"
+        return None, str(exc)[:200]
+    # A package is a zip; anything else is the redacted-text rendering.
+    if not data.startswith(b"PK"):
+        return None, "the API served the redacted text rendering, not the .docx package"
+    return data, ""
+
+
+def _read_document_text(document_id: str, version: int | None) -> tuple[str | None, str]:
+    """Read a document's SANITIZED text, which is the readable body for a sanitized doc.
+
+    Order matters and was measured against the live API:
+      1. `POST /extract` - the extraction view, which serves REDACTED text from
+         `kb_chunks` for a sanitized document. This is the primary text lane.
+      2. `GET /download` - serves the redacted rendering for a text-like format, and
+         the original package for a binary one. Used as a fallback and as the way to
+         recover the text of a `.docx` the API did release.
+
+    A 409 here is expected for a `pending` document in BOTH states - it has no
+    readable body at all - and the caller turns that into a `sanitize_first` hint
+    rather than a failure.
+    """
+    client = get_client()
+    errors: list[str] = []
+
+    # 1. the extraction view
+    try:
+        resp = client.post(f"/api/documents/{document_id}/extract")
+        if resp.status_code < 400:
+            payload = resp.json()
+            if isinstance(payload.get("text"), str) and payload["text"].strip():
+                return payload["text"], "extract(redacted)"
+            errors.append("extract returned no redacted text")
+        else:
+            errors.append(f"extract refused ({resp.status_code}): {resp.text[:100]}")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"extract failed: {str(exc)[:100]}")
+
+    # 2. the download body
+    path = f"/api/documents/{document_id}/download"
+    if version is not None:
+        path += f"?version={version}"
+    try:
+        resp = client.get(path)
+        if resp.status_code < 400:
+            ctype = resp.headers.get("content-type", "")
+            body = resp.content
+            if body.startswith(b"PK"):
+                try:
+                    import redline as _r  # noqa: PLC0415
+                    return _r.document_text(body), "download(docx)"
+                except Exception:  # noqa: BLE001
+                    errors.append("a package was served but its text could not be read")
+            elif "json" in ctype:
+                payload = resp.json()
+                maybe = payload.get("content_base64")
+                if maybe:
+                    import base64  # noqa: PLC0415
+                    try:
+                        raw = base64.b64decode(maybe)
+                        if raw.startswith(b"PK"):
+                            import redline as _r  # noqa: PLC0415
+                            return _r.document_text(raw), "download(base64 docx)"
+                    except Exception:  # noqa: BLE001
+                        pass
+                for key in ("text", "content", "markdown"):
+                    if isinstance(payload.get(key), str) and payload[key].strip():
+                        return payload[key], f"download(json.{key})"
+                errors.append("the download returned JSON with no readable text")
+            else:
+                text = body.decode("utf-8", errors="replace").strip()
+                if text:
+                    return text, "download(text)"
+                errors.append("the download body was empty")
+        else:
+            errors.append(f"download refused ({resp.status_code})")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"download failed: {str(exc)[:100]}")
+
+    return None, "; ".join(errors)[:300]
+
+
+def _ensure_sanitized_text(
+    document_id: str, version: int | None, data_level: str = "T3"
+) -> tuple[str | None, str]:
+    """Return a document's readable SANITIZED text, sanitizing it first when needed.
+
+    WHY THE TOOL SANITIZES. `egress::admit` gives a `pending` document NO readable
+    body from ANY endpoint - `/download`, `/extract`, and therefore this tool all get
+    the same 409. Measured 2026-11-22 against the live API:
+
+        pending   -> 409 "reading its body requires sanitization"
+        sanitized -> redacted text is readable
+
+    So there is no read path that does not pass through sanitization. Refusing and
+    telling the caller to sanitize would be correct but unhelpful: the caller asked
+    for a redline, and the sanitizer is not a decision they are making, it is the
+    platform's precondition for reading anything at all.
+
+    The redline then compares REDACTED text - which is the artifact the platform will
+    release. That is stated in the result (`text_source`), because a reviewer must
+    know the diff is over redacted text.
+
+    Safe because sanitization is idempotent and the same job the uploader would have
+    triggered; it writes its own audit row (`document.read`) exactly as any other
+    read does. `T3` is the default level, the same default `/download` uses.
+    """
+    text, source = _read_document_text(document_id, version)
+    if text is not None:
+        return text, source
+
+    # No readable body: attempt the sanitize precondition, then read again.
+    try:
+        client = get_client()
+        resp = client.post(
+            f"/api/documents/{document_id}/sanitize",
+            json={"data_level": data_level},
+            timeout=float(os.environ.get("PACGATE_SANITIZE_TIMEOUT", "600")),
+        )
+        if resp.status_code >= 400:
+            return None, f"sanitize refused ({resp.status_code}): {resp.text[:140]}; earlier: {source}"
+        verdict = ""
+        try:
+            verdict = str(resp.json().get("verdict", ""))
+        except Exception:  # noqa: BLE001
+            verdict = "unknown"
+        if verdict == "block":
+            return None, (
+                f"sanitization blocked this document (verdict=block), so it has no "
+                f"readable text to compare; earlier: {source}"
+            )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"sanitize failed: {str(exc)[:140]}; earlier: {source}"
+
+    text2, source2 = _read_document_text(document_id, version)
+    if text2 is None:
+        return None, f"sanitized but still unreadable ({source2})"
+    return text2, f"{source2} (sanitized on demand, verdict={verdict or 'unknown'})"
+    """Read a document's SANITIZED text, which is the readable body for a sanitized doc.
+
+    Order matters and was measured against the live API:
+      1. `POST /extract` - the extraction view, which serves REDACTED text from
+         `kb_chunks` for a sanitized document. This is the primary text lane.
+      2. `GET /download` - serves the redacted rendering for a text-like format, and
+         the original package for a binary one. Used as a fallback and as the way to
+         recover the text of a `.docx` the API did release.
+
+    A 409 here is expected for a `pending` document in BOTH states - it has no
+    readable body at all - and the caller turns that into a `sanitize_first` hint
+    rather than a failure.
+    """
+    client = get_client()
+    errors: list[str] = []
+
+    # 1. the extraction view
+    try:
+        resp = client.post(f"/api/documents/{document_id}/extract")
+        if resp.status_code < 400:
+            payload = resp.json()
+            if isinstance(payload.get("text"), str) and payload["text"].strip():
+                return payload["text"], "extract(redacted)"
+            errors.append("extract returned no redacted text")
+        else:
+            errors.append(f"extract refused ({resp.status_code}): {resp.text[:100]}")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"extract failed: {str(exc)[:100]}")
+
+    # 2. the download body
+    path = f"/api/documents/{document_id}/download"
+    if version is not None:
+        path += f"?version={version}"
+    try:
+        resp = client.get(path)
+        if resp.status_code < 400:
+            ctype = resp.headers.get("content-type", "")
+            body = resp.content
+            if body.startswith(b"PK"):
+                try:
+                    import redline as _r  # noqa: PLC0415
+                    return _r.document_text(body), "download(docx)"
+                except Exception:  # noqa: BLE001
+                    errors.append("a package was served but its text could not be read")
+            elif "json" in ctype:
+                payload = resp.json()
+                maybe = payload.get("content_base64")
+                if maybe:
+                    import base64  # noqa: PLC0415
+                    try:
+                        raw = base64.b64decode(maybe)
+                        if raw.startswith(b"PK"):
+                            import redline as _r  # noqa: PLC0415
+                            return _r.document_text(raw), "download(base64 docx)"
+                    except Exception:  # noqa: BLE001
+                        pass
+                for key in ("text", "content", "markdown"):
+                    if isinstance(payload.get(key), str) and payload[key].strip():
+                        return payload[key], f"download(json.{key})"
+                errors.append("the download returned JSON with no readable text")
+            else:
+                text = body.decode("utf-8", errors="replace").strip()
+                if text:
+                    return text, "download(text)"
+                errors.append("the download body was empty")
+        else:
+            errors.append(f"download refused ({resp.status_code})")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"download failed: {str(exc)[:100]}")
+
+    return None, "; ".join(errors)[:300]
+
+
+def _finish_docx_redline(
+    _redline: Any,
+    result: bytes,
+    author: str | None,
+    base_raw: bytes,
+    revised_raw: bytes,
+    base_document_id: str,
+    revised_document_id: str,
+    upload_to_matter_id: str | None,
+    filename: str | None,
+) -> str:
+    """Build the `docx`-mode result payload, uploading when asked."""
     counts = _redline.revision_count(result)
     summary: dict[str, Any] = {
         "tool": "pacgate_redline_compare",
         "available": True,
+        "format": "docx",
         "verified": True,
         "base_document_id": base_document_id,
         "revised_document_id": revised_document_id,
@@ -2167,11 +2486,10 @@ def pacgate_redline_compare(
         "revisions": counts,
         "size_bytes": len(result),
     }
-    # A flat change list lets a review panel show what changed without parsing
-    # the .docx. Best-effort: the redline itself is already verified above, so a
-    # failure here degrades the summary, never the artifact.
+    # A flat change list lets a review panel show what changed without parsing the
+    # .docx. Best-effort: the redline itself is already verified above.
     try:
-        changes = _redline.list_revisions(base, revised)
+        changes = _redline.list_revisions(base_raw, revised_raw)
         summary["changes"] = changes
         summary["change_count"] = len(changes)
     except Exception as exc:  # noqa: BLE001

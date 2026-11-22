@@ -188,6 +188,79 @@ def _assert_contract(ds: Any, redline: bytes, left: bytes, right: bytes) -> None
         )
 
 
+def compare_text(
+    left_text: str,
+    right_text: str,
+    *,
+    author: str | None = None,
+    date_time: str | None = None,
+) -> str:
+    """Produce a PLAIN-TEXT redline between two strings.
+
+    WHY THIS EXISTS - it is not a substitute for `compare`, it is the only mode the
+    egress design permits.
+
+    `compare` needs the two `.docx` packages. pacgate-api will not release one: after
+    sanitization a binary document is served as REDACTED TEXT, never the original
+    package, and the `never` state that would permit the original has no HTTP route.
+    So a redline over stored DOCX files cannot be built from a download at all.
+
+    What pacgate-api WILL give a caller, legitimately, is the sanitized text. This
+    function turns that into a reviewable diff, which is the honest capability at the
+    text lane: the reviewer sees exactly which characters changed, marked so the
+    original is still readable.
+
+    It does NOT produce a Word redline and must never be presented as one. Word
+    needs an OOXML package; there is no package here to put revision marks into. The
+    caller is told which mode it got via the `format` key in the tool result.
+
+    Granularity follows the script, for the same measured reason as the Rust
+    `patch_document_xml` fix: `difflib` with default junk detection treats a whole
+    Chinese sentence as one token, so 甲方应于…三十日 became a single
+    replace-the-sentence opcode. `autojunk=False` is not sufficient on its own for
+    space-delimited text either - it exists to disable heuristics that misfire on
+    long inputs, not to change tokenisation - so the two are chosen per script here.
+    """
+    import difflib
+
+    def is_space_delimited(s: str) -> bool:
+        return any(ch.isspace() for ch in s)
+
+    if is_space_delimited(left_text) or is_space_delimited(right_text):
+        # Word-ish tokenisation: keep the whitespace attached to its token so the
+        # reconstruction is exact.
+        def tokenize(s: str) -> list[str]:
+            return re.findall(r"\S+\s*|\s+", s)
+
+        left_tokens = tokenize(left_text)
+        right_tokens = tokenize(right_text)
+        matcher = difflib.SequenceMatcher(None, left_tokens, right_tokens, autojunk=False)
+        left_view: list[str] | str = left_tokens
+        right_view: list[str] | str = right_tokens
+        join: Any = lambda seq: "".join(seq)
+    else:
+        matcher = difflib.SequenceMatcher(None, left_text, right_text, autojunk=False)
+        left_view = left_text
+        right_view = right_text
+        join = lambda seq: seq  # slicing a str already yields a str
+
+    out: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        old = join(left_view[i1:i2])
+        new = join(right_view[j1:j2])
+        if tag == "equal":
+            out.append(old)
+        else:
+            # The original stays visible in strikethrough, the replacement is
+            # underlined: the same accept/reject distinction Word makes, in plain
+            # text. Nothing is dropped, so a reader can reconstruct either side.
+            if old:
+                out.append(f"[-{old}-]")
+            if new:
+                out.append(f"{{+{new}+}}")
+    return "".join(out)
+
+
 def accept(redline: bytes) -> bytes:
     """Resolve every tracked change in favour of the new text."""
     return _engine().docx_diff_accept_revisions(redline)
