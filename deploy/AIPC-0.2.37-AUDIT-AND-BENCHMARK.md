@@ -59,6 +59,32 @@ defect — a second suite instance from an earlier probe was running concurrentl
 mutating the same fixtures. Worth recording because I nearly reported a regression I
 had not caused: the same contamination produced `32/1` on a gate that is `33/0`.
 
+**e. `ocr-service` was running a locally-built image under the release tag.** Found
+after the suite, by noticing that `docker ps` showed an image **ID** (`46060f9f5929`)
+where every other service showed a tag. Both the local build and the published
+`0.2.37` carried the same `org.opencontainers.image.revision` label (`df1fa67`) and a
+byte-identical `app.py`, so nothing was functionally wrong — but the container was not
+the published artifact. Cause: a local rebuild took the `0.2.37` tag earlier, the stack
+deployed it, and the suite's later `docker pull` re-pointed the tag at the published
+image, leaving the running container stranded on an image with no tag at all.
+
+Recreated from the published artifact. Running image, tag resolution and published
+digest are now all `4ebe3cc44e18`.
+
+**This is a real blind spot in `test-stack-version-coherence.ps1`, and it should be
+fixed.** The gate compares `Test-ImageMatchesPin $pinned $actual` where `$actual` comes
+from the container's `.Config.Image`. That field stores the string the container was
+*created with*, so it reads `ghcr.io/jzkk720/ocr-service:0.2.37` even when the tag has
+since been re-pointed at different bytes. The gate therefore cannot detect "this
+container is not the bytes that tag now names" — which is exactly the 0.1.28 defect
+class that `test-release-provenance.ps1` exists to catch on the *published* side.
+
+The correct assertion is `.Image` (the digest the container actually runs) against
+`docker image inspect <tag> --format '{{.Id}}'`, not the tag string. Recorded as an open
+item rather than fixed here, because a gate change needs its own mutation test and this
+commit is already a verification record.
+
+
 ---
 
 ## 2. Karpathy-guidelines audit of my own work
@@ -200,11 +226,21 @@ was not present.
 
 ## 5. What is still open
 
-1. **The `models[0]`-by-host decision** — the only commercial call. Recommendation: fail
+1. **`test-stack-version-coherence.ps1` cannot see a re-pointed tag.** It compares the
+   container's `.Config.Image` (the string the container was *created with*) against the
+   compose pin, so a container running bytes that the tag no longer names still reads as
+   coherent. This actually happened during this audit (§1.1e). The fix is to compare
+   `.Image` — the digest the container really runs — against
+   `docker image inspect <tag> --format '{{.Id}}'`. Left open deliberately: a gate change
+   needs its own mutation test, and it would be dishonest to fold an untested assertion
+   into a verification commit.
+2. **The `models[0]`-by-host decision** — the only commercial call. Recommendation: fail
    the install loudly on a host that cannot run the default, with cloud promotion as an
    explicit opt-in flag. Detail in `AIPC-0.2.37-E2E-VERIFICATION.md` §7.1.
-2. **`smoke-full-stack.ps1` retry branch** — replace with always-post-from-file (§2.1).
-3. **A repo-wide guard against version literals in gate scripts.** Four defects this
-   round were one class: `:0.2.6`, `:0.2.8`, `$AipcVramGB = 16`, and a stale staged copy.
-   Worth adding when the harness is next touched, not worth a release alone.
-4. **qm stays on 0.1.4** — `deploy/qm-pacgate/UPSTREAM-0.1.19-VERDICT.md`.
+3. **`smoke-full-stack.ps1` retry branch** — replace with always-post-from-file (§2.1).
+4. **A repo-wide guard against version literals in gate scripts.** Five defects this
+   round were one class: `:0.2.6`, `:0.2.8`, `$AipcVramGB = 16`, a stale staged copy, and
+   a re-pointed tag. Each produced a confident verdict about something nobody was
+   running. Worth adding when the harness is next touched, not worth a release alone.
+5. **qm stays on 0.1.4** — `deploy/qm-pacgate/UPSTREAM-0.1.19-VERDICT.md`.
+
