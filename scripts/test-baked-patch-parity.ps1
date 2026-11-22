@@ -51,11 +51,15 @@ if (-not $Image) {
         Select-String -Path $bundle -Pattern 'image:\s*\S*deer-flow-pacgate:(?<v>\d+\.\d+\.\d+)' |
             Select-Object -First 1
     }
-    $Image = if ($pin) {
-        "ghcr.io/jzkk720/deer-flow-pacgate:$($pin.Matches[0].Groups['v'].Value)"
-    } else {
-        'ghcr.io/jzkk720/deer-flow-pacgate:0.2.8'
+    if (-not $pin) {
+        # Do NOT fall back to a literal. A literal reintroduces exactly the defect this
+        # derivation exists to remove, and it would do so invisibly - the check would
+        # run against an obsolete image and report its drift as a finding.
+        Write-Host "  [skip] CANNOT CHECK: could not read a deer-flow-pacgate tag from $bundle" -ForegroundColor Yellow
+        Write-Host "  Pass -Image explicitly. B4 stays unreported rather than reporting on the wrong image." -ForegroundColor Yellow
+        exit 2
     }
+    $Image = "ghcr.io/jzkk720/deer-flow-pacgate:$($pin.Matches[0].Groups['v'].Value)"
     Write-Host "  comparing against $Image (derived from the bundle pin)" -ForegroundColor DarkGray
 }
 

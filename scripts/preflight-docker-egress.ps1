@@ -160,6 +160,10 @@ $img = 'python:3.12-slim'
 # Read the tag from the bundle pin rather than hardcoding it: a literal here goes
 # stale on every release and the miss is silent (docker prints "No such image",
 # we fall through to python:3.12-slim, and the probe still prints [ok]).
+#
+# The fallback is announced, not silent. python:3.12-slim carries none of our layers,
+# so a probe that runs there answers "can a container reach pypi", not "can THIS
+# stack's image reach its build targets". Reporting that difference is the point.
 $candidates = @()
 $bundleCompose = Join-Path $PSScriptRoot '..\deploy\client-bundle\compose.bundle.yaml'
 if (Test-Path $bundleCompose) {
@@ -171,6 +175,10 @@ $candidates += $img
 foreach ($cand in $candidates) {
     docker image inspect $cand *> $null
     if ($LASTEXITCODE -eq 0) { $img = $cand; break }
+}
+if ($img -eq 'python:3.12-slim') {
+    Write-Host '  [note] our release image is not present locally; probing from python:3.12-slim.' -ForegroundColor DarkGray
+    Write-Host '         This still proves the daemon has egress, but says nothing about our own layers.' -ForegroundColor DarkGray
 }
 
 $out = Invoke-NativeCapture { $probe | docker run --rm -i --entrypoint python3 $img - $Targets }
