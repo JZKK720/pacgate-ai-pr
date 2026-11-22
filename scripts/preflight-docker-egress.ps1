@@ -157,8 +157,19 @@ sys.exit(1 if bad else 0)
 $img = 'python:3.12-slim'
 # Prefer an image already on this machine so the preflight never needs the very
 # network it is testing. Fall back to the python image only if none is present.
-foreach ($cand in @('ghcr.io/jzkk720/deer-flow-pacgate:0.2.6', $img)) {
-    docker image inspect $cand | Out-Null
+# Read the tag from the bundle pin rather than hardcoding it: a literal here goes
+# stale on every release and the miss is silent (docker prints "No such image",
+# we fall through to python:3.12-slim, and the probe still prints [ok]).
+$candidates = @()
+$bundleCompose = Join-Path $PSScriptRoot '..\deploy\client-bundle\compose.bundle.yaml'
+if (Test-Path $bundleCompose) {
+    $pin = Select-String -Path $bundleCompose -Pattern 'image:\s*\S*deer-flow-pacgate:(?<v>\d+\.\d+\.\d+)' |
+        Select-Object -First 1
+    if ($pin) { $candidates += "ghcr.io/jzkk720/deer-flow-pacgate:$($pin.Matches[0].Groups['v'].Value)" }
+}
+$candidates += $img
+foreach ($cand in $candidates) {
+    docker image inspect $cand *> $null
     if ($LASTEXITCODE -eq 0) { $img = $cand; break }
 }
 
