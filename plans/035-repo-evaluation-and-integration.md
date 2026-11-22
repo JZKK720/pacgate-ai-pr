@@ -394,6 +394,49 @@ hatch and the validator.
 
 ---
 
+#### 2.1.7 BLOCKER found by e2e (2026-11-22): the redline tools cannot reach a `.docx`
+
+**Status: OPEN, needs a design decision.** Recorded in
+`deploy/AIPC-0.2.36-E2E-AUDIT.md` §3.3 with the full evidence.
+
+`pacgate_redline_compare` fetches its inputs via `GET /api/documents/:id/download`,
+whose body decision (`documents.rs::download_body_for`) is:
+
+```
+("sanitized", text_like = false) => RefusedBinary    <-- a .docx
+("sanitized", text_like = true ) => SanitisedText
+("never",     _                ) => OriginalBinary
+_                                => RefusedBinary
+```
+
+Observed in the live 0.2.36 stack, both directions:
+
+- `pending` → `409 "document is 'pending'; reading its body requires sanitization
+  (or an explicit 'never' decision)"`
+- after `sanitize` → `pacgate_read_document` returned **112 characters of Chinese
+  text** ending `creator: OfficeCLI lastModifiedBy: OfficeCLI` — the text rendering,
+  not a zip. `docx-scalpel` then reported `File contains corrupted data`.
+- `never` → would return the binary, but **no HTTP route sets that state**; `'never'`
+  exists only as a *read* case in `documents.rs` and `egress.rs`.
+
+So in every reachable state a binary `.docx` cannot be fetched, and the three tools
+cannot do their job. **The engine is correct** (gate 8/8 on bytes in memory); the
+transport is not. The sanitizer is also right — after redaction the artifact genuinely
+is text — so this is a defect in the feature's assumption, not in egress.
+
+Options (not chosen here, because it is an egress decision):
+
+1. **Redaction-preserving binary lane** — redact inside the `.docx` package so a
+   "sanitized" binary is truly redacted. Correct; largest change.
+2. **Dedicated compare endpoint** — takes two document IDs, builds the redline from
+   the *original* package under an explicit audited `ReadPurpose`. Smallest change
+   that keeps the audit trail honest, and it reuses the existing `ReadPurpose`
+   mechanism.
+3. **Remove the tools** — shipping an unusable tool is worse than not shipping it.
+
+Option 2 is recommended.
+
+
 #### 2.1.6 Path A details worth knowing before implementation
 
 `docx-scalpel` exposes 282 symbols, of which the ones we need are:
