@@ -6,3 +6,9 @@ httpx>=0.24
 # throws FileConversionException on any .docx. Pin the extras explicitly.
 # Valid extras in markitdown 0.1.7: docx, pptx, xlsx (also 'xls'), pdf, all.
 markitdown[docx,pptx,xlsx,pdf]>=0.1.5
+# DOCX redlines with native Word tracked changes (w:ins / w:del).
+# Thin Python client over Docxodus. Ships a manylinux wheel that is
+# self-contained, so the image needs NO .NET runtime.
+# Pinned exactly: 0.13.0 is the version the accept/reject contract was
+# measured against (see redline.py). Do not float this to `latest`.
+docx-scalpel==0.13.0

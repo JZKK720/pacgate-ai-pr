@@ -1433,17 +1433,61 @@ def _laya_truncation(usage: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(usage, dict) or not usage.get("truncated"):
         return None
     dropped = usage.get("state_tokens_dropped")
+    read = usage.get("state_tokens")
     return {
         "partial": True,
         "state_tokens_dropped": dropped,
-        "state_tokens_read": usage.get("state_tokens"),
+        "state_tokens_read": read,
         "note": (
             "The clause exceeded laya's window and the tail was dropped before "
             "judgement, so these numbers describe only the part that was read. "
             "Do not treat an absence of flags in the dropped text as absence of "
             "risk. Split the clause, or raise max_len for this deployment."
         ),
+        # Pacgate 2026-11-22: `repair_hint` rather than a bare description.
+        # Idea taken from OpenDCAI/DataFlow-WebUI's `PipelineValidationIssue`,
+        # which carries `suggested_fields` and `repair_hint` so the caller can
+        # self-correct instead of looping (plans/035-repo-evaluation-and-integration.md P1).
+        # A description of the fault ("the tail was dropped") is not actionable; a
+        # computed next step is. This one names the split so the model does not have
+        # to infer how much to cut.
+        "repair_hint": _truncation_repair_hint(read, dropped),
     }
+
+
+def _truncation_repair_hint(
+    read: int | None, dropped: int | None
+) -> dict[str, Any]:
+    """Turn a truncation into a concrete, computed next step.
+
+    Returns the suggested split point rather than an instruction to "split the
+    clause", because the useful part - how much to cut - is arithmetic the caller
+    should not have to redo, and getting it wrong silently re-truncates on retry.
+
+    Every number is derived; nothing is asserted when laya does not report enough
+    to derive it. A hint that guesses is worse than no hint, because a model will
+    follow it.
+    """
+    hint: dict[str, Any] = {
+        "action": "split_clause",
+        "reason": "the judged text was a prefix; a verdict over a prefix is not a verdict about the clause",
+    }
+    try:
+        if isinstance(read, (int, float)) and isinstance(dropped, (int, float)):
+            total = int(read) + int(dropped)
+            if total > 0 and dropped > 0:
+                hint["suggested_max_chars"] = int(read)
+                hint["fraction_read"] = round(read / total, 3)
+                hint["suggested_parts"] = -(-total // int(read)) if read else None
+                hint["suggested_fields"] = ["clause"]
+    except (TypeError, ZeroDivisionError):  # pragma: no cover - defensive
+        pass
+    hint["retry"] = (
+        "Re-call with the clause split at a clause boundary (；。;.) into parts no "
+        "larger than suggested_max_chars, then judge each part and combine. Do not "
+        "re-call with the same text: it will truncate identically."
+    )
+    return hint
 
 
 def _laya_unavailable_result(tool: str, exc: Exception) -> str:
@@ -1456,6 +1500,20 @@ def _laya_unavailable_result(tool: str, exc: Exception) -> str:
                 "laya is an optional local decision engine. The clause tools are "
                 "inactive until a laya service is configured for this deployment."
             ),
+            # Same principle as `repair_hint` above: name the next step. The
+            # description-only version left a caller with "laya is not configured"
+            # and no path forward, which in practice produced retries of the SAME
+            # call rather than a different one.
+            "repair_hint": {
+                "action": "configure_service",
+                "requires": ["PACGATE_LAYA_URL", "PACGATE_LAYA_API_KEY"],
+                "note": (
+                    "This tool cannot produce a number without a laya service. "
+                    "Retrying will not help; configure the endpoint or route the "
+                    "clause to a reasoning model instead."
+                ),
+                "retry": "none — the call is correct, the deployment is incomplete",
+            },
         },
         ensure_ascii=False,
         indent=2,
@@ -1570,6 +1628,21 @@ def _laya_withheld_result(tool: str, clause: str) -> str:
             },
             "use_instead": instead,
             "validated_languages": ["en"],
+            # Pacgate 2026-11-22 (plan 035 P1): `use_instead` names the right tool
+            # but not the call. A caller that has to re-derive the arguments often
+            # re-issues the same failing call, so the repair names the concrete
+            # substitute including its arguments.
+            "repair_hint": {
+                "action": "call_other_tool",
+                "tool": "pacgate_clause_risk",
+                "arguments": {"clause": "<the same clause text>"},
+                "note": (
+                    "pacgate_clause_risk has a Chinese-calibrated path and is the "
+                    "supported route for this text; pacgate_clause_flags must not "
+                    "be retried for Chinese."
+                ),
+                "retry": "do not retry this tool with Chinese text",
+            },
         },
         ensure_ascii=False,
         indent=2,
@@ -1770,6 +1843,10 @@ def pacgate_clause_risk(
                     ),
                     "usage": data.get("usage"),
                     "routing": data.get("routing"),
+                    # Plan 035 P1: this branch refuses with a reason but no
+                    # computed next step, so a caller re-issues the same clause and
+                    # gets the same refusal. Same hint shape as the English path.
+                    "repair_hint": partial.get("repair_hint"),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1975,6 +2052,290 @@ def pacgate_route_language(
         ensure_ascii=False,
         indent=2,
     )
+
+
+# ── DOCX redline ─────────────────────────────────────────────────────────────
+#
+# These three tools exist so a generated draft can come back to the reviewer as a
+# Word redline they accept or reject, rather than as a narrative diff. The engine
+# is `docx-scalpel` (MIT); see redline.py for what is verified and why the
+# accept/reject contract is asserted rather than assumed.
+#
+# They take their text straight from pacgate-api documents, so the agent never
+# has to round-trip base64 through the model's context.
+
+
+def _read_document_bytes(document_id: str, version: int | None) -> bytes:
+    """Fetch a stored document's raw bytes from pacgate-api."""
+    client = get_client()
+    path = f"/api/documents/{document_id}/download"
+    if version is not None:
+        path += f"?version={version}"
+    resp = client.get(path)
+    _handle_error(resp)
+    return resp.content
+
+
+def _redline_unavailable(tool: str, exc: Exception) -> str:
+    return json.dumps(
+        {
+            "tool": tool,
+            "available": False,
+            "reason": str(exc),
+            "hint": (
+                "Rebuild the pacgate-mcp image with deploy/pacgate-mcp/requirements.txt; "
+                "docx-scalpel ships a self-contained manylinux wheel and needs no .NET."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def pacgate_redline_compare(
+    base_document_id: str,
+    revised_document_id: str,
+    author: str | None = None,
+    base_version: int | None = None,
+    revised_version: int | None = None,
+    upload_to_matter_id: str | None = None,
+    filename: str | None = None,
+) -> str:
+    """Produce a Word redline (tracked changes) between two stored documents.
+
+    Use this when a lawyer must see what changed between a draft and its
+    revision - the result opens in Word with real insertions and deletions they
+    can Accept or Reject individually, not a rendered diff.
+
+    The result is VERIFIED before it is returned: accepting every revision must
+    reproduce the revised document exactly, and rejecting every revision must
+    reproduce the base document exactly. A redline that fails that check is
+    refused rather than returned, because a reviewer cannot see the difference
+    until they have already reviewed it.
+
+    Chinese text is supported: revisions are granular (a changed digit, a changed
+    character), not whole-paragraph replacements.
+
+    Args:
+        base_document_id: UUID of the ORIGINAL document.
+        revised_document_id: UUID of the document carrying the proposed changes.
+        author: Name shown against each revision in Word. Defaults to
+            PACGATE_REDLINE_AUTHOR ("PacGate Legal Review").
+        base_version: Optional version of the base document (defaults to latest).
+        revised_version: Optional version of the revised document.
+        upload_to_matter_id: Optional matter UUID. When given, the redline is
+            stored in pacgate-api under this matter so it is versioned with the
+            rest of the file set.
+        filename: Output name when uploading (e.g. "draft-v2-redline.docx").
+
+    Returns the stored document metadata when uploaded, otherwise a summary of
+    the revision counts.
+    """
+    try:
+        import redline as _redline  # noqa: PLC0415 - module sits beside server.py
+    except ImportError as exc:  # pragma: no cover
+        return _redline_unavailable("pacgate_redline_compare", exc)
+
+    base = _read_document_bytes(base_document_id, base_version)
+    revised = _read_document_bytes(revised_document_id, revised_version)
+
+    try:
+        result = _redline.compare(base, revised, author=author)
+    except _redline.RedlineUnavailable as exc:
+        return _redline_unavailable("pacgate_redline_compare", exc)
+    except _redline.RedlineContractError as exc:
+        return json.dumps(
+            {
+                "tool": "pacgate_redline_compare",
+                "available": True,
+                "verified": False,
+                "reason": str(exc),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    counts = _redline.revision_count(result)
+    summary: dict[str, Any] = {
+        "tool": "pacgate_redline_compare",
+        "available": True,
+        "verified": True,
+        "base_document_id": base_document_id,
+        "revised_document_id": revised_document_id,
+        "author": author or _redline.resolve_author(),
+        "revisions": counts,
+        "size_bytes": len(result),
+    }
+    # A flat change list lets a review panel show what changed without parsing
+    # the .docx. Best-effort: the redline itself is already verified above, so a
+    # failure here degrades the summary, never the artifact.
+    try:
+        changes = _redline.list_revisions(base, revised)
+        summary["changes"] = changes
+        summary["change_count"] = len(changes)
+    except Exception as exc:  # noqa: BLE001
+        summary["changes_error"] = f"{type(exc).__name__}: {exc}"
+
+    if upload_to_matter_id:
+        name = filename or f"redline-{revised_document_id[:8]}.docx"
+        client = get_client()
+        resp = client.post_multipart(
+            "/api/documents",
+            {"matter_id": upload_to_matter_id},
+            {
+                "file": (
+                    name,
+                    result,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        _handle_error(resp)
+        summary["uploaded"] = resp.json()
+
+    return json.dumps(summary, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_redline_accept(
+    redline_document_id: str,
+    version: int | None = None,
+    upload_to_matter_id: str | None = None,
+    filename: str | None = None,
+) -> str:
+    """Resolve every tracked change in a redline in favour of the new text.
+
+    The counterpart to a reviewer clicking "Accept All" in Word. Use it to
+    promote a redlined draft to its clean version once the review is done, so the
+    clean copy is the exact text the reviewer saw, rather than a re-generation
+    that could differ.
+
+    Args:
+        redline_document_id: UUID of the redlined document.
+        version: Optional version of the redline (defaults to latest).
+        upload_to_matter_id: Optional matter UUID to store the accepted copy.
+        filename: Output name when uploading (e.g. "draft-v2-clean.docx").
+    """
+    try:
+        import redline as _redline  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover
+        return _redline_unavailable("pacgate_redline_accept", exc)
+
+    data = _read_document_bytes(redline_document_id, version)
+
+    try:
+        cleaned = _redline.accept(data)
+    except _redline.RedlineUnavailable as exc:
+        return _redline_unavailable("pacgate_redline_accept", exc)
+    except Exception as exc:  # noqa: BLE001 - engine error on a non-redline file
+        return json.dumps(
+            {
+                "tool": "pacgate_redline_accept",
+                "available": True,
+                "ok": False,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "hint": "This tool expects a document that still carries tracked changes.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    remaining = _redline.revision_count(cleaned)
+    summary: dict[str, Any] = {
+        "tool": "pacgate_redline_accept",
+        "available": True,
+        "ok": True,
+        "remaining_revisions": remaining,
+        "size_bytes": len(cleaned),
+    }
+    if upload_to_matter_id:
+        name = filename or f"accepted-{redline_document_id[:8]}.docx"
+        client = get_client()
+        resp = client.post_multipart(
+            "/api/documents",
+            {"matter_id": upload_to_matter_id},
+            {
+                "file": (
+                    name,
+                    cleaned,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        _handle_error(resp)
+        summary["uploaded"] = resp.json()
+    return json.dumps(summary, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def pacgate_redline_reject(
+    redline_document_id: str,
+    version: int | None = None,
+    upload_to_matter_id: str | None = None,
+    filename: str | None = None,
+) -> str:
+    """Resolve every tracked change in a redline back to the original text.
+
+    The counterpart to "Reject All" in Word. Use it when a review round is
+    abandoned and the original draft must be restored exactly as it was, without
+    re-fetching the base document (which may have since been revised itself).
+
+    Args:
+        redline_document_id: UUID of the redlined document.
+        version: Optional version of the redline (defaults to latest).
+        upload_to_matter_id: Optional matter UUID to store the restored copy.
+        filename: Output name when uploading (e.g. "draft-v2-restored.docx").
+    """
+    try:
+        import redline as _redline  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover
+        return _redline_unavailable("pacgate_redline_reject", exc)
+
+    data = _read_document_bytes(redline_document_id, version)
+
+    try:
+        restored = _redline.reject(data)
+    except _redline.RedlineUnavailable as exc:
+        return _redline_unavailable("pacgate_redline_reject", exc)
+    except Exception as exc:  # noqa: BLE001 - engine error on a non-redline file
+        return json.dumps(
+            {
+                "tool": "pacgate_redline_reject",
+                "available": True,
+                "ok": False,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "hint": "This tool expects a document that still carries tracked changes.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    remaining = _redline.revision_count(restored)
+    summary: dict[str, Any] = {
+        "tool": "pacgate_redline_reject",
+        "available": True,
+        "ok": True,
+        "remaining_revisions": remaining,
+        "size_bytes": len(restored),
+    }
+    if upload_to_matter_id:
+        name = filename or f"restored-{redline_document_id[:8]}.docx"
+        client = get_client()
+        resp = client.post_multipart(
+            "/api/documents",
+            {"matter_id": upload_to_matter_id},
+            {
+                "file": (
+                    name,
+                    restored,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        _handle_error(resp)
+        summary["uploaded"] = resp.json()
+    return json.dumps(summary, ensure_ascii=False, indent=2)
 
 
 def main() -> None:

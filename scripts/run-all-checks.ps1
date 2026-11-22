@@ -819,6 +819,30 @@ $liveStackGates = @(
     # tool needs no edit here while REMOVING one still fails - the source and the
     # deployed surface cannot drift. Mutation-tested by renaming a decorator.
     'scripts/test-mcp-tool-surface.ps1'
+    # DOCX REDLINE contract, registered 2026-11-22 with pacgate_redline_*. The
+    # surface gate above proves the three redline tools are ADVERTISED; this proves
+    # the engine behind them still emits Word tracked changes that round-trip. The
+    # load-bearing assertions are that ACCEPTING every revision reproduces the
+    # revised document exactly and REJECTING every revision reproduces the original
+    # - a redline that fails either is silently wrong, because the reviewer sees a
+    # plausible diff and approves text neither document contains. It also asserts
+    # CJK granularity by SPAN (no single revision covering >=50% of the document),
+    # because the alternative engine replaced whole Chinese sentences for lack of
+    # whitespace to tokenise on. Mutation-tested: the engine's default author
+    # "Docxodus" and a whole-sentence replacement both fail it.
+    'scripts/test-docx-redline.ps1'
+    # ERROR RESULTS MUST BE ACTIONABLE, registered 2026-11-22 (plan 035 P1, idea
+    # taken from OpenDCAI/DataFlow-WebUI's `PipelineValidationIssue`, which carries
+    # `suggested_fields` + `repair_hint`). A failure that only DESCRIBES the fault
+    # leaves an agent nothing to change, so it re-issues the same call - and the
+    # measured signal here is 1,303 model calls for 16 user messages. Three shapes
+    # are locked: unconfigured service (retry is pointless -> say so), truncated
+    # clause (emit the COMPUTED split size from laya's own read/dropped numbers),
+    # and language-withheld verdict (name the substitute tool AND its arguments).
+    # Mutation-tested: renaming `"repair_hint":` to `"repair_tip":` fails it. The
+    # first version of this gate passed that mutation because the function's comment
+    # mentions the key - the assertion now strips comments and requires the JSON key.
+    'scripts/test-mcp-repair-hints.ps1'
     # MCP ARGUMENT path translation, registered 2026-10-30. `test-mcp-tool-surface`
     # proves the tools are ADVERTISED; this proves they can accept a path. The
     # measured failure was officecli returning "Could not find a part of the path"

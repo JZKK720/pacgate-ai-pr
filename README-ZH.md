@@ -4,6 +4,17 @@
 
 **English:** [README.md](README.md) | [Staff Handbook](docs/PACGATE-LAW-STAFF-HANDBOOK.md)
 
+## 版本：v0.2.36（2026年11月22日）
+
+- **DOCX 红线修订，带 Word 原生修订标记。** 新增三个 MCP 工具——`pacgate_redline_compare`、`pacgate_redline_accept`、`pacgate_redline_reject`——把两份已存文档合成为带真实 `<w:ins>`/`<w:del>` 标记的 `.docx`，审核律师可在 Word 中逐条接受或拒绝修订，而无需阅读叙述式 diff。pacgate-mcp 桥接镜像的对外工具数由 **26 增至 29**。
+  - **产物在返回前已通过校验。** `compare()` 会断言：接受全部修订后**精确**还原新文档，拒绝全部修订后**精确**还原原文档。任一不成立即**拒绝返回**，因为这种失败对审核者不可见——他们看到的是看似合理的差异，进而批准了两份文档都不存在的文本。
+  - **中文支持，粒度到词。** 在中文合同条款上实测，修订落在变更处而非整句：`12`→`11`、`31`→`30`、`壹`→`贰`、插入 `五`、`专用`→`普通`。评估过的替代库（`redlines`）在中文输入下替换**整句**，因为中文没有可用于分词的空格。
+  - **引擎与许可。** `docx-scalpel` 0.13.0（MIT），Docxodus 的 Python 客户端。版本精确锁定；自带自包含的 manylinux wheel。
+- **失败结果现在给出下一步动作。** pacgate-mcp 的每一种错误形态都带 `repair_hint`：未配置服务的结果会点名环境变量并明确"重试无意义"；条款被截断时给出**计算所得**的切分尺寸（`suggested_max_chars`、`fraction_read`、`suggested_parts`），数据取自 laya 自身的 token 计数；语言不适用而扣留结论时，会点名替代工具**及其参数**。只描述故障而不给出可改动之处，agent 就只会重复发起同一调用。
+- **新增两道闸门。** `test-docx-redline.ps1`（8 项断言：镜像内引擎存在、真实 `w:ins`/`w:del`、双向还原、作者不是引擎默认值、中文粒度按跨度衡量）与 `test-mcp-repair-hints.ps1`（26 项断言，已做变异测试）。二者均纳入 `run-all-checks.ps1`。
+- **运维注意（镜像层面）。** `pacgate-mcp` 现依赖 `libicu`。其内置 .NET 宿主在裸 `python:3.12-slim` 上会以*"Couldn't find a valid ICU package installed on the system"* 中止，因此 Dockerfile 安装了 `libicu-dev libssl3 libstdc++6 ca-certificates`。请勿移除该层，也不要将本镜像切换到 Alpine——该 wheel 为 `manylinux_2_28_x86_64`。
+- **客户需要做什么。** 拉取下表新标签并重建 `pacgate-mcp`。无 API 变更、无 schema 变更、无配置变更。既有的非红线文档流程不受影响。
+
 ## 版本：v0.2.35（2026年11月15日）
 
 - **校验器不再把模型猜测当作残留证据。** `verdict()` 对**任何**存活片段都返回 `Block`，因此一个 `MatchSource::Model` 片段本身即可定案。循环性在于：`verify()` 会针对**已脱敏**文本重新运行检测器，模型检测器可能对脱敏器早已替换掉的文本、或其相邻碎片重新命中，而 `VerifyScope::inside_placeholder` 只排除完全落在占位符内部的片段。于是一个针对"已不存在的文本"的猜测，成了拒绝整份文档的理由。现按**证据类型**区分：规则命中（校验和、模式、上下文）属结构性证据，无条件阻断；模型命中属猜测，不再单独阻断。模型片段仍保留在 `residue` 与 `notes` 中，审核者依然可见。
@@ -11,9 +22,9 @@
 - **客户需要做什么。** 拉取 `ghcr.io/jzkk720/pacgate-api:0.2.35`，然后**重新脱敏**受影响的文档：`POST /api/documents/:id/sanitize`，请求体为 `{"data_level":"T3"}`。判定结果在脱敏时计算并存储，因此既有的 `blocked` 记录在重新脱敏前仍为阻断状态，仅拉取镜像不会解除。请使用 `/sanitize`，**不要**用 `/sanitize-rescan`：后者是只读检查，只报告 `chunks_offending`，不会提升任何分块。
 - **未变更的部分。** 无 API 变更、无 schema 变更、无配置变更、无新增接口。本次为判定规则修复。其余镜像内容未变，仅因流水线没有按路径过滤而一并重建。
 
-### 承接自 v0.2.34（上一个版本，本次未改动）
+### 承接自 v0.2.34（未改动，仍有效）
 
-以下内容已随 0.2.34 发布并继续有效，单列于此，不再作为 0.2.35 的变更重复陈述。
+以下内容已随 0.2.34 发布并继续有效，单列于此，不再作为后续版本的变更重复陈述。
 
 - **文档正文读取统一为一个准入判断。** `/api/documents/:id/download` 会拒绝 `pending` 文档，而 `/api/documents/:id/extract` 却返回其正文——租户校验是它唯一的校验。二者现均调用 `pacgate_api::egress::assert_readable`，且**每次读取与每次拒绝都写入审计行**（`document.read`，含 `purpose`、`document_state`、`data_level` 与 `outcome`）。根因是结构性的而非笔误：每个 handler 各自维护一条规则，因此后来新增的第三个 handler 无规则可继承。`documents.rs` 现已锁定返回正文的 handler 清单，新增而未接入该统一入口者会导致测试失败。
 - **`/extract` 不再返回脱敏前的 spans。** `document_spans.text` 保存的是抽取器当时读到的文本，而去标识任务从不重写该表——脱敏产物写入 `kb_chunks`。因此 `sanitized` 文档的缓存抽取会在 `spans[].text` 中返回**原始正文**，而顶层 `text` 字段看起来却是干净的；仅对 `text` 加闸会得到一个"读起来像已修完"的半修结果。现在已脱敏文档的抽取只从 `kb_chunks` 返回脱敏后的 `text`，且不返回 spans，因为脱敏文本没有可对应的页面坐标。这是真实的能力收缩，在此明示，而非留给使用者自行发现。
@@ -34,11 +45,11 @@
 - RAG 检索（pgvector + tsvector + Ollama 嵌入，T1-T4 数据分级过滤）— 完全本地运行
 - OpenViking 记忆模块：经 qm 桥接的 ov-remember / ov-search / ov-read，deer-flow 内 MCP 召回
 - 认证体系（JWT + argon2 + SOUL 解析中间件）
-- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.35`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
-- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.35`（公开）
-- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.35`（公开；暴露 26 个 MCP 工具，含文档/工作流）
-- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.35`（公开；构建时烘焙网关地址）
-- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.35`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
+- pacgate-api 镜像：`ghcr.io/jzkk720/pacgate-api:0.2.36`（公开；LLM 路由遵循 `OLLAMA_BASE_URL`，支持按租户模型覆盖）
+- deer-flow 封装镜像：`ghcr.io/jzkk720/deer-flow-pacgate:0.2.36`（公开）
+- pacgate-mcp 桥接镜像：`ghcr.io/jzkk720/pacgate-mcp:0.2.36`（公开；暴露 **29** 个 MCP 工具，含文档/工作流与 DOCX 红线）
+- deer-flow 前端封装镜像：`ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.36`（公开；构建时烘焙网关地址）
+- OCR 服务镜像：`ghcr.io/jzkk720/ocr-service:0.2.36`（公开；PaddleOCR 抽取，自 0.1.16 起为一等镜像）
 - qm 协作桥接已验证（Python CLI，HARNESS=pi，真实 Ollama）
 - 客户部署包已入库：`deploy/client-bundle/` — 全新克隆安装路径已验证
 - 知识图谱：935 节点、2220 条边、49 个社区
@@ -104,11 +115,11 @@ Pacgate 运行时镜像均为**公开**（已验证匿名拉取）。源码仓�
 
 | 镜像 | 内容 | 基础镜像 |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.2.35` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.35` | pacgate-api MCP 桥接（26 个工具，含文档/工作流） | `python:3.12-slim` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.35` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.35` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.35` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.2.36` | Rust 二进制 + SQL 迁移 | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.2.36` | pacgate-api MCP 桥接（**29** 个工具，含文档/工作流/红线） | `python:3.12-slim` + `libicu` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.36` | deer-flow 后端 + Python 适配器 | `ghcr.io/bytedance/deer-flow-backend`（固定 SHA） |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.36` | deer-flow Next.js 检索界面（构建时烘焙网关地址） | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.2.36` | PaddleOCR 抽取服务（自 0.1.16 起为一等镜像） | `python:3.12-slim` |
 
 每个镜像同时带有 `:latest` 标签，与版本标签保持同步。
 

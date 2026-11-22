@@ -48,6 +48,7 @@ delivery **and** release engineering.
 | 033 | Sync to upstream 0.2.32 and pin the GHCR stack | P1 | **DONE (2026-11-08)** - 12 conflict hunks across 7 files resolved; 4 local-only fixes upstream never took verified live; all five Pacgate images moved 0.2.6 -> 0.2.32; **ALL 66 GATES PASSED**; CJK full-text migration 009 applied (0 -> 324 matching chunks); model tiers consolidated onto `nemotron-3.5-bolt:e4b-q8_0` at 100% GPU. One local fix dropped: the memory query-param passthrough, because no shipped caller uses it and keeping it broke tag provenance. See `033-upstream-sync-0.2.32-and-ghcr-pin.md` and `deploy/SYNC-2026-11-08-0.2.32.md` |
 | 030 | Reconcile the AIPC #1 / #2 field reports against 0.2.3 | P1 | **DONE (2026-10-23)** — both reports re-measured, not taken on trust. **AIPC #2:** read-only mirror, 47 gates, and the 百宸 exposure all CONFIRMED; `GetRelativePath`, `rev-list`-with-SHA, `**_kwargs` and the 42 MB binary are **fork-local, absent from this repo**; "35 MCP tools" is really 19 pacgate + 15 openviking. **AIPC #1:** the 12B docgen failure is **real and reproduced 0/5** with the full tool list — but their "0/5 even with one tool" is wrong (measured **4/5**), and their no-tools patch measured **3/5** here, so it was not adopted. Two real defects found that neither report named: **four of five services were running 0.2.1 while the suite reported 47/47 green** (`ocr-service` has no bind-mounts, so it really was the old code), and **no gate compares every running container to its compose pin**. Fixed by `test-stack-version-coherence.ps1` (new), a MAIN-tier capability assertion, and a 19-name MCP surface assertion. See `030-aipc-field-report-reconciliation.md` |
 | 034 | Cut 0.2.35 to close the release gap | **P0** | **DONE (2026-11-15)** - `v0.2.35` published at `2924798cb44a`; all six images share that revision; `test-release-provenance.ps1` **exit 0**, green for the first time since 0.2.33. The redactor verdict fix `9f0e0c8` is in `pacgate-api:0.2.35` and was verified live, not inferred: a document blocked with 16 chunks on model-only evidence re-sanitized to `verdict: pass`, `chunks_promoted: 15`, leaving only public bodies (欧盟法院, 北大) as residue. Stack converged to 0.2.35 for every service. See `docs/superpowers/plans/2026-11-14-cut-0.2.35-to-close-the-release-gap.md` |
+| 035 | Ten-repo evaluation and integration plan (Univer, omnara, DataFlow-WebUI, AG-UI, OpenIntelligentUI, billion-context, 3× OpenMotion, Docxodus) | P1 | **P1 + P1.6 SHIPPED; P1.5 CLOSED; P2/P3 gated (2026-11-22)** — evaluated ten candidate repos against the **bundle stack** (deer-flow + qm + pacgate-mcp), not the editor. **DOCX redline shipped:** `pacgate_redline_compare` / `_accept` / `_reject` (26 → **29 tools**) on **`docx-scalpel` 0.13.0** (MIT). Proven on a Chinese clause with correct granularity (`12`→`11`, `壹`→`贰`, insert `五`, `专用`→`普通`); `accept(redline)==b`, `reject(redline)==a`, 0 residual; `compare()` asserts it and refuses a redline that fails. **Verified against a BUILT image**, not just a venv: `test-docx-redline.ps1` 8/8, `tools/list` = 29 incl. all three redline tools. Two container-only defects found+fixed there: `redline.py` was missing from the image, and the bundled **.NET host aborted for want of ICU** (`Couldn't find a valid ICU package`) so every call raised `DocxodusTransportError` — Dockerfile now installs `libicu-dev libssl3 libstdc++6 ca-certificates`; **do not drop that apt layer**. **Actionable failures (P1):** `repair_hint` added to all three failure shapes incl. the Chinese-path refusal; the truncation hint is **computed** (`suggested_max_chars`/`fraction_read`/`suggested_parts`) and invents nothing when laya under-reports. Gate `test-mcp-repair-hints.ps1` 26 assertions, mutation-verified — its first version passed a `repair_hint`→`repair_tip` rename because a **comment** mentioned the key; now strips comments and requires `"repair_hint":`. **P1.5 CLOSED — premise falsified:** OfficeCLI 1.0.152 **does** compute `SORT`/`XLOOKUP`/`LET`/`IF`/`CONCATENATE`/`TEXT`/`SUMIF` incl. CJK and caches `<v>`; it only **drops the persisted `<v>`** after a precedent edit, fixable with one `raw-set append`. Univer `engine-formula` would duplicate that; not adopted (recipe + 2 traps recorded). **P2 verified:** `billion-context@0.1.216` has **no install-time scripts**, deps only `zod`+`mysql2`, MIT; pilot-only. **P3 proven:** `ag-ui-protocol==1.0.0` (MIT, `pydantic` only) encodes a pacgate run to valid SSE — 11 frames, camelCase, CJK intact; still flag-gated. **Rejected:** Univer as editor (Forms **does not exist**; Canvas **is** paid Boards; OSS Slides deleted 2026-11-04; OSS reads/writes **no** Office file); omnara (no DAG/join/fan-in); DataFlow-WebUI (forbids auth by policy); OpenIntelligentUI (0 releases, 6 contributors); **Yuan-ManX/open-motion** (492 tools ≈ 74K tokens = 4.5x our tool block); **Hada45/Open-Motion** (video app); **fireX-bit/AimatorsAreGoats** (2 files, no source, no LICENSE). **qm:** `QmConfig` has **no `mcp` key**, package has **zero** `mcp` refs; opencode supports MCP but no adapter exists locally. **P0 superseded by measurement:** latency **tracks payload bytes, not tokens** — a same-size body with 24% more tokens was **faster** (25.2s vs 21.6s). Cache is already **~99.4% hit** (a 450k-token prompt still took 14s at 100% hit), so **cache tuning has no headroom**; fitted model at 100% hit is `2698 + 20.86 ms/1k tok`. This session: **4,066,493** input tokens over 18 calls (mean 239k, max 456k), **0.49%** output/input, **90.4%** of model time spent waiting for first token. The lever is sending fewer bytes per call, not the cache. See `035-repo-evaluation-and-integration.md` §1.0 |
 
 ### Plan 007 sub-documents
 
@@ -126,6 +127,79 @@ Two older sets live outside `plans/`:
 - `deploy/USER-MANUAL.md` privacy wording — audited 2026-09-15 and found
   **accurate** (documents never leave the machine; conversation text goes to the
   enabled model service). The earlier "claims no cloud" concern is resolved.
+
+### Third-party repos evaluated and not adopted (2026-11-22, plan 035)
+
+Recorded so they are not re-litigated. Each is real engineering; each failed on
+integration cost or on not solving the problem it was proposed for. Note:
+**one item was adopted** — `docx-scalpel` for redline. Everything else below,
+including Univer's `engine-formula`, stays rejected.
+
+- **JSv4/Docxodus → PyPI `docx-scalpel` 0.13.0 — ADOPTED for redline.** MIT,
+  Python ≥3.10, ships a `manylinux_2_28_x86_64` wheel (58.9 MB) with **no .NET
+  required**. `docx_diff_compare` emits real `w:ins`/`w:del`. **Proven on CJK**:
+  `12`→`11`, `壹`→`贰`, insert `五`, `专用`→`普通`, and the contract holds exactly
+  — `accept(redline)==b`, `reject(redline)==a`. Set
+  `author_for_revisions` / `date_time_for_revisions` explicitly (defaults are
+  `Docxodus` / `2000-01-01T00:00:00Z`). `prove_redline_reversibility()` may report
+  `success=False` on `path='relationship'` when inputs come from different
+  producers — that is the strict package-bytes proof, not a redline failure.
+- **dream-num/univer — as an editor: REJECTED; `engine-formula` also REJECTED (no gap).**
+  Redline: `trackChanges` = 0 hits repo-wide; its own matrix marks Track Changes
+  **Not supported** across the *full* SDK. **Forms does not exist** in any
+  edition (`packages/forms` has zero commits ever, 0 sitemap entries, no npm
+  package). **Canvas IS Boards** (`README.md:626`), proprietary
+  `@univerjs-pro/boards`, never had an OSS commit, no headless preset even paid.
+  OSS Slides **deleted 2026-11-04** (PR #8084). OSS Univer reads/writes **no**
+  Office file (dependency audit: no `xlsx|jszip|docx|ooxml` anywhere). DOCX I/O
+  is a closed binary, metered (10 exports/mo free), documented lossy.
+  The one thing that looked like a gap: `@univerjs/engine-formula` (Apache-2.0,
+  headless in Node `>=18.17`, `createWorkbook` needs no DOM). Measurement killed it
+  — OfficeCLI 1.0.152 already computes `SORT`/`XLOOKUP`/`LET`/`IF`/`CONCATENATE`/
+  `TEXT`/`SUMIF` including CJK, so there is nothing to fill. Not adopted (plan 035
+  P1.5; its headless recipe and two traps are recorded there in case it is revisited).
+- **omnara-ai/omnara** — a managed-agent control plane, not an orchestrator: no
+  DAG, no `wait_agent`/join/fan-in, `max_depth` defaults to 1, no Python SDK.
+  Would put a second control plane in front of the bundle's existing one.
+- **OpenDCAI/DataFlow-WebUI** — `CLAUDE.md` forbids adding auth ("single-user,
+  local-first"); `user_id` is a query param against an in-process dict; every
+  API error returns HTTP 200; Ray execution is RCE by design; no export-to-code.
+  Pinned `open-dataflow==1.0.10` vs PyPI 1.0.13; issue #78 open 7 months. Kept
+  only its `suggested_fields` + `repair_hint` validation shape (plan 035 P1).
+- **CopilotKit/OpenIntelligentUI** — a reference app, not a library: all
+  packages `private: true`, no npm package, 0 tags, 0 releases, 6 contributors,
+  141/162 commits from one CopilotKit engineer, and state that is
+  self-admittedly process memory. Only `@copilotkit/a2ui-renderer` is separable.
+- **ag-ui-protocol/ag-ui** — 1.0 is real and MIT, but the HTTP-SSE binding has
+  no `Last-Event-ID` resumption and interrupts are terminal-run + resume. Vue
+  client is thin. Deferred to a single flag-gated trial endpoint.
+- **ranxianglei/billion-context** — MIT **plus an attribution term** (GitHub
+  shows `NOASSERTION`), so commercially usable with one credit line. Compresses
+  **conversation and tool results, not tool schemas**; its own docs treat the
+  static floor as irreducible. Own paper: **1.2-1.8x** at 200K windows, not 5x.
+  State is one-conversation-one-process with no shared store ("silent
+  corruption" on RWX). Scoped single-developer pilot only — never in the client
+  bundle, never as an MCP server, never in deer-flow or qm.
+- **Three "OpenMotion" repos, all rejected.** `Yuan-ManX/open-motion` is real
+  engineering (MIT, MCP server, Lottie export) but registers **492 MCP tools /
+  294 KB of schemas ≈ 74K tokens** — 4.5x pacgate's entire current tool block and
+  ~2x what `tool_search` exists to remove. `Hada45/Open-Motion` is a **video**
+  motion-graphics app (Alight Motion alternative) — wrong domain.
+  `fireX-bit/AimatorsAreGoats` contains **two files** (`ReadMe.txt`, `index.html`),
+  **no source, no LICENSE**, 0 stars, and its site's MIT/CI/bundled-model claims
+  are false. **Do not use.**
+
+### Shipping rule learned from the 0.1.28 defect (plan 035 §6)
+
+**Never publish onto an existing version tag.** `scripts/test-release-provenance.ps1`
+records how `v0.1.28` was tagged at `fffec57`, then a `workflow_dispatch` — used to
+publish a newer build "without minting a version" — **overwrote the 0.1.28
+packages** while the tag stayed put. The artifacts were fine; the tag stopped being
+the recipe for the release. The mechanism is still live: `Resolve image tag` reads
+`inputs.tag` on a dispatch and `github.ref_name` on a push, with no explicit `ref:`
+on checkout, so **a dispatch publishes `main` under the old version**. Any change
+therefore gets a **version bump**, a **push** (not a dispatch), and
+`preflight-release-tag.ps1` + `test-release-provenance.ps1` before it ships.
 
 ## How to add a plan
 
