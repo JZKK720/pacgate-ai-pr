@@ -57,6 +57,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+$script:cannotCheck = $false
 
 function Ok($m)   { Write-Host "  [PASS] $m" -ForegroundColor Green }
 function Bad($m)  { Write-Host "  [FAIL] $m" -ForegroundColor Red }
@@ -110,6 +111,7 @@ if ($computeLines.Count -gt 0) {
 }
 
 if ($computeLines.Count -eq 0) {
+    $script:cannotCheck = $true
     Skip "no 'inference compute' line in $serverLog - cannot tell which device ollama enumerated"
 } elseif ($gpuDevices.Count -eq 0) {
     $seen = ($computeLines | ForEach-Object { ([regex]::Match($_.Line, 'library=(\S+)')).Groups[1].Value }) -join ', '
@@ -134,6 +136,56 @@ if ($computeLines.Count -eq 0) {
     Ok ("ollama enumerated GPU device(s): " + (($gpuDevices | ForEach-Object { "$($_.Name) [$($_.Library)]" }) -join ', '))
 }
 
+# ── Does any local chat tag actually FIT the device it enumerated? ───────────
+#
+# Enumeration and fit are different facts, and conflating them was a false green.
+# Measured 2026-10-05 on an AMD Radeon 8060S (4 GB VRAM): ollama enumerated ROCm,
+# the gate above passed, and yet NOT ONE installed chat tag could load - the
+# smallest was 6.10 GB. Every run died with 'failed to allocate ROCm0 buffer', and
+# the failure surfaced three stages later as "the agent never called an MCP tool".
+#
+# Reading the declared VRAM is best-effort and never fatal on its own: WMI reports
+# AdapterRAM as a 4 GB-saturating uint32 on many cards, so this only speaks up when
+# the figure is both present and smaller than every chat tag.
+$vramGb = $null
+try {
+    $vc = Get-CimInstance Win32_VideoController -ErrorAction Stop |
+        Sort-Object -Property AdapterRAM -Descending | Select-Object -First 1
+    if ($vc -and $vc.AdapterRAM -gt 0) { $vramGb = [math]::Round($vc.AdapterRAM / 1GB, 1) }
+} catch { }
+
+if ($vramGb -and $tags.models) {
+    # Embedding/reranker tags are loaded on purpose and are tiny; they are not chat.
+    # Cloud tags carry no weights locally - their manifest is ~300 BYTES - so they
+    # are NOT "the smallest model that fits"; they are not local inference at all.
+    # Measured on this box: glm-5.3:cloud reports size=293 bytes. A size-only filter
+    # therefore picked the cloud tag and declared a 4 GB device adequate. Filter on
+    # the name marker AND a 100 MB floor so a manifest-only tag can never qualify.
+    $chatTags = @($tags.models | Where-Object {
+        $_.name -notmatch 'embed|rerank' -and $_.name -notmatch ':cloud' -and $_.size -gt 100MB
+    })
+    if ($chatTags.Count -eq 0) {
+        Skip "no LOCAL chat tag is installed - every tag is a ':cloud' or embedding model"
+        Write-Host "         Local inference is not installed on this machine, so residency" -ForegroundColor Yellow
+        Write-Host "         has nothing to assert. That is a capacity fact, not a GPU fault." -ForegroundColor Yellow
+    } else {
+        $smallest = $chatTags | Sort-Object { $_.size } | Select-Object -First 1
+        $smallestGb = [math]::Round($smallest.size / 1GB, 2)
+        # A q4 model needs weights plus KV cache plus compute graph; 1.15x is a
+        # deliberately generous allowance so this never cries wolf on a tight fit.
+        if ($smallestGb -gt ($vramGb * 1.15)) {
+            Write-Host ("  [WARN] no local chat model fits the enumerated device: {0} GB VRAM" -f $vramGb) -ForegroundColor Yellow
+            Write-Host ("         vs the smallest local chat tag '{0}' at {1} GB" -f $smallest.name, $smallestGb) -ForegroundColor Yellow
+            Write-Host "         Every local run will fail at load with an out-of-memory error from" -ForegroundColor Yellow
+            Write-Host "         the backend. Select a ':cloud' tag for this machine, or install a" -ForegroundColor Yellow
+            Write-Host "         tag that fits. This does not fail the gate - residency is still the" -ForegroundColor Yellow
+            Write-Host "         assertion here - but it explains an agent that never answers." -ForegroundColor Yellow
+        } else {
+            Ok ("a local chat model fits: smallest tag '{0}' at {1} GB, device {2} GB" -f $smallest.name, $smallestGb, $vramGb)
+        }
+    }
+}
+
 # ── Is any LOADED runner actually on the GPU? ────────────────────────────────
 #
 # The enumeration above can be right while a specific model still spills to CPU
@@ -154,7 +206,11 @@ if ($psOut) {
 
 if ($rows.Count -eq 0) {
     Write-Host "  no runner loaded right now - residency is checked at enumeration only" -ForegroundColor Gray
-    Ok "no runner loaded (nothing can be on the CPU yet)"
+    # This assertion used to read Ok "no runner loaded (nothing can be on the CPU yet)",
+    # which counts an ABSENCE of evidence as evidence. Measured 2026-10-05 on a box
+    # with 4 GB VRAM and every local tag 6-24 GB: nothing is ever resident because
+    # nothing can load, so this line passed while local inference was impossible.
+    Skip "no runner loaded - this proves nothing about residency"
 } else {
     foreach ($r in $rows) {
         # "100% GPU", "100% CPU", or a split such as "48%/52% CPU/GPU".
@@ -175,6 +231,19 @@ $failed = @($rows | Where-Object {
 }).Count
 $noGpu = ($computeLines.Count -gt 0 -and $gpuDevices.Count -eq 0)
 $cpuOnly = $noGpu -or ($rows.Count -gt 0 -and $failed -gt 0)
+
+# CANNOT CHECK is checked BEFORE any green verdict. Ordering is load-bearing: when
+# the enumeration line was missing, $noGpu was false, $cpuOnly was false, and this
+# script printed "local inference is GPU-backed" from no evidence at all. A gate
+# must never reach its success branch on "I did not look".
+if ($script:cannotCheck) {
+    Write-Host "RESULT: CANNOT CHECK - ollama enumerated no device we can read" -ForegroundColor Yellow
+    Write-Host "        This is NOT a pass. A healthy GPU install writes an 'inference" -ForegroundColor Yellow
+    Write-Host "        compute' line at every server start; its absence means the log" -ForegroundColor Yellow
+    Write-Host "        rotated, ollama has not restarted since logging changed, or the" -ForegroundColor Yellow
+    Write-Host "        server never enumerated. Restart the Ollama app and re-run." -ForegroundColor Yellow
+    exit 2
+}
 
 if (-not $cpuOnly) {
     Write-Host "RESULT: local inference is GPU-backed" -ForegroundColor Green

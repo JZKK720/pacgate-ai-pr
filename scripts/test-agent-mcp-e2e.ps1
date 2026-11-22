@@ -275,6 +275,29 @@ if ($json) {
 
 $fallback = @($msgs | Where-Object { $_.additional_kwargs -and $_.additional_kwargs.deerflow_error_fallback })
 $why = if ($fallback.Count -gt 0) { ($fallback | ForEach-Object { $_.additional_kwargs.error_detail } | Select-Object -First 1) } else { $null }
+
+# MEASURED 2026-10-05 (this box, 0.2.37): the fallback can also mean the MODEL never
+# started, which is an environment condition and not an agent/MCP defect. This AIPC
+# has an AMD Radeon 8060S with 4 GB VRAM; the first entry in the picker roster is
+# nemotron-3.5-bolt:e4b-q8_0 at 9.09 GB, and every other local tag is 6-24 GB. The
+# runtime therefore fails at startup with 'cudaMalloc failed' / 'unable to allocate
+# ROCm0 buffer' and deer-flow returns 500 inside an ai message. E3/E4 then fail too,
+# because a model that never loaded cannot call a tool. Reporting all three as red
+# hides the one fact that matters: nothing was tested.
+#
+# So classify an INFRASTRUCTURE-shaped failure separately. It stays a failure (exit
+# code unchanged) - a green "cannot check" would repeat the exact false green this
+# repo has been burned by - but it is labelled so the next reader does not go hunting
+# for a tool-plumbing bug that is not there. A 404/'model not found', which is a
+# config error rather than a capacity error, is deliberately NOT in this list.
+$infraPattern = 'out of memory|out-of-memory|cudaMalloc|Unable to allocate|failed to allocate|ROCm|llama-server startup failed|llama_init_from_model|requires ctx_other|not enough memory|insufficient memory'
+$isInfra = ($fallback.Count -gt 0) -and ("$why" -match $infraPattern)
+
+if ($isInfra) {
+    Write-Host '         [UNAVAILABLE] the model runtime could not start - E3/E4 below cannot be evaluated' -ForegroundColor Yellow
+    Write-Host '         This is a machine-capacity condition, not an agent or MCP defect.' -ForegroundColor DarkGray
+    Write-Host '         Local tags present vs this box: 4 GB VRAM; smallest chat tag is 6.10 GB.' -ForegroundColor DarkGray
+}
 Check 'E2b the run produced an answer, not an LLM error fallback' ($fallback.Count -eq 0) `
     "deer-flow returned an error fallback instead of a reply: $why"
 
@@ -316,14 +339,22 @@ $called = @($called | Sort-Object -Unique)
 
 Check 'E3 the run invoked at least one real MCP tool' `
       ($called.Count -ge 1) `
-      'no assistant tool_calls record names an advertised MCP tool - the agent replied without calling one (a tool name appearing only in the prompt does not count)'
+      $(if ($isInfra) {
+            'NOT EVALUATED - the model runtime never started, so no tool could be called. This is not evidence that the agent cannot call MCP tools.'
+        } else {
+            'no assistant tool_calls record names an advertised MCP tool - the agent replied without calling one (a tool name appearing only in the prompt does not count)'
+        })
 if ($called.Count -ge 1) {
     Write-Host ("         called: {0}" -f ($called -join ', ')) -ForegroundColor DarkGray
 }
 
 Check 'E4 a tool-call record came back (the call did not fail after issuance)' `
       $toolRecord `
-      'a tool was named but no tool-call record is present - the call was issued and produced nothing'
+      $(if ($isInfra) {
+            'NOT EVALUATED - the model runtime never started, so no tool was issued.'
+        } else {
+            'a tool was named but no tool-call record is present - the call was issued and produced nothing'
+        })
 
 Write-Host ''
 $colour = if ($script:failed -gt 0) { 'Red' } else { 'Green' }
