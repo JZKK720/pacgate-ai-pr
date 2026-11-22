@@ -69,7 +69,27 @@ function Git {
     # pathspec 'work', the commit failed, and CASE 4's fixture silently stopped
     # creating the divergence it claimed to test. Adding the argument to the
     # ArgumentList collection passes it as one entry, so spaces are preserved.
-    foreach ($a in $GitArgs) { $psi.ArgumentList.Add($a) }
+    #
+    # ArgumentList DOES NOT EXIST ON WINDOWS POWERSHELL 5.1 (it arrived with
+    # ProcessStartInfo in .NET Core / PS 6). Under 5.1 the property is $null, so
+    # `.Add()` threw `You cannot call a method on a null-valued expression`, the
+    # helper returned nothing, and every CASE read a null result. That did not fail
+    # the gate - it HUNG the whole suite: run-all-checks.ps1 launches gates with
+    # powershell.exe (5.1) and the parent waited forever on the broken child.
+    # Measured 2026-10-05: the suite sat ~40 min having run two gates, with 1.5
+    # CPU-seconds consumed.
+    #
+    # So: use ArgumentList when it exists, and otherwise quote explicitly for the
+    # legacy `Arguments` string. Both branches keep a spaced argument as ONE argv
+    # entry, which is the property that matters here.
+    if ($psi.PSObject.Properties.Match('ArgumentList').Count -gt 0) {
+        foreach ($a in $GitArgs) { $psi.ArgumentList.Add($a) }
+    } else {
+        $quoted = foreach ($a in $GitArgs) {
+            if ($a -match '[\s"]') { '"' + ($a -replace '"', '\"') + '"' } else { $a }
+        }
+        $psi.Arguments = ($quoted -join ' ')
+    }
     $psi.WorkingDirectory = $Dir
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true

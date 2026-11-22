@@ -60,7 +60,18 @@ function Invoke-Git {
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
     $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
-    foreach ($a in $GitArgs) { $psi.ArgumentList.Add($a) }
+    # BRANCH ON RUNTIME CAPABILITY, do not assume ArgumentList.
+    # ArgumentList is .NET Core / PS 6+; Windows PowerShell 5.1 runs on .NET Framework,
+    # where the property is $null and `.Add()` throws "You cannot call a method on a
+    # null-valued expression". See deploy/DEFECT-ps51-argumentlist-null.md. This site and
+    # scripts/qm-sandbox-fingerprint.ps1 were still on the broken form on 2026-10-05.
+    if ($psi.PSObject.Properties.Match('ArgumentList').Count -gt 0) {
+        foreach ($a in $GitArgs) { $psi.ArgumentList.Add($a) }
+    } else {
+        $psi.Arguments = (($GitArgs | ForEach-Object {
+                    if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+                }) -join ' ')
+    }
     $p = [System.Diagnostics.Process]::Start($psi)
     $o = $p.StandardOutput.ReadToEnd()
     $e = $p.StandardError.ReadToEnd()

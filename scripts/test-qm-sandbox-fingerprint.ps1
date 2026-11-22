@@ -65,7 +65,15 @@ function Invoke-Captured {
     $psi.UseShellExecute = $false
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    foreach ($a in $ArgList) { $psi.ArgumentList.Add($a) }
+    # Branch on runtime capability: ArgumentList does not exist on Windows PowerShell 5.1
+    # (.NET Framework), where `.Add()` throws. See deploy/DEFECT-ps51-argumentlist-null.md.
+    if ($psi.PSObject.Properties.Match('ArgumentList').Count -gt 0) {
+        foreach ($a in $ArgList) { $psi.ArgumentList.Add($a) }
+    } else {
+        $psi.Arguments = (($ArgList | ForEach-Object {
+                    if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+                }) -join ' ')
+    }
 
     $p = [System.Diagnostics.Process]::Start($psi)
     if ($Stdin) { $p.StandardInput.Write($Stdin) }

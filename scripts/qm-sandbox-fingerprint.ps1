@@ -111,9 +111,14 @@ function Get-SandboxFiles {
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
     # Capture paths as-is; git quotes unusual names, which these are not.
-    $psi.ArgumentList.Add('ls-files')
-    $psi.ArgumentList.Add('--')
-    $psi.ArgumentList.Add('sandbox')
+    # Branch on runtime capability: ArgumentList does not exist on Windows PowerShell 5.1
+    # (.NET Framework), where `.Add()` throws. See deploy/DEFECT-ps51-argumentlist-null.md.
+    $gitArgs = @('ls-files', '--', 'sandbox')
+    if ($psi.PSObject.Properties.Match('ArgumentList').Count -gt 0) {
+        foreach ($a in $gitArgs) { $psi.ArgumentList.Add($a) }
+    } else {
+        $psi.Arguments = ($gitArgs -join ' ')
+    }
 
     $p = [System.Diagnostics.Process]::Start($psi)
     $out = $p.StandardOutput.ReadToEnd()
