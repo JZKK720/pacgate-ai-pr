@@ -1,97 +1,104 @@
-# Pacgate QM stack — single declarative definition for the local docker target.
+# qm 0.1.18 deployment - the two-service topology.
 #
-# This mirrors the exact topology QM's own `qm up` produces so the runtime is
-# clean and organized in ONE stack file (like compose.bundle.yaml for the main
-# pacgate stack). It is for managing/reference; QM's `qm up`/`qm down` remain
-# the canonical launcher for this deployment. If you bring it up with
-# `docker compose -f compose.qm.yaml up -d`, do NOT also run `qm up` against
-# the same directory — the two would fight over the same named volumes/network.
+# WHY THIS FILE CHANGED SHAPE (2026-11-23)
 #
-# Secrets (CORE_SIGNING_SECRET, CAPABILITY_SECRET, etc.) are sourced from .env
-# via ${VAR}; never hardcode them here. Values mirror the running containers.
+# 0.1.18 is a re-architecture, not a version bump: the topology collapsed 5 services to 2.
+# "web-ui", "portal" and "admin" are no longer services - core now serves the public sign-in
+# front door, the browser UI and the operator settings at /settings. "auth" survives as the
+# in-core sign-in broker. The digests below are the ones the pinned CLI's manifest.json
+# publishes; keep them in step with `deploy/qm-pacgate/node_modules/@yc-software/qm/manifest.json`.
 #
-# Network: qm-pacgate (bridge, 172.24.0.0/16). Volumes: qm-pacgate-coredata,
-# qm-pacgate-pgdata.
+# THE TWO SOURCE PATCHES ARE GONE. Both existed to fix upstream behaviour that 0.1.18 now
+# implements natively:
+#   - patch/local-sandbox.ts  -> replaced by QM_CORE_CONTAINER (read by localSandboxEnv since
+#     upstream #271/#1675). Removed.
+#   - patch/pi-models.ts      -> replaced by a runtime CUSTOM PROVIDER (admin API), which is
+#     the supported way to point an OpenAI-compatible id at Ollama. Removed.
+# See deploy/qm-pacgate/migration-0.1.18/MIGRATION-SPIKE.md.
+#
+# MAILPIT IS GONE. Sign-in email is disabled by default in 0.1.18 and `qm admin-login` prints
+# a single-use admin link, so the SMTP catcher and its wiring are no longer required.
+#
+# What is still hand-maintained on purpose: the docker-socket mount and the static docker CLI
+# (handbook 7.4). Upstream's local sandbox backend shells the docker CLI from inside core, and
+# the Alpine core image ships neither the binary nor the socket. RW socket = host-root
+# equivalent; acceptable on the single-firm AIPC deployment model, NOT for shared hosts.
+#
+# Do NOT run `qm up` against this directory; it would fight this file over the same volumes
+# and network. `qm up` is also currently broken on Windows (its which() helper shells
+# /bin/sh), which is why this file - not the CLI - is the launcher.
+
 name: qm-pacgate
 
 services:
   core:
-    image: ghcr.io/yc-software/qm/core@sha256:bee03e7f22719dfe76ea2c83bb65db2bdefd55b714eae4014007033800bdb5ab
-    # Pin the name so `docker exec qm-pacgate-core`, tasks/patch-pi-models.sh,
-    # the handbooks, and Docker Desktop keep referencing the same container after
-    # migration. Without this, compose auto-names it qm-pacgate-core-1.
+    image: ghcr.io/yc-software/qm/core@sha256:988ce50907e469b3b1789488991c75d010e83829059bf945621ac742cf6a2aa4
     container_name: qm-pacgate-core
     user: node
-    # docker access for the socket mount (plan 025, measured 2026-10-05): on
-    # Docker Desktop the socket is root:root mode 660 and there is no docker
-    # gid to join (unlike a Linux host), so access is granted by joining the
-    # root group (gid 0). The node user's other groups are untouched.
+    # Docker access for the socket mount: on Docker Desktop the socket is root:root
+    # mode 660 and there is no docker gid to join, so access is granted by joining
+    # the root group. The node user's other groups are untouched.
     group_add:
       - "0"
     depends_on:
       - pg
     environment:
-      # secrets (from .env)
       CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
       CAPABILITY_SECRET: ${CAPABILITY_SECRET}
       CONNECTOR_SECRET_KEY: ${CONNECTOR_SECRET_KEY}
       SKILL_SIGNING_SECRET: ${SKILL_SIGNING_SECRET}
       PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
-      # model / harness
-      HARNESS: pi
+      PORTAL_SESSION_SECRET: ${PORTAL_SESSION_SECRET}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
+      AUTH_SIGNING_JWK: ${AUTH_SIGNING_JWK}
+      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS}
+      # Sign-in email is disabled by default; this key is still REQUIRED by config
+      # validation even so. AUTH_BRAND_NAME keeps the branded sign-in page.
+      AUTH_EMAIL_TRANSPORT: smtp
+      AUTH_BRAND_NAME: PacGate
+      # Model lane. The provider endpoint is OpenAI-compatible; Ollama serves it.
+      # MODEL_BASE_URL was renamed OPENAI_BASE_URL in 0.1.18.
       MODEL_PROVIDER: openai
-      MODEL_BASE_URL: http://host.docker.internal:11434/v1
-      PI_MODEL: ${PI_MODEL:-glm-5.3-flash:cloud}
-      PI_DETECT_MODEL: ${PI_DETECT_MODEL:-glm-5.3-flash:cloud}
-      PI_TITLE_MODEL: ${PI_TITLE_MODEL:-glm-5.3-flash:cloud}
-      PI_JUDGE_MODEL: ${PI_JUDGE_MODEL:-glm-5.3-flash:cloud}
-      OPENAI_API_KEY: ${MODEL_API_KEY:-ollama}
-      # admin grants (email:role) -> seeds core's org_admin grant for the sign-in email
+      OPENAI_BASE_URL: http://host.docker.internal:11434/v1
+      OPENAI_API_KEY: ${MODEL_API_KEY:-ollama-local}
+      # REQUIRED: 0.1.18 refuses a custom provider whose baseUrl is a private address
+      # (an SSRF control) and logs "resolves to a private network address" otherwise.
+      # Without this every session turn fails with a bare "Connection error."
+      PRIVATE_NETWORK_ALLOWED_ORIGINS: http://host.docker.internal:11434
+      PI_MODEL: ${PI_MODEL:-minimax-m3.1-flash:cloud}
+      PI_DETECT_MODEL: ${PI_DETECT_MODEL:-minimax-m3.1-flash:cloud}
+      PI_TITLE_MODEL: ${PI_TITLE_MODEL:-minimax-m3.1-flash:cloud}
+      PI_JUDGE_MODEL: ${PI_JUDGE_MODEL:-minimax-m3.1-flash:cloud}
       ADMIN_GRANTS: ${ADMIN_GRANTS}
-      # app / data
       ORG_ID: pacgate
       NODE_ENV: development
       PORT: 8080
+      # basePort + 2 is core's public front door in 0.1.18 (the portal's old slot).
+      PUBLIC_PORT: "8000"
       DATA_DIR: /data
       RUN_STORE: postgres
       SESSION_STORE: postgres
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@pg:5432/qm
-      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8180}
-      PUBLIC_WEB_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
-      WEB_UI_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
-      # sandbox bridge / connectors
-      # Repinned 2026-10-04 alongside qm.config.jsonc. The previous fallback was
-      # `localhost:5000/pacgate-sandboxes@sha256:207a779d…`, a registry that does
-      # not exist on any machine, so this default handed the core an image it
-      # could never boot. This is a SECOND hardcoded copy of a value that
-      # qm.config.jsonc also owns - keep the two in step when repinning.
-      FLY_BASE_IMAGE: ${FLY_BASE_IMAGE:-ghcr.io/jzkk720/pacgate-sandboxes@sha256:52e867fcb195f07c5ff32fc78e8ac3f35d000ebd5f34d6c8d792c602f6eae65b}
-      # plan 025 (live E2E 2026-10-05): with SANDBOX_BACKEND=local, the core's
-      # local-sandbox runtime reads LOCAL_SANDBOX_IMAGE (default
-      # `qm-sandbox-local:latest`, which nothing builds) — FLY_BASE_IMAGE is
-      # inert on this backend (upstream local-sandbox.ts:95 + config.ts:339).
-      # The local backend ALSO needs the image to run the exec daemon
-      # (microvm-agent on :8080) — the published tooling image does NOT (its
-      # CMD is an idle sleep loop), so LOCAL_SANDBOX_IMAGE points at the
-      # exec-daemon wrapper built from deploy/qm-pacgate/sandbox-local/ (base:
-      # this digest). Machine-local tag; rebuilt with that Dockerfile.
-      LOCAL_SANDBOX_IMAGE: ${LOCAL_SANDBOX_IMAGE:-qm-pacgate-sandbox-local:latest}
-      # Required for the local backend to reach the core API from the sandbox at
-      # http://<core-container>:8080 (local-sandbox.ts:166-175); without it the
-      # sandbox targets 127.0.0.1:<port> which resolves inside the core itself.
-      QM_CORE_CONTAINER: qm-pacgate-core
-      FLY_SANDBOX_APP_NAME: pacgate-sandboxes
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8182}
+      PUBLIC_WEB_URL: ${QM_PUBLIC_URL:-http://localhost:8182}
+      WEB_UI_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8182}
+      # Sandbox. QM_CORE_CONTAINER replaces patch/local-sandbox.ts: upstream reaches the
+      # sandbox by container DNS and attaches core to the sandbox network, instead of
+      # dialling 127.0.0.1:<published port> (which inside a container is core itself).
       SANDBOX_BACKEND: local
+      QM_CORE_CONTAINER: qm-pacgate-core
       DEPLOYMENT_LAYER: /layer
-      # nginx routes the metadata API under /pacgate/ (root / goes to the
-      # deer-flow frontend) — mirror the 7528e49 qm.config.jsonc fix so sandbox
-      # pacgate tools reach pacgate-api, not the frontend.
+      # The local backend boots this image for the exec daemon. Machine-local tag,
+      # built from deploy/qm-pacgate/sandbox-local/.
+      LOCAL_SANDBOX_IMAGE: ${LOCAL_SANDBOX_IMAGE:-qm-pacgate-sandbox-local:latest}
+      FLY_SANDBOX_APP_NAME: pacgate-sandboxes
+      # nginx routes the metadata API under /pacgate/; sandbox tools follow suit.
       FLY_RESIDENT_ENV_PACGATE_API_URL: http://host.docker.internal:8089/pacgate
       FLY_RESIDENT_ENV_PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
       FLY_RESIDENT_ENV_PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}
       FLY_RESIDENT_ENV_OPENVIKING_URL: http://host.docker.internal:1933
       # /mcp authenticates with the ROOT key; the app key returns 401 there.
-      # Provide both (7528e49 parity) so ov-* tools work in sandboxes.
       FLY_RESIDENT_ENV_OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
       FLY_RESIDENT_ENV_OPENVIKING_API_KEY: ${OPENVIKING_API_KEY}
       FLY_RESIDENT_ENV_OPENVIKING_ACCOUNT: ${OPENVIKING_ACCOUNT}
@@ -100,159 +107,23 @@ services:
     volumes:
       - ./sandbox/skills:/layer/skills:ro
       - ./sandbox/tools:/layer/tools:ro
-      # Pacgate: override the pi model registry so the pi harness points the
-      # configured Ollama model (glm-5.3-flash:cloud) at MODEL_BASE_URL instead
-      # of the hardcoded api.openai.com catalog entry. Durable across recreation.
-      - ./patch/pi-models.ts:/app/src/model/pi-models.ts:ro
-      # Pacgate fix (tape-verified 2026-10-05): upstream local-sandbox daemon()
-      # fetches the exec daemon via the docker PUBLISH (127.0.0.1:<hostport>).
-      # Works when core runs on the docker host; broken when core runs in this
-      # container - the publish binds the VM/host loopback, not core's netns,
-      # so every call "Connection refused" -> "exec daemon never became
-      # reachable: fetch failed", and the teardown path then stop(-t2)-killed
-      # the sandbox (exit 137). This override resolves the sandbox IP on its
-      # bridge (routable from core) and prefers it; loopback remains fallback.
-      - ./patch/local-sandbox.ts:/app/src/sandbox/local-sandbox.ts:ro
-      # plan 025: the SANDBOX_BACKEND=local launch path shells the docker CLI
-      # inside this container (handbook §7.4), which upstream never wired: the
-      # Alpine core ships no docker binary and no socket. Provide BOTH halves:
-      # (1) an official static CLI, extracted from
-      # https://download.docker.com/linux/static/stable/x86_64/docker-28.5.2.tgz
-      # (client binary ONLY - dockerd/runc deliberately NOT mounted, this
-      # container must never run a daemon), and (2) the host daemon socket.
-      # RW socket = host-root-equivalent; acceptable on the single-firm AIPC
-      # deployment model where the firm owns the machine, NOT for shared
-      # multi-tenant hosts. First socket mount in this repo - decision recorded
-      # in plans/025.
+      # The static docker CLI + the host daemon socket (handbook 7.4). Client binary
+      # ONLY - dockerd/runc are deliberately NOT mounted; this container must never
+      # run a daemon.
       - ./patch/docker-cli/docker:/usr/local/bin/docker:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - qm-pacgate-coredata:/data
     ports:
       - "${QM_CORE_PORT:-8180}:8080"
-    restart: unless-stopped
-
-  web-ui:
-    image: ghcr.io/yc-software/qm/web-ui@sha256:f037834fd726bcff220245665ef46accb10b476331006a85c59defbde1635e52
-    container_name: qm-pacgate-web-ui
-    depends_on:
-      - core
-    environment:
-      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
-      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
-      CORE_API_URL: http://core:8080
-      CORE_ORG_ID: pacgate
-      WEB_UI_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
-      PORT: 8080
-      NODE_ENV: development
-    ports:
-      - "${QM_WEBUI_PORT:-8182}:8080"
-    restart: unless-stopped
-
-  portal:
-    image: ghcr.io/yc-software/qm/portal@sha256:e245dfc2c12a47f18f0bb367622538b30e9b89e890a145dcfd5abefe342d0e98
-    container_name: qm-pacgate-portal
-    depends_on:
-      - core
-      - auth
-      - web-ui
-      - admin
-    environment:
-      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
-      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
-      PORTAL_SESSION_SECRET: ${PORTAL_SESSION_SECRET}
-      AUTH_BROKER_UPSTREAM: http://auth:8080
-      AUTH_BROKER_PREFIX: /idp
-      OIDC_CLIENT_ID: qm-portal
-      OIDC_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
-      OIDC_ISSUER: ${QM_PUBLIC_URL:-http://localhost:8181}/idp
-      OIDC_AUTH_ENDPOINT: ${QM_PUBLIC_URL:-http://localhost:8181}/idp/authorize
-      OIDC_TOKEN_ENDPOINT: http://auth:8080/token
-      OIDC_USERINFO_ENDPOINT: http://auth:8080/userinfo
-      OIDC_JWKS_URI: http://auth:8080/.well-known/jwks.json
-      OIDC_PRINCIPAL_CLAIM: email
-      OIDC_SCOPES: openid email
-      # plain email list (NO :role suffix) - the portal does an exact match against the OIDC email
-      OIDC_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS}
-      CORE_API_URL: http://core:8080
-      CORE_ORG_ID: pacgate
-      ADMIN_UPSTREAM: http://admin:8080
-      WEB_UI_UPSTREAM: http://web-ui:8080
-      PORTAL_PUBLIC_URL: ${QM_PUBLIC_URL:-http://localhost:8181}
-      PORT: 8080
-      NODE_ENV: development
-    ports:
-      - "${QM_PORTAL_PORT:-8181}:8080"
-    restart: unless-stopped
-
-  auth:
-    image: ghcr.io/yc-software/qm/auth@sha256:27f2e1467adca3d5dc6fb75f2d624a514d113a437893cc75d1eb54ebf365639b
-    container_name: qm-pacgate-auth
-    depends_on:
-      - core
-      - mailpit
-    environment:
-      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
-      # Required here, not optional. Without it the chassis signs portal-identity
-      # tokens with CORE_SIGNING_SECRET (its own dev fallback, which it logs), a
-      # DIFFERENT key from the one portal/web-ui/core verify with - so any identity
-      # this service mints is silently rejected downstream. The other four consumers
-      # were wired and this one was missed.
-      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
-      AUTH_SIGNING_JWK: ${AUTH_SIGNING_JWK}
-      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
-      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
-      AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM}
-      # plain email list (NO :role suffix) - the auth broker does an exact match before sending the link
-      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS}
-      AUTH_EMAIL_TRANSPORT: smtp
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
-      SMTP_TLS: none
-      SMTP_USERNAME: ${SMTP_USERNAME}
-      SMTP_PASSWORD: ${SMTP_PASSWORD}
-      AUTH_ISSUER: ${QM_PUBLIC_URL:-http://localhost:8181}/idp
-      AUTH_CLIENT_ID: qm-portal
-      AUTH_REDIRECT_URI: ${QM_PUBLIC_URL:-http://localhost:8181}/auth/callback
-      AUTH_BRAND_NAME: PacGate
-      CORE_API_URL: http://core:8080
-      CORE_ORG_ID: pacgate
-      PORT: 8080
-      NODE_ENV: development
-    restart: unless-stopped
-
-  admin:
-    image: ghcr.io/yc-software/qm/admin@sha256:ec071338547e17d44337441d3144a068e6f3119fc377b2d9dd5c75d5b210c604
-    container_name: qm-pacgate-admin
-    depends_on:
-      - core
-    environment:
-      CORE_SIGNING_SECRET: ${CORE_SIGNING_SECRET}
-      PORTAL_IDENTITY_SECRET: ${PORTAL_IDENTITY_SECRET}
-      CORE_API_URL: http://core:8080
-      CORE_ORG_ID: pacgate
-      ADMIN_BASE_PATH: /admin
-      PORT: 8080
-      NODE_ENV: development
-    ports:
-      - "${QM_ADMIN_PORT:-8183}:8080"
-    restart: unless-stopped
-
-  mailpit:
-    image: axllent/mailpit:v1.24
-    container_name: qm-mailpit
-    environment:
-      MP_SMTP_AUTH_ACCEPT_ANY: "1"
-      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
-    ports:
-      - "${QM_MAILPIT_PORT:-8025}:8025"
+      - "${QM_PUBLIC_PORT:-8182}:8000"
     restart: unless-stopped
 
   pg:
-    image: postgres:16
+    image: pgvector/pgvector:0.8.1-pg16
     container_name: qm-pacgate-pg
     environment:
-      POSTGRES_DB: qm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: qm
     volumes:
       - qm-pacgate-pgdata:/var/lib/postgresql/data
     restart: unless-stopped

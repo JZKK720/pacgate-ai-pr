@@ -8,7 +8,7 @@
 # path), so this Dockerfile must COPY the tool launchers itself. Each tool
 # launcher is a bash script that `exec python3 <script>.py`, so both files are
 # copied and the launcher is made executable.
-FROM ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873
+FROM ghcr.io/yc-software/qm/sandbox-base@sha256:56eae68622f9bd8efedae4a1511b322213cc1023712ed5899e3d94a5791bed0d
 
 # markitdown pulls mammoth (docx), openpyxl (xlsx), python-pptx (pptx) and
 # pdfminer-based readers as dependencies — one install covers the office

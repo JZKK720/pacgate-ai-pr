@@ -1,91 +1,91 @@
 {
-  // The deployment contract major this directory conforms to.
+  // Deployment contract major this directory conforms to.
+  //
+  // STILL 1. Upstream did NOT bump it when it rebuilt the topology (5 services -> 2), which
+  // is why `qm check` fails on service NAMES rather than on a contract mismatch. Do not
+  // read contract:1 as "unchanged architecture".
   "contract": 1,
 
-  // Short identifier for your organization; app and container names derive from it.
   "orgId": "pacgate",
 
-  // The one public address of the deployment; the service URLs derive from it.
-  // With the portal service enabled, this is the PORTAL front door (basePort+1
-  // = 8181): users sign in there and are proxied to web-ui/admin. Keep QM off
-  // Pacgate's host 8080 by using the 8180/8182 range locally.
-  "publicUrl": "http://localhost:8181",
+  // PORTAL IS GONE. In 0.1.18 the public sign-in front door AND the browser web UI are both
+  // served by `core` (operator settings at /settings). So this points at core.
+  //
+  // 8182 = basePort + 2. That is not a free choice: 0.1.18 requires publicUrl to use
+  // exactly basePort+2 ("where qm up publishes core's front door"), and it says so with a
+  // hard error if you get it wrong. The old 8181 pointed at the departed portal.
+  "publicUrl": "http://localhost:8182",
 
-  // Base host port for the docker target. Core binds to this port and the
-  // web UI takes the next exposed slot used by the pinned QM package.
+  // Keep qm in the 8180s: Pacgate's own stack owns 8089 and 1933.
   "basePort": 8180,
 
-  // Where to deploy: "docker" runs local containers, "fly" deploys Fly apps,
-  // and "aws" runs the control plane on ECS and agent computers on Lambda MicroVMs.
   "target": "docker",
 
-  // Leave the base model unset for the checked-in docker target so local smoke
-  // runs can use HARNESS=mock without requiring a vendor API key.
-
-  // Optional base model id, passed to the harness (e.g. "claude-opus-4-6").
-  // Omit it and the deployment uses the default model for the provider above.
-  // It must be a model that provider can bill.
-  // "model": "glm-5.3-flash:cloud",
-
-  // The base model provider. "openai" here means the OpenAI-compatible API —
-  // locally that is Ollama at MODEL_BASE_URL, billed by the dummy key
-  // OPENAI_API_KEY=ollama-local in .env (Ollama ignores the key value).
+  // Unchanged in spirit: an OpenAI-compatible endpoint served by Ollama on the host.
+  // MODEL_BASE_URL is renamed OPENAI_BASE_URL in the core env below.
   "modelProvider": "openai",
 
-  // First-party services to run. The full set: "core" (the agent runtime and API,
-  // always required), "slack" (the Slack surface, runs inside the core process),
-  // "web-ui" (a browser chat UI), "admin" (the operator dashboard), "portal"
-  // (the public sign-in front door), and "auth" (the built-in sign-in broker that
-  // emails one-time links; drop it to sign in through an external OIDC provider).
-  // Production-grade local topology: portal front door + auth broker (one-time
-  // sign-in links delivered to the local Mailpit SMTP catcher) + admin dashboard.
-  "services": ["core", "web-ui", "portal", "auth", "admin"],
+  // 5 services -> 2. "core" now also serves web-ui and the settings page; "auth" stays as
+  // the in-core sign-in broker. "portal", "web-ui" and "admin" no longer exist as services.
+  // "egress-proxy" is available but not enabled: it enforces sandbox egress policy through a
+  // TLS proxy, which is a deployment decision rather than a default.
+  "services": ["core", "auth"],
 
-  // Extra plugins to run alongside the services. A prebuilt image runs with
-  // { "name": "linear", "image": "ghcr.io/you/qm-linear:1.0" }. A plugin with a
-  // Dockerfile at plugins/<name>/ in this directory needs no entry here at all.
   "plugins": [],
 
-  // Extra directories of SKILL.md files, mounted into the agent.
   "skills": [],
 
-  // Non-secret env overrides, per service. The pi harness connects to
-  // Ollama for local model inference. PI_MODEL selects the model id (the pi
-  // harness reads PI_MODEL, not MODEL_NAME). Model credentials (MODEL_API_KEY)
-  // go in .env, not here.
-  // Sign-in links are delivered over SMTP to the local Mailpit catcher
-  // (plugins/mailpit). Swap SMTP_HOST/USERNAME/PASSWORD in .env to a real
-  // relay (e.g. Gmail app password) to deliver to real inboxes.
-  // NODE_ENV=development on portal/auth permits http://localhost URLs; every
-  // other security mechanism (JWT identity, one-time links, allow-list,
-  // signed source-auth) stays active.
+  // HARNESS is dropped: the harness selection was removed and the agent runtime is inside
+  // core. SANDBOX_BACKEND=local is retained.
+  //
+  // MODEL_BASE_URL -> OPENAI_BASE_URL (provider-endpoints.ts: PROVIDER_BASE_URL_ENV.openai).
+  //
+  // QM_CORE_CONTAINER is what replaces our local-sandbox.ts source patch. Upstream reads it
+  // in localSandboxEnv (sandbox-settings.ts:91) and then reaches the sandbox by CONTAINER
+  // DNS NAME and attaches core to the sandbox network (local-sandbox.ts:168/237), instead of
+  // dialling 127.0.0.1:<published port> which inside a container is core itself. This is
+  // upstream issue #271 / fix PR #1675, and 0.1.4 has ZERO references to the variable -
+  // which is why the patch existed.
+  //
+  // PRIVATE_NETWORK_ALLOWED_ORIGINS is REQUIRED for the Ollama lane to work at all.
+  // 0.1.18 refuses a custom provider whose baseUrl resolves to a private address - a
+  // deliberate SSRF control - and logs:
+  //   "custom provider ollama: host.docker.internal resolves to a private network address;
+  //    a deployment operator can allow this exact origin with PRIVATE_NETWORK_ALLOWED_ORIGINS"
+  // Without it every turn fails with a bare "Connection error." Verified both ways on a
+  // scratch deployment: absent -> Connection error; present -> a real assistant reply.
+  //
+  // AUTH_EMAIL_TRANSPORT is retained because 0.1.18 REJECTS a config without it
+  // ("must be resend or smtp") even though sign-in email is disabled by default. Its SMTP
+  // partners are now OPTIONAL secrets, so the Mailpit catcher and the SMTP wiring are gone
+  // while this one vestigial key stays.
   "env": {
-    "core": { "HARNESS": "pi", "SANDBOX_BACKEND": "local", "MODEL_BASE_URL": "http://host.docker.internal:11434/v1", "PI_MODEL": "glm-5.3-flash:cloud", "PI_DETECT_MODEL": "glm-5.3-flash:cloud", "PI_TITLE_MODEL": "glm-5.3-flash:cloud", "PI_JUDGE_MODEL": "glm-5.3-flash:cloud", "NODE_ENV": "development" },
-    "auth": { "AUTH_EMAIL_TRANSPORT": "smtp", "SMTP_PORT": "1025", "SMTP_TLS": "none", "AUTH_BRAND_NAME": "PacGate", "NODE_ENV": "development" },
-    "portal": { "NODE_ENV": "development" },
-    "web-ui": { "NODE_ENV": "development" },
-    "admin": { "NODE_ENV": "development" }
+    "core": {
+      "SANDBOX_BACKEND": "local",
+      "OPENAI_BASE_URL": "http://host.docker.internal:11434/v1",
+      "PRIVATE_NETWORK_ALLOWED_ORIGINS": "http://host.docker.internal:11434",
+      "QM_CORE_CONTAINER": "qm-pacgate-core",
+      "PI_MODEL": "minimax-m3.1-flash:cloud",
+      "PI_DETECT_MODEL": "minimax-m3.1-flash:cloud",
+      "PI_TITLE_MODEL": "minimax-m3.1-flash:cloud",
+      "PI_JUDGE_MODEL": "minimax-m3.1-flash:cloud",
+      "NODE_ENV": "development"
+    },
+    "auth": { "AUTH_EMAIL_TRANSPORT": "smtp", "AUTH_BRAND_NAME": "PacGate", "NODE_ENV": "development" }
   },
 
-  // The Fly app agents execute in. The core boots the immutable sandbox image
-  // recorded by `qm sandbox publish`.
+  // The "sandbox" block is DELETED. `sandbox.image` is retired and ignored from 0.1.10 (a
+  // warning only from 0.1.10-0.1.15, which is the false green recorded in
+  // UPSTREAM-0.1.19-VERDICT.md 9.1), and `qm sandbox publish` no longer exists.
   //
-  // REPINNED 2026-10-04. This was `localhost:5000/pacgate-sandboxes@sha256:207a779d…`
-  // - a reference to a registry that nothing provisions, on any machine. A client
-  // could never resolve it, so the agent's sandbox could never start. Published to
-  // the namespace the other five qm images already use, and pinned to the digest
-  // `qm sandbox publish` itself recorded.
+  // Sandboxes now boot the platform's stock sandbox-base image and our layer is a BIND
+  // MOUNT (the `sandbox/` directory). That retires
+  // deploy/DEFECT-qm-sandbox-image-unobtainable.md: the entire GHCR-visibility workaround
+  // existed only to keep a published sandbox image resolvable.
   //
-  // NOTE: the package must be PUBLIC for a client to pull it; GHCR makes new
-  // packages private by default and the visibility API returns 404 for a
-  // personal account, so this is a manual UI step. See
-  // deploy/DEFECT-qm-sandbox-image-unobtainable.md.
-  "sandbox": { "sourceFingerprint": "429e4a961adcd94efd126a30a9199ff87b12ee81a8d9c48255542beaf5b32316", "image": "ghcr.io/jzkk720/pacgate-sandboxes@sha256:52e867fcb195f07c5ff32fc78e8ac3f35d000ebd5f34d6c8d792c602f6eae65b", "baseImage": "ghcr.io/yc-software/qm/sandbox-base@sha256:52cb44a6e9d166da20638c8ce55e3f423384f5557eba49915684cb8ed16e5873",
-    "app": "pacgate-sandboxes",
-    "env": {
-      "PACGATE_API_URL": "http://host.docker.internal:8089/pacgate",
-      "OPENVIKING_URL": "http://host.docker.internal:1933"
-    },
-    "secretEnv": ["PACGATE_API_EMAIL", "PACGATE_API_PASSWORD", "OPENVIKING_ROOT_API_KEY", "OPENVIKING_API_KEY", "OPENVIKING_ACCOUNT", "OPENVIKING_USER", "FIRECRAWL_API_KEY"]
-  }
+  // The two URLs the sandbox tools use (PACGATE_API_URL=http://host.docker.internal:8089/pacgate,
+  // OPENVIKING_URL=http://host.docker.internal:1933) are no longer expressible here; they
+  // belong to the layer env and are carried in deploy/qm-pacgate/migration-0.1.18/.
+
+  "secretEnv": { "core": { "ADMIN_GRANTS": "ADMIN_GRANTS" } }
 }

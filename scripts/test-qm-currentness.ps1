@@ -126,8 +126,19 @@ if (-not (Test-Path -LiteralPath $qmPkg) -or -not (Test-Path -LiteralPath $qmCfg
     else {
         $manSvc = @(((Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).services |
             ForEach-Object { $_.PSObject.Properties.Name }) | Sort-Object -Unique)
-        $onlyCfg = @($cfgSvc | Where-Object { $manSvc -notcontains $_ })
-        $onlyMan = @($manSvc | Where-Object { $cfgSvc -notcontains $_ })
+        # manifest.json lists only services with a RUNNABLE IMAGE (core, egress-proxy). Some
+        # valid services are VIRTUAL - they run inside core and have no image, e.g. `auth`
+        # (the in-core sign-in broker) and `slack`. And `egress-proxy` is a real but OPTIONAL
+        # service, so a config that omits it is valid too. A symmetric comparison therefore
+        # fails on correct configs - which it did, the moment the pin moved to 0.1.18.
+        #
+        # The assertion is one-directional: every config service must be KNOWN (a manifest
+        # image, or a known virtual name). Omission is never an error. `qm check` remains the
+        # authority on validity; this gate only cross-checks that the PIN understands the
+        # config at all.
+        $knownVirtual = @('auth', 'slack')
+        $onlyCfg = @($cfgSvc | Where-Object { $manSvc -notcontains $_ -and $knownVirtual -notcontains $_ })
+        $onlyMan = @($manSvc | Where-Object { $cfgSvc -notcontains $_ -and $_ -ne 'egress-proxy' })
 
         if ($onlyCfg.Count -eq 0 -and $onlyMan.Count -eq 0) {
             Write-Pass "pin $pinnedVer publishes exactly the $($manSvc.Count) service(s) the config declares"
