@@ -135,3 +135,84 @@ Recommended order, cheapest-risk first:
 2. bring the migrated config up in a scratch directory and run one agent turn
 3. only then delete `pi-models.ts` and confirm the native path
 4. then the client bundle, handbooks, and a fresh-clone install
+
+---
+
+## 8. Runtime spike, 2026-11-23: how far the stack actually gets
+
+The config spike (§2) proved `check`. This one brought a real 0.1.18 deployment UP in an
+**isolated** project (`orgId: pacgate-spike`, ports 8190-8192) so the live 0.1.4 stack could
+not be touched. It did not touch it: 9 live containers, core image `bee03e7f` before and
+after.
+
+### What came up, and worked
+
+| Step | Result |
+| --- | --- |
+| `sandbox/Dockerfile` repinned to `sandboxBase` `56eae686…` | **builds** (`pacgate-spike-sandbox:local`), build-time check asserts both tool binaries are on PATH |
+| our tools in that layer | **execute**: `pacgate-qm --help` prints its full command surface |
+| `qm up` | **succeeds**: postgres + core, `✓ stack up — pacgate-spike` |
+| core health | `/healthz` and `/readyz` both `{"ok":true}` |
+| `qm admin-login` | **works**, no SMTP, no Mailpit: prints a single-use `…/auth/admin-login#token=…` URL |
+| that URL redeemed | **303** with `portal_session` cookies; admin API then answers **200** (`/v1/admin/directory`) |
+| `/v1/admin/mcp-servers` | **200**, `{"servers":[],"tools":[]}` — MCP is a runtime admin feature, as predicted |
+| our `sandbox/` layer | mounted at `/layer`, both tools + all three skills visible in core |
+
+So the deployment topology, the layer mechanism, the login path and the MCP surface all
+work. That is a large part of "is this migration real".
+
+### What blocked a completed agent turn — and each cause is pre-existing, not new
+
+1. **`qm up` cannot start on Windows at all.** Its `which()` helper is
+   `execFileSync("/bin/sh", ["-c", ...])`; on Windows that is `ENOENT`. Proven directly:
+   `sh FAILS: ENOENT`. I patched that one line in the scratch `node_modules` to prove the
+   stack beyond it — **this is an upstream bug worth reporting, and it does not affect our
+   client path**, because `setup-qm.ps1` deliberately never runs `qm up` (it renders the
+   same topology with `docker compose`).
+2. **Docker socket needs `--group-add 0`.** The live core has `HostConfig.GroupAdd: ["0"]`;
+   without it core reaches `/var/run/docker.sock` and gets `permission denied`. `qm up`
+   sets this itself, so it is a property of hand-running `docker run`, not of the upgrade.
+3. **`AUTH_SIGNING_JWK` must be a P-256 EC key** (`kty EC, crv P-256, d`). An `oct` key is
+   rejected at boot with `auth broker refusing to start`. Our live `.env` already satisfies
+   this; I had to generate a correct one for the scratch env.
+4. **Model ids must be allow-listed, and the id is passed to the provider verbatim.**
+   The default fell to `gpt-6.1-sol` (codex default) and Ollama answered
+   `model 'gpt-6.1-sol' not found`. Confirmed both halves from inside core:
+
+   ```
+   gpt-5.6-sol          -> {"error":{"message":"model 'gpt-5.6-sol' not found",...}}
+   glm-5.3-flash:cloud  -> {"id":"chatcmpl-629", "choices":[...], "usage":{...}}
+   ```
+
+   **This is exactly what our `pi-models.ts` patch exists for**: it substitutes the Ollama
+   model id where stock qm passes a vendor id through `OPENAI_BASE_URL`.
+
+   The native replacement is a **custom provider**: `PUT /v1/admin/custom-providers/:id`
+   with `{protocol:"openai", baseUrl, models:[{id:"custom/<id>",…}], apiKey}`. That
+   registered (200, `hasEnc` set). But the org base-model endpoint still answered
+   `unknown model id: custom/glm-5.3-flash:cloud`, and a turn with that id as an explicit
+   `model` was refused as `runtime … is not approved`. The custom-provider registry is
+   populated by `setCustomProviders(await customProviders.enabled())` on tenant load, and
+   despite the row being present and enabled it was not visible to `resolveModel` in either
+   the admin or the worker path — including after a full stop/start.
+
+   **Conclusion: `pi-models.ts` is NOT yet proven deletable.** The native mechanism exists
+   and is documented above, but getting stock qm to serve an Ollama-only model id needs
+   either a catalog entry qm accepts as `resolveModel`-able, or keeping a (much smaller)
+   patch. This is the one item from §4 that survives the spike, and it is now precise
+   rather than vague.
+
+### Verdict for the upgrade
+
+Everything structural is proven: it brings up, the layer works, tools execute, login works
+without SMTP, MCP is administrable, and the live stack is isolated from all of it. The
+remaining work is narrow and named:
+
+1. decide the model-id strategy (custom provider vs. a small retained patch) — the only
+   open technical question
+2. run one real agent turn once (1) is settled
+3. `setup-qm.ps1` path + fresh-clone install
+4. both handbooks
+
+Nothing here changes the recommendation to upgrade; it just removes the hand-waving about
+what "a release" means.
