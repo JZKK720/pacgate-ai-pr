@@ -4,6 +4,35 @@
 
 ## The short version
 
+### Who froze 0.1.4 — and it was not a decision anyone made
+
+Traced in git, not remembered:
+
+```
+$ git log --format='%h %ad %an %s' -S'@yc-software/qm' -- deploy/qm-pacgate/
+d25865e 2026-08-17  JZKK720  feat: add QM deployment directory + Windows wrapper + TS adapter
+```
+
+That is the **only** commit that has ever written the pin, and no commit since has changed
+the version. So:
+
+- **It was never set deliberately.** `qm init` writes the version of whatever CLI ran it
+  into `package.json`. Run the 0.1.18 CLI and it writes `0.1.18` (verified — the scratch
+  scaffold in this round has exactly that). The 0.1.4 pin means *the CLI that scaffolded
+  this directory was 0.1.4*, not *someone chose 0.1.4 and defended it*.
+- **It was already stale at creation.** `0.1.4` published 2026-07-31; `0.1.5` published
+  **2026-08-17 21:25 +0800**; the pin commit is **2026-08-17 23:07 +0800** — 1h41m *later*.
+  By the time it was committed the pin was one release behind.
+- **Your recollection is correct.** The repo was meant to *follow upstream*, which is what
+  the `package.json` + `package-lock.json` pair is for. Nothing in this repo ever
+  re-resolved that pin, because **no mechanism to do so existed**. `test-qm-currentness.ps1`
+  checks that the stages match and that the topology agrees; it never asked upstream for a
+  newer version.
+
+That is the real answer to "why are we building it this way": **we accidentally froze a
+moving dependency and then wrote documents explaining the frozen state.** The documents
+were not the cause, they were the symptom. §12 adds the missing mechanism.
+
 **Q. Upstream is at 0.1.18. Why are we still on 0.1.4?**
 
 **A. Because `0.1.4` is a frozen literal in our repo, not a pointer to "latest".**
@@ -514,3 +543,50 @@ fully replaces our patch by opening the sandbox path end-to-end on a scratch clo
 (`pacgate-qm` + `firecrawl-qm` tools and the three skills must still load). The upstream
 fix landed after our patch was written, and "the capability exists" is not the same as
 "our usage still works".
+
+---
+
+## 12. The mechanism that was missing (added 2026-11-23)
+
+The pin drifted for three months because **nothing ever asked upstream what the current
+version was.** That is now `scripts/test-qm-upstream-drift.ps1`, registered in
+`scripts/run-all-checks.ps1`.
+
+It answers four questions, in the order that matters:
+
+| | Question | Why it is the right question |
+| --- | --- | --- |
+| D1 | What do we pin? | `deploy/qm-pacgate/package.json` |
+| D2 | What is upstream **stable**? | reads npm dist-tag `latest`, deliberately not `next` - reporting a prerelease as "the latest" is how a team gets pushed onto an unstable line by a status check |
+| D3 | How far behind? | counts published releases between the two, so "we are behind" is a number, not a vibe |
+| D4 | Is the bump **config-compatible**? | runs `qm check` against our real `qm.config.jsonc` - the same command `setup-qm.ps1` runs, and the one that aborts the client install when it fails |
+
+Current output:
+
+```
+[warn] pin 0.1.4 is behind upstream stable 0.1.18 by 14 release(s)
+       candidates: 0.1.5, 0.1.6, ... 0.1.18
+[warn] upstream 0.1.18 REJECTS our config - the bump needs a migration
+RESULT: pin 0.1.4, upstream stable 0.1.18, verdict needs-migration. Drift REPORTED, not blocked.
+```
+
+**It exits 0 by design.** A newer upstream release must not turn the suite red - that would
+be a gate failing on someone else's release schedule, which is precisely how red stops
+meaning anything. The suite's job is to make the drift *visible*; choosing when to move is a
+decision for the team.
+
+Two defects in my own first version, both caught and fixed before commit, both worth
+recording because they are this repo's recurring shapes:
+
+1. The compatibility probe ran from the repo root, so `qm check` reported
+   **"no qm.config.jsonc"** - which reads as an incompatible config when nothing was ever
+   tested. The exit code alone could not distinguish "rejected" from "never ran", so the
+   message is now checked as well and that case reports `unknown`, never `needs-migration`.
+2. `@($raw | ConvertFrom-Json)` yields **count = 1** (the array wrapped as a single item), so
+   the release count iterated over the raw JSON text and reported **"0 releases behind"**
+   while listing nothing. Assign first, wrap second.
+
+The gate also self-tests its comparison in both directions (`0.1.4 vs 0.1.18` must be behind;
+`0.1.18 vs 0.1.18` must not), because a report that always answers "current" would pass
+everything else. Mutation-verified: forcing the comparison to `$false` makes it report
+`drift comparison FAILED its own positive case` instead of silently claiming we are current.

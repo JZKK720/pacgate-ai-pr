@@ -748,6 +748,23 @@ $liveStackGates = @(
     # the check that catches a corrected file the container never picked up.
     # Exits 2 when qm is not deployed, since that is normal on a box without it.
     'scripts/test-qm-currentness.ps1'
+    # UPSTREAM DRIFT, registered 2026-11-23 - the gate that was missing.
+    #
+    # The qm pin sat 14 releases behind upstream stable and NOTHING in this repo ever
+    # asked upstream what the current version was. Every gate asked a local question
+    # (staged copy matches tracked, config agrees with the pin's manifest, container is
+    # healthy) and all of them stayed green while the dependency aged.
+    #
+    # This reports the drift and, crucially, whether the bump is CONFIG-COMPATIBLE - the
+    # only thing that decides the cost. `qm check` against our config is the honest test
+    # because it is the same command setup-qm.ps1 runs, and it aborts the client install
+    # when it fails.
+    #
+    # It exits 0 by design. A newer upstream release must not turn the suite red: that
+    # would be a gate failing on someone else's release schedule, which is how red stops
+    # meaning anything. The suite makes the drift VISIBLE; choosing when to move is a
+    # decision for the team.
+    'scripts/test-qm-upstream-drift.ps1'
     # BROWSER-ORIGIN and OAuth reachability, registered 2026-10-19.
     #
     # This is the gate whose ABSENCE let a client-facing auth breakage ship through
