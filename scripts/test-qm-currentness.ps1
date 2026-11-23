@@ -71,6 +71,81 @@ if (-not (Test-Path -LiteralPath $staged)) {
 }
 
 # ---------------------------------------------------------------------------
+# Q0. The qm pin, the config, and the CLI's published topology agree.
+#
+# WHY THIS EXISTS (2026-11-23). "Why can we not upgrade qm?" kept having to be
+# re-derived by hand, and the structural reason is that we hold TWO pins that must
+# agree while nothing asserted it:
+#
+#   - package.json / package-lock.json pin the CLI (@yc-software/qm), whose shipped
+#     `manifest.json` carries the image DIGESTS and the SERVICE TOPOLOGY;
+#   - compose.qm.yaml pins the runtime images by digest and mirrors what `qm up`
+#     produces for that CLI version.
+#
+# A pin guarantees REPRODUCIBILITY, not COMPATIBILITY. Bumping the npm pin without
+# rewriting the config yields a failing `qm check`, and deploy/client-bundle/
+# setup-qm.ps1 ABORTS the install on that failure - so the mismatch is a client-
+# install stop, not a maintainer's warning.
+#
+# Measured 2026-11-23 (UPSTREAM-0.1.19-VERDICT.md 10.3): pin 0.1.4 is the last version
+# whose `qm check` accepts our 5-service config AND still honours sandbox.image.
+# 0.1.10-0.1.15 pass but silently ignore sandbox.image; 0.1.16+ fail on service names.
+#
+# This check deliberately does NOT pin a version - that would be the stale-literal
+# defect this repo keeps re-learning. It asserts the RELATIONSHIP, which holds across
+# versions: the services our config declares must be exactly the services the pinned
+# CLI publishes.
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'Q0  qm pin publishes the topology the config declares' -ForegroundColor Cyan
+
+$qmPkg = Join-Path $tracked 'package.json'
+$qmCfg = Join-Path $tracked 'qm.config.jsonc'
+
+if (-not (Test-Path -LiteralPath $qmPkg) -or -not (Test-Path -LiteralPath $qmCfg)) {
+    Write-Skip 'qm package.json or qm.config.jsonc not found - cannot compare'
+} else {
+    $pinnedVer = ([regex]::Match((Get-Content -LiteralPath $qmPkg -Raw),
+        '"@yc-software/qm"\s*:\s*"(?<v>\d+\.\d+\.\d+)"')).Groups['v'].Value
+
+    $cfgSvc = @()
+    $m = [regex]::Match((Get-Content -LiteralPath $qmCfg -Raw),
+        '(?ms)"services"\s*:\s*\[(?<body>[^\]]*)\]')
+    if ($m.Success) {
+        $cfgSvc = @([regex]::Matches($m.Groups['body'].Value, '"([a-z0-9\-]+)"') |
+            ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    }
+
+    $manifest = Join-Path $tracked 'node_modules/@yc-software/qm/manifest.json'
+    if (-not (Test-Path -LiteralPath $manifest)) {
+        Write-Skip "pinned CLI not installed ($manifest absent) - run npm ci to make the pin assertable"
+    }
+    elseif ($cfgSvc.Count -eq 0) {
+        Write-Fail 'could not parse the "services" array from qm.config.jsonc'
+    }
+    else {
+        $manSvc = @(((Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).services |
+            ForEach-Object { $_.PSObject.Properties.Name }) | Sort-Object -Unique)
+        $onlyCfg = @($cfgSvc | Where-Object { $manSvc -notcontains $_ })
+        $onlyMan = @($manSvc | Where-Object { $cfgSvc -notcontains $_ })
+
+        if ($onlyCfg.Count -eq 0 -and $onlyMan.Count -eq 0) {
+            Write-Pass "pin $pinnedVer publishes exactly the $($manSvc.Count) service(s) the config declares"
+        } else {
+            $detail = @()
+            if ($onlyCfg.Count) { $detail += "config declares but $pinnedVer does not publish: $($onlyCfg -join ', ')" }
+            if ($onlyMan.Count) { $detail += "$pinnedVer publishes but config omits: $($onlyMan -join ', ')" }
+            Write-Fail ("pin $pinnedVer and qm.config.jsonc disagree - " + ($detail -join '; '))
+            Write-Host ''
+            Write-Host '        => `qm check` will reject the config, and setup-qm.ps1 aborts the client install.' -ForegroundColor DarkGray
+            Write-Host '           A pin is reproducible, not compatible: upgrading the CLI needs the config,' -ForegroundColor DarkGray
+            Write-Host '           compose, handbooks and client bundle re-proven together.' -ForegroundColor DarkGray
+            Write-Host '           See deploy/qm-pacgate/UPSTREAM-0.1.19-VERDICT.md section 10.' -ForegroundColor DarkGray
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Q1. Staged definitions == tracked definitions.
 #
 # Compares CONTENT, not timestamps: a re-stage that rewrote identical files is not

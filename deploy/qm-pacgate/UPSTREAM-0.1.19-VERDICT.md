@@ -206,7 +206,7 @@ contract changes land at two different versions:
 | 0.1.4 (pinned) | **honored** | 5 | pass |
 | 0.1.9 | honored | 5 | pass |
 | **0.1.10** | **retired & ignored** | 5 | pass |
-| 0.1.15 | retired & ignored | 5 | pass (but sign-in email already `disabled` by default) |
+| 0.1.15 | retired & ignored | 5 | pass |
 | **0.1.16** | retired & ignored | **admin removed** | **fail** |
 
 `qm check` passing at 0.1.15 is a **false green**. It passes because
@@ -220,3 +220,102 @@ the only safe window, and 0.1.9 is six releases behind head with no changelog to
 say what it fixes. That is not worth a release either.
 
 So: stay on **0.1.4** until the firm commits to the re-architecture.
+
+---
+
+## 10. Re-verification 2026-11-23: "why can we not upgrade even when pinned to upstream?"
+
+The question assumes a pin is a compatibility guarantee. Verified against the published
+packages, and the key point is that **we hold TWO independent pins, and only one of them
+is the npm version this document is about.**
+
+### 10.1 The two pins
+
+| Pin | Where | What it controls |
+| --- | --- | --- |
+| **npm CLI** `@yc-software/qm` `0.1.4` | `deploy/qm-pacgate/package.json` + `package-lock.json` | the orchestrator (`check`/`plan`/`up`) **and, via `manifest.json` shipped inside the package, the image digests and the topology** |
+| **runtime images** by **digest** | `deploy/qm-pacgate/compose.qm.yaml` | the five containers that actually run |
+
+The npm pin is not decorative, which is worth stating explicitly because the running
+images are digest-pinned. `manifest.json` inside `@yc-software/qm@0.1.19` is:
+
+```json
+{"services": {"core": "…@sha256:fd3482…", "egress-proxy": "…@sha256:008359…"}}
+```
+
+and on `0.1.4` the same file lists `core, web-ui, admin, portal, auth`. **The topology
+lives in the CLI package.** `compose.qm.yaml`'s own header records that it "mirrors the
+exact topology QM's own `qm up` produces" and that `qm up` "remain[s] the canonical
+launcher". So bumping the npm pin does change what the stack is — that is precisely why
+a pin cannot make an incompatible version compatible.
+
+**A pin guarantees reproducibility, not compatibility.** It says "this exact artefact,
+every time"; it cannot say "this artefact still understands our config, our topology or
+our client install path."
+
+### 10.2 The install path makes the incompatibility a hard stop
+
+`deploy/client-bundle/setup-qm.ps1` runs `npm ci` (line 160) and then `qm check`
+(lines 511, 724), and **aborts the install** on failure. So a version whose `qm check`
+rejects our config does not merely warn on a maintainer's box — it stops a client
+install. Measured on 0.1.19 against our unmodified `qm.config.jsonc`:
+
+```
+error: …\qm.config.jsonc: unknown service "web-ui" — valid: core, egress-proxy, slack, auth
+```
+
+### 10.3 The matrix, re-measured (not re-read)
+
+Each row: install the CLI at that version, run `qm check` against our real config.
+
+| Version | `qm check` | `sandbox.image` | sign-in email | services |
+| --- | --- | --- | --- | --- |
+| 0.1.4 (pinned) | pass | honored | active | 5 |
+| 0.1.8 | pass | honored | **active** | 5 |
+| **0.1.9** | pass | honored | **disabled** ← corrected | 5 |
+| 0.1.10 – 0.1.15 | pass (false green) | **retired, warning only** | disabled | 5 |
+| 0.1.16 | **fail** `unknown service "admin"` | ignored | disabled | 5 |
+| 0.1.17 – 0.1.19 | **fail** `unknown service "web-ui"` | ignored | disabled | 2 |
+
+### 10.4 One correction to §9.1
+
+§9.1 attributed the sign-in-email flip (`disabled; use qm admin-login`) to **0.1.15**.
+Bisected at 0.1.7 / 0.1.8 / 0.1.9: it lands at **0.1.9**, together with `sandbox.image`
+still honored. That *narrows* the "safe window" from `0.1.4 → 0.1.9` to **`0.1.4 → 0.1.8`**
+if the Mailpit + SMTP + one-time-link flow is a requirement.
+
+It also means 0.1.9 is not an interesting upgrade on its own: it gains us nothing we use
+and already removes the email flow. **The conclusion does not change — 0.1.4 stays — but
+the reason is one release tighter than recorded.**
+
+### 10.5 A trap in how the `sandbox.image` question is asked
+
+Two probes give opposite answers, and only one is meaningful:
+
+- **valid digest** (our real config): 0.1.10+ prints `"sandbox.image" is retired and
+  ignored`, and `check` still **passes**. This is the false green §9.1 describes.
+- **invalid tag**: `≤0.1.9` **rejects** it (`must be pinned by digest`), while `0.1.10+`
+  says nothing at all. Confirms retirement happened at 0.1.10.
+
+My first probe used an invalid tag on 0.1.9, saw a rejection, and appeared to contradict
+§9.1. It did not: 0.1.9 validates a key it honors. Recorded because the same question
+will be asked again, and the "silent on garbage" signal is the sharper test of retirement.
+
+### 10.6 What would actually have to be true to upgrade
+
+Not "pin a newer version". All of:
+
+1. `qm.config.jsonc` rewritten: 5 services → `core` + `auth` (+ `egress-proxy`), delete
+   `portal`/`web-ui`/`admin` blocks, drop `sandbox.image`, `MODEL_BASE_URL` →
+   `OPENAI_BASE_URL`, drop `HARNESS`.
+2. `compose.qm.yaml` (both copies) re-derived: 5 digest pins → 2, plus `egress-proxy`;
+   every healthcheck, dependency, network and port mapping.
+3. The sign-in email flow (Mailpit + SMTP + one-time links) replaced by `qm admin-login`
+   — a **product decision for the firm**, since it removes a flow we built deliberately.
+4. Sandbox delivery re-proven as a bind-mounted layer rather than a published image, and
+   `DEFECT-qm-sandbox-image-unobtainable.md` archived.
+5. Both handbooks rewritten bilingual, and the client bundle re-proven from a **fresh
+   clone** (the only valid test for install-path changes).
+
+That is a release, not a bump. `dist-tags` at time of measurement: `latest` = **0.1.18**,
+`next` = **0.1.19** — so 0.1.19 is not even the stable channel.
