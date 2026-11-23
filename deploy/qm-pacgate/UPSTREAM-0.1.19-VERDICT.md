@@ -1,18 +1,74 @@
-# qm upstream 0.1.4 → 0.1.19: verified verdict
+# qm: why we are on 0.1.4, and what the upgrade actually is
 
 **Date:** 2026-10-05, **revised 2026-11-23**
-**Pinned:** `@yc-software/qm` 0.1.4 (running: `qm-pacgate-core` `bee03e7f2271`)
-**Upstream:** latest **stable** v0.1.18 (2026-11-11). v0.1.19 is a GitHub *prerelease*;
-**there is no v1** (§11.1). npm `dist-tags`: `latest` = 0.1.18, `next` = 0.1.19.
-**Verdict: it is not a version bump, and a pin cannot make it one (§10). But the upgrade is
-now worth planning: it removes BOTH source patches and fixes the team's sign-in pain (§11).**
+
+## The short version
+
+**Q. Upstream is at 0.1.18. Why are we still on 0.1.4?**
+
+**A. Because `0.1.4` is a frozen literal in our repo, not a pointer to "latest".**
+
+```json
+// deploy/qm-pacgate/package.json
+"@yc-software/qm": "0.1.4"
+```
+
+It does not say `latest`, and it does not say `^0.1.4`. Upstream publishing 0.1.18 does not
+move us; nothing auto-updates. We stay on 0.1.4 until a human edits that line — and nobody
+has, because editing it alone breaks the install (next paragraph).
+
+**Q. So can we just change it to 0.1.18?**
+
+**A. We can pin it. It will not start.** Measured against our unmodified config:
+
+```
+$ npx --yes @yc-software/qm@0.1.18 check
+error: qm.config.jsonc: unknown service "web-ui" — valid: core, egress-proxy, slack, auth
+```
+
+Our config declares **5** services — `core, web-ui, portal, auth, admin`. Upstream 0.1.18
+ships **2** — `core, egress-proxy` (plus the virtual `slack`, `auth`). They rebuilt the
+architecture. And `deploy/client-bundle/setup-qm.ps1` runs `qm check` and `exit 1`s when it
+fails (lines 511, 724), so a client install stops dead.
+
+**That is the whole confusion: a pin is a lock, not an adapter.** Pinning a version
+guarantees you get *that exact code, every time*. It cannot guarantee that code still
+understands our config, our topology, or our client install path. Reproducibility ≠
+compatibility.
+
+**Q. Is there a v1?**
+
+**A. No.** Newest tag is `v0.1.19`; newest **stable** release is **v0.1.18** (2026-11-11);
+`v0.1.19` is a GitHub *prerelease*. npm: `latest` = 0.1.18, `next` = 0.1.19. No `v1.*` tag
+exists (§11.1). (`package.json` on upstream `main` reads `"0.1.0"` — that is the package's
+own field, not the release version. It is a common source of this exact confusion.)
+
+**Q. Why is 0.1.4 hard for our team to use?**
+
+**A. Because we patch qm's source inside its image, and its login flow is fragile.** That
+is the real complaint and it is legitimate. Section 7 of
+`deploy/handbooks/qm-openviking-pacgate-handbook.zh.md` is five workarounds, one of them
+titled "This sign-in link no longer works".
+
+**Q. What should we do?**
+
+**A. Take the upgrade, as its own planned release — not as a version bump.** It is real work
+(rewrite the config for 2 services, regenerate compose, rewrite both handbooks), and it
+*removes* far more than it adds: both source patches become unnecessary, and the Mailpit
+container + SMTP wiring + 13 env vars are replaced by `qm admin-login`. See §11.6.
+
+**Why this sat undone:** the 2026-10-05 conclusion "do not upgrade" was correct about *risk*
+and wrong about *priority* — it treated "cannot be a patch release" as "should not be done".
+That is a judgement error, and §11 corrects it.
+
+---
 
 Everything below was measured, not read from a changelog. Upstream publishes no
 changelog, so each claim names the command that produced it.
 
-**Read §10 and §11 first if you are asking "why can't we just pin to upstream?" or "why is
-0.1.4 so hard to use?"** They contain the two answers, including one correction (§11.5) to
-my own first reading of the sandbox patch.
+**Detail lives in §10** (the two-pin structure and the measured compatibility matrix) and
+**§11** (the v1 question, the usability analysis, and one correction to my own first
+reading of the sandbox patch at §11.5).
 
 ---
 
