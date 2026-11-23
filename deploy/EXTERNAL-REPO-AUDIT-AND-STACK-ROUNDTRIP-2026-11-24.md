@@ -1,0 +1,290 @@
+# External-repo integration audit + pacgate-ai stack round trip
+
+**Date:** 2026-11-23 / 24
+**Scope:** the eight integration repos the owner listed, then the full pacgate-ai
+bundle (deer-flow, qm, pacgate-api, pacgate-mcp, openviking)
+**Verdict: 5 of 8 repos are real code and every one of those round-trips live.
+The pacgate stack has no regression, and four gates were reporting a healthy
+stack as broken.**
+
+---
+
+## 0. The premise, corrected first
+
+The eight names are **not in this repo**. Measured, not assumed:
+
+| Search | Result |
+| --- | --- |
+| `pacgate-ai-pr/**` for `deepseek-harness`, `kitesurf`, `astryx` | **0 files** |
+| `pacgate-ai-pr/**` for the other five | prose in `plans/035` only |
+| `pacgate-ai-pr/deploy` compose + configs for all eight | **0 hits** |
+| `pacgate-ai-pr` for `cubecloud` | **0 hits** |
+| `cubecloud-agentic-os` for `pacgate` | **0 hits** |
+
+They live in the sibling repo `cubecloud-agentic-os` and the coupling is **zero
+in both directions**. So "the pacgate-ai bundle ... if regression fully inference
+end to end" is two separate audits, and both were run. Anyone reading the eight
+names as part of the client bundle would be auditing the wrong product.
+
+---
+
+## 1. The eight repos: code, then a live round trip
+
+A unit test proves an adapter matches *my* understanding of a protocol. It cannot
+prove the understanding matches the shipped runtime. Where a real runtime existed,
+it was run.
+
+| # | Repo | Code today | Live round trip |
+| --- | --- | --- | --- |
+| 1 | deepseek-harness | `harnesses/deepseek-harness.ts` 574 ln + `dsh-jsonrpc-client.ts`, `dsh-provider-config.ts`, `dsh-mcp-bridge.ts` | **PASS** |
+| 2 | ag-ui | `packages/platform-core/src/ag-ui.ts` 626 ln, `POST /api/ag-ui/run` | **PASS** |
+| 3 | A2UI | `shared/a2ui.ts` + `A2uiBlock.tsx` + fence producer in `AgentMarkdown.tsx` | **PASS** (render path, red-green) |
+| 4 | DataFlow | `managed-apps/dataflow.ts` on `probeSse` | **PASS** (transport) |
+| 5 | omnara | none | correctly absent, 0 references |
+| 6 | univer | none | correctly absent |
+| 7 | kitesurf | `managed-apps/kitesurf.ts` + `kitesurf-probe.ts` | **PASS** |
+| 8 | astryx | none | correctly absent, 0 references |
+
+### 1.1 deepseek-harness — against the real published runtime
+
+Installed `@deepseek-ai/dsh@0.2.2-rc.5` (it is published), built the adapter
+bundle, and ran `scripts/dsh-real-smoke.cjs`:
+
+```
+dsh: .../@deepseek-ai/dsh/lib/bin.js
+── A. failure path (dead loopback route) ──
+PASS  error: Connection error.: bad port
+── B. success path (loopback OpenAI-compatible, no cloud) ──
+PASS  "pong from real runtime", 30 tools, loopback only
+✅ real-runtime smoke passed
+```
+
+Both halves matter. The success path proves a real turn; the failure path proves
+the adapter reports a dead route instead of a clean empty turn — which the smoke's
+own header records as bug 4, the one that shipped broken once.
+
+`[skip]` in that script is not a pass: without `DSH_PACKAGE_DIR` plus a built
+`adapter.cjs` it exits 0 having tested nothing. Both were supplied here.
+
+### 1.2 ag-ui — a real model answer over SSE
+
+The console backend was already up on `:6770` with `dataflowHealth` and
+`kitesurfHealth` in its 314-route table. Driving `POST /api/ag-ui/run`:
+
+```
+data: {"type":"RUN_STARTED","threadId":"local-verify-4","protocolVersion":"1.0"}
+data: {"type":"TEXT_MESSAGE_CONTENT","delta":"P"} ... "AC" "G" "ATE" "-A" "GUI" "-" "OK"
+data: {"type":"RUN_FINISHED","outcome":{"type":"success"}}
+```
+
+`PACGATE-AGUI-OK` arrived as 8 deltas and the run finished `success`. Two traps
+worth recording:
+
+- The token is `CONSOLE_KERNEL_TOKEN`, read from the container — `ci-smoke-token`
+  from `ci.yml` is a CI-only fixture and returns `{"success":false,"error":"invalid
+  console token"}`.
+- The body must be posted from a file. Hand-quoting the JSON through PowerShell
+  produced `{"success":false,"error":"invalid JSON body"}` twice.
+
+### 1.3 A2UI — the producer is what the tests guard
+
+15 tests pass. Red-green, because a passing suite proves nothing about whether it
+can fail: renaming the fence dispatch `if (language === "a2ui")` disabled the
+producer and produced **1 failed / 14 passed**; restoring it produced **15
+passed**. The producer wiring is genuinely covered.
+
+### 1.4 DataFlow — no published image, so the transport was tested directly
+
+`opendcai/dataflow-webui` has **no published image**: the anonymous GHCR token
+flow issued no token for it, `/v2/` answered `401`, and `docker manifest inspect`
+returned `manifest unknown`. The upstream repo also has no Dockerfile-driven
+compose. The adapter's own default is `http://localhost:8000/mcp` speaking
+**legacy HTTP+SSE** over `probeSse`.
+
+Rather than accept 7 mocked tests as proof, a wire-faithful SSE MCP server was
+written (20 tools, `event: endpoint` then `event: message`) and the real adapter
+was pointed at it:
+
+```
+state: "found"  detail: "DataFlow reachable at http://localhost:8000/mcp - ..."
+```
+
+Then the server was killed: `state: "not-found", detail: "fetch failed"`. So the
+probe distinguishes reachable from not, and is not simply always-green.
+
+Note the probe path detail: the adapter treats the configured URL **itself** as
+the SSE stream (DataFlow's `/mcp` *is* the stream). A first attempt serving only
+`/sse` returned `HTTP 404` — that was my fixture being wrong, not the adapter.
+
+### 1.5 kitesurf — real container, real CDP handshake
+
+`ghcr.io/cloudflare/kitesurf:latest` pulled and run on `127.0.0.1:8787`:
+
+```
+PROBE={"reachable":true,"baseUrl":"http://127.0.0.1:8787",
+       "browser":"Kitesurf/0.0.1","protocolVersion":"1.3",
+       "detail":"CDP target Kitesurf/0.0.1 speaking protocol 1.3","error":null}
+```
+
+Container removed after the measurement.
+
+### 1.6 The three refusals are real absences, not missing work
+
+`omnara`, `astryx`, and `univer` have **zero** source references. The single
+`univer` hit was the word "universal" in a comment, and `astryx`/`omnara` had
+none at all. Recorded refusals with reasons in
+`cubecloud-agentic-os/docs/plans/2026-11-22-open-items-implementation-plan.md`;
+the container framing did **not** change the astryx verdict.
+
+### 1.7 What "functional" does and does not mean here
+
+- **Proven:** the adapters, transports, and render paths work against real
+  runtimes (deepseek-harness, ag-ui, kitesurf) or a wire-faithful fixture
+  (DataFlow), and are covered by 205 passing tests across 10 files.
+- **Not proven:** DataFlow against the real DataFlow application, because no
+  image is published. kitesurf and DataFlow are **opt-in roster entries**, not
+  always-on lanes — neither is running as part of the client bundle.
+- **Not applicable:** A2UI is a render path, exercised in-process; it emits no
+  network round trip to prove.
+
+---
+
+## 2. pacgate-ai stack: no regression
+
+| Gate | Result |
+| --- | --- |
+| `run-all-checks.ps1` | **ALL 70 GATES PASSED, exit 0** (25 live-stack gates) |
+| `test-agent-mcp-e2e.ps1` | **9 passed** — real run, real tool call, record returned |
+| `test-lane-connectivity.ps1` | **11 passed, 0 not reachable** |
+| `test-mcp-tool-surface.ps1` | **6 passed** — 29 tools, source == advertised |
+| `test-legal-journey.ps1` | **20 assertions, all lanes verified** |
+| `test-docx-redline.ps1` | **11 passed** |
+| `test-stack-version-coherence.ps1` | **16 passed** |
+
+Full inference chain, proven end to end rather than inferred:
+
+```
+[PASS] E1b the DEFAULT picker model 'deepseek-v4.1-flash:cloud' is installed
+[PASS] E2  an agent run completes (the KeyError-class defect)
+[PASS] E2b the run produced an answer, not an LLM error fallback
+[PASS] E3  the run invoked at least one real MCP tool
+       called: pacgate_pacgate_list_connectors
+[PASS] E4  a tool-call record came back
+```
+
+Independent lanes: openviking `tools/list` = **15 tools** and a real
+`tools/call health` returned `"OpenViking is healthy (..., storage: VikingFS)"`;
+qm 0.1.18 `readyz {"ok":true}` at core `988ce509…` with `Restarts=0`; pacgate-api
+health `ok`; 222 workflows served.
+
+---
+
+## 3. Accelerated round trips
+
+`benchmark-round-trips.ps1 -IncludeAgent -Runs 3`, this host. Compared against
+the 0.2.37 report because it is the only prior table with the same probe set.
+
+| Layer | Probe | Now (median) | Spread | 0.2.37 | Change |
+| --- | --- | --- | --- | --- | --- |
+| L0 | nginx → api `/version` | **16.1 ms** | 86% | 23.8 | **-32%** |
+| L0 | api `/pacgate/health` | **5.5 ms** | 72% | 19.8 | **-72%** |
+| L0 | deer-flow-frontend `/` | **25.6 ms** | 86% | 222.9 | **-89%** |
+| L0 | qm core `/readyz` | 13.6 ms | 194% | n/a (was portal `/`) | different endpoint |
+| L1 | `POST /auth/login/local` | 275.0 ms | **5%** | 302.3 | -9% |
+| L1 | `POST /api/threads` | **41.1 ms** | **11%** | 61.8 | **-33%** |
+| L2 | MCP handshake + `tools/list` (cold) | **314.7 ms** | **6%** | 371.2 | **-15%** |
+| L4 | agent `/runs/wait` (tool loop) | **4,592.8 ms** | 29% | 4,767.1 | -4% |
+
+One pass of every probe: **5,284 ms**.
+
+Read this as a shape, not a spec: it is one dev box with one Ollama runner slot.
+The interesting part is the spread collapse on the auth and MCP lanes (17%→5%,
+18%→6%), which says those paths stopped being noisy — not that the hardware
+changed. The L4 spread also fell from **187%** to 29%, so the agent lane is far
+more stable than at 0.2.37 even though its median barely moved.
+
+The qm row is **not comparable**: 0.2.37 timed a portal `/` that no longer exists
+(hence its absurd 2388% spread on a 1.5–86.4 ms range); this times core
+`/readyz`.
+
+---
+
+## 4. The defect this audit found — in our own gates
+
+Four gates were probing the **qm portal port that the 0.1.18 migration deleted**
+(`:8181`, `:8180`). Core serves `{"ok":true}` on `:8182`; the portal is gone. Each
+gate produced a confident verdict about a dead service:
+
+| Gate | Verdict it produced | Truth |
+| --- | --- | --- |
+| `benchmark-round-trips.ps1` | `[FAIL] no-response` | stack healthy |
+| `smoke-full-stack.ps1` | `[SKIP] qm not running (000)` | stack healthy |
+| `test-lane-connectivity.ps1` | E5/E6/E7 unreachable | stack healthy |
+| `test-legal-journey.ps1` | "portal not reachable" | stack healthy |
+
+This is plan 035 §7.2's stale-literal class on the port axis. Patching
+`8181 → 8182` would reproduce it at the next topology change, so all four now
+derive from config via `scripts/lib/QmEndpoint.ps1` (staged `.env` → tracked
+`qm.config.jsonc` → the 0.1.18 default), and the health path is discovered
+(`/readyz` then `/healthz`) so a route rename cannot report a healthy core as
+down either.
+
+**The fix was not cosmetic.** `test-legal-journey` went from
+
+```
+journey PASSED on every step that ran; some lanes were NOT verified
+```
+
+to
+
+```
+assertions passed: 20
+RESULT: full legal journey PASSED, all lanes verified.
+```
+
+The retired-port skip had been silently hiding a real lane. A gate that reports a
+deleted service as a broken product is worse than no gate: it spends the
+reader's attention on a fault that does not exist, which is how a suite loses
+authority.
+
+### 4.1 The guard earned its place immediately
+
+`scripts/test-stale-literal-guard.ps1` was added and registered, asserting
+(A1) no qm port literal outside the resolver, (A2) no released image-tag literal
+outside an explicit fixture, (A3) the resolver answers.
+
+On its first run it found **two more literals a manual sweep had missed** —
+`test-lane-connectivity.ps1:65` and `test-legal-journey.ps1:39`. Both were fixed.
+Mutation-verified: injecting `http://localhost:8181/healthz` into a scratch repo
+fails A1 with exit 1.
+
+Shipped in `5d2c7b7`. Red-green held too: a dead qm endpoint still fails the
+benchmark (`exit 1`, `no-response`), so the fix did not simply stop asserting.
+
+---
+
+## 5. Hazards recorded while doing this
+
+1. **A mutation gate left a product file modified.** After a full suite run,
+   `deploy/client-bundle/install.ps1` had
+   `--untracked-files=no` stripped from a `git status` call. This is the exact
+   hazard plan 027 documented. It was reverted with `git checkout --` and the
+   gate was **not** touched. Always `git status` after a suite run.
+2. **`ci.yml`'s AG-UI token is a fixture.** `x-console-token: ci-smoke-token` only
+   works inside CI. Locally the token is `CONSOLE_KERNEL_TOKEN` from the
+   container.
+3. **The console backend is not in the pacgate stack.** It is a separate product
+   on `:6770`. Auditing "the bundle" must not silently include it, and equally
+   must not silently exclude it when the question is about the eight repos.
+
+---
+
+## 6. Open items, stated rather than implied
+
+- **DataFlow has no runnable upstream.** If a real DataFlow deployment is wanted,
+  one must be built from source; the transport is proven, the application is not.
+- **kitesurf is off by default** and upstream says it is "not a hardened sandbox".
+  Enabling it means accepting arbitrary page JavaScript; that is an operator
+  decision, not a default.
+- **`dsh-real-smoke.cjs` skips green** when the runtime is absent. It is safe to
+  wire into a manual ladder, and would be a false green in required CI.
