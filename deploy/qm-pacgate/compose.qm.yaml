@@ -57,6 +57,27 @@ services:
       # validation even so. AUTH_BRAND_NAME keeps the branded sign-in page.
       AUTH_EMAIL_TRANSPORT: smtp
       AUTH_BRAND_NAME: PacGate
+      # EMBEDDED AUTH BROKER. Without these, /auth/login redirects to SLACK's OIDC
+      # endpoint with an EMPTY client_id (portal/src/index.ts:169 defaults
+      # OIDC_AUTH_ENDPOINT to slack.com when unset) and sign-in cannot proceed.
+      # AUTH_EMBEDDED=1 runs the broker INSIDE core on 127.0.0.1:8099 - the separate
+      # `auth` container no longer exists in 0.1.18.
+      AUTH_EMBEDDED: "1"
+      AUTH_BROKER_UPSTREAM: http://127.0.0.1:8099
+      AUTH_BROKER_PREFIX: /idp
+      AUTH_ISSUER: ${QM_PUBLIC_URL:-http://localhost:8182}/idp
+      AUTH_CLIENT_ID: qm-portal
+      AUTH_REDIRECT_URI: ${QM_PUBLIC_URL:-http://localhost:8182}/auth/callback
+      OIDC_CLIENT_ID: qm-portal
+      OIDC_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
+      OIDC_ISSUER: ${QM_PUBLIC_URL:-http://localhost:8182}/idp
+      OIDC_AUTH_ENDPOINT: ${QM_PUBLIC_URL:-http://localhost:8182}/idp/authorize
+      OIDC_TOKEN_ENDPOINT: http://127.0.0.1:8099/token
+      OIDC_USERINFO_ENDPOINT: http://127.0.0.1:8099/userinfo
+      OIDC_JWKS_URI: http://127.0.0.1:8099/.well-known/jwks.json
+      OIDC_SCOPES: "openid email"
+      OIDC_PRINCIPAL_CLAIM: email
+
       # Model lane. The provider endpoint is OpenAI-compatible; Ollama serves it.
       # MODEL_BASE_URL was renamed OPENAI_BASE_URL in 0.1.18.
       MODEL_PROVIDER: openai
@@ -146,3 +167,4 @@ networks:
   default:
     name: qm-pacgate
     external: true
+
