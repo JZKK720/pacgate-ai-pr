@@ -72,7 +72,14 @@ Check 'openviking pinned in compose' { (Select-String -Path 'deploy/client-bundl
 Check 'openviking data mount' { (Select-String -Path 'deploy/client-bundle/compose.prod.yaml' -Pattern '\./openviking' -Quiet) }
 Check 'OPENVIKING_CONF_CONTENT rendered' { (Select-String -Path 'deploy/client-bundle/install.ps1' -Pattern 'OPENVIKING_CONF_CONTENT' -Quiet) }
 Check 'openviking config template' { Test-Path 'deploy/client-bundle/openviking' }
-Check 'OPENVIKING_API_KEY wired to sandbox' { (Select-String -Path 'deploy/qm-pacgate/qm.config.jsonc' -Pattern 'OPENVIKING_API_KEY' -Quiet) }
+# Either surface counts. Before 0.1.18 the key lived in qm.config.jsonc's sandbox.secretEnv;
+# that block was retired and the sandbox tool env moved to compose's FLY_RESIDENT_ENV_*
+# variables. Checking only the config reports the wiring as MISSING when it merely moved -
+# which is exactly what it did the moment the qm pin moved to 0.1.18.
+Check 'OPENVIKING_API_KEY wired to sandbox' {
+    (Select-String -Path 'deploy/qm-pacgate/qm.config.jsonc' -Pattern 'OPENVIKING_API_KEY' -Quiet) -or
+    (Select-String -Path 'deploy/qm-pacgate/compose.qm.yaml' -Pattern 'OPENVIKING_API_KEY' -Quiet)
+}
 
 Write-Output ''
 Write-Host '=== 4. Documentation pipeline ===' -ForegroundColor Cyan
@@ -142,3 +149,5 @@ if ($fail -eq 0) {
 }
 Write-Host ("{0} CHECK(S) FAILED" -f $fail) -ForegroundColor Red
 exit 1
+
+

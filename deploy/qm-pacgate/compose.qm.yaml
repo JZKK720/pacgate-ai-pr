@@ -94,6 +94,12 @@ services:
       LOCAL_SANDBOX_IMAGE: ${LOCAL_SANDBOX_IMAGE:-qm-pacgate-sandbox-local:latest}
       FLY_SANDBOX_APP_NAME: pacgate-sandboxes
       # nginx routes the metadata API under /pacgate/; sandbox tools follow suit.
+      #
+      # FROM 0.1.18 THE `sandbox` CONFIG BLOCK IS GONE, so the secrets and URLs the sandbox
+      # tools need live here as FLY_RESIDENT_ENV_* variables instead. Do not delete these when
+      # tidying the retired block: verify-surviving-components.ps1 asserts every
+      # OPENVIKING_*_API_KEY stays wired, and audit-qm-bootstrap.ps1 asserts the host-port
+      # coupling to 8089/1933 still exists. Both caught their removal once already.
       FLY_RESIDENT_ENV_PACGATE_API_URL: http://host.docker.internal:8089/pacgate
       FLY_RESIDENT_ENV_PACGATE_API_EMAIL: ${PACGATE_API_EMAIL}
       FLY_RESIDENT_ENV_PACGATE_API_PASSWORD: ${PACGATE_API_PASSWORD}

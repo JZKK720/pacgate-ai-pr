@@ -179,8 +179,15 @@ foreach ($m in [regex]::Matches($prodCode, '(?m)^\s*-\s*"(?<host>\d+):(?<cont>\d
 }
 
 # Host ports qm REACHES the main stack on, from host.docker.internal:<port>.
+#
+# Scanned across BOTH deployment surfaces, not just the config. In 0.1.18 the `sandbox`
+# config block was retired, so the sandbox tool environment moved to compose's
+# FLY_RESIDENT_ENV_* variables. Reading only qm.config.jsonc then reports the coupling as
+# "removed" when it merely moved - which is what this gate did the moment the pin moved to
+# 0.1.18. Either surface is a legitimate home; the assertion is that the coupling EXISTS,
+# not where it is written.
 $qmReaches = @()
-foreach ($m in [regex]::Matches($cfgCode, 'host\.docker\.internal:(?<p>\d+)')) {
+foreach ($m in [regex]::Matches($allRaw, 'host\.docker\.internal:(?<p>\d+)')) {
     $qmReaches += $m.Groups['p'].Value
 }
 $qmReaches = @($qmReaches | Select-Object -Unique | Sort-Object)

@@ -15,6 +15,10 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 $prod = 'deploy/client-bundle/compose.prod.yaml'
 $qmCfg = 'deploy/qm-pacgate/qm.config.jsonc'
+# The qm compose is where the host-port coupling lives from 0.1.18 onward: the `sandbox`
+# config block was retired, so the sandbox tool env moved to FLY_RESIDENT_ENV_* variables.
+# Mutations below target whichever surface currently carries the coupling.
+$qmCompose = 'deploy/qm-pacgate/compose.qm.yaml'
 $setup = 'deploy/client-bundle/setup-qm.ps1'
 $test = './scripts/audit-qm-bootstrap.ps1'
 
@@ -30,13 +34,13 @@ $mutations = @(
        Want = 'the main stack publishes host port 8089, which qm reaches via host.docker.internal' }
 
     @{ N = 'qm reaches a host port the main stack does not publish'
-       File = $qmCfg
+       File = $qmCompose
        From = 'http://host.docker.internal:8089/pacgate'
        To   = 'http://host.docker.internal:9999/pacgate'
        Want = 'the main stack publishes host port 9999, which qm reaches via host.docker.internal' }
 
     @{ N = 'a qm host-port coupling is removed by retyping the URL'
-       File = $qmCfg
+       File = $qmCompose
        From = 'http://host.docker.internal:1933'
        To   = 'http://host.docker.internal:11434/api'
        Want = 'qm still reaches every documented host port' }
@@ -78,3 +82,4 @@ $ok = Invoke-MutationSuite -Mutations $mutations -SuiteScript $test -GuardPaths 
 
 if (-not $ok) { exit 1 }
 exit 0
+
