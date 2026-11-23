@@ -229,37 +229,33 @@ if (-not $ovKey) {
         if ($ovLine) { $ovKey = ($ovLine -replace '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*', '').Trim() }
     }
 }
-$mcp = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 15 -X POST 'http://localhost:1933/mcp' `
-        -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' `
-        -H "X-API-Key: $ovKey" `
-        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1 | Out-String).Trim()
-
-# RETRY A MANGLED BODY - this is not a retry for a bad key.
+# ALWAYS POST FROM A FILE - there is deliberately no inline attempt.
 #
 # PowerShell re-quotes a JSON literal passed as a native argument, so curl can
 # deliver `{jsonrpc:2.0,...}` with the quotes stripped. The server then correctly
-# answers 400 `Parse error: Expecting property name enclosed in double quotes`,
-# and this lane reported that as "a real failure" against a healthy stack.
-#
+# answers 400 `Parse error: Expecting property name enclosed in double quotes`.
 # Measured 2026-11-22 during the 0.2.36 e2e: the identical command returned 200
 # from an interactive shell and 400 from inside this script, with the SAME 64-char
-# key. A body delivered via a file is quoting-proof, so a 400 is retried that way
-# and only a second 400 counts as a real fault. A rejected key returns 401, so this
-# cannot mask an auth failure, and the no-key case is still distinguished below.
-$mcpNote = ''
-if ($mcp -eq '400') {
-    $ovBody = Join-Path ([IO.Path]::GetTempPath()) 'ov-tools-list.json'
+# key.
+#
+# This used to send the inline form first and retry from a file only on 400. That
+# is a wasted round trip whose only purpose was to explain away the first verdict:
+# it asked a question the shell could corrupt, then asked it again properly. A
+# body delivered from a file is quoting-proof, so it is now the ONLY request, and
+# a 400 here means a real fault rather than a shell artefact. A rejected key still
+# returns 401, so this cannot mask an auth failure.
+$ovBody = Join-Path ([IO.Path]::GetTempPath()) 'ov-tools-list.json'
+try {
     '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' |
         Set-Content -LiteralPath $ovBody -Encoding ASCII -NoNewline
-    $mcp2 = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 15 -X POST 'http://localhost:1933/mcp' `
+    $mcp = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 15 -X POST 'http://localhost:1933/mcp' `
             -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' `
             -H "X-API-Key: $ovKey" `
             --data-binary "@$ovBody" 2>&1 | Out-String).Trim()
-    Remove-Item -LiteralPath $ovBody -ErrorAction SilentlyContinue
-    $mcp = $mcp2
-    $mcpNote = ' (retried with a file body; the shell mangled the inline JSON)'
 }
-if ($mcp -eq '200' -or $mcp -eq '202') { Ok "openviking MCP tools/list -> $mcp$mcpNote" }
+finally { Remove-Item -LiteralPath $ovBody -ErrorAction SilentlyContinue }
+
+if ($mcp -eq '200' -or $mcp -eq '202') { Ok "openviking MCP tools/list -> $mcp" }
 elseif (-not $ovKey) { Skip "openviking MCP -> $mcp (no OPENVIKING_ROOT_API_KEY in env or client-bundle/.env)" }
 else { Bad "openviking MCP -> $mcp (a key IS configured, so this is a real failure, not a skip)" }
 

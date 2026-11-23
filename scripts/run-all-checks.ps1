@@ -800,6 +800,18 @@ $liveStackGates = @(
     # It compares EVERY pinned release service at once, and exits 2 when the stack
     # is down so a clean machine is not a false red.
     'scripts/test-stack-version-coherence.ps1'
+    # Proves the gate above can REJECT, which it demonstrably could not before.
+    #
+    # It asserted `.Config.Image` - the create-time tag string - against the compose
+    # pin. Both come from the same compose file, so it was a tautology that survived
+    # the 2026-11-22 incident it exists for: `ocr-service` ran locally-built bytes
+    # under the release tag while this gate reported PASS. Reproduced on this box by
+    # re-pointing `pacgate-api:0.2.37` at `alpine:3.20`.
+    #
+    # Registered alongside the gate rather than left to a manual run, for the reason
+    # test-pdf-freshness-mutations.ps1 records: a gate whose only evidence is a green
+    # run has not been tested at all.
+    'scripts/test-coherence-mutations.ps1'
     # THE MCP TOOL SURFACE, registered 2026-10-23 from the same field reports.
     #
     # One AIPC lost ALL of its MCP tools and the 47-gate suite stayed green. The
@@ -1050,6 +1062,24 @@ $gates += 'scripts/test-sync-capability.ps1'
 # printed on every run, but that loop ignores exit codes by design. This wrapper
 # supplies -Strict and is what actually blocks.
 $gates += 'scripts/test-aipc-capacity-fit-strict.ps1'
+# THE INSTALL-TIME STOP FOR AN UNRUNNABLE DEFAULT, registered 2026-11-23.
+#
+# The two entries above judge the ROSTER against the 16 GB reference card. That is
+# a review-time question, and it is the wrong one at the point of install: measured
+# 2026-10-05 on a 4 GB Radeon 8060S, every active entry was over-cap while the
+# suite reported FITS, because it was judging a card that was not present.
+#
+# `models[0]` is also not a roster preference. It is the default a new session
+# starts with, so an over-cap default is a stack that cannot answer its first
+# question - and it fails three stages later as an agent crash, not as a capacity
+# error. deploy/client-bundle/install.ps1 now STOPS on that host unless the
+# operator passes -AllowCloudDefault (options C, then B opt-in; verified report
+# 7.1).
+#
+# This gate proves that stop actually stops, and that the opt-in stays opt-in - a
+# client must never start sending prompts to ollama.com because an installer
+# decided its GPU was small.
+$gates += 'scripts/test-model-default-capacity.ps1'
 # SKILLS AND WORKFLOW TEMPLATES, registered 2026-10-19.
 #
 # These are declared must-haves on every machine, and NOTHING asserted them. The

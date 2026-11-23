@@ -226,18 +226,33 @@ was not present.
 
 ## 5. What is still open
 
-1. **`test-stack-version-coherence.ps1` cannot see a re-pointed tag.** It compares the
-   container's `.Config.Image` (the string the container was *created with*) against the
-   compose pin, so a container running bytes that the tag no longer names still reads as
-   coherent. This actually happened during this audit (§1.1e). The fix is to compare
-   `.Image` — the digest the container really runs — against
-   `docker image inspect <tag> --format '{{.Id}}'`. Left open deliberately: a gate change
-   needs its own mutation test, and it would be dishonest to fold an untested assertion
-   into a verification commit.
-2. **The `models[0]`-by-host decision** — the only commercial call. Recommendation: fail
-   the install loudly on a host that cannot run the default, with cloud promotion as an
-   explicit opt-in flag. Detail in `AIPC-0.2.37-E2E-VERIFICATION.md` §7.1.
-3. **`smoke-full-stack.ps1` retry branch** — replace with always-post-from-file (§2.1).
+1. ~~**`test-stack-version-coherence.ps1` cannot see a re-pointed tag.**~~ **CLOSED
+   2026-11-23.** It now compares the digest the container RUNS (`.Image`) against the
+   digest the pin's tag NOW NAMES (`docker image inspect <tag> .Id`), instead of the
+   create-time tag string. Proven both ways: reproduced the 2026-11-22 incident
+   end-to-end by re-pointing `pacgate-api:0.2.37` at `alpine:3.20` (old gate: 14/14
+   PASS, exit 0 — it was green about a stack that was not the release; new gate: FAIL,
+   exit 1, naming both digests), and guarded by `scripts/test-coherence-mutations.ps1`,
+   which restores the create-time field and gets caught 3/3.
+2. ~~**The `models[0]`-by-host decision.**~~ **DECIDED 2026-11-23 — option C, with B as
+   an explicit opt-in.** `install.ps1` now refuses to finish on a host that cannot load
+   the shipped default and prints both fixes; `-AllowCloudDefault` promotes an
+   already-active `:cloud` entry (machine-local override, tracked config untouched).
+   The reasoning, recorded rather than assumed: `models[0]` is the default a new session
+   starts with and is not conditional, so an over-cap default is a stack that cannot
+   answer its first question — and it fails three stages later as an agent crash. It
+   must never be silent in EITHER direction: not a silently-unrunnable local default,
+   and not a silently-egressing cloud one. `test-model-default-capacity.ps1` proves the
+   stop stops (mutation: `exit 1` → `return` is caught) and that the flag stays opt-in.
+3. ~~**`smoke-full-stack.ps1` retry branch**~~ **DONE 2026-11-23** — always posts from a
+   file (§2.1); the inline attempt and its explanatory retry are gone.
+4. **`qm` stays on 0.1.4.** Unchanged, and this round did not touch it. See
+   `deploy/qm-pacgate/UPSTREAM-0.1.19-VERDICT.md`.
+5. **Watch for the stale-literal-in-a-gate pattern** (§ above, `AIPC-0.2.37-E2E-
+   VERIFICATION.md` §7.2). Still not implemented as a repo-wide guard. Note this round
+   produced a live example in the other direction: the `-AllowCloudDefault` promote
+   path first hardcoded model TAGS where `--promote` takes roster ENTRY NAMES, which
+   matched nothing. Both are now derived from `deer-flow-config.yaml`.
 4. **A repo-wide guard against version literals in gate scripts.** Five defects this
    round were one class: `:0.2.6`, `:0.2.8`, `$AipcVramGB = 16`, a stale staged copy, and
    a re-pointed tag. Each produced a confident verdict about something nobody was
