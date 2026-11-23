@@ -296,6 +296,66 @@ if ($activeModels.Count -eq 0) {
 }
 
 # ---------------------------------------------------------------------------
+# B0. The DEFAULT model must fit the host.
+#
+# B2 below reports over-cap ACTIVE roster entries, and that is the right severity
+# for an OPTIONAL entry: a client simply will not pick a model that cannot load.
+# `models[0]` is different in kind. It is the default the picker opens on and the
+# model a new session starts with, and nothing about it is conditional - so an
+# over-cap `models[0]` is not a roster preference, it is a stack that cannot
+# answer its first question.
+#
+# WHY THIS IS NOT HYPOTHETICAL. On 2026-10-05 this box (4 GB Radeon 8060S iGPU)
+# ran a stack whose `models[0]` was nemotron-3.5-bolt:e4b-q8_0 at 9.8 GB. Nothing
+# failed at install: `ollama pull` succeeded, `ollama list` showed the model,
+# `ollama ps` was never consulted, and the install printed [OK] throughout. The
+# failure surfaced three stages later as a failed agent run. The shipped config
+# hardcodes that default and does not read PACGATE_MODEL_*, so `.env` cannot
+# retarget it either.
+#
+# The gate does not decide the commercial question (see deploy/AIPC-0.2.37-E2E-
+# VERIFICATION.md 7.1). It makes the exposure VISIBLE on the host in front of you,
+# which is what was missing: the pre-existing report judged the 16 GB REFERENCE
+# card while running on a 4 GB machine, so it said FITS about hardware that was
+# not there.
+#
+# Exit 2 (cannot check), never 1: choosing the default is a product decision, and
+# a gate that blocks the suite on a commercial question teaches people to ignore
+# the suite. The installer is where this becomes a stop - see install.ps1's
+# Confirm-ModelCapacityGate.
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'B0  default model (models[0]) fits THIS host' -ForegroundColor Cyan
+
+$defaultTag = if ($activeModels.Count -gt 0) { $activeModels[0].Tag } else { '' }
+$defaultOverCap = $false
+
+if (-not $defaultTag) {
+    Write-Warn 'no active models[0] parsed - cannot check B0'
+}
+elseif (-not $KnownSizesGB.ContainsKey($defaultTag)) {
+    Write-Warn "models[0] -> $defaultTag : size unknown, add it to the table in this script"
+}
+else {
+    $defaultGB = [double]$KnownSizesGB[$defaultTag]
+    $defaultVerdict = Get-FitVerdict $defaultGB
+    if ($defaultVerdict -ne 'OVER_CAP') {
+        Write-Pass "models[0] -> $defaultTag ($('{0:N1}' -f $defaultGB) GB) : $defaultVerdict on $AipcVramGB GB"
+    }
+    else {
+        $defaultOverCap = $true
+        $alt = @($KnownSizesGB.GetEnumerator() |
+            Where-Object { $_.Key -ne $defaultTag -and $_.Value -gt 0 -and (Get-FitVerdict ([double]$_.Value)) -ne 'OVER_CAP' } |
+            Sort-Object Value -Descending | Select-Object -First 3 | ForEach-Object { $_.Key })
+        Write-Warn ("models[0] -> {0} ({1:N1} GB) : OVER_CAP on this {2} GB host - the stack will install and then fail on its first agent run" -f `
+            $defaultTag, $defaultGB, $AipcVramGB)
+        Write-Host ("         a default that cannot load. Fitting alternatives: {0}" -f `
+            $(if ($alt.Count) { $alt -join ', ' } else { 'none in this table - no local tag fits, so the client must choose a :cloud entry deliberately' })) -ForegroundColor Yellow
+        Write-Host '         fix: scripts/regen-local-model-override.py --promote <entry>   (machine-local, tracked config untouched)' -ForegroundColor Gray
+    }
+}
+
+# ---------------------------------------------------------------------------
 # B3. Pre-pull waste: over-cap tags ollama-models.txt pulls that nothing
 #     references. install.ps1 pulls EVERY uncommented line unconditionally, so
 #     these are tens of GB of guaranteed-unused download per client machine.
@@ -380,5 +440,12 @@ if ($script:warnings -gt 0 -and -not $Strict) {
     Write-Host '  This script is registered NON-BLOCKING on purpose: the warnings are real' -ForegroundColor DarkGray
     Write-Host '  capacity exposures, but which models the shipped roster offers is a product' -ForegroundColor DarkGray
     Write-Host '  decision. Run with -Strict once that decision is made.' -ForegroundColor DarkGray
+}
+if ($defaultOverCap) {
+    Write-Host ''
+    Write-Host '  B0 is the one exposure a client cannot work around: models[0] is the default,' -ForegroundColor Yellow
+    Write-Host '  not a choice. install.ps1 refuses to finish on this host unless the operator' -ForegroundColor Yellow
+    Write-Host '  passes -AllowCloudDefault - so the failure is a decision, not a 3-stages-later' -ForegroundColor Yellow
+    Write-Host '  agent crash.' -ForegroundColor Yellow
 }
 exit 0

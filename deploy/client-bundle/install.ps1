@@ -9,7 +9,19 @@
 
 param(
     [switch]$Update,
-    [switch]$SkipRepoPull
+    [switch]$SkipRepoPull,
+    # Proceed even when this host cannot load the shipped default model, by
+    # promoting an already-active :cloud entry to models[0] (machine-local
+    # override; the tracked config is not modified).
+    #
+    # This is deliberately opt-in. deer-flow's chat models are :cloud by accepted
+    # decision, but a client install should never START sending prompts off the
+    # machine by default - that is a decision the firm or its client signs off on,
+    # not a fallback an installer picks because a GPU is small. Without this flag
+    # an under-capacity host STOPS, with the fix printed.
+    #
+    # See deploy/AIPC-0.2.37-E2E-VERIFICATION.md 7.1 (options A/B/C).
+    [switch]$AllowCloudDefault
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +50,39 @@ function Get-QmPowerShell {
 }
 $QmPowerShell = Get-QmPowerShell
 
+# Discrete VRAM in GiB for THIS host, or 0 when the registry cannot answer.
+#
+# Extracted from the tier resolver below so that the model-capacity gate and the
+# tier decision read the SAME number. Two detectors that disagree is how a stack
+# earns a tier it cannot run - the exact class of defect the capacity gate exists
+# for, so this must stay one implementation.
+#
+# The registry key is used, NOT Win32_VideoController.AdapterRAM: AdapterRAM is a
+# 32-bit field and saturates at 4 GiB, so an 8 GB or 16 GB card reports the same
+# 4 GiB a small one does.
+#
+# A unified-memory iGPU reports an enormous value here (96 GiB on the dev box)
+# that is NOT usable for co-residency. Above 64 GiB it is a carve-out, not a
+# card, so it is ignored - the tier logic then falls back to system memory. That
+# keeps the dev box working without pretending its iGPU is a 96 GB accelerator.
+function Get-DiscreteVramGiB {
+    $vram = 0
+    try {
+        $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+        Get-ChildItem $cls -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSChildName -match '^\d{4}$' } |
+            ForEach-Object {
+                $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                $raw = $p.'HardwareInformation.qwMemorySize'
+                if ($raw -and [int64]$raw -gt 0) {
+                    $g = [math]::Round([int64]$raw / 1GB, 1)
+                    if ($g -lt 64) { $vram = [math]::Max($vram, $g) }   # ignore UMA carve-outs
+                }
+            }
+    } catch { }
+    return $vram
+}
+
 # Resolve the residency tier for this machine from its OS-visible memory.
 #
 # WHY THIS EXISTS (measured 2026-10-20)
@@ -65,22 +110,9 @@ function Get-OllamaResidencyProfile {
         $sysGiB = [math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1MB, 1)
     } catch { }
 
-    # Discrete VRAM, via the registry key that is NOT truncated to 4 GiB the way
-    # AdapterRAM is. A unified-memory iGPU reports an enormous value here (96 GiB
-    # on the dev box) that is NOT usable for co-residency, so it is only ever
-    # reported, never used to raise a limit.
-    $vramGiB = 0
-    try {
-        $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
-        Get-ChildItem $cls -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\d{4}$' } | ForEach-Object {
-            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-            $raw = $p.'HardwareInformation.qwMemorySize'
-            if ($raw -and [int64]$raw -gt 0) {
-                $g = [math]::Round([int64]$raw / 1GB, 1)
-                if ($g -lt 64) { $vramGiB = [math]::Max($vramGiB, $g) }   # ignore UMA carve-outs
-            }
-        }
-    } catch { }
+    # Discrete VRAM, from the shared detector above. Same number the capacity
+    # gate judges, so the tier and the model budget cannot disagree.
+    $vramGiB = Get-DiscreteVramGiB
 
     if ($sysGiB -ge 56) {
         # Plenty of SYSTEM memory. Whether that translates into a big tier
@@ -1457,6 +1489,161 @@ function Test-ModelInstalled([string]$tag) {
 }
 
 $missingModels = @($requiredModels | Where-Object { -not (Test-ModelInstalled $_) })
+
+# ---------------------------------------------------------------------------
+# Model-capacity gate for the DEFAULT model - the "options C now" decision
+# recorded in deploy/AIPC-0.2.37-E2E-VERIFICATION.md 7.1.
+#
+# THE FAILURE THIS PREVENTS. The shipped deer-flow config hardcodes models[0] as
+# a 9.8 GB tag and does not read PACGATE_MODEL_*, so .env cannot retarget it. On a
+# host that cannot load 9.8 GB - a 4 GB iGPU, measured 2026-10-05 - the install
+# completed with [OK] everywhere: the pull succeeded, `ollama list` showed the
+# model, and nothing failed until an agent run three stages later. The failure
+# looked like an Ollama bug and was chased as one for nine days.
+#
+# WHY IT STOPS RATHER THAN ADAPTS. Adapting silently would make every small-GPU
+# client start sending conversations to ollama.com by default. Cloud chat IS the
+# accepted decision for deer-flow, but as a deliberate act - the tracked config
+# says so in prose, and a 7.1 option-B default would invert that for every client
+# who never had the conversation. So the default posture is: stop, name the host
+# limit, print both fixes.
+#
+# -AllowCloudDefault opts into option B: promote an ALREADY-ACTIVE :cloud entry to
+# models[0] via the machine-local override, leaving the tracked config untouched.
+#
+# The capacity verdict itself comes from test-aipc-capacity-fit.ps1 (B0), not from
+# a second copy of the size table here - one source of truth, and the same code the
+# suite runs.
+# ---------------------------------------------------------------------------
+function Confirm-ModelCapacityGate {
+    $gate = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts/test-aipc-capacity-fit.ps1'
+    if (-not (Test-Path $gate)) {
+        Write-Host '[WARN] capacity gate not found - skipping the models[0] check' -ForegroundColor Yellow
+        return
+    }
+
+    # The gate defaults to the 16 GB REFERENCE card. Judging that instead of the
+    # machine in front of you is precisely how a 4 GB host passed review, so the
+    # host value is passed explicitly.
+    $vram = Get-DiscreteVramGiB
+    if ($vram -le 0) {
+        Write-Host '[WARN] could not read discrete VRAM - skipping the models[0] check' -ForegroundColor Yellow
+        Write-Host '       (if this host has no discrete card, a local default cannot be proven to fit)' -ForegroundColor DarkGray
+        return
+    }
+
+    # 2>$null, never 2>&1 - same convention as the ollama/API probes above, and
+    # enforced by scripts/test-ps51-native-stderr.ps1. Under PS 5.1 a native
+    # command's stderr record becomes a terminating error when
+    # $ErrorActionPreference='Stop', so an unguarded 2>&1 here could abort the
+    # install on a successful run.
+    $out = (Invoke-WithNativeStderr {
+        & $QmPowerShell -NoProfile -ExecutionPolicy Bypass -File $gate -VramGB ([int][math]::Ceiling($vram)) 2>$null
+    } | Out-String)
+    $gateExit = $LASTEXITCODE
+
+    # AN EMPTY OR FAILED RUN IS "CANNOT CHECK", NEVER "FITS".
+    #
+    # Reading no OVER_CAP line as a pass is the exact defect class this repo keeps
+    # re-finding: a gate that goes green on absence of evidence. If the capacity
+    # script cannot run at all, this check knows nothing and must say so.
+    if ($gateExit -ne 0 -or [string]::IsNullOrWhiteSpace($out)) {
+        Write-Host "[WARN] the capacity gate did not answer (exit $gateExit) - models[0] fit is UNVERIFIED on this host" -ForegroundColor Yellow
+        Write-Host '       Install is continuing; verify manually with:' -ForegroundColor DarkGray
+        Write-Host "         pwsh -File scripts/test-aipc-capacity-fit.ps1 -VramGB $([int][math]::Ceiling($vram))" -ForegroundColor DarkGray
+        return
+    }
+
+    $b0 = @($out -split "`n" | Where-Object { $_ -match 'models\[0\].*OVER_CAP' })
+    if ($b0.Count -eq 0) {
+        Write-Host "[OK] default model fits this $vram GB host" -ForegroundColor Green
+        return
+    }
+
+    $detail = ($b0 -join ' ').Trim()
+    if (-not $AllowCloudDefault) {
+        Write-Host ''
+        Write-Host '[FAIL] the shipped default model cannot load on this host.' -ForegroundColor Red
+        Write-Host "       $detail" -ForegroundColor Red
+        Write-Host ''
+        Write-Host '       models[0] is the default a new session starts with, so the stack would' -ForegroundColor Yellow
+        Write-Host '       install cleanly and then fail on its first agent run. Two ways forward:' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '         1. Promote a cloud entry on THIS machine only (sends chat to ollama.com):' -ForegroundColor Gray
+        Write-Host '              git pull; .\install.ps1 -Update -AllowCloudDefault' -ForegroundColor Gray
+        Write-Host '         2. Or promote a local entry that fits:' -ForegroundColor Gray
+        Write-Host '              py scripts/regen-local-model-override.py --promote <entry>' -ForegroundColor Gray
+        Write-Host '            (the tracked config is never modified by either route)' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '       Refusing to continue rather than shipping a stack that cannot answer.' -ForegroundColor Red
+        exit 1
+    }
+
+    # -AllowCloudDefault: promote an already-active :cloud entry. Never invent one -
+    # --promote only moves entries that EXIST in the tracked config, so the tracked
+    # config stays the single source of truth.
+    #
+    # Candidates are DERIVED from the config, not hardcoded. --promote takes the
+    # roster ENTRY NAME (`glm-5.3-flash-cloud`), which is not the model tag
+    # (`glm-5.3-flash:cloud`) - passing a tag silently matches nothing. And a
+    # hardcoded name is the stale-literal defect this repo keeps re-learning, so
+    # both are read out of the file on every install.
+    $override = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts/regen-local-model-override.py'
+    if (-not (Test-Path $override)) {
+        Write-Host '[FAIL] -AllowCloudDefault was passed but scripts/regen-local-model-override.py is missing' -ForegroundColor Red
+        exit 1
+    }
+
+    $cfgPath = Join-Path $PSScriptRoot 'deer-flow-config.yaml'
+    $cloudEntries = @()
+    if (Test-Path $cfgPath) {
+        $inModels = $false; $name = $null
+        foreach ($line in [System.IO.File]::ReadAllLines($cfgPath)) {
+            if ($line -match '^models:\s*$') { $inModels = $true; continue }
+            if ($inModels -and $line -match '^[A-Za-z_]') { break }
+            if (-not $inModels) { continue }
+            if ($line -match '^\s*-\s+name:\s*(\S+)\s*$') { $name = $Matches[1]; continue }
+            if ($name -and $line -match '^\s*model:\s*(\S+)\s*$') {
+                # Bind the capture BEFORE testing it: `-match` overwrites $Matches,
+                # so reading $Matches[1] after an inner test yields ':cloud'.
+                $tag = $Matches[1]
+                if ($tag -match ':cloud$') { $cloudEntries += [pscustomobject]@{ Entry = $name; Tag = $tag } }
+                $name = $null
+            }
+        }
+    }
+
+    if ($cloudEntries.Count -eq 0) {
+        Write-Host '[FAIL] -AllowCloudDefault was passed but deer-flow-config.yaml has no ACTIVE :cloud entry.' -ForegroundColor Red
+        Write-Host '       Add one to the roster first, then re-run.' -ForegroundColor Red
+        exit 1
+    }
+
+    # 2>$null, never 2>&1: under $ErrorActionPreference='Stop' a native command's
+    # stderr record becomes a terminating error on PS 5.1, so a successful probe
+    # would abort the install. Same convention as the ollama probe above.
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $py) { $py = Get-Command py -ErrorAction SilentlyContinue }
+    if (-not $py) {
+        Write-Host '[FAIL] -AllowCloudDefault was passed but no python/py interpreter was found' -ForegroundColor Red
+        exit 1
+    }
+
+    $promoted = $null
+    foreach ($candidate in $cloudEntries) {
+        $r = (Invoke-WithNativeStderr { & $py.Source $override --promote $candidate.Entry 2>$null } | Out-String)
+        if ($LASTEXITCODE -eq 0) { $promoted = $candidate; break }
+        Write-Host "       '$($candidate.Entry)' not promotable: $($r.Trim())" -ForegroundColor DarkGray
+    }
+    if (-not $promoted) {
+        Write-Host '[FAIL] -AllowCloudDefault was passed but no active :cloud entry could be promoted.' -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] default promoted to '$($promoted.Entry)' ($($promoted.Tag)) for this machine only" -ForegroundColor Green
+    Write-Host '     Chat now egresses to ollama.com for deer-flow sessions on this host.' -ForegroundColor Yellow
+}
+
+Confirm-ModelCapacityGate
 
 if ($missingModels.Count -eq 0) {
     Write-Host "[OK] all $($requiredModels.Count) required model(s) already present" -ForegroundColor Green
