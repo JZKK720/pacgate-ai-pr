@@ -1,0 +1,75 @@
+{
+  // Deployment contract major this directory conforms to. Still 1 - upstream did NOT
+  // bump the contract when it rebuilt the topology, which is why `qm check` fails on
+  // service NAMES rather than on a contract mismatch. See UPSTREAM-0.1.19-VERDICT.md.
+  "contract": 1,
+
+  "orgId": "pacgate",
+
+  // PORTAL IS GONE. In 0.1.18 the public sign-in front door and the browser web UI are
+  // both served by `core` (operator settings at /settings). So publicUrl points at core
+  // instead of at the old portal on basePort+1.
+  //
+  // Kept in the 8180 range: Pacgate's own stack uses 8089/1933, and qm must not collide.
+  "publicUrl": "http://localhost:8180",
+
+  "basePort": 8180,
+
+  "target": "docker",
+
+  // Unchanged: OpenAI-compatible provider = Ollama behind host.docker.internal.
+  // MODEL_BASE_URL is renamed OPENAI_BASE_URL in the core env below.
+  "modelProvider": "openai",
+
+  // 5 services -> 2. "core" now also serves web-ui and the settings page; "auth" stays
+  // as the in-core sign-in broker. "portal", "web-ui" and "admin" no longer exist as
+  // services. "egress-proxy" is available but not enabled here: it enforces sandbox
+  // egress policy through a TLS proxy, which is a deployment decision, not a default.
+  "services": ["core", "auth"],
+
+  "plugins": [],
+
+  "skills": [],
+
+  // HARNESS is dropped entirely - the pi/opencode selection was removed and the agent
+  // runtime is now inside core. SANDBOX_BACKEND=local is retained.
+  //
+  // MODEL_BASE_URL -> OPENAI_BASE_URL (provider-endpoints.ts: PROVIDER_BASE_URL_ENV.openai).
+  // PI_MODEL and the PI_* auxiliary pins are still read (14 refs in 0.1.19).
+  //
+  // AUTH_EMAIL_TRANSPORT is dropped for the auth service: with sign-in email disabled by
+  // default, `qm admin-login` is the supported admin path and needs no SMTP at all.
+  // AUTH_BRAND_NAME is retained.
+  "env": {
+    "core": {
+      "SANDBOX_BACKEND": "local",
+      "OPENAI_BASE_URL": "http://host.docker.internal:11434/v1",
+      "PI_MODEL": "glm-5.3-flash:cloud",
+      "PI_DETECT_MODEL": "glm-5.3-flash:cloud",
+      "PI_TITLE_MODEL": "glm-5.3-flash:cloud",
+      "PI_JUDGE_MODEL": "glm-5.3-flash:cloud",
+      "QM_CORE_CONTAINER": "qm-pacgate-core",
+      "NODE_ENV": "development"
+    },
+    "auth": { "AUTH_EMAIL_TRANSPORT": "smtp", "AUTH_BRAND_NAME": "PacGate", "NODE_ENV": "development" }
+  },
+
+  // The sandbox block is DELETED. `sandbox.image` is retired and ignored from 0.1.10
+  // (warning only in 0.1.10-0.1.15, which is the false green this repo recorded), and
+  // `qm sandbox publish` no longer exists. Sandboxes now boot the platform's stock
+  // sandbox-base image and our layer is a BIND MOUNT instead of a published image.
+  //
+  // That retires deploy/DEFECT-qm-sandbox-image-unobtainable.md: the whole
+  // GHCR-visibility workaround existed only to keep that published image resolvable.
+  //
+  // The two URLs the sandbox tools need move into a layer-provided env; they are kept
+  // here as comments so the intent is not lost.
+  //
+  //   PACGATE_API_URL = http://host.docker.internal:8089/pacgate
+  //   OPENVIKING_URL  = http://host.docker.internal:1933
+
+  "secretEnv": { "core": { "ADMIN_GRANTS": "ADMIN_GRANTS" } }
+}
+
+
+
