@@ -40,6 +40,13 @@ services:
     # the root group. The node user's other groups are untouched.
     group_add:
       - "0"
+    # Password-account hashes are supplied here, NOT in .env: a scrypt hash contains
+    # `$` separators, and compose interpolates `$15`/`$8`/`$salt` in an `environment:`
+    # value, silently truncating the hash so qm rejects it with the misleading
+    # "not produced by the password helper". env_file passes bytes through unexpanded.
+    env_file:
+      - path: .env.secrets
+        required: false
     depends_on:
       - pg
     environment:
@@ -53,6 +60,11 @@ services:
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
       AUTH_SIGNING_JWK: ${AUTH_SIGNING_JWK}
       AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS}
+      # Optional password accounts (<email>:<scrypt-hash>). 0.1.18 disables sign-in EMAIL
+      # by default, and the portal form then says "Email delivery isn't configured" - so
+      # without this, staff cannot sign in at all except via an operator-run
+      # `qm admin-login`. Generate entries with new-password-user.ps1, which uses qm's own
+      # hash helper (a hand-rolled scrypt digest is rejected).
       # Sign-in email is disabled by default; this key is still REQUIRED by config
       # validation even so. AUTH_BRAND_NAME keeps the branded sign-in page.
       AUTH_EMAIL_TRANSPORT: smtp
@@ -167,4 +179,6 @@ networks:
   default:
     name: qm-pacgate
     external: true
+
+
 
