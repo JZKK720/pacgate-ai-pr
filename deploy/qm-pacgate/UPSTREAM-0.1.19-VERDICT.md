@@ -1,12 +1,18 @@
 # qm upstream 0.1.4 → 0.1.19: verified verdict
 
-**Date:** 2026-10-05
+**Date:** 2026-10-05, **revised 2026-11-23**
 **Pinned:** `@yc-software/qm` 0.1.4 (running: `qm-pacgate-core` `bee03e7f2271`)
-**Upstream head:** 0.1.19 (latest published; npm list ends at 0.1.19)
-**Verdict: DO NOT upgrade. 0.1.16–0.1.19 is a re-architecture, not a version bump.**
+**Upstream:** latest **stable** v0.1.18 (2026-11-11). v0.1.19 is a GitHub *prerelease*;
+**there is no v1** (§11.1). npm `dist-tags`: `latest` = 0.1.18, `next` = 0.1.19.
+**Verdict: it is not a version bump, and a pin cannot make it one (§10). But the upgrade is
+now worth planning: it removes BOTH source patches and fixes the team's sign-in pain (§11).**
 
 Everything below was measured, not read from a changelog. Upstream publishes no
 changelog, so each claim names the command that produced it.
+
+**Read §10 and §11 first if you are asking "why can't we just pin to upstream?" or "why is
+0.1.4 so hard to use?"** They contain the two answers, including one correction (§11.5) to
+my own first reading of the sandbox patch.
 
 ---
 
@@ -221,8 +227,6 @@ say what it fixes. That is not worth a release either.
 
 So: stay on **0.1.4** until the firm commits to the re-architecture.
 
----
-
 ## 10. Re-verification 2026-11-23: "why can we not upgrade even when pinned to upstream?"
 
 The question assumes a pin is a compatibility guarantee. Verified against the published
@@ -319,3 +323,138 @@ Not "pin a newer version". All of:
 
 That is a release, not a bump. `dist-tags` at time of measurement: `latest` = **0.1.18**,
 `next` = **0.1.19** — so 0.1.19 is not even the stable channel.
+
+---
+
+## 11. 2026-11-23: "is there a v1, and why is 0.1.4 so hard for our team to use?"
+
+### 11.1 There is no v1 — verified against the repo, not the registry alone
+
+The earlier analysis read only npm. Checked the public repo directly:
+
+| Source | Result |
+| --- | --- |
+| `repos/yc-software/qm/tags` | newest is `v0.1.19`; **no `v1.*` or `1.*` tag exists** |
+| `releases` | newest is **v0.1.18** (stable, 2026-11-11); `v0.1.19` is `prerelease: true` |
+| `npm dist-tags` | `latest` = 0.1.18, `next` = 0.1.19 |
+| `package.json` on `main` | `"version": "0.1.0"` — the package's own field, not the release version |
+
+So 0.1.18 *is* upstream's latest stable release. The claim of a v1 is not supported by the
+repo. Note the repo is public and active (pushed 2026-11-23, PR numbers around #3820), so
+this is a live project, not an abandoned one.
+
+### 11.2 The usability complaint is real, and it is not about the version number
+
+The earlier verdict answered a *compatibility* question and never addressed usability.
+Reading our own handbook makes the friction concrete: **section 7 of
+`deploy/handbooks/qm-openviking-pacgate-handbook.zh.md` is five entries and every one is a
+workaround**, including a section titled "This sign-in link no longer works".
+
+The dominant cause is structural: **we patch qm's source inside its image.** Verified in
+`deploy/qm-pacgate/compose.qm.yaml`:
+
+```
+./patch/pi-models.ts:/app/src/model/pi-models.ts:ro
+./patch/local-sandbox.ts:/app/src/sandbox/local-sandbox.ts:ro
+./patch/docker-cli/docker:/usr/local/bin/docker:ro
+```
+
+Any team member who debugs qm is debugging a **modified build of a third-party product
+with no upstream changelog**. That is the "very hard to use" experience, and it follows
+from our patches, not from 0.1.4 being old.
+
+### 11.3 The single highest-value usability fix needs an upgrade we cannot take
+
+`qm admin-login [--email <admin-email>]` — "print a single-use admin login link, valid for
+five minutes" — exists in **0.1.18 and 0.1.19** and does **not** exist in our pinned
+**0.1.4** (checked via `qm --help` on each installed CLI). It removes the entire
+magic-link path that our handbook documents as failing: no SMTP, no Mailpit, no
+single-use-and-browser-bound JWT `st` claim to explain to a user.
+
+What it would let us delete, measured in our own stack:
+
+- the `qm-mailpit` container and its `8025` port
+- `AUTH_EMAIL_TRANSPORT: smtp`, `SMTP_HOST/PORT/TLS/USERNAME/PASSWORD`, `AUTH_EMAIL_FROM`
+- **13 of the variables in `.env.example`**
+
+That is a large, user-visible simplification — and it is exactly the upgrade the topology
+rewrite blocks.
+
+### 11.4 Why the patches make the upgrade harder than the topology change alone
+
+The two TypeScript patches are **whole-file replacements**, and upstream's files have
+diverged far enough that they no longer patch cleanly:
+
+| File | Our patch | Upstream 0.1.19 | Consequence |
+| --- | --- | --- | --- |
+| `pi-models.ts` | 309 lines | **491 lines** | our copy exports `HARNESS_IDS`, which **does not exist** in 0.1.19 (`grep -c` = 0); `DEFAULT_CODEX_MODEL_ID` moved `gpt-5.6-sol` → `gpt-6.1-sol` and five new exports appeared |
+| `local-sandbox.ts` | — | **rewritten** (see 11.5) | our loopback workaround is now **upstream** — the patch should be deleted, not ported |
+
+So an upgrade requires re-authoring `pi-models.ts` against a 491-line file **and**
+rebuilding the topology, config, compose, handbooks and client bundle in the same change.
+The patches are not a reason to stay on 0.1.4 — they are a multiplier on the cost of
+leaving it.
+
+### 11.5 Correction: the sandbox patch is obsolete upstream, and my first reading of it was wrong
+
+§11.4's first draft said the loopback bug "is not fixed" because
+`local-sandbox.ts:170` still contains `127.0.0.1:${await resolvePort(name)}`. **That was a
+misreading.** The full line is a ternary:
+
+```ts
+const base = opts.coreContainer
+  ? `http://${name}:${AGENT_PORT}${path}`      // container DNS - what we want
+  : `http://127.0.0.1:${await resolvePort(name)}${path}`;
+```
+
+The loopback branch is only the fallback for when `coreContainer` is unset — which is
+correct behaviour for a core that runs on the host. 0.1.19 has the whole `coreContainer`
+implementation that our patch hand-rolls:
+
+| Capability | Our 0.1.4 + patch | Upstream 0.1.19 |
+| --- | --- | --- |
+| Read `QM_CORE_CONTAINER` | **0 references** in the image | `sandbox-settings.ts:91` — `localSandboxEnv` reads it |
+| Reach sandbox | patch resolves the **container IP** via `docker inspect` | **DNS name** `http://<name>:8080` (`local-sandbox.ts:168`) |
+| Network attach | — | `docker network connect <net> <coreContainer>` (`:237`) with connect/disconnect lifecycle |
+| Host port publish | patched | skipped when `coreContainer` is set (`:272`) |
+
+This is upstream issue **#271** ("docker target assumes core runs on the host (five failure
+modes)", open) with fix PR **#1675**, and the fix has landed in the shipped image.
+
+**Consequence for the upgrade: delete `patch/local-sandbox.ts`, do not port it.** The
+remaining patch (`pi-models.ts`) is the Ollama bridge, which 0.1.19 supports natively via
+`OPENAI_BASE_URL` (§4) — so it too is likely deletable, making the upgrade
+**patch-free**. That is the single strongest argument for taking it.
+
+### 11.6 Where this leaves the decision
+
+The honest framing is a fork, not a version choice:
+
+- **Stay:** the team keeps a stack that works, with an admin experience we explain five
+  ways (handbook §7), and two source patches to maintain.
+- **Move:** one release-sized change that deletes the email path (13 env vars, Mailpit), the
+  `sandbox.image` workaround, **both source patches**, and most of handbook §7 — paid for by
+  re-authoring config, compose, both handbooks, and the client bundle.
+
+**Recommendation, revised after 11.5.** The earlier "stay on 0.1.4" was correct as a
+*compatibility* verdict but understated the value of moving. Three facts change the balance:
+
+1. **The upgrade is patch-free.** `local-sandbox.ts` is obsolete upstream (§11.5) and
+   `pi-models.ts`'s Ollama bridge is native via `OPENAI_BASE_URL` (§4). We would go from
+   two whole-file source patches to zero — which is precisely the "hard to use" complaint.
+2. **The sign-in pain has a real fix** that only exists in the newer versions:
+   `qm admin-login` (§11.3).
+3. **0.1.18 is the stable release** the team is being asked to use, and it is the same
+   architecture as 0.1.19 (identical `core` digest), so 0.1.19's prerelease status is not a
+   reason to avoid the family.
+
+So the recommendation is now: **take the upgrade as its own planned release**, not because
+0.1.4 is unsafe but because staying costs the team permanent patched-source maintenance and
+a broken-by-design login flow. Do not do it as a bump: `qm check` rejects the config and
+`setup-qm.ps1` aborts the install (§10.2).
+
+**Do this first, before any upgrade work:** confirm with upstream that `coreContainer`
+fully replaces our patch by opening the sandbox path end-to-end on a scratch clone
+(`pacgate-qm` + `firecrawl-qm` tools and the three skills must still load). The upstream
+fix landed after our patch was written, and "the capability exists" is not the same as
+"our usage still works".
