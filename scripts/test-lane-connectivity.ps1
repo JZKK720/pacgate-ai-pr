@@ -62,12 +62,17 @@ param(
     [string]$PacgateApi = 'http://localhost:8089/pacgate',
     [string]$OpenViking = 'http://localhost:1933',
     [string]$DeerFlow   = 'http://localhost:3000',
-    [string]$QmCore     = 'http://localhost:8180',
+    [string]$QmCore     = '',
     [switch]$VerboseEdges
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'lib/QmEndpoint.ps1')
+# Derived, not literal. The default here was the retired portal port 8180; after the
+# qm 0.1.18 migration the E5/E6/E7 lanes probed a service that no longer exists and
+# were reported as unreachable. See scripts/lib/QmEndpoint.ps1.
+$QmCore = Get-QmEndpoint -RepoRoot $repoRoot -QmUrl $QmCore
 
 $script:failures = 0
 $script:passed   = 0

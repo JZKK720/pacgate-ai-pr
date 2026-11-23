@@ -277,9 +277,17 @@ else { Bad "baked weights incomplete ($baked/3 of det rec cls present)" }
 
 # ── Lane 7: qm-pacgate ──────────────────────────────────────────────────────
 Lane 'qm-pacgate'
-$qm = Get-Code 'http://localhost:8181/healthz'
-if ($qm -eq '200' -or $qm -eq '401') { Ok "qm portal reachable ($qm)" }
-else { Skip "qm not running ($qm) - setup-qm.ps1 is INTERACTIVE (admin email + bridge password) and does not run 'qm up'" }
+# Derived, not literal. The old line probed :8181/healthz, the retired PORTAL, so a
+# healthy 0.1.18 stack that serves {"ok":true} on :8182/readyz was reported as
+# "qm not running (000)". See scripts/lib/QmEndpoint.ps1.
+. (Join-Path $PSScriptRoot 'lib/QmEndpoint.ps1')
+$qmBase = Get-QmEndpoint -RepoRoot (Split-Path -Parent $PSScriptRoot)
+$qmPath = Get-QmHealthPath -BaseUrl $qmBase
+if ($qmPath) { Ok "qm core healthy at $qmBase$qmPath" }
+else {
+    $qmCode = Get-Code "$qmBase/readyz"
+    Skip "qm core not answering at $qmBase ($qmCode on /readyz) - setup-qm.ps1 is INTERACTIVE (admin email + bridge password) and does not run 'qm up'"
+}
 
 # ── VERDICT ─────────────────────────────────────────────────────────────────
 Write-Host "`n=== RESULT ===" -ForegroundColor White

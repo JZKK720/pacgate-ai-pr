@@ -829,6 +829,16 @@ $liveStackGates = @(
     # test-pdf-freshness-mutations.ps1 records: a gate whose only evidence is a green
     # run has not been tested at all.
     'scripts/test-coherence-mutations.ps1'
+    # THE STALE-LITERAL GUARD, registered 2026-11-23 while fixing exactly this class.
+    #
+    # Plan 035 §7.2 said this was "worth adding when someone next touches the gate
+    # harness". Then four gates were found probing the qm PORTAL port after the
+    # 0.1.18 topology deleted it - benchmark-round-trips, smoke-full-stack,
+    # test-lane-connectivity, test-legal-journey - each reporting a healthy stack as
+    # down. The guard caught two of those four that a manual sweep had missed, and
+    # fixing them turned test-legal-journey from "some lanes were NOT verified" into
+    # "all lanes verified".
+    'scripts/test-stale-literal-guard.ps1'
     # THE MCP TOOL SURFACE, registered 2026-10-23 from the same field reports.
     #
     # One AIPC lost ALL of its MCP tools and the 47-gate suite stayed green. The

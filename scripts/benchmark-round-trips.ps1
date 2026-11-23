@@ -38,7 +38,10 @@ EXIT CODES
 param(
     [string]$NginxUrl = 'http://localhost:8089',
     [string]$FrontendUrl = 'http://localhost:8090',
-    [string]$QmUrl = 'http://localhost:8181',
+    # Empty = derive from config. The literal that used to live here was the retired
+# portal port, so the L0 qm probe measured a deleted service and reported the
+# healthy stack as "[FAIL] no-response". See scripts/lib/QmEndpoint.ps1.
+[string]$QmUrl = '',
     [string]$Email = 'admin@pacgate-law.com',
     [string]$Password = '',
     [int]$TimeoutSec = 300,
@@ -53,6 +56,8 @@ param(
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
+. (Join-Path $PSScriptRoot 'lib/QmEndpoint.ps1')
+$QmUrl = Get-QmEndpoint -RepoRoot $repoRoot -QmUrl $QmUrl
 
 $results = [System.Collections.Generic.List[object]]::new()
 
@@ -126,16 +131,23 @@ Measure-Probe 'L0' 'deer-flow-frontend /' {
     $null = Invoke-WebRequest -Uri "$FrontendUrl/" -UseBasicParsing -TimeoutSec 15
     @{}
 }
-Measure-Probe 'L0' 'qm portal /' {
-    try {
-        $null = Invoke-WebRequest -Uri "$QmUrl/" -UseBasicParsing -TimeoutSec 15
-        @{ Note = '200' }
-    } catch {
-        $c = $_.Exception.Response.StatusCode.value__
-        # A 401 is the portal correctly refusing an anonymous request; the round trip
-        # still happened, which is what is being timed.
-        if ($c -eq 401) { @{ Note = '401 = auth wall, expected' } } else { throw }
+Measure-Probe 'L0' 'qm core /readyz' {
+    $base = $QmUrl.TrimEnd('/')
+    $probe = $null
+    foreach ($p in @('/readyz', '/healthz')) {
+        try {
+            $r = Invoke-WebRequest -Uri "$base$p" -UseBasicParsing -TimeoutSec 15
+            $probe = "$p -> $($r.StatusCode)"
+            break
+        } catch {
+            $c = $_.Exception.Response.StatusCode.value__
+            # A 401/403 is the service correctly refusing an anonymous request; the
+            # round trip still happened, which is what is being timed.
+            if ($c -eq 401 -or $c -eq 403) { $probe = "$p -> $c (auth wall, expected)"; break }
+        }
     }
+    if (-not $probe) { throw "qm core did not answer /readyz or /healthz at $base" }
+    @{ Note = $probe }
 }
 Write-Host ''
 

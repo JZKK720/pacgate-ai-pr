@@ -36,7 +36,7 @@ param(
     # Leave the matter/document in place for inspection instead of cleaning up.
     [switch]$KeepArtifacts,
     # qm portal (publicUrl in qm.config.jsonc). Off unless qm is running.
-    [string]$QmUrl = 'http://localhost:8181',
+    [string]$QmUrl = '',
     [string]$OpenVikingUrl = 'http://localhost:1933',
     [int]$OcrTimeoutSec = 180,
     # OpenViking content/write with wait=true blocks on VLM semantic extraction.
@@ -53,6 +53,11 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'lib/QmEndpoint.ps1')
+# Derived, not literal. This defaulted to the retired portal port 8181, so the qm
+# co-work step reported "portal not reachable (qm stack not running)" while the qm
+# core was healthy on 8182. See scripts/lib/QmEndpoint.ps1.
+$QmUrl = Get-QmEndpoint -RepoRoot $repo -QmUrl $QmUrl
 if (-not $EnvFile) { $EnvFile = Join-Path $repo 'deploy/client-bundle/.env' }
 
 $script:passed = 0
