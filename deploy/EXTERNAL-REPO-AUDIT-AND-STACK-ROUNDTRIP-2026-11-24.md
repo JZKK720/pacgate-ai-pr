@@ -168,11 +168,16 @@ the container framing did **not** change the astryx verdict.
 - **Proven:** the adapters, transports, and render paths work against the **real
   runtimes** — deepseek-harness (`@deepseek-ai/dsh@0.2.2-rc.5`), ag-ui (live SSE
   turn), kitesurf (real container), and DataFlow (the real `DataFlow-WebUI`
-  backend with its real `fastapi-mcp` surface). Measured: **187 tests across 11
-  files** (167 in `agent-desktop`, 20 in `packages/platform-core`).
-- **Not proven:** nothing about reachability. What is *not* proven is durability
-  or multi-tenant behaviour under load — these were single round trips against
-  one local deployment.
+  backend with its real `fastapi-mcp` surface). Measured: **192 tests across 11
+  files** (172 in `agent-desktop`, 20 in `packages/platform-core`).
+- **Proven from the container, not just the host.** A host-process probe is the
+  wrong vantage point for this stack. Measured inside `cc-console-backend-1`
+  against the live backend: `localhost:8000/mcp` and `127.0.0.1:8000/mcp` both
+  failed, `host.docker.internal:8000/mcp` answered `200` with an `endpoint`
+  event. The deployed kernel now reports `dataflow: {"state":"found"}` naming
+  that alias. See §7.
+- **Not proven:** durability or multi-tenant behaviour under load — these were
+  single round trips against one local deployment.
 - **Operator decision, not a gap:** kitesurf and DataFlow are **opt-in roster
   entries**, not always-on lanes. Neither runs as part of the client bundle.
   kitesurf stays off because upstream says it is "not a hardened sandbox" and a
@@ -325,8 +330,9 @@ benchmark (`exit 1`, `no-response`), so the fix did not simply stop asserting.
 | "`dsh-real-smoke.cjs` skips green" | Fixed. Exit codes are three-valued | absent → **exit 2**; real runtime → **exit 0** with both paths passing; `tests/dsh-real-smoke.test.ts` pins it (4 tests, red-green verified) |
 | "kitesurf off by default" | Unchanged and **correct** — kept off, but its off state is now honest | `capabilities ["config"]`, `lifecycle null`, `inventory "unsupported"`; the card names the endpoint instead of a bare `fetch failed` |
 
-Shipped in cubecloud `49370c1`: 173 test files, **1846 passed**, 3 skipped,
-0 failed; `typecheck:node` clean; `check-mojibake` and `check-doc-pair` green.
+Shipped in cubecloud `49370c1` (the three limit fixes) and `2c6d71d` (the
+reachability defect in §7): 173 test files, **1851 passed**, 3 skipped, 0 failed;
+`typecheck:node` clean; `check-mojibake` and `check-doc-pair` green.
 
 What remains genuinely open, and is not a code defect:
 
@@ -338,3 +344,53 @@ What remains genuinely open, and is not a code defect:
   bundle, that packaging work does not exist yet.
 - **Nothing here was tested under load or multi-tenant.** These are single round
   trips against one local deployment.
+
+---
+
+## 7. The reachability defect that a host-side test could not see
+
+My first round of verification ran the adapters from **this host process**, which
+is the wrong vantage point for a containerised kernel. Running the same probes
+from **inside `cc-console-backend-1`** exposed two independent blockers:
+
+| # | Blocker | Consequence |
+| --- | --- | --- |
+| 1 | `normalizeMcpEndpoint` allowed plain http only on `localhost`/`127.0.0.1`/`::1` | `http://host.docker.internal:8000/mcp` returned `null` — refused before any socket opened |
+| 2 | the DataFlow adapter had one fixed endpoint, no candidate list | even a correctly configured alias was never tried |
+
+Measured inside the container, against the real backend:
+
+```
+http://localhost:8000/mcp             -> fetch failed
+http://127.0.0.1:8000/mcp             -> fetch failed
+http://host.docker.internal:8000/mcp  -> 200  "event: endpoint\r\ndata: /mcp/messages/?session_id=..."
+```
+
+A container's `127.0.0.1` is its own, so the gateway alias is the *only* route to
+a host-run service. kitesurf had already solved this (`isLoopbackCdpUrl` includes
+the alias, and `probeWithCandidates` tries it); the shared probe and the DataFlow
+adapter had not.
+
+**A unit test alone would not have found this either.** The deployed image
+carried the defect — `POST /api/console/dataflowHealth` returned
+`{"ok":false,"detail":"fetch failed"}` while every test was green, because the
+tests mocked the probe. The fix was proven by rebuilding the image and asking the
+live kernel:
+
+```
+POST /api/console/dataflowHealth
+  -> {"ok":true,"detail":"reachable at http://host.docker.internal:8000/mcp
+      (tool catalog not enumerated over SSE) — ..."}
+listManagedApps
+  -> dataflow {"state":"found","detail":"DataFlow reachable at http://host.docker.internal:8000/mcp — ..."}
+  -> kitesurf {"state":"not-found","detail":"no CDP endpoint at http://127.0.0.1:8787"}
+```
+
+Fixed in cubecloud `2c6d71d`. The alias is matched exactly, so
+`host.docker.internal.evil.com` and a plain-http `10.0.0.5` are still rejected —
+a test pins both. The adapter reports the endpoint that **answered**, not the one
+configured, and does not append the alias when the operator named a non-loopback
+host.
+
+**Lesson for the next audit:** for anything the kernel reaches, probe from inside
+the kernel container. Host-side success is not evidence about the deployed path.
