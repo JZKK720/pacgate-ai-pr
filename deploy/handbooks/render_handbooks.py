@@ -194,7 +194,8 @@ def main() -> None:
         # regenerated, went stale on every version bump, and
         # test-pdf-freshness.ps1 went red with no tool to fix it.
     }
-    names = list(targets) if args.name == "all" else [args.name]
+    # "aipc" is handled by the dedicated loop below, not by `targets`.
+    names = list(targets) if args.name == "all" else ([] if args.name == "aipc" else [args.name])
     rendered: list[tuple[str, Path]] = []
     for name in names:
         md_path = targets[name]

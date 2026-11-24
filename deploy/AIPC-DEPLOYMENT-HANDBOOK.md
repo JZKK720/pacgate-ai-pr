@@ -709,6 +709,7 @@ Run this checklist on each AIPC independently.
 ### Ollama
 
 - [ ] `ollama list` shows the required models
+- [ ] **The shipped default model (`models[0]`, ~9.8 GB) fits this host, or install was run with `-AllowCloudDefault`** - `install.ps1` stops before finishing when it does not fit; verify with `pwsh -File scripts/test-aipc-capacity-fit.ps1 -VramGB <host VRAM>`. `ollama ps` reporting GPU says nothing about whether the default can load - on a 4 GB iGPU it cannot
 - [ ] **`ollama ps` shows a GPU, not `100% CPU`** - run `scripts/test-ollama-gpu-residency.ps1`, it must exit 0
 - [ ] deer-flow can call Ollama for inference
 - [ ] qm can call Ollama for inference

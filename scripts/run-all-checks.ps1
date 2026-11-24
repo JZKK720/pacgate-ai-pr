@@ -708,6 +708,15 @@ $liveStackGates = @(
     # compose.prod.yaml, while both declare `name: pacgate-ai-bundle` (same project).
     # Exits 2 when nothing is reachable, so a clean machine is not a false red.
     'scripts/test-lane-connectivity.ps1'
+    # OPENVIKING ROUND TRIP, registered 2026-11-24. Every other gate proves a
+    # lane REACHES OpenViking (or that a tool is advertised). None of them
+    # wrote a byte and read it back, so a store that answers /health but drops
+    # or corrupts writes looked identical to a healthy one - and that is the
+    # failure the 0.4.16 -> 0.5.6 migration can produce (snapshot backfill on
+    # first boot, QueueFS key persistence). The gate writes one canary file,
+    # reads it back, deletes it, and confirms it is gone. It creates no memory,
+    # session, or matter data. Exits 2 when OpenViking is down.
+    'scripts/test-openviking-roundtrip.ps1'
     # LEGAL JOURNEY, registered 2026-10-31. This is the closest thing to a real
     # acceptance test in the repo - matter -> upload -> extract -> sanitize -> review
     # gate -> KB search -> external search -> connector health -> deer-flow auth ->

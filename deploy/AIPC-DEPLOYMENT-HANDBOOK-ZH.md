@@ -642,6 +642,7 @@ docker network connect pacgate-ai-bundle_default qm-pacgate-core
 ### Ollama
 
 - [ ] `ollama list` 显示所需模型
+- [ ] **随包发布的默认模型（`models[0]`，约 9.8 GB）能在本机加载，或安装时使用了 `-AllowCloudDefault`** - 装不下时 `install.ps1` 会在完成前停止；用 `pwsh -File scripts/test-aipc-capacity-fit.ps1 -VramGB <主机显存>` 复核。`ollama ps` 显示 GPU 并不能说明默认模型能加载 - 在 4 GB 核显上它装不下
 - [ ] **`ollama ps` 的 PROCESSOR 列显示 GPU，而不是 `100% CPU`** - 运行 `scripts/test-ollama-gpu-residency.ps1`，退出码必须为 0
 - [ ] deer-flow 可以调用 Ollama 进行推理
 - [ ] qm 可以调用 Ollama 进行推理
