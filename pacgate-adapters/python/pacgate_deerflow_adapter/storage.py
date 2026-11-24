@@ -8,12 +8,50 @@ example:
 
 This adapter translates DeerFlow memory load/save/reload calls into HTTP calls
 to Pacgate's matter-scoped memory endpoints.
+
+Pacgate patch (2026-10-10): SHAPE NORMALIZATION on load().
+
+Root cause of the frontend memory card crash ("This page couldn't load",
+RangeError: Invalid time value): matter memory on disk is a flat process-note
+document ({content, revision, tags}), NOT a deer-flow memory document. The
+router's MemoryResponse model then fills every missing field with "" —
+including lastUpdated and every section updatedAt — and the frontend calls
+formatDistanceToNow("") which throws. The whole settings page dies on the
+error boundary.
+
+Fix: load() now guarantees the deer-flow memory shape. The matter's process
+note is surfaced as the topOfMind summary (it IS the current process state);
+everything else starts empty with real timestamps so the UI renders "just now"
+instead of crashing. save() round-trips the full deer-flow shape, which
+check_memory_scope already validates server-side.
 """
 
 import os
 from typing import Any
 
-from deerflow.agents.memory.storage import MemoryStorage
+try:
+    from deerflow.agents.memory.storage import MemoryStorage, utc_now_iso_z
+except ModuleNotFoundError:  # deer-flow >= 2.2.0: the 2.0 storage module is gone
+    class MemoryStorage:  # type: ignore[no-redef]
+        """Placeholder so this module stays importable on deer-flow >= 2.2.0.
+
+        Instantiation raises; on v2.2.0 use
+        pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage via
+        memory.backend_config.storage_class.
+        """
+
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                "pacgate_deerflow_adapter.storage.PacgateMemoryStorage requires "
+                "deer-flow < 2.2.0. On v2.2.0+ set "
+                "memory.backend_config.storage_class="
+                "'pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage'"
+            )
+
+    from datetime import UTC, datetime
+
+    def utc_now_iso_z() -> str:  # type: ignore[no-redef]
+        return datetime.now(UTC).isoformat().removesuffix("+00:00") + "Z"
 
 from .client import PacgateApiClient
 
@@ -46,6 +84,71 @@ class MatterMemoryOutOfScope(Exception):
     """
 
 
+def _empty_section() -> dict[str, Any]:
+    return {"summary": "", "updatedAt": ""}
+
+
+def _normalize_to_deerflow_shape(data: Any) -> dict[str, Any]:
+    """Coerce a matter-memory payload into the deer-flow memory shape.
+
+    Two shapes arrive here:
+    - Legacy matter memory: {version: "2.0", revision, lastUpdated, content,
+      tags} — a flat process-note document. The note maps to topOfMind.summary
+      (it IS the current process state); other sections start empty.
+    - Already-migrated memory: a full deer-flow shape written back by save().
+      Its sections are preserved as-is.
+
+    Empty sections keep updatedAt="" — the frontend guards those with
+    truthiness before formatting. lastUpdated is ALWAYS a real timestamp: the
+    frontend formats it unconditionally, and an empty string crashes the
+    memory card (RangeError: Invalid time value).
+    """
+    if not isinstance(data, dict):
+        data = {}
+
+    # Already in deer-flow shape? Preserve sections verbatim.
+    user = data.get("user")
+    if isinstance(user, dict) and isinstance(user.get("workContext"), dict):
+        last_updated = data.get("lastUpdated")
+        if not isinstance(last_updated, str) or not last_updated.strip():
+            last_updated = utc_now_iso_z()
+        facts = data.get("facts")
+        return {
+            "version": "1.0",
+            "lastUpdated": last_updated,
+            "user": user,
+            "history": data.get("history") if isinstance(data.get("history"), dict) else {},
+            "facts": facts if isinstance(facts, list) else [],
+        }
+
+    content = data.get("content")
+    if not isinstance(content, str):
+        content = ""
+
+    # lastUpdated: prefer the stored value when it parses as a timestamp;
+    # fall back to now. NEVER emit "" — the frontend formats this field
+    # unconditionally and an empty string crashes the memory card.
+    last_updated = data.get("lastUpdated")
+    if not isinstance(last_updated, str) or not last_updated.strip():
+        last_updated = utc_now_iso_z()
+
+    return {
+        "version": "1.0",
+        "lastUpdated": last_updated,
+        "user": {
+            "workContext": _empty_section(),
+            "personalContext": _empty_section(),
+            "topOfMind": {"summary": content, "updatedAt": last_updated if content else ""},
+        },
+        "history": {
+            "recentMonths": _empty_section(),
+            "earlierContext": _empty_section(),
+            "longTermBackground": _empty_section(),
+        },
+        "facts": data.get("facts") if isinstance(data.get("facts"), list) else [],
+    }
+
+
 class PacgateMemoryStorage(MemoryStorage):
     """Memory storage backed by pacgate-api (per-matter knowledge base)."""
 
@@ -67,14 +170,18 @@ class PacgateMemoryStorage(MemoryStorage):
     def load(
         self, agent_name: str | None = None, *, user_id: str | None = None
     ) -> dict[str, Any]:
-        """Load memory from pacgate-api, remembering the revision read."""
+        """Load memory from pacgate-api, remembering the revision read.
+
+        The raw matter payload is normalized to the deer-flow memory shape
+        before returning — see _normalize_to_deerflow_shape for why.
+        """
         resp = self.client.get(f"/api/matters/{self.matter_id}/memory")
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):
             revision = data.get("revision", 0)
             self._revision = revision if isinstance(revision, int) else 0
-        return data
+        return _normalize_to_deerflow_shape(data)
 
     def reload(
         self, agent_name: str | None = None, *, user_id: str | None = None

@@ -349,6 +349,12 @@ services:
       # frontend's formatTimeAgo("") threw RangeError: Invalid time value,
       # killing the settings memory card. Bind-mounted until upstreamed.
       - ./patches/pacgate-adapter-storage.py:/app/adapters/pacgate_deerflow_adapter/storage.py:ro
+      # Pacgate 2026-11-24: deer-flow v2.2.0 backend. matter_memory.py implements the
+      # v2.2.0 MemoryStorage contract (backends.deermem...core.storage.MemoryStorage)
+      # and is selected via memory.backend_config.storage_class in deer-flow-config.yaml.
+      # It is bind-mounted (like the siblings above) so the memory backend can ship
+      # without an image rebuild; the v2.2.0 image is built from this tree anyway.
+      - ./patches/pacgate-adapter-matter-memory.py:/app/adapters/pacgate_deerflow_adapter/matter_memory.py:ro
       # Pacgate 2026-10-30: seeded legal skills (see compose.prod.yaml for the
       # rationale). Read-only; the agent writes its own skills to custom/ via the
       # scanned `skill_manage` path, never by editing a seed.

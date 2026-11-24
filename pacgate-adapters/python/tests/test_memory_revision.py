@@ -18,7 +18,13 @@ from unittest.mock import MagicMock, patch
 # unittest.mock.patch on the storage/client objects, never through a real
 # HTTP client, and production runs inside the deer-flow image where the real
 # module exists.
-if importlib.util.find_spec("httpx") is None:
+def _httpx_missing():
+    try:
+        return importlib.util.find_spec("httpx") is None
+    except (ImportError, ValueError):
+        return True
+
+if _httpx_missing():
     _httpx_stub = types.ModuleType("httpx")
     _httpx_stub.HTTPError = type("HTTPError", (Exception,), {})
     _httpx_stub.Response = type("Response", (), {})
@@ -38,27 +44,10 @@ if importlib.util.find_spec("httpx") is None:
 # not of this repo's venv. Stub it before import so the storage class's
 # inheritance resolves. This is a test-only shim: production runs inside the
 # deer-flow image where the real module exists.
-_stubs: dict[str, types.ModuleType] = {}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _deerflow_stubs  # noqa: E402
 
-
-def _ensure_stub(name: str) -> types.ModuleType:
-    if name in sys.modules:
-        return sys.modules[name]
-    mod = types.ModuleType(name)
-    mod.__path__: list[str] = []
-    sys.modules[name] = mod
-    _stubs.setdefault(name, mod)
-    return mod
-
-
-_memory_storage = _ensure_stub("deerflow.agents.memory.storage")
-
-
-class _MemoryStorage:  # pragma: no cover - structural stub
-    pass
-
-
-_memory_storage.MemoryStorage = _MemoryStorage
+_deerflow_stubs.install()
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

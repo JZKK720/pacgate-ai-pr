@@ -29,7 +29,29 @@ check_memory_scope already validates server-side.
 import os
 from typing import Any
 
-from deerflow.agents.memory.storage import MemoryStorage, utc_now_iso_z
+try:
+    from deerflow.agents.memory.storage import MemoryStorage, utc_now_iso_z
+except ModuleNotFoundError:  # deer-flow >= 2.2.0: the 2.0 storage module is gone
+    class MemoryStorage:  # type: ignore[no-redef]
+        """Placeholder so this module stays importable on deer-flow >= 2.2.0.
+
+        Instantiation raises; on v2.2.0 use
+        pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage via
+        memory.backend_config.storage_class.
+        """
+
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                "pacgate_deerflow_adapter.storage.PacgateMemoryStorage requires "
+                "deer-flow < 2.2.0. On v2.2.0+ set "
+                "memory.backend_config.storage_class="
+                "'pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage'"
+            )
+
+    from datetime import UTC, datetime
+
+    def utc_now_iso_z() -> str:  # type: ignore[no-redef]
+        return datetime.now(UTC).isoformat().removesuffix("+00:00") + "Z"
 
 from .client import PacgateApiClient
 
