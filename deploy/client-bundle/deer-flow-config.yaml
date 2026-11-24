@@ -712,6 +712,16 @@ uploads:
   # reachable after a rebuild.
   pdf_converter: auto
 
+# Pacgate 2026-11-24: 2.2.0 recursion ceilings, replacing the baked patch and the
+# DEERFLOW_MAX_RECURSION_LIMIT env knob it read. The default is now 100 and the hard
+# ceiling 1000, clamped at the call site in the gateway, so the old ~3M-token run
+# cannot happen regardless of what the client sends. We raise the ceiling to 2000
+# (the value the deleted patch enforced) because the deepest successful run measured
+# 937 of its 1000 budget; 1000 is a cliff, not a guard. Clients still choose their
+# own recursion_limit; this only raises the server-side clamp.
+recursion_limit: 100
+max_recursion_limit: 2000
+
 # Pacgate 2026-10-27: size the per-tool loop guard so it can tell productive work
 # from a loop.
 #

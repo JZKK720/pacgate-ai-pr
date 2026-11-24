@@ -307,51 +307,19 @@ services:
       # Pacgate: auto-route local vs cloud model by bound tool count (see
       # compose.bundle.yaml for the rationale).
       - ./patches/deer-flow-agent.py:/app/backend/packages/harness/deerflow/agents/lead_agent/agent.py:ro
-      # Pacgate 2026-10-27: window the per-tool frequency loop guard. At v2.0.0
-      # Layer 2 kept a MONOTONIC same-tool counter that nothing reset, keyed by
-      # thread_id, so every bash call for a thread's whole life counted against
-      # one ceiling of 50. A productive document run (92 calls / 71 bash / 55
-      # distinct commands on thread 6cc8dfae) was force-stopped mid-work with
-      # "[FORCED STOP] Tool bash called 50 times". This mount is upstream
-      # e492bb1c (#4072, windowed deque + Counter) plus 4746a257 (#4295, counter
-      # cleanup on evict/reset) backported onto the pinned v2.0.0 file.
-      # Layer 1 (identical-call hash, 3/5) is unchanged - real loops still stop.
-      # REMOVE THIS MOUNT at the 2.1.0 rebase (plans/023-deer-flow-2.1-upgrade.md).
-      # NOT because v2.1.0 carries these two commits - it does not (measured
-      # 2026-10-27) - but because it keys its counters on (thread_id, run_id), so a
-      # per-RUN scope replaces the window. The loop_detection CONFIG block stays:
-      # its keys are unchanged at v2.1.0 and a per-run counter is what the bash
-      # override was sized for.
-      # 2026-11-24 (2.2.0): mount dropped - loop_detection_middleware.py was rewritten upstream in v2.2.0 (per-run keyed counters).
+      # 2026-11-24 (2.2.0): loop-detection mount dropped - upstream rewrote
+      # loop_detection_middleware.py with per-run keyed counters, superseding the
+      # v2.0.0 backport this block described. The loop_detection CONFIG block in
+      # the shipped config is unchanged and still governs thresholds.
       - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
-      # Pacgate 2026-10-28: clamp the lead-agent recursion budget.
-      # Pacgate 2026-11-07: and FLOOR it - the clamp alone did not save anyone.
-      #
-      # The chat UI sends recursion_limit: 1000 on every run, and
-      # build_run_config() overwrote its own 100 default with whatever the client
-      # sent. LangGraph counts each graph super-step against that number, so a
-      # thrashing run consumed all 1000 and died after ~16 minutes with a bare
-      # GraphRecursionError - 12 of 16 failed runs on this box were this error, at
-      # BOTH 100 and 1000. The patch clamps client values to a ceiling (default
-      # 4000, override with DEERFLOW_MAX_RECURSION_LIMIT) while still honouring a
-      # request between the floor and the ceiling.
-      #
-      # The clamp was only half the fix, and the half that was missing is the one
-      # that cost the most. Measured 2026-11-07 across 333 recorded runs: 22 died
-      # with GraphRecursionError and EVERY one that carried a client budget died at
-      # exactly 1000 (114-136 LLM calls); four checkpoint walks consumed exactly
-      # 1001 super-steps, which is the wall itself. Meanwhile the deepest SUCCESS
-      # whose checkpoints were retained used 937 of its 1000 - only 63 super-steps of
-      # headroom - and the deepest success on record (138 LLM calls; checkpoints
-      # pruned) extrapolates to ~1150-1200 at the 8.24-8.88 ratio every other deep
-      # success shows. A budget a good run exhausts to 94% is not a budget. Those
-      # runs were not thrashing either: one made 111 model calls for 15 distinct tool
-      # payloads and left a real memo on disk. Hence a floor (default 2000, override
-      # with DEERFLOW_MIN_RECURSION_LIMIT): a client may ask for more, never less. The
-      # floor yields to a lower explicit ceiling so the env var still means what it
-      # says. Do not "tidy" the floor away as redundant - it is the only thing
-      # standing between a stale client constant and a truncated deliverable.
-      # 2026-11-24 (2.2.0): mount dropped - services.py now clamps recursion_limit against AppConfig.max_recursion_limit upstream in v2.2.0.
+      # 2026-11-24 (2.2.0): recursion clamp is now upstream's. AppConfig gained
+      # max_recursion_limit (default 1000) and the gateway clamps client-supplied
+      # recursion_limit against it at the call site. The old services.py patch and
+      # DEERFLOW_MAX_RECURSION_LIMIT / DEERFLOW_MIN_RECURSION_LIMIT are gone.
+      # We set max_recursion_limit: 2000 in deer-flow-config.yaml to keep the
+      # headroom that floor bought: measured 2026-11-07, every client-budgeted run
+      # died at exactly 1000 while the deepest retained success used 937 of 1000.
+      # A client may still ask for less; nothing may exceed 2000.
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which
       # Ollama's /v1 endpoint ignores - background calls (memory updater) then
@@ -388,13 +356,9 @@ services:
       # lost whenever the image is rebuilt; this keeps lawyer-visible
       # deliverables in tenants/<t>/matters/<m>/docs/.
       - ./patches/deer-flow-present-file.py:/app/backend/packages/harness/deerflow/tools/builtins/present_file_tool.py:ro
-      # Pacgate 2026-10-08: prefix-aware skill allowed-tools matching. Skills
-      # declare bare MCP server names (pkulaw, yuandian-law, pacgate) but tool
-      # names are prefixed (pkulaw_*, pacgate_pacgate_*); exact-match filtering
-      # dropped ALL 137 MCP tools once any skill declared allowed-tools (agent
-      # left with bash/read_file only). The patch matches exact or
-      # "<normalized-declaration>_" prefixes.
-      # 2026-11-24 (2.2.0): mount dropped - tool_policy.py was deleted upstream in v2.2.0 (#6935: allowed-tools is now metadata only).
+      # 2026-11-24 (2.2.0): tool-policy mount dropped - upstream deleted tool_policy.py
+      # in #6935; allowed-tools is now metadata only, not a filter, so the prefix-matching
+      # behaviour this patch supplied no longer has anything to act on.
       # Pacgate 2026-10-21: make tool_search deferral TRANSPARENT.
       #
       # tool_search was shipped disabled because deferral produced a "deferred,
@@ -422,14 +386,15 @@ services:
       # (*/evals/fixtures/) from skill discovery - they are test data, not
       # user-facing skills (5 phantom skills, one with an empty allowed-tools).
       - ./patches/deer-flow-skill-storage.py:/app/backend/packages/harness/deerflow/skills/storage/skill_storage.py:ro
-      # Pacgate 2026-10-25: refuse to fall back to FileMemoryStorage when a
-      # storage class WAS configured. Upstream degrades silently on any
-      # exception, which would move matter memory off the pacgate-api
-      # sanitization gate while every health check still reports green.
-      # 2026-11-24 (2.2.0): mount dropped - agents/memory/storage.py moved to agents/memory/backends/deermem/core/storage.py in v2.2.0.
-      # Pacgate 2026-10-26: bound the memory lane's input and stabilize its
-      # prompt prefix (see compose.bundle.yaml for the measurement).
-      # 2026-11-24 (2.2.0): mount dropped - agents/memory/prompt.py moved to backends/deermem/deermem/core/prompt.py in v2.2.0.
+      # 2026-11-24 (2.2.0): memory-storage mount dropped - the module moved to
+      # backends/deermem/core/storage.py. The same guarantee is now carried by the
+      # pluggable backend itself: matter memory goes through pacgate-api via
+      # matter_memory.py (If-Match + 422), and create_storage() refuses an
+      # unresolvable storage_class instead of silently degrading.
+      # 2026-11-24 (2.2.0): memory-prompt mount dropped - the module moved to
+      # backends/deermem/deermem/core/prompt.py. The 2.2.0 prompt assembly and
+      # token budgeting need re-measuring before the stable-prefix benefit is
+      # claimed again; do not re-add a fork of that file without re-measuring.
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix (see compose.bundle.yaml for the rationale).
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro

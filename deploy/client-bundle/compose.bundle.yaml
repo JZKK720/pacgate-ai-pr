@@ -226,16 +226,9 @@ services:
       # these commits" (it does not; it scopes per run instead).
       # 2026-11-24 (2.2.0): mount dropped - loop_detection_middleware.py was rewritten upstream in v2.2.0 (per-run keyed counters).
       - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
-      # Pacgate 2026-10-28: clamp the lead-agent recursion budget so a thrashing
-      # run stops early instead of burning 1000 supersteps and ~3M tokens. See
-      # the longer note in compose.prod.yaml.
-      # Pacgate 2026-11-07: the clamp is only half of it - measured 22
-      # GraphRecursionErrors, every client-budgeted one at exactly 1000, while the
-      # deepest SUCCESS whose checkpoints were retained used 937 of its 1000. 1000 was
-      # not a budget but the next ceiling, so the patch now also applies a FLOOR
-      # (default 2000, DEERFLOW_MIN_RECURSION_LIMIT) that a client cannot undercut.
-      # Details and measurements are in compose.prod.yaml beside the same mount.
-      # 2026-11-24 (2.2.0): mount dropped - services.py now clamps recursion_limit against AppConfig.max_recursion_limit upstream in v2.2.0.
+      # 2026-11-24 (2.2.0): recursion clamp is now upstream's. recursion_limit /
+      # max_recursion_limit live in the shipped config (2000 ceiling); the gateway
+      # clamps client values at the call site. See compose.prod.yaml for the measurements.
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets
       # (langchain-openai renames it to max_completion_tokens, which Ollama's
       # /v1 endpoint ignores - background calls then generate to EOS and hog
@@ -264,13 +257,8 @@ services:
       # deliverables land in tenants/<t>/matters/<m>/docs/ instead of the
       # container-internal per-thread outputs dir (lost on image rebuild).
       - ./patches/deer-flow-present-file.py:/app/backend/packages/harness/deerflow/tools/builtins/present_file_tool.py:ro
-      # Pacgate 2026-10-08: prefix-aware skill allowed-tools matching. Skills
-      # declare bare MCP server names (pkulaw, yuandian-law, pacgate) but tool
-      # names are prefixed (pkulaw_*, pacgate_pacgate_*); exact-match filtering
-      # dropped ALL 137 MCP tools once any skill declared allowed-tools (agent
-      # left with bash/read_file only). The patch matches exact or
-      # "<normalized-declaration>_" prefixes.
-      # 2026-11-24 (2.2.0): mount dropped - tool_policy.py was deleted upstream in v2.2.0 (#6935: allowed-tools is now metadata only).
+      # 2026-11-24 (2.2.0): tool-policy mount dropped - upstream deleted tool_policy.py
+      # in #6935; allowed-tools is now metadata only, not a filter.
       # Pacgate 2026-10-21: make tool_search deferral TRANSPARENT.
       #
       # tool_search was shipped disabled because deferral produced a "deferred,
@@ -297,20 +285,15 @@ services:
       # (*/evals/fixtures/) from skill discovery - they are test data, not
       # user-facing skills (5 phantom skills, one with an empty allowed-tools).
       - ./patches/deer-flow-skill-storage.py:/app/backend/packages/harness/deerflow/skills/storage/skill_storage.py:ro
-      # Pacgate 2026-10-25: refuse to fall back to FileMemoryStorage when a
-      # storage class WAS configured. Upstream degrades silently on any
-      # exception, which would move matter memory off the pacgate-api
-      # sanitization gate while every health check still reports green.
-      # 2026-11-24 (2.2.0): mount dropped - agents/memory/storage.py moved to agents/memory/backends/deermem/core/storage.py in v2.2.0.
-      # Pacgate 2026-10-26: bound the memory lane's input and stabilize its
-      # prompt prefix. The template put the volatile `{current_memory}` block
-      # ahead of the conversation, so the prefix changed on every update and
-      # llama.cpp could never reuse it - measured 68.7 s cold on three
-      # consecutive updates vs 0.5 s when the prefix was held constant. The
-      # conversation block is now first (append-only, therefore stable) and the
-      # memory block last, and the conversation is capped at 16k chars / 40
-      # messages so it stops evicting the chat lane's cache entry.
-      # 2026-11-24 (2.2.0): mount dropped - agents/memory/prompt.py moved to backends/deermem/deermem/core/prompt.py in v2.2.0.
+      # 2026-11-24 (2.2.0): memory-storage mount dropped - the module moved to
+      # backends/deermem/core/storage.py. The guarantee is now carried by the
+      # pluggable backend: matter memory goes through pacgate-api via
+      # matter_memory.py (If-Match + 422), and create_storage() refuses an
+      # unresolvable storage_class instead of degrading silently.
+      # 2026-11-24 (2.2.0): memory-prompt mount dropped - the module moved to
+      # backends/deermem/deermem/core/prompt.py. The 2.2.0 prompt assembly needs
+      # re-measuring before the 68.7s -> 0.5s prefix-cache win can be claimed; do
+      # not re-add a fork of that file without re-measuring.
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix. MCP server keys like "yuandian-law" produce tool names
       # "yuandian-law_yuandian_rh_ft_search" that models hallucinate as

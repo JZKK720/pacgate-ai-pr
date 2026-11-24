@@ -230,6 +230,11 @@ loop_detection:
 # storage backend is the replacement. nemotron-bolt-7b-memory carries a hard
 # 2048 max_tokens (entry above) so a runaway extraction cannot stall the
 # single Ollama runner slot.
+# Pacgate 2026-11-24: match the client bundle's 2.2.0 ceilings. Upstream defaults
+# are recursion_limit=100 / max_recursion_limit=1000, enforced by the gateway.
+recursion_limit: 100
+max_recursion_limit: 2000
+
 memory:
   mode: middleware
   manager_class: deermem
