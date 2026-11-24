@@ -93,28 +93,55 @@ can fail: renaming the fence dispatch `if (language === "a2ui")` disabled the
 producer and produced **1 failed / 14 passed**; restoring it produced **15
 passed**. The producer wiring is genuinely covered.
 
-### 1.4 DataFlow — no published image, so the transport was tested directly
+### 1.4 DataFlow — the REAL application, not a fixture (superseded 2026-11-24)
 
 `opendcai/dataflow-webui` has **no published image**: the anonymous GHCR token
 flow issued no token for it, `/v2/` answered `401`, and `docker manifest inspect`
-returned `manifest unknown`. The upstream repo also has no Dockerfile-driven
-compose. The adapter's own default is `http://localhost:8000/mcp` speaking
-**legacy HTTP+SSE** over `probeSse`.
+returned `manifest unknown`.
 
-Rather than accept 7 mocked tests as proof, a wire-faithful SSE MCP server was
-written (20 tools, `event: endpoint` then `event: message`) and the real adapter
-was pointed at it:
+**The repo the owner supplied is not the MCP surface.** `OpenDCAI/DataFlow`'s
+Dockerfile ends in `CMD ["/bin/bash"]` — an interactive shell, not a server — and
+contains **zero** `fastapi_mcp` / `/mcp` references. The 20-tool MCP server lives
+in the sibling **`OpenDCAI/DataFlow-WebUI`**, at `backend/app/mcp_server.py`, and
+its `.mcp.json` declares exactly the shape the adapter assumes:
+
+```json
+{ "mcpServers": { "dataflow": { "type": "sse", "url": "http://localhost:8000/mcp" } } }
+```
+
+So it was run for real. Cloned `DataFlow-WebUI`, installed
+`backend/requirements.txt` on a **uv-managed CPython 3.12.13**, started
+`uvicorn app.main:app`, and drove the SSE handshake end to end:
 
 ```
-state: "found"  detail: "DataFlow reachable at http://localhost:8000/mcp - ..."
+app.mcp_server:create_mcp_server - MCP Server mounted at /mcp
+GET  /mcp                    -> 200  event: endpoint
+POST <endpoint> initialize   -> 202
+POST <endpoint> tools/list   -> 202
+tools returned: 20
 ```
 
-Then the server was killed: `state: "not-found", detail: "fetch failed"`. So the
-probe distinguishes reachable from not, and is not simply always-green.
+The 20 names match both `DATAFLOW_EXPECTED_TOOL_COUNT` and the `include_operations`
+whitelist verbatim (`list_pipelines`, `create_pipeline`, `execute_pipeline`,
+`recommend_operator_categories`, `render_pipeline_in_editor`, …). The real adapter
+reports `state: "found"` against it.
+
+Two traps worth recording:
+
+- **Python 3.12.10 on this box cannot create a venv** — it is missing
+  `Lib\encodings`, so `python -m venv` dies with `ModuleNotFoundError: No module
+  named 'encodings'`. `uv venv --python 3.12` provisions a clean 3.12.13 instead.
+  The 3.10/3.12 requirement is real: `pyproject.toml` declares `>=3.7, <4`, and
+  the system default here is 3.15.
+- `probeSse` reads **only the first chunk** to learn the endpoint, so it returns
+  `tools: null` and never enumerates. The adapter rendered that as "0 tools
+  advertised" — a claim it had no evidence for, contradicting the 20 measured
+  above. It now says "tool catalog not enumerated over SSE". Fixed in
+  cubecloud `49370c1`.
 
 Note the probe path detail: the adapter treats the configured URL **itself** as
-the SSE stream (DataFlow's `/mcp` *is* the stream). A first attempt serving only
-`/sse` returned `HTTP 404` — that was my fixture being wrong, not the adapter.
+the SSE stream (DataFlow's `/mcp` *is* the stream), which the real server
+confirms — it answers `200 text/event-stream` with an `endpoint` event.
 
 ### 1.5 kitesurf — real container, real CDP handshake
 
@@ -138,12 +165,20 @@ the container framing did **not** change the astryx verdict.
 
 ### 1.7 What "functional" does and does not mean here
 
-- **Proven:** the adapters, transports, and render paths work against real
-  runtimes (deepseek-harness, ag-ui, kitesurf) or a wire-faithful fixture
-  (DataFlow), and are covered by 205 passing tests across 10 files.
-- **Not proven:** DataFlow against the real DataFlow application, because no
-  image is published. kitesurf and DataFlow are **opt-in roster entries**, not
-  always-on lanes — neither is running as part of the client bundle.
+- **Proven:** the adapters, transports, and render paths work against the **real
+  runtimes** — deepseek-harness (`@deepseek-ai/dsh@0.2.2-rc.5`), ag-ui (live SSE
+  turn), kitesurf (real container), and DataFlow (the real `DataFlow-WebUI`
+  backend with its real `fastapi-mcp` surface). Measured: **187 tests across 11
+  files** (167 in `agent-desktop`, 20 in `packages/platform-core`).
+- **Not proven:** nothing about reachability. What is *not* proven is durability
+  or multi-tenant behaviour under load — these were single round trips against
+  one local deployment.
+- **Operator decision, not a gap:** kitesurf and DataFlow are **opt-in roster
+  entries**, not always-on lanes. Neither runs as part of the client bundle.
+  kitesurf stays off because upstream says it is "not a hardened sandbox" and a
+  CDP target executes page JavaScript — that must be an explicit choice, and the
+  adapter keeps its off state honest (`capabilities: ["config"]`, `lifecycle:
+  null`, `inventory: "unsupported"`).
 - **Not applicable:** A2UI is a render path, exercised in-process; it emits no
   network round trip to prove.
 
@@ -281,10 +316,25 @@ benchmark (`exit 1`, `no-response`), so the fix did not simply stop asserting.
 
 ## 6. Open items, stated rather than implied
 
-- **DataFlow has no runnable upstream.** If a real DataFlow deployment is wanted,
-  one must be built from source; the transport is proven, the application is not.
-- **kitesurf is off by default** and upstream says it is "not a hardened sandbox".
-  Enabling it means accepting arbitrary page JavaScript; that is an operator
-  decision, not a default.
-- **`dsh-real-smoke.cjs` skips green** when the runtime is absent. It is safe to
-  wire into a manual ladder, and would be a false green in required CI.
+**All three limits recorded in the first version of this document are now closed
+(2026-11-24), and each closure is proven rather than asserted.**
+
+| Was | Now | Proof |
+| --- | --- | --- |
+| "DataFlow has no runnable upstream" | Resolved. The MCP surface is in **`DataFlow-WebUI`**, not `DataFlow`; it runs from source on CPython 3.12.13 | `MCP Server mounted at /mcp`, handshake 202/202, **exactly 20 tools** measured, adapter `state: found` |
+| "`dsh-real-smoke.cjs` skips green" | Fixed. Exit codes are three-valued | absent → **exit 2**; real runtime → **exit 0** with both paths passing; `tests/dsh-real-smoke.test.ts` pins it (4 tests, red-green verified) |
+| "kitesurf off by default" | Unchanged and **correct** — kept off, but its off state is now honest | `capabilities ["config"]`, `lifecycle null`, `inventory "unsupported"`; the card names the endpoint instead of a bare `fetch failed` |
+
+Shipped in cubecloud `49370c1`: 173 test files, **1846 passed**, 3 skipped,
+0 failed; `typecheck:node` clean; `check-mojibake` and `check-doc-pair` green.
+
+What remains genuinely open, and is not a code defect:
+
+- **kitesurf enabling is an operator decision.** Upstream says it is "not a
+  hardened sandbox" and a CDP target executes page JavaScript. Making it
+  always-on would be a policy change, not a fix.
+- **DataFlow has no published image and no Dockerfile-driven compose.** Running
+  it means building from source as done here. If it is ever wanted in the client
+  bundle, that packaging work does not exist yet.
+- **Nothing here was tested under load or multi-tenant.** These are single round
+  trips against one local deployment.
