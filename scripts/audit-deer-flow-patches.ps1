@@ -62,8 +62,11 @@ if (-not (Test-Path $patchesDir)) { throw "patches dir not found: $patchesDir" }
 # 2026-11-24 (2.2.0 rebase): the map now covers EVERY upstream-source patch the
 # compose lanes bind-mount, not just the ones the 2.1.0 plan rebased. The five
 # 2.0.0-era entries whose upstream paths are gone at 2.2.0 (loop-detection,
-# recursion-cap, tool_policy, memory-storage, memory-prompt) were deleted along
-# with their mounts, not carried forward. Adding an entry here changes what the
+# recursion-cap, tool_policy, memory-storage, memory-prompt). The patch FILES are
+# retained on disk only because the live deer-flow container bind-mounts them by
+# name and cannot remount a deleted file on Docker Desktop; they are not wired
+# into compose/Dockerfile/bundle and are deleted with the 2.2.0 image rebuild.
+# Adding an entry here changes what the
 # audit measures, so re-read plans/023 before widening it further.
 $patchMap = [ordered]@{
     'deer-flow-agent.py'       = 'backend/packages/harness/deerflow/agents/lead_agent/agent.py'
@@ -75,12 +78,11 @@ $patchMap = [ordered]@{
     'deer-flow-thread-runs.py' = 'backend/app/gateway/routers/thread_runs.py'
     'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
     'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
-    # Pacgate 2026-11-06: heading titles rendered into the agent's prompt carried
-    # raw pymupdf4llm markup. 2.2.0 upstream picked up the same fix (extract_outline
-    # and _clean_bold_title live in deerflow/utils/file_outline.py now), so this
-    # entry is audited to confirm the upstream path still exists, not to justify
-    # keeping the whole-file fork.
-    'deer-flow-file-conversion.py' = 'backend/packages/harness/deerflow/utils/file_conversion.py'
+    # Pacgate 2026-11-24: 2.2.0 moved outline extraction into
+    # deerflow/utils/file_outline.py and absorbed our fence/comment/BOM handling.
+    # The surviving delta (inline-HTML strip in _clean_bold_title) is carried by
+    # deer-flow-file-outline.py; the old file_conversion whole-file fork is gone.
+    'deer-flow-file-outline.py' = 'backend/packages/harness/deerflow/utils/file_outline.py'
     # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated.
     'deer-flow-mcp-args.py'    = 'backend/packages/harness/deerflow/mcp/tools.py'
     # Pacgate 2026-10-11: MCP HTTP client read timeout + per-server headers.

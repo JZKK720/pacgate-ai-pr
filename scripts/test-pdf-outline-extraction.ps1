@@ -181,7 +181,12 @@ $probe = @'
 import asyncio, sys
 sys.path.insert(0, "/app/backend/packages/harness")
 from pathlib import Path
-from deerflow.utils.file_conversion import convert_file_to_markdown, extract_outline
+from deerflow.utils.file_conversion import convert_file_to_markdown
+try:
+    from deerflow.utils.file_outline import extract_outline
+except ModuleNotFoundError:
+    # Pre-2.2.0 images only carry extract_outline on the legacy module.
+    from deerflow.utils.file_conversion import extract_outline
 
 src = Path(sys.argv[1])
 md = Path(asyncio.run(convert_file_to_markdown(src)))
@@ -266,7 +271,10 @@ if ($null -eq $outlineCount) {
     $cleanProbe = @'
 import sys
 sys.path.insert(0, "/app/backend/packages/harness")
-from deerflow.utils.file_conversion import _clean_bold_title
+try:
+    from deerflow.utils.file_outline import _clean_bold_title
+except ModuleNotFoundError:
+    from deerflow.utils.file_conversion import _clean_bold_title
 cases = [
     ("**<mark>1.1 Something</mark>**", "1.1 Something"),
     ("**<mark>一句话说明</mark>**", "一句话说明"),

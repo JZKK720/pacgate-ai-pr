@@ -390,24 +390,23 @@ $contextPrefixes = @(
     'deploy/deer-flow-pacgate/config.yaml',
     'deploy/deer-flow-src/frontend/',
     'deploy/frontend-patches/files/',  # CI copies these INTO the frontend context
-    # ADDED 2026-10-28. deploy/deer-flow-pacgate/Dockerfile COPYs these two
-    # straight into the image (L51 and L58), so they DO reach a built layer. They
-    # were missing here, which made this gate report BENIGN on the most
-    # image-affecting files in the tree - the exact under-report the comment
-    # below calls the dangerous direction. Consequence measured today: the
-    # recursion-cap patch landed in this list as benign, so a release cut could
-    # have shipped an image whose gateway silently lacked the cap while this gate
-    # stayed green. Derived from the Dockerfile, not guessed: re-check L51/L58 if
-    # the bake moves.
-    'deploy/client-bundle/patches/deer-flow-loop-detection.py',
-    'deploy/client-bundle/patches/deer-flow-run-recursion-cap.py',
+    # 2026-11-24: the loop-detection and recursion-cap patches that used to be
+    # listed here were retired. deer-flow v2.2.0 absorbed both (windowed, per-run
+    # keyed tool-frequency guard; recursion_limit clamped against
+    # AppConfig.max_recursion_limit). What DOES reach the image from here is
+    # listed below.
+
     # ADDED 2026-11-06 for the 0.2.31 PDF-outline fix. Both are COPY sources in
     # deploy/deer-flow-pacgate/Dockerfile (L91 and L124) and have no bind mount
     # shadowing them, so their content reaches clients ONLY through the image.
     # That makes them the most dangerous kind of build input to leave untracked:
     # the gate's own failure message named them, which is the correct direction
     # for this gate to err in.
-    'deploy/client-bundle/patches/deer-flow-file-conversion.py',
+    'deploy/client-bundle/patches/deer-flow-file-outline.py',
+    'deploy/client-bundle/memory-prompts/memory_update.chat.yaml',
+    'deploy/client-bundle/memory-prompts/staleness_review.yaml',
+    'deploy/client-bundle/memory-prompts/consolidation.yaml',
+    'deploy/client-bundle/memory-prompts/fact_extraction.yaml',
     'deploy/pacgate-pins/pymupdf4llm.constraints.txt'
 )
 

@@ -119,19 +119,17 @@ $gates = @(    'scripts/test-install-render.ps1'
     # The per-tool loop guard counted bash calls MONOTONICALLY per thread at
     # v2.0.0, so a productive document run was force-stopped mid-work at 50
     # (measured: 92 calls / 71 bash / 55 distinct commands, thread 6cc8dfae,
-    # 2026-10-27). The backport makes the counter windowed; the config ceiling
-    # gives it headroom. Both halves are asserted here, plus live replay against
-    # the mounted module so a silent un-mount fails loudly.
-    'scripts/test-loop-detection-window.ps1'
-    # The chat UI sent recursion_limit: 1000 per run and build_run_config()
-    # overwrote its own 100 default with it. LangGraph counts super-steps against
-    # that number, and 1000 turned out to sit BELOW this graph's legitimate working
-    # depth: measured 2026-11-07, 22 runs died with GraphRecursionError, every one
-    # carrying a client budget died at exactly 1000, while the deepest SUCCESSFUL run
-    # needed 138 LLM calls (~1250-1350 super-steps). The cap bounds an upper request;
-    # the FLOOR is what stops a client pinning the stack below what the graph needs.
-    # This gate asserts both, using the module mounted into the RUNNING container.
-    'scripts/test-run-recursion-cap.ps1'
+    # 2026-10-27). v2.2.0 absorbed the fix upstream (per-run windowed counters),
+    # so the patch is gone; this gate asserts the shipped image actually carries
+    # the upstream fix and that the config keeps bash headroom.
+    'scripts/test-loop-detection.ps1'
+    # v2.2.0 owns the client clamp: build_run_config clamps a client-supplied
+    # recursion_limit against AppConfig.max_recursion_limit and falls back to
+    # recursion_limit on junk input. There is no floor any more. This gate pins
+    # the two config values, proves the deleted back-port is really gone, and
+    # (when the container is the 2.2.0 build) probes the live clamp. The retired
+    # back-port file is retained on disk only because the live container mounts it.
+    'scripts/test-recursion-budget.ps1'
     # A run killed at the recursion ceiling is RECOVERABLE only because thread
     # outputs land on the /data bind mount and stay downloadable. Nothing asserted
     # that until now, and the property is easy to lose: a mount change or a
@@ -287,9 +285,9 @@ $gates = @(    'scripts/test-install-render.ps1'
     # template put the volatile {current_memory} block ahead of the
     # conversation, so the prefix changed on every update and llama.cpp could
     # never reuse it - measured 68.7 s cold on three consecutive updates vs
-    # 1.3 s once the conversation block was moved first. The conversation is
-    # also capped so the memory prompt stops reaching chat size and evicting
-    # the chat lane's cache entry. Self-contained (reads files; no docker).
+    # 1.3 s once the conversation block was moved first (upstream 2.2.0 still
+    # orders it that way, so the fork moves it back). Self-contained (reads
+    # files; no docker).
     'scripts/test-memory-prompt-stability.ps1'
     # Proves the gate above can REJECT. It went in as a blind gate twice in this
     # subsystem already, so the mutation harness is registered alongside it

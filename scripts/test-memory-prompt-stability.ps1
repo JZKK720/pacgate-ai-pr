@@ -1,41 +1,41 @@
-# Asserts the memory lane's prompt is PREFIX-STABLE and BOUNDED.
+# Asserts the memory lane's prompt is PREFIX-STABLE after the deer-flow 2.2.0
+# upgrade. See header history in git for the measured prefill numbers.
 #
-# WHY THIS GATE EXISTS
+# WHY THIS GATE EXISTS (measured 2026-10-26/27, HX370 box, Ollama 0.40.11,
+# gemma4:12b-it-qat)
 #
-# llama.cpp (behind Ollama) reuses a prompt prefix only up to the first
-# differing token. The memory lane's prompt template used to read:
+# Upstream v2.2.0 ships memory_update.chat.yaml with the user message ordered:
+#     Current Memory State -> <current_memory> -> New Conversation -> <conversation>
+# `current_memory` changes on every update, so the prefix changed every update
+# and llama.cpp could never reuse the cached prefix. Holding the conversation
+# constant, updates measured 77.7s / 68.7s / 68.7s, then 0.5s identical rerun.
+# After moving the conversation block first, the same sequence measured
+# 68.9s -> 1.3s -> 1.2s.
 #
-#     Current Memory State:
-#     <current_memory>{current_memory}</current_memory>
+# HOW IT SHIPS IN 2.2.0
+# deer-flow 2.2.0 moved the memory prompt into core/prompts/memory_update.chat.yaml
+# loaded via load_prompt_messages(..., prompts_dir=...) from memory.backend_config
+# .prompts_dir. The fork is a YAML fork under deploy/client-bundle/memory-prompts/,
+# not a .py patch. prompts_dir is all-or-nothing: EVERY template resolves from
+# it, so the directory also carries verbatim copies of the other three templates.
 #
-#     New Conversation to Process:
-#     <conversation>{conversation}</conversation>
+# WHAT THIS GATE ASSERTS
+#   1. every template prompts_dir must contain is present and parses
+#   2. the forked template's system message is byte-identical to upstream
+#      (it carries the cached prefix - it must not drift)
+#   3. the user message has <conversation> before <current_memory>
+#   4. both compose lanes mount the prompts dir, both configs set
+#      backend_config.prompts_dir at it, and the Dockerfile bakes it
+#   5. the three non-forked templates match upstream v2.2.0 byte-for-byte
 #
-# `current_memory` changes on every successful update, so the prefix changed on
-# every update and the cache could never be reused. Measured on the HX370 box
-# (Ollama 0.40.11, gemma4:12b-it-qat), holding the conversation constant and
-# changing only the memory block:
-#
-#     update #1 (cold)             77.7 s   cached=0
-#     update #2 (memory changed)  68.7 s   cached=0
-#     update #3 (memory changed)  68.7 s   cached=0
-#     update #3 again (identical)  0.5 s   cached=35028
-#
-# Three consecutive updates, three full cold prefills. After moving the
-# conversation block first and the memory block last, the same sequence at
-# 35k tokens measured 68.9 s -> 1.3 s -> 1.2 s (cached=35032).
-#
-# The second half of the gate covers the input bound. `format_conversation_for_update`
-# truncated each message to 1000 chars but capped neither the message count nor
-# the total, and `filter_messages_for_memory` keeps every human message plus
-# every final AI message - so the memory prompt grew with the conversation and
-# reached chat-sized (~35k tokens). That pays a ~70 s cold prefill, evicts the
-# chat lane's prompt-cache entry, and competes for the same 8 GiB cache budget.
-#
-# SCOPE DISCIPLINE: this asserts the SHIPPED PATCH, not a live model call. A
-# pass means "the mounted prompt.py puts the stable block first and enforces a
-# cap" - not "the cache hit". The cache-hit proof is the measurement above and
-# the live probe in plans/031.
+# WHAT IT DOES NOT ASSERT (honest gap)
+# The 2.0.0-era gate also asserted a hard total cap on the conversation text.
+# Upstream 2.2.0 removed that cap; growth is now bounded by the extraction
+# watermark (only new turns are fed) plus a per-message 1000-char truncation,
+# not by a total. Restoring a total cap means forking prompt.py, which is a
+# much heavier maintenance burden. If the memory prompt ever measures big
+# again, fork format_conversation_for_update, not this file, and restore a
+# cap assertion here.
 #
 # Exit codes: 0 pass, 1 real failure, 2 cannot check. "Cannot check" is never a pass.
 
@@ -46,153 +46,132 @@ $script:failures = 0
 function Fail($m) { Write-Host "  FAIL  $m" -ForegroundColor Red; $script:failures++ }
 function Pass($m) { Write-Host "  PASS  $m" -ForegroundColor Green }
 
-Write-Host '=== memory prompt prefix stability + input bound ===' -ForegroundColor Cyan
+Write-Host '=== memory prompt prefix stability (prompts_dir fork) ===' -ForegroundColor Cyan
 
 $bundle = 'deploy/client-bundle'
-$patch = Join-Path $bundle 'patches/deer-flow-memory-prompt.py'
-
-# ---------------------------------------------------------------------------
-# 1. The patch exists and is syntactically valid Python.
-# ---------------------------------------------------------------------------
-if (-not (Test-Path $patch)) {
-    Write-Host "  exit 2 - $patch not found; cannot verify the memory prompt shape" -ForegroundColor Yellow
-    exit 2
-}
+$promptDir = Join-Path $bundle 'memory-prompts'
+$chatYaml = Join-Path $promptDir 'memory_update.chat.yaml'
+$otherTemplates = @('staleness_review.yaml', 'consolidation.yaml', 'fact_extraction.yaml')
+$srcRoot = 'deploy/deer-flow-src'
+$upstreamDir = 'backend/packages/harness/deerflow/agents/memory/backends/deermem/deermem/core/prompts'
 
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
 if (-not $py) {
-    Write-Host '  exit 2 - no python on PATH; cannot parse the patch' -ForegroundColor Yellow
+    Write-Host '  exit 2 - no python on PATH; cannot parse the templates' -ForegroundColor Yellow
     exit 2
 }
 
-$syntax = & $py.Source -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read()); print('ok')" $patch 2>&1
-if ($LASTEXITCODE -eq 0 -and "$syntax" -match 'ok') {
-    Pass 'patches/deer-flow-memory-prompt.py parses as Python'
-}
-else {
-    Fail "patches/deer-flow-memory-prompt.py does not parse: $syntax"
+if (-not (Test-Path $promptDir)) {
+    Write-Host "  exit 2 - $promptDir not found; the prompts_dir fork is missing" -ForegroundColor Yellow
+    exit 2
 }
 
-# ---------------------------------------------------------------------------
-# 2. The conversation block precedes the memory block in the template.
-#
-# Anchored to the template's own markers, not to a line number, so a comment
-# edit cannot satisfy it and a reflow cannot break it.
-# ---------------------------------------------------------------------------
-$src = Get-Content $patch -Raw
-
-$convIdx = $src.IndexOf('New Conversation to Process:')
-$memIdx = $src.IndexOf('Current Memory State:')
-
-if ($convIdx -lt 0 -or $memIdx -lt 0) {
-    Fail 'the template no longer contains both "New Conversation to Process:" and "Current Memory State:" - the prefix-stability check cannot be evaluated'
-}
-elseif ($convIdx -lt $memIdx) {
-    Pass 'the conversation block precedes the memory block (stable prefix)'
-}
-else {
-    Fail 'the memory block precedes the conversation block - {current_memory} changes on every update, so the prompt prefix changes on every update and llama.cpp can never reuse it (measured 68.7 s cold per update vs 1.3 s warm)'
+# -- 1. every template prompts_dir must provide is present and parses --
+foreach ($name in @('memory_update.chat.yaml') + $otherTemplates) {
+    $p = Join-Path $promptDir $name
+    if (-not (Test-Path $p)) { Fail "$name missing from prompts_dir (prompts_dir is all-or-nothing)"; continue }
+    $r = & $py.Source -c "import sys,yaml; d=yaml.safe_load(open(sys.argv[1],encoding='utf-8')); print(d.get('format'))" $p 2>&1
+    if ($LASTEXITCODE -eq 0) { Pass "$name parses (format=$r)" } else { Fail "$name does not parse: $r" }
 }
 
-# ---------------------------------------------------------------------------
-# 3. The conversation input is bounded.
-# ---------------------------------------------------------------------------
-if ($src -match '(?m)^MEMORY_CONVERSATION_MAX_CHARS\s*=\s*(\d+)') {
-    $cap = [int]$Matches[1]
-    if ($cap -gt 0 -and $cap -le 32000) {
-        Pass "conversation block is capped at $cap chars"
-    }
-    else {
-        Fail "MEMORY_CONVERSATION_MAX_CHARS is $cap; expected 1..32000 (a chat-sized memory prompt evicts the chat lane's cache entry)"
-    }
-}
-else {
-    Fail 'MEMORY_CONVERSATION_MAX_CHARS is not defined - the memory prompt grows with the conversation and reaches chat-sized'
-}
-
-if ($src -match '(?m)^MEMORY_CONVERSATION_MAX_MESSAGES\s*=\s*(\d+)') {
-    $maxMsgs = [int]$Matches[1]
-    if ($maxMsgs -gt 0 -and $maxMsgs -le 200) {
-        Pass "conversation block is capped at $maxMsgs messages"
-    }
-    else {
-        Fail "MEMORY_CONVERSATION_MAX_MESSAGES is $maxMsgs; expected 1..200"
-    }
-}
-else {
-    Fail 'MEMORY_CONVERSATION_MAX_MESSAGES is not defined - message count is unbounded'
-}
-
-# ---------------------------------------------------------------------------
-# 4. The cap is actually APPLIED, not merely declared.
-#
-# A declared constant that nothing reads is the failure mode this catches. The
-# behavioural proof runs the real function against an oversized conversation.
-# ---------------------------------------------------------------------------
+# -- 2/3. user-block order and system-message identity --------------------
 $probe = @'
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location("pp", sys.argv[1])
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
-
-class Msg:
-    def __init__(self, t, c): self.type = t; self.content = c
-
-msgs = []
-for i in range(100):
-    msgs.append(Msg("human", "q%d " % i + "x" * 880))
-    msgs.append(Msg("ai", "a%d " % i + "y" * 880))
-
-out = m.format_conversation_for_update(msgs)
-cap = m.MEMORY_CONVERSATION_MAX_CHARS
-if len(out) > cap + 10:
-    print("FAIL len=%d cap=%d" % (len(out), cap)); sys.exit(1)
-if "a99" not in out:
-    print("FAIL newest turn dropped"); sys.exit(1)
-
-small = m.format_conversation_for_update([Msg("human", "hi"), Msg("ai", "hello")])
-if small != "User: hi\n\nAssistant: hello":
-    print("FAIL small conversation was altered: %r" % small); sys.exit(1)
-
-print("ok len=%d cap=%d" % (len(out), cap))
+import sys, yaml
+fork = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+msgs = fork["messages"]
+user = next(m["content"] for m in msgs if m["role"] == "user")
+print("CONV=%d MEM=%d" % (user.find("<conversation>"), user.find("<current_memory>")))
 '@
-
-$probePath = Join-Path ([System.IO.Path]::GetTempPath()) "pacgate-memory-prompt-probe.py"
+$probePath = Join-Path ([System.IO.Path]::GetTempPath()) 'pacgate-prompt-order.py'
 Set-Content -Path $probePath -Value $probe -Encoding UTF8
 try {
-    $result = & $py.Source $probePath $patch 2>&1
-    if ($LASTEXITCODE -eq 0 -and "$result" -match '^ok') {
-        Pass "the cap is applied and keeps the newest turn ($result)"
+    $out = & $py.Source $probePath $chatYaml 2>&1
+    if ("$out" -match 'CONV=(\d+) MEM=(\d+)') {
+        $conv = [int]$Matches[1]; $mem = [int]$Matches[2]
+        if ($conv -ge 0 -and $mem -ge 0 -and $conv -lt $mem) {
+            Pass 'the user message puts <conversation> before <current_memory> (stable prefix)'
+        } else {
+            Fail "user block order is wrong (conversation=$conv memory=$mem) - the volatile block is ahead of the stable one and llama.cpp can never reuse the prefix"
+        }
+    } else {
+        Fail "could not parse the user block: $out"
     }
-    else {
-        Fail "the cap is declared but not applied correctly: $result"
+} finally { Remove-Item $probePath -ErrorAction SilentlyContinue }
+
+# Upstream comparison (skipped with a note when the clone is absent)
+$upOk = Test-Path $srcRoot
+if ($upOk) {
+    $upPath = Join-Path ([System.IO.Path]::GetTempPath()) 'pacgate-upstream-memory-update.yaml'
+    & git -C $srcRoot show "v2.2.0:$upstreamDir/memory_update.chat.yaml" > $upPath 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $sysProbe = @'
+import sys, yaml
+up = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+fork = yaml.safe_load(open(sys.argv[2], encoding="utf-8"))
+up_sys = next(m["content"] for m in up["messages"] if m["role"] == "system")
+fork_sys = next(m["content"] for m in fork["messages"] if m["role"] == "system")
+print("SAME" if up_sys == fork_sys else "DIFF")
+'@
+        $sp = Join-Path ([System.IO.Path]::GetTempPath()) 'pacgate-sys-compare.py'
+        Set-Content -Path $sp -Value $sysProbe -Encoding UTF8
+        $sysOut = & $py.Source $sp $upPath $chatYaml 2>&1
+        Remove-Item $sp, $upPath -ErrorAction SilentlyContinue
+        if ("$sysOut" -match 'SAME') {
+            Pass 'the fork keeps upstream system message byte-identical (cached prefix preserved)'
+        } else {
+            Fail "the fork's system message differs from upstream: $sysOut"
+        }
+    } else {
+        Write-Host '  [ .. ] upstream v2.2.0 not readable; system-message identity not checked' -ForegroundColor DarkGray
+        $upOk = $false
     }
-}
-finally {
-    Remove-Item $probePath -ErrorAction SilentlyContinue
 }
 
-# ---------------------------------------------------------------------------
-# 5. Every base compose that mounts the memory storage patch also mounts the
-#    prompt patch. A machine that gets one and not the other has the bound
-#    without the prefix fix, or neither.
-# ---------------------------------------------------------------------------
-$composes = Get-ChildItem $bundle -Filter 'compose*.yaml' | Sort-Object Name
-$checked = 0
-foreach ($c in $composes) {
-    $text = Get-Content $c.FullName -Raw
-    if ($text -notmatch 'deer-flow-memory-storage\.py') { continue }
-    $checked++
-    if ($text -match 'deer-flow-memory-prompt\.py') {
-        Pass "$($c.Name) mounts the memory prompt patch"
-    }
-    else {
-        Fail "$($c.Name) mounts deer-flow-memory-storage.py but NOT deer-flow-memory-prompt.py - the memory lane keeps its unstable prefix and unbounded input"
+# -- 4. compose lanes mount it, configs set prompts_dir, image bakes it --
+foreach ($lane in @('compose.prod.yaml', 'compose.bundle.yaml')) {
+    $f2 = Join-Path $bundle $lane
+    $t = if (Test-Path $f2) { Get-Content $f2 -Raw } else { '' }
+    if ($t -match [regex]::Escape('./memory-prompts:/app/prompts/memory')) {
+        Pass "$lane mounts memory-prompts at /app/prompts/memory"
+    } else {
+        Fail "$lane does not mount memory-prompts - the fork would not reach the container"
     }
 }
-if ($checked -eq 0) {
-    Fail 'no compose file mounts deer-flow-memory-storage.py - the discovery anchor is gone; this gate is no longer checking what it thinks it is'
+foreach ($cfg in @("$bundle/deer-flow-config.yaml", 'deploy/deer-flow-pacgate/config.yaml')) {
+    $t = if (Test-Path $cfg) { Get-Content $cfg -Raw } else { '' }
+    if ($t -match '(?m)^\s*prompts_dir:\s*/app/prompts/memory\s*$') {
+        Pass "$cfg sets backend_config.prompts_dir"
+    } else {
+        Fail "$cfg does not set prompts_dir - the fork would be ignored"
+    }
+}
+$df = Get-Content 'deploy/deer-flow-pacgate/Dockerfile' -Raw -ErrorAction SilentlyContinue
+if ($df -match 'COPY deploy/client-bundle/memory-prompts /app/prompts/memory') {
+    Pass 'the image bakes memory-prompts (standalone runs are covered)'
+} else {
+    Fail 'the Dockerfile does not bake memory-prompts - a standalone run loses the fork'
+}
+
+# -- 5. the three copied templates have not drifted from upstream ----------
+if (Test-Path $srcRoot) {
+    foreach ($name in $otherTemplates) {
+        $gpath = "v2.2.0:$upstreamDir/$name"
+        $up = & git -C $srcRoot show $gpath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [ .. ] $name - upstream v2.2.0 not readable; drift not checked" -ForegroundColor DarkGray
+            continue
+        }
+        $local = (Get-Content (Join-Path $promptDir $name) -Raw).TrimEnd()
+        $remote = (($up -join "`n")).TrimEnd()
+        if ($local -eq $remote) {
+            Pass "$name matches upstream v2.2.0 verbatim"
+        } else {
+            Fail "$name has drifted from upstream v2.2.0 - rebase onto the upstream copy, do not hand-edit"
+        }
+    }
+} else {
+    Write-Host "  [ .. ] $srcRoot not present; upstream drift not checked" -ForegroundColor DarkGray
 }
 
 Write-Host ''
