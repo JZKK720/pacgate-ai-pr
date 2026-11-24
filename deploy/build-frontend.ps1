@@ -19,7 +19,7 @@ param(
     [switch]$Push,
     [string]$Tag = "0.1.0",
     [string]$GatewayUrl = "http://deer-flow:8001",
-    [string]$DeerFlowVersion = "v2.0.0",
+    [string]$DeerFlowVersion = "v2.2.0",
     [string]$Namespace = ""
 )
 
