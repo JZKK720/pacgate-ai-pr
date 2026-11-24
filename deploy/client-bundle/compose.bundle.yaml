@@ -242,7 +242,7 @@ services:
       # Pacgate 2026-11-06: strip pymupdf4llm's inline HTML (<mark>/<br>) from
       # heading titles before they reach the agent's "Document outline" prompt
       # section. See the longer note in compose.prod.yaml.
-      - ./patches/deer-flow-file-conversion.py:/app/backend/packages/harness/deerflow/utils/file_conversion.py:ro
+      - ./patches/deer-flow-file-outline.py:/app/backend/packages/harness/deerflow/utils/file_outline.py:ro
       # Pacgate (hang fix 2026-10-06): bound the non-streaming title ainvoke()
       # and make CancelledError fall back instead of freezing the pregel loop
       # (run df600939: no output for 11 minutes; only STOP recovered it).
@@ -338,6 +338,10 @@ services:
       # It is bind-mounted (like the siblings above) so the memory backend can ship
       # without an image rebuild; the v2.2.0 image is built from this tree anyway.
       - ./patches/pacgate-adapter-matter-memory.py:/app/adapters/pacgate_deerflow_adapter/matter_memory.py:ro
+      # Pacgate 2026-11-24: memory-extraction prompt fork (same file and rationale
+      # as compose.prod.yaml; memory prompts are directory-mounted because the
+      # loader reads all four templates from prompts_dir).
+      - ./memory-prompts:/app/prompts/memory:ro
       # Pacgate 2026-10-30: seeded legal skills (see compose.prod.yaml for the
       # rationale). Read-only; the agent writes its own skills to custom/ via the
       # scanned `skill_manage` path, never by editing a seed.

@@ -329,14 +329,14 @@ services:
       # Pacgate: inject conversation-history token estimate for auto-routing
       # (see compose.bundle.yaml for the rationale).
       - ./patches/deer-flow-worker.py:/app/backend/packages/harness/deerflow/runtime/runs/worker.py:ro
-      # Pacgate 2026-11-06: strip pymupdf4llm's inline HTML (<mark>/<br>) from
-      # heading titles. Those titles are rendered into the agent's prompt as the
-      # "Document outline" section, and on the 65-page CJK tutorial PDF 59 of 241
-      # headings arrived as "**<mark>1.1 ...</mark>**" - markup spent as prompt
-      # tokens, obscuring the text the agent matches against. Only reachable now
-      # that pymupdf4llm is actually installed (see the image Dockerfile); with
-      # the MarkItDown fallback there were no headings at all to clean.
-      - ./patches/deer-flow-file-conversion.py:/app/backend/packages/harness/deerflow/utils/file_conversion.py:ro
+      # Pacgate 2026-11-24 (2.2.0): strip pymupdf4llm's inline HTML (<mark>/<br>)
+      # from heading titles. Upstream 2.2.0 absorbed the rest of our 2026-10-07
+      # file_conversion fork into file_outline.py (fences, comments, BOM, bounded
+      # titles), so this now carries ONLY the inline-HTML strip. The 65-page CJK
+      # tutorial PDF measured 59 of 241 headings wrapped in <mark>. Titles are
+      # rendered into the agent's prompt as the "Document outline" section, so
+      # raw markup is prompt tokens spent on tags.
+      - ./patches/deer-flow-file-outline.py:/app/backend/packages/harness/deerflow/utils/file_outline.py:ro
       # Pacgate (hang fix 2026-10-06): bound the non-streaming title ainvoke()
       # and make CancelledError fall back instead of freezing the pregel loop
       # (run df600939: no output for 11 minutes; only STOP recovered it).
@@ -434,6 +434,13 @@ services:
       # It is bind-mounted (like the siblings above) so the memory backend can ship
       # without an image rebuild; the v2.2.0 image is built from this tree anyway.
       - ./patches/pacgate-adapter-matter-memory.py:/app/adapters/pacgate_deerflow_adapter/matter_memory.py:ro
+      # Pacgate 2026-11-24: memory-extraction prompt fork (see memory-prompts/).
+      # memory_update.chat.yaml moves the conversation block ahead of the volatile
+      # <current_memory> block so llama.cpp can reuse the prefix across updates;
+      # the other three templates are verbatim upstream v2.2.0 because prompts_dir
+      # is all-or-nothing. A directory mount, not a file mount: the loader reads
+      # four files from it.
+      - ./memory-prompts:/app/prompts/memory:ro
       # Pacgate 2026-10-30: SEED SKILLS. Read-only into the skills root that
       # `skills.path: .deer-flow/skills` resolves to, so these are the competent
       # starting corpus the agent patches instead of authoring from nothing.

@@ -411,6 +411,14 @@ memory:
   manager_class: deermem
   backend_config:
     storage_class: pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage
+    # Pacgate 2026-11-24: prompts_dir points at a fork of upstream's memory_update
+    # chat prompt with the conversation block moved ahead of the volatile
+    # <current_memory> block. Without it, every memory extraction pays a full cold
+    # prefill because llama.cpp can only reuse a prefix up to the first differing
+    # token. The directory also carries verbatim copies of the other three
+    # templates: prompts_dir is all-or-nothing, not per-file override.
+    # Mounted read-only in both compose lanes at /app/prompts/memory.
+    prompts_dir: /app/prompts/memory
     model:
       provider: openai
       model: nemotron-3.5-bolt:e4b-q8_0
@@ -712,15 +720,23 @@ uploads:
   # reachable after a rebuild.
   pdf_converter: auto
 
-# Pacgate 2026-11-24: 2.2.0 recursion ceilings, replacing the baked patch and the
-# DEERFLOW_MAX_RECURSION_LIMIT env knob it read. The default is now 100 and the hard
-# ceiling 1000, clamped at the call site in the gateway, so the old ~3M-token run
-# cannot happen regardless of what the client sends. We raise the ceiling to 2000
-# (the value the deleted patch enforced) because the deepest successful run measured
-# 937 of its 1000 budget; 1000 is a cliff, not a guard. Clients still choose their
-# own recursion_limit; this only raises the server-side clamp.
-recursion_limit: 100
-max_recursion_limit: 2000
+# Pacgate 2026-11-24: 2.2.0 recursion budget. Replaces the baked patch and the
+# DEERFLOW_MAX_RECURSION_LIMIT / DEERFLOW_MIN_RECURSION_LIMIT env knobs it read.
+#
+# Upstream now owns the clamp: recursion_limit is the server default applied when a
+# run carries no client value, and max_recursion_limit is a hard ceiling applied to
+# any client-supplied value at the call site. There is NO floor upstream - a client
+# may ask for 1 and get 1. That is fine for us because the UI no longer sends the
+# key at all (deploy/frontend-patches/.../hooks.ts, 2026-11-07), so every run takes
+# this default.
+#
+# 937 of 1000 super-steps was the deepest RETAINED success on this box and 138-call
+# successes extrapolate past 1000, so the budget has to clear that with room: 2000.
+# The old floor enforced exactly this number; upstream has no floor, so the default
+# IS the floor - it must not be lowered without re-measuring, and doing so would
+# silently re-impose the 1000-ish wall that killed every client-budgeted run.
+recursion_limit: 2000
+max_recursion_limit: 4000
 
 # Pacgate 2026-10-27: size the per-tool loop guard so it can tell productive work
 # from a loop.
@@ -730,8 +746,10 @@ max_recursion_limit: 2000
 # against one ceiling of 50. Thread 6cc8dfae was force-stopped mid-work with
 # "[FORCED STOP] Tool bash called 50 times" on a run that made 92 calls, 71 of
 # them bash and 55 of them DISTINCT commands - document assembly, not a loop.
-# patches/deer-flow-loop-detection.py backports the upstream windowed fix
-# (e492bb1c #4072 + 4746a257 #4295) so counts decay instead of accumulating.
+# Upstream v2.2.0 absorbed the windowed, per-run keyed tool-frequency guard
+# (upstream v2.2.0 loop_detection_middleware.py; the fix landed as #4072 and
+# #4295), so no backport is carried here any more. The config below is the real
+# lever: the middleware sizes its window to the largest hard limit in play.
 #
 # WINDOWING ALONE IS STILL NOT ENOUGH HERE. The middleware auto-sizes its window
 # to max(window_size, hard_limit, every override hard_limit), so a ceiling of 50

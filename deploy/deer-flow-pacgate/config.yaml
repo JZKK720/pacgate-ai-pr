@@ -230,16 +230,21 @@ loop_detection:
 # storage backend is the replacement. nemotron-bolt-7b-memory carries a hard
 # 2048 max_tokens (entry above) so a runaway extraction cannot stall the
 # single Ollama runner slot.
-# Pacgate 2026-11-24: match the client bundle's 2.2.0 ceilings. Upstream defaults
-# are recursion_limit=100 / max_recursion_limit=1000, enforced by the gateway.
-recursion_limit: 100
-max_recursion_limit: 2000
+# Pacgate 2026-11-24: match the client bundle. recursion_limit is the server
+# default applied when a run carries no client value; max_recursion_limit is the
+# hard clamp on any client-supplied value. See the client bundle for the measured
+# rationale (937 of 1000 super-steps on the deepest retained success).
+recursion_limit: 2000
+max_recursion_limit: 4000
 
 memory:
   mode: middleware
   manager_class: deermem
   backend_config:
     storage_class: pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage
+    # Baked into the image at /app/prompts/memory (see Dockerfile). Same fork as
+    # the client bundle: conversation block first, volatile <current_memory> last.
+    prompts_dir: /app/prompts/memory
     model:
       provider: openai
       model: nemotron-3.5-bolt:e4b-q8_0

@@ -11,6 +11,14 @@ COPY pacgate-adapters/python/pacgate_deerflow_adapter /app/adapters/pacgate_deer
 # PYTHONPATH, because DeerFlow itself runs from /app/backend via `uv run --no-sync`.
 RUN pip install --no-cache-dir /app/adapters/pacgate_deerflow_adapter
 
+# Pacgate 2026-11-24: bake the memory-extraction prompt fork. The baked config
+# points memory.backend_config.prompts_dir at /app/prompts/memory. The directory
+# holds a fork of upstream's memory_update.chat.yaml with the conversation block
+# moved ahead of the volatile <current_memory> block (llama.cpp prefix cache),
+# plus verbatim copies of the other three templates, which prompts_dir resolves
+# all-or-nothing. Compose lanes bind-mount the same directory over this copy.
+COPY deploy/client-bundle/memory-prompts /app/prompts/memory
+
 # Pacgate: bake the document-conversion CLI so the agent's sandbox bash tool can
 # convert generated markdown to docx/pdf/html/txt (the MD->docx/pdf direction).
 # pandoc is the office-cli (MD->docx/html/txt); weasyprint is its PDF engine
@@ -54,6 +62,12 @@ RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
 # and 335 <br> in the converted markdown, and 59 of 241 headings arrived as
 # "**<mark>1.1 ...</mark>**".
 #
+# 2026-11-24 (2.2.0): upstream moved outline extraction out of file_conversion.py
+# into file_outline.py and absorbed our fence/comment handling, BOM handling,
+# bounded titles and the bold-title cleaner. The old whole-file fork is deleted;
+# this bake carries ONLY the inline-HTML strip (pymupdf4llm <mark>/<br> on
+# highlighted headings), which upstream still lacks. Everything else is upstream.
+#
 # Those titles are not cosmetic. UploadsMiddleware renders them into the agent's
 # prompt as the "Document outline" section, so the markup was spending prompt
 # tokens on tags and obscuring the text the agent matches a question against.
@@ -63,7 +77,7 @@ RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
 # must not reintroduce the defect. Both compose lanes also mount it so a fix can
 # ship without an image rebuild, and scripts/test-baked-patch-parity.ps1 asserts
 # the bake and the mount never point at different code.
-COPY deploy/client-bundle/patches/deer-flow-file-conversion.py /app/backend/packages/harness/deerflow/utils/file_conversion.py
+COPY deploy/client-bundle/patches/deer-flow-file-outline.py /app/backend/packages/harness/deerflow/utils/file_outline.py
 
 # Pacgate 2026-11-06: install pymupdf4llm so the PREFERRED PDF->Markdown path runs.
 #
