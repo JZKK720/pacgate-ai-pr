@@ -4,7 +4,7 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
 
 **中文文档：** [README-ZH.md](README-ZH.md) | [员工使用手册](docs/PACGATE-LAW-STAFF-HANDBOOK-ZH.md)
 
-## Release: v0.2.37 (2026-11-22)
+## Release: v0.3.0 (2026-11-24)
 
 - **DOCX redlines with native Word tracked changes.** Three new MCP tools —
   `pacgate_redline_compare`, `pacgate_redline_accept`, `pacgate_redline_reject` —
@@ -44,14 +44,14 @@ Privacy-first legal AI platform for multi-tenant attorney offices. Headless Rust
   `pacgate-mcp`. No API surface changed, no schema, no config. Existing redline-free
   document workflows are untouched.
 
-## Release: v0.2.35 (2026-11-15)
+## Release: v0.3.0 (2026-11-24)
 
 - **The verifier no longer treats a model guess as proof of residue.** `verdict()` returned `Block` for ANY surviving span, so a `MatchSource::Model` span was decisive on its own. The circularity: `verify()` re-runs the detectors over the REDACTED text, so a model detector can re-fire on text the redactor already replaced, or on a fragment beside it, and `VerifyScope::inside_placeholder` only excludes a span wholly inside one placeholder. A guess about text that is no longer there became the reason to refuse the whole document. The split is now by **evidence**: a rule match (checksum, pattern, context) is structural and still blocks unconditionally; a model match is a guess and may not. Model spans stay in `residue` and `notes`, so a reviewer still sees them.
 - **What it unblocks.** Documents that were `blocked` on model-only evidence now pass sanitization. Measured on the dev box before the fix: **397 of 868 chunks across four documents**, including 合规律师实用Prompts指南 (144), 基金律师实用Prompts指南 (108) and presented-pacgate-ai-平台实战教程 (73 docx + 70 pdf). The surviving spans the ledger named were a textbook placeholder name (张三), a registered connector name (yuandian), and public bodies (黄山市人民政府, 保定市国资委, 平潭综合实验区国有资产管理局) - none of them client identity.
-- **What a client must do.** Pull `ghcr.io/jzkk720/pacgate-api:0.2.35` and **re-sanitize** the affected documents: `POST /api/documents/:id/sanitize` with `{"data_level":"T3"}`. The verdict is computed at sanitize time and stored, so existing `blocked` rows stay blocked until re-sanitized - pulling the image alone does not release them. Use `/sanitize`, **not** `/sanitize-rescan`: the rescan is a read-only inspection that reports `chunks_offending` and promotes nothing.
+- **What a client must do.** Pull `ghcr.io/jzkk720/pacgate-api:0.3.0` and **re-sanitize** the affected documents: `POST /api/documents/:id/sanitize` with `{"data_level":"T3"}`. The verdict is computed at sanitize time and stored, so existing `blocked` rows stay blocked until re-sanitized - pulling the image alone does not release them. Use `/sanitize`, **not** `/sanitize-rescan`: the rescan is a read-only inspection that reports `chunks_offending` and promotes nothing.
 - **What did NOT change.** No API surface, no schema, no config, no new endpoint. This is a verdict-rule fix. Every other running image is unchanged in content and is rebuilt only because the pipeline has no per-path filter.
 
-### Carried from v0.2.34 (unchanged, still in force)
+### Carried from v0.3.0 (unchanged, still in force)
 
 The following shipped in 0.2.34 and remain in force. They are listed under their own
 heading rather than repeated as 0.2.35 changes.
@@ -75,11 +75,11 @@ heading rather than repeated as 0.2.35 changes.
 - RAG retrieval (pgvector + tsvector + Ollama embeddings, T1-T4 data level filtering) — fully on-device
 - OpenViking memory lane: ov-remember / ov-search / ov-read bridge via qm, MCP recall in deer-flow
 - Auth (JWT + argon2 + SOUL resolver middleware)
-- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.2.37` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
-- deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.2.37` (public)
-- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.2.37` (public; exposes **29** MCP tools incl. documents/workflows and DOCX redlines)
-- deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37` (public; gateway URL baked in at build time)
-- OCR service image: `ghcr.io/jzkk720/ocr-service:0.2.37` (public; PaddleOCR extraction, first-class since 0.1.16)
+- pacgate-api image: `ghcr.io/jzkk720/pacgate-api:0.3.0` (public; LLM router honors `OLLAMA_BASE_URL`, per-tenant model overrides)
+- deer-flow wrapper image: `ghcr.io/jzkk720/deer-flow-pacgate:0.3.0` (public)
+- pacgate-mcp bridge image: `ghcr.io/jzkk720/pacgate-mcp:0.3.0` (public; exposes **29** MCP tools incl. documents/workflows and DOCX redlines)
+- deer-flow frontend wrapper image: `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.3.0` (public; gateway URL baked in at build time)
+- OCR service image: `ghcr.io/jzkk720/ocr-service:0.3.0` (public; PaddleOCR extraction, first-class since 0.1.16)
 - qm collaboration bridge validated (Python CLI, HARNESS=pi, real Ollama)
 - Client deployment bundle checked in at `deploy/client-bundle/` — fresh-clone install path verified
 - Knowledge graph: 935 nodes, 2220 edges, 49 communities
@@ -144,11 +144,11 @@ Pacgate runtime images are **public** (anonymous pull verified). The source repo
 
 | Image | Contents | Base |
 |-------|----------|------|
-| `ghcr.io/jzkk720/pacgate-api:0.2.37` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.37` | pacgate-api MCP bridge (**29** tools incl. documents/workflows/redlines) | `python:3.12-slim` + `libicu` |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.37` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
-| `ghcr.io/jzkk720/ocr-service:0.2.37` | PaddleOCR extraction service (first-class since 0.1.16) | `python:3.12-slim` |
+| `ghcr.io/jzkk720/pacgate-api:0.3.0` | Rust binary + SQL migrations | `rust:1.94-bookworm` -> `debian:bookworm-slim` |
+| `ghcr.io/jzkk720/pacgate-mcp:0.3.0` | pacgate-api MCP bridge (**29** tools incl. documents/workflows/redlines) | `python:3.12-slim` + `libicu` |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.3.0` | deer-flow backend + Python adapter | `ghcr.io/bytedance/deer-flow-backend` (pinned SHA) |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.3.0` | deer-flow Next.js research UI (gateway URL baked in) | `node:22-alpine` |
+| `ghcr.io/jzkk720/ocr-service:0.3.0` | PaddleOCR extraction service (first-class since 0.1.16) | `python:3.12-slim` |
 
 Every image also carries `:latest`, kept in lockstep with the version tag.
 

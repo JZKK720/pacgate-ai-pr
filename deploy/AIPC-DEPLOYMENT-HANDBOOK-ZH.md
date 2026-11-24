@@ -121,11 +121,11 @@ AIPC #2 必须拉取**更新后**的代码（见 Stage 1），以获得这些修
 
 | 镜像 | 状态 |
 |---|---|
-| `ghcr.io/jzkk720/pacgate-api:0.2.37` | 即 0.2.36 的脱敏修复内容，未再变更。修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
-| `ghcr.io/jzkk720/pacgate-mcp:0.2.37` | **红线可比对版本。** `pacgate_redline_compare` 现在对从未脱敏的文档、以及接口只提供脱敏正文的文档均可用：按需脱敏，并在无法下载 `.docx` 时退化为文本差异（`[-删除-]` / `{+新增+}`），并明确回报所用模式。各类失败均带 `repair_hint`。此前凡是 `sanitized` 文档该工具都不可达，因为 `/download` 拒绝返回二进制。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 加 `pacgate-mcp` 重启即可获得工具变更，无需新镜像。 |
-| `ghcr.io/jzkk720/deer-flow-pacgate:0.2.37` | 收录 `pacgate-docx` crate 的中文粒度修复。中文修订现为词级粒度（`从` `三` `个` `月` `改` `为` `12` `个` `月`），不再整句删除后重插——旧实现按空白分词，而中文没有空白。 |
-| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.2.37` | 本版本未变更。 |
-| `ghcr.io/jzkk720/ocr-service:0.2.37` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
+| `ghcr.io/jzkk720/pacgate-api:0.3.0` | 即 0.2.36 的脱敏修复内容，未再变更。修正了校验器，使其不再在文档仍含身份证号、统一社会信用代码、律师执业证号、银行账号、港澳通行证、车牌、微信号、纳税人识别号时判为通过（详见下文）。同时保留案件工作区汇总视图，并新增两个补救接口：`POST /api/documents/:id/sanitize-rescan` 与 `PATCH /api/documents/:id/sanitize-reset`。 |
+| `ghcr.io/jzkk720/pacgate-mcp:0.3.0` | **红线可比对版本。** `pacgate_redline_compare` 现在对从未脱敏的文档、以及接口只提供脱敏正文的文档均可用：按需脱敏，并在无法下载 `.docx` 时退化为文本差异（`[-删除-]` / `{+新增+}`），并明确回报所用模式。各类失败均带 `repair_hint`。此前凡是 `sanitized` 文档该工具都不可达，因为 `/download` 拒绝返回二进制。注意 `server.py` 以 bind-mount 挂入容器，因此 `git pull` 加 `pacgate-mcp` 重启即可获得工具变更，无需新镜像。 |
+| `ghcr.io/jzkk720/deer-flow-pacgate:0.3.0` | 收录 `pacgate-docx` crate 的中文粒度修复。中文修订现为词级粒度（`从` `三` `个` `月` `改` `为` `12` `个` `月`），不再整句删除后重插——旧实现按空白分词，而中文没有空白。 |
+| `ghcr.io/jzkk720/deer-flow-frontend-pacgate:0.3.0` | 本版本未变更。 |
+| `ghcr.io/jzkk720/ocr-service:0.3.0` | PaddleOCR 抽取服务；自 0.1.16 起为一等镜像。自 0.1.28 起，其 PP-OCRv4 权重已**内置于镜像**，抽取无需外部模型站点，可离线运行。 |
 | `ghcr.io/volcengine/openviking@sha256:46f9e34c…` | 在 `compose.prod.yaml` 中按摘要固定。上游公开镜像。 |
 
 > **0.2.14 是正确性修复，不是功能版本。** 客户扫描真实扫描件时返回
