@@ -31,7 +31,7 @@
 [CmdletBinding()]
 param(
     [string]$BaseRef = 'v2.0.0',
-    [string]$TargetRef = 'v2.1.0-rc0',
+    [string]$TargetRef = 'v2.2.0',
     [string]$ClonePath
 )
 
@@ -59,24 +59,41 @@ if (-not (Test-Path $patchesDir)) { throw "patches dir not found: $patchesDir" }
 # set. Adding an entry here changes what the audit measures, so re-measure the
 # plan when you do. The completeness check below reports any mounted patch that
 # is outside this set, so the gap is visible rather than silent.
+# 2026-11-24 (2.2.0 rebase): the map now covers EVERY upstream-source patch the
+# compose lanes bind-mount, not just the ones the 2.1.0 plan rebased. The five
+# 2.0.0-era entries whose upstream paths are gone at 2.2.0 (loop-detection,
+# recursion-cap, tool_policy, memory-storage, memory-prompt) were deleted along
+# with their mounts, not carried forward. Adding an entry here changes what the
+# audit measures, so re-read plans/023 before widening it further.
 $patchMap = [ordered]@{
     'deer-flow-agent.py'       = 'backend/packages/harness/deerflow/agents/lead_agent/agent.py'
-    'deer-flow-loop-detection.py' = 'backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py'
     'deer-flow-artifacts.py'   = 'backend/app/gateway/routers/artifacts.py'
+    'deer-flow-auth.py'        = 'backend/app/gateway/routers/auth.py'
+    'deer-flow-auth-errors.py' = 'backend/app/gateway/auth/errors.py'
     'deer-flow-prompt.py'      = 'backend/packages/harness/deerflow/agents/lead_agent/prompt.py'
     'deer-flow-sync.py'        = 'backend/packages/harness/deerflow/tools/sync.py'
     'deer-flow-thread-runs.py' = 'backend/app/gateway/routers/thread_runs.py'
     'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
-    'deer-flow-run-recursion-cap.py' = 'backend/app/gateway/services.py'
     'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
     # Pacgate 2026-11-06: heading titles rendered into the agent's prompt carried
-    # raw pymupdf4llm markup ("**<mark>1.1 ...</mark>**") on 59 of 241 headings.
+    # raw pymupdf4llm markup. 2.2.0 upstream picked up the same fix (extract_outline
+    # and _clean_bold_title live in deerflow/utils/file_outline.py now), so this
+    # entry is audited to confirm the upstream path still exists, not to justify
+    # keeping the whole-file fork.
     'deer-flow-file-conversion.py' = 'backend/packages/harness/deerflow/utils/file_conversion.py'
     # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated.
     'deer-flow-mcp-args.py'    = 'backend/packages/harness/deerflow/mcp/tools.py'
     # Pacgate 2026-10-11: MCP HTTP client read timeout + per-server headers.
     # LOCAL-ONLY - upstream has no counterpart for this patch.
     'deer-flow-mcp-client.py'  = 'backend/packages/harness/deerflow/mcp/client.py'
+    'deer-flow-model-factory.py' = 'backend/packages/harness/deerflow/models/factory.py'
+    'deer-flow-title-middleware.py' = 'backend/packages/harness/deerflow/agents/middlewares/title_middleware.py'
+    'deer-flow-deferred-tool-filter.py' = 'backend/packages/harness/deerflow/agents/middlewares/deferred_tool_filter_middleware.py'
+    'deer-flow-tool-search-prompt.py' = 'backend/packages/harness/deerflow/tools/builtins/tool_search.py'
+    'deer-flow-skill-storage.py' = 'backend/packages/harness/deerflow/skills/storage/skill_storage.py'
+    'deer-flow-summarization-recovery.py' = 'backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py'
+    'deer-flow-present-file.py' = 'backend/packages/harness/deerflow/tools/builtins/present_file_tool.py'
+    'deer-flow-sandbox-audit.py' = 'backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py'
 }
 
 # langchain-mcp-tools.py overrides a VENDORED package inside the image venv, not
@@ -110,6 +127,7 @@ $notUpstream = @(
     'langchain-mcp-tools.py'          # vendored venv package, not upstream source
     'pacgate-adapter-client.py'       # our own adapter tree (/app/adapters)
     'pacgate-adapter-storage.py'      # our own adapter tree (/app/adapters)
+    'pacgate-adapter-matter-memory.py'  # our own adapter tree (/app/adapters), v2.2.0 backend
 )
 
 $composeProd = Join-Path $repoRoot 'deploy/client-bundle/compose.prod.yaml'
