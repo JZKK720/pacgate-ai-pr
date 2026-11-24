@@ -62,6 +62,20 @@ The second link, minted by the same agent with the same secret, verified
 **byte-for-byte** and rendered its form (`HTTP 200`, field `OpenViking Root API
 Key`). So the mechanism is sound; one URL was damaged.
 
+## Operator runbook (one line, pin this)
+
+> **A `404 "This link has expired"` on a drop page is almost never expiry.**
+> Check the signature first (§3). If it is off by a few characters, the URL was
+> mistyped in transit — ask the agent to re-mint, never retype the link by hand.
+> Links are bearer credentials: open them directly, do not paste them into any
+> other tool, and delete any saved copy once the field is filled in.
+
+Transfer rule that would have prevented this: a drop URL is never a string a
+person copies. It is produced by the agent and consumed by clicking. If you find
+yourself selecting, copying, and re-pasting a `?t=` parameter, the flow you are
+trying to automate needs a different shape (the agent should submit it, or the
+form should be opened by the same process that printed it).
+
 ## 3. How to tell these apart, in one command
 
 ```powershell
