@@ -110,7 +110,7 @@ Test-MutationRejected -Name '.env.example PACGATE_MATTER_ID blanked' `
 
 Test-MutationRejected -Name 'storage_class reverted to FileMemoryStorage' `
     -File 'deploy/client-bundle/deer-flow-config.yaml' `
-    -Find 'pacgate_deerflow_adapter.storage.PacgateMemoryStorage' `
+    -Find 'pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage' `
     -ReplaceWith 'deerflow.agents.memory.storage.FileMemoryStorage'
 
 Test-MutationRejected -Name 'PACGATE_MATTER_ID dropped from compose' `

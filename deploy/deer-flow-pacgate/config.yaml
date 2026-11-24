@@ -225,14 +225,22 @@ loop_detection:
       warn: 100
       hard_limit: 150
 
+# Pacgate 2026-11-24: v2.2.0 memory wiring (same shape as the client bundle).
+# The 2.0 storage_class key is gone upstream; DeerMem + our matter-memory
+# storage backend is the replacement. nemotron-bolt-7b-memory carries a hard
+# 2048 max_tokens (entry above) so a runaway extraction cannot stall the
+# single Ollama runner slot.
 memory:
-  storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
-  # Pacgate 2026-10-07: pin background memory updates to a capped model. The
-  # memory updater runs OUTSIDE user-visible runs; without a pin it uses the
-  # first config model with no generation cap, and a confused run can loop tens
-  # of thousands of tokens on the single Ollama runner slot, stalling every
-  # chat. nemotron-bolt-7b-memory carries a hard 2048 max_tokens (entry above).
-  model_name: nemotron-bolt-7b-memory
+  mode: middleware
+  manager_class: deermem
+  backend_config:
+    storage_class: pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage
+    model:
+      provider: openai
+      model: nemotron-3.5-bolt:e4b-q8_0
+      api_key: ollama
+      base_url: http://host.docker.internal:11434/v1
+      temperature: 0.1
 
 # Pacgate 2026-10-17: PIN the title-generation model.
 #

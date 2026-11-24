@@ -384,15 +384,39 @@ model_routing:
   # deployment with a genuinely large surface can still use it.
   tool_count_threshold: 200
 
-# Pacgate 2026-10-07: pin background memory updates to a dedicated capped model.
-# The memory updater runs OUTSIDE user-visible runs; without a pin it used the
-# first config model with no generation cap, and a confused run looped 43k+
-# tokens on the single Ollama runner slot, stalling every chat in the session.
-# nemotron-bolt-7b-memory carries a hard 2048 max_tokens so this class of loop cannot
-# recur. (MemoryConfig.model_name, deerflow/agents/memory/updater.py.)
+# Pacgate 2026-11-24: deer-flow v2.2.0 memory wiring.
+#
+# v2.2.0 deleted deerflow.agents.memory.storage.MemoryStorage and the
+# `memory.storage_class` key. Memory is now pluggable behind
+# `memory.manager_class` + `memory.backend_config.storage_class`
+# (backends.deermem.create_storage), which imports a dotted class path and
+# refuses anything that does not subclass MemoryStorage. Without this change
+# a 2.2.0 image boots with deer-flow's built-in deermem backend pointed at a
+# local file, and matter memory silently stops round-tripping to pacgate-api.
+#
+# We keep deer-flow's own DeerMem manager and swap ONLY the storage backend,
+# so matter memory stays in pacgate-api at /api/matters/:id/memory with its
+# If-Match revision guard and 422 scope policy. Option A in
+# docs/superpowers/specs/2026-11-24-deer-flow-2.2.0-upgrade-design.md; OpenViking
+# remains agent working memory, not the matter-memory system of record.
+# The adapter class is bind-mounted into the image by both compose lanes.
+#
+# backend_config.model pins the extraction LLM to the same Ollama tag the
+# 0.2.37 config used (nemotron-bolt-7b-memory -> nemotron-3.5-bolt:e4b-q8_0,
+# 2048-token cap) so an upgrade does not silently re-home extraction onto the
+# host default model. v2.2.0 nests this under backend_config.model; an unset
+# model falls back to the host default (models[0]) rather than failing.
 memory:
-  storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
-  model_name: nemotron-bolt-7b-memory
+  mode: middleware
+  manager_class: deermem
+  backend_config:
+    storage_class: pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage
+    model:
+      provider: openai
+      model: nemotron-3.5-bolt:e4b-q8_0
+      api_key: ollama
+      base_url: http://host.docker.internal:11434/v1
+      temperature: 0.1
 
 # Pacgate 2026-10-30: SKILLS + AGENT-MANAGED SKILL EVOLUTION.
 #

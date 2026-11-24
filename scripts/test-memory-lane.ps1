@@ -3,12 +3,18 @@
 #
 # WHY THIS GATE EXISTS
 #
-# deer-flow selects its memory storage by class PATH, at runtime:
+# deer-flow <= 2.1.x selects its memory storage by class PATH, at runtime:
 #
 #     storage_class: pacgate_deerflow_adapter.storage.PacgateMemoryStorage
 #
-# and get_memory_storage() wraps the whole instantiation in a bare
-# `except Exception` that logs one line and substitutes FileMemoryStorage():
+# deer-flow 2.2.0 moved the seam: `memory.manager_class` picks the backend
+# ("deermem") and `memory.backend_config.storage_class` picks the storage the
+# DeerMem manager constructs through create_storage(). The config under test
+# ships the 2.2.0 shape; the 2.0 assertions are kept commented-equivalent by
+# accepting either, with the 2.2.0 form required for this tree.
+#
+# In 2.0.x, get_memory_storage() wrapped the whole instantiation in a bare
+# `except Exception` that logged one line and substituted FileMemoryStorage():
 #
 #     except Exception as e:
 #         logger.error("Failed to load memory storage %s, falling back to
@@ -62,13 +68,28 @@ $cfg = Get-Content $cfgPath -Raw
 # pinned: the first version of this check hardcoded 4 spaces, failed against
 # correct code, and reported the right value as wrong. What matters is the key,
 # not the column it sits in.
-if ($cfg -match '(?m)^\s*storage_class:\s*pacgate_deerflow_adapter\.storage\.PacgateMemoryStorage\s*$') {
-    Pass 'memory.storage_class selects PacgateMemoryStorage'
+$v2 = 'pacgate_deerflow_adapter.storage.PacgateMemoryStorage'
+$v22 = 'pacgate_deerflow_adapter.matter_memory.PacgateMatterMemoryStorage'
+if ($cfg -match [regex]::Escape($v22)) {
+    Pass 'memory.backend_config.storage_class selects PacgateMatterMemoryStorage'
+}
+elseif ($cfg -match [regex]::Escape($v2)) {
+    Pass 'memory.storage_class selects PacgateMemoryStorage (pre-2.2.0 layout)'
 }
 else {
     $actual = ([regex]::Match($cfg, '(?m)^\s*storage_class:\s*(\S+)')).Groups[1].Value
     if (-not $actual) { $actual = '<no storage_class key found>' }
-    Fail "memory.storage_class is '$actual', not the Pacgate adapter - deer-flow will write memory with its own storage class, outside every matter-memory guard"
+    Fail "memory backend_config.storage_class is '$actual', not the Pacgate adapter - deer-flow will write memory with its own storage class, outside every matter-memory guard"
+}
+# The 2.2.0 seam is two keys, not one: manager_class picks deermem, and the
+# backend_config block must sit under memory:. A stray top-level storage_class
+# (the 2.0 key) is rejected by pydantic as dead config on a 2.2.0 image - the
+# same silent no-op this gate exists to catch.
+if ($cfg -match '(?m)^\s+manager_class:\s*deermem\s*$' -and $cfg -match '(?m)^\s+storage_class:\s*pacgate_deerflow_adapter\.matter_memory\.PacgateMatterMemoryStorage\s*$') {
+    Pass 'memory.manager_class=deermem with the Pacgate backend_config nested under it'
+}
+else {
+    Fail 'memory.manager_class/backend_config nesting is wrong for 2.2.0 - `storage_class` must sit under `backend_config:`, not at the top level of memory:'
 }
 
 # ---------------------------------------------------------------------------
@@ -141,14 +162,21 @@ else {
 # default to a placeholder, the silent-degradation path reopens - so the guard
 # is asserted in the direction that KEEPS it strict.
 # ---------------------------------------------------------------------------
-$adapter = 'pacgate-adapters/python/pacgate_deerflow_adapter/storage.py'
-if (Test-Path $adapter) {
+$adapters = @(
+    'pacgate-adapters/python/pacgate_deerflow_adapter/storage.py',
+    'pacgate-adapters/python/pacgate_deerflow_adapter/matter_memory.py'
+)
+$anyAdapter = $false
+foreach ($adapter in $adapters) {
+    if (-not (Test-Path $adapter)) { continue }
+    $anyAdapter = $true
     $a = Get-Content $adapter -Raw
-    if ($a -match 'raise ValueError\("PacgateMemoryStorage requires PACGATE_MATTER_ID"\)') {
-        Pass 'the adapter still raises on a missing PACGATE_MATTER_ID'
+
+    if ($a -match 'requires PACGATE_MATTER_ID') {
+        Pass "$(Split-Path $adapter -Leaf) still raises on a missing PACGATE_MATTER_ID"
     }
     else {
-        Fail 'the adapter no longer raises on a missing PACGATE_MATTER_ID - if it now defaults the id, deer-flow proceeds with a bogus matter and the silent-degradation path reopens'
+        Fail "$(Split-Path $adapter -Leaf) no longer raises on a missing PACGATE_MATTER_ID - if it now defaults the id, deer-flow proceeds with a bogus matter and the silent-degradation path reopens"
     }
 
     # The adapter must stay API-backed. Any local write reintroduces a disk lane
@@ -156,14 +184,14 @@ if (Test-Path $adapter) {
     $writes = @('json.dump', 'write_text', '_get_memory_file_path')
     $found = $writes | Where-Object { $a -match [regex]::Escape($_) }
     if ($found.Count -eq 0) {
-        Pass 'the adapter writes only through pacgate-api (no local file lane)'
+        Pass "$(Split-Path $adapter -Leaf) writes only through pacgate-api (no local file lane)"
     }
     else {
-        Fail "the adapter gained a local write path ($($found -join ', ')) - a disk lane cannot be reached by the server-side 422 scope rule"
+        Fail "$(Split-Path $adapter -Leaf) gained a local write path ($($found -join ', ')) - a disk lane cannot be reached by the server-side 422 scope rule"
     }
 }
-else {
-    Write-Host "  exit 2 - adapter not found at $adapter; cannot check the trip-wire" -ForegroundColor Yellow
+if (-not $anyAdapter) {
+    Write-Host "  exit 2 - no adapter module found; cannot check the trip-wire" -ForegroundColor Yellow
     $script:failures++
 }
 
