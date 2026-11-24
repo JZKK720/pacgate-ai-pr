@@ -2,7 +2,7 @@
   "name": "pacgate-qm-deployment",
   "version": "0.0.0",
   "dependencies": {
-    "@yc-software/qm": "0.1.18"
+    "@yc-software/qm": "0.1.19"
   },
   "private": true,
   "engines": {

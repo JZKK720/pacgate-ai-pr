@@ -427,7 +427,7 @@ jobs:
       # then build with the gateway URL baked in.
       - name: Clone deer-flow frontend source
         run: |
-          git clone --depth 1 --branch v2.0.0 --filter=blob:none --sparse \
+          git clone --depth 1 --branch v2.2.0 --filter=blob:none --sparse \
             https://github.com/bytedance/deer-flow.git deploy/deer-flow-src
           git -C deploy/deer-flow-src sparse-checkout set frontend
 
@@ -514,4 +514,3 @@ jobs:
               exit 1
             fi
           done
-

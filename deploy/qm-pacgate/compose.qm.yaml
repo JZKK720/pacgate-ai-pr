@@ -1,8 +1,18 @@
-# qm 0.1.18 deployment - the two-service topology.
+# qm 0.1.19 deployment - the two-service topology.
+#
+# 2026-11-24: bumped 0.1.18 -> 0.1.19. 0.1.19 is a patch, not a re-architecture:
+# 151 of 153 dist files are byte-identical to 0.1.18. The only source change is the
+# removal of PI_DETECT_MODEL from the Fly.io env allowlist (services.js); the local
+# Docker path does not consume it. All three published digests moved:
+#   core 988ce509... -> fd3482d2...   egress-proxy d2c7458b... -> 008359925c54
+#   sandbox-base 56eae686... -> 4ddeeb8e...
+# `npx qm check` passes against our qm.config.jsonc on both pins, and
+# scripts/test-qm-upstream-drift.ps1 reports current. PI_DETECT_MODEL is left in the
+# config: it is inert upstream, and deleting it here would change more than the bump.
 #
 # WHY THIS FILE CHANGED SHAPE (2026-11-23)
 #
-# 0.1.18 is a re-architecture, not a version bump: the topology collapsed 5 services to 2.
+# 0.1.18 was a re-architecture, not a version bump: the topology collapsed 5 services to 2.
 # "web-ui", "portal" and "admin" are no longer services - core now serves the public sign-in
 # front door, the browser UI and the operator settings at /settings. "auth" survives as the
 # in-core sign-in broker. The digests below are the ones the pinned CLI's manifest.json
@@ -32,7 +42,7 @@ name: qm-pacgate
 
 services:
   core:
-    image: ghcr.io/yc-software/qm/core@sha256:988ce50907e469b3b1789488991c75d010e83829059bf945621ac742cf6a2aa4
+    image: ghcr.io/yc-software/qm/core@sha256:fd3482d26dafb5e70801561968a91fad1022e9940994c2e9cd083e7008530c6f
     container_name: qm-pacgate-core
     user: node
     # Docker access for the socket mount: on Docker Desktop the socket is root:root

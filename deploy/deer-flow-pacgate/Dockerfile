@@ -2,7 +2,7 @@
 # Layers the pacgate_deerflow_adapter on top of deer-flow's published backend image.
 # Never forks deer-flow source — the adapter is pip-installed on top.
 
-FROM ghcr.io/bytedance/deer-flow-backend@sha256:e7c503a803c99a039e08da61359932877a9e0d0196799429698244117338af13
+FROM ghcr.io/bytedance/deer-flow-backend@sha256:5a0c01ae939e4c8b0213b8df4f3fe712ce0663c3fbaf7d83c929274b2e9dfa60
 
 # Copy the adapter package
 COPY pacgate-adapters/python/pacgate_deerflow_adapter /app/adapters/pacgate_deerflow_adapter
@@ -33,44 +33,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # absolute path is blocked by the sandbox path-validation allowlist. Symlinking
 # it into /usr/local/bin (on PATH + in the allowlist) lets the agent run
 # `markitdown <file>` directly for PDF/DOCX/PPTX/XLSX -> MD on demand.
-# Pacgate 2026-10-27: bake the windowed loop-detection middleware into the image.
-# At the pinned v2.0.0 base, Layer 2 kept a MONOTONIC same-tool counter cleared
-# only by reset() (which the gateway never calls), so a productive document run
-# was force-stopped mid-work at 50 bash calls ("[FORCED STOP] Tool bash called 50
-# times", thread 6cc8dfae, 92 calls / 71 bash / 55 distinct commands). The file
-# backports upstream e492bb1c (#4072) + 4746a257 (#4295).
-#
-# BAKED rather than only bind-mounted so the standalone image - and any lane that
-# forgets the mount - still has the fix. The client compose lanes ALSO mount it,
-# which is intentional: the mount is what lets the fix ship without an image
-# rebuild, and both point at the same file, so they cannot diverge. REMOVE BOTH at
-# the 2.1.0 rebase - but NOT because v2.1.0 carries these commits (measured
-# 2026-10-27: it does not; it keys its counters per run instead). Remove it because
-# v2.1.0 has an equivalent-or-stronger fix of its own. The loop_detection CONFIG
-# block is KEPT at the rebase - its keys are unchanged at v2.1.0.
-COPY deploy/client-bundle/patches/deer-flow-loop-detection.py /app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
-
-# Pacgate 2026-10-28: clamp the lead-agent recursion budget. The chat UI sends
-# recursion_limit: 1000 per run and build_run_config() let that overwrite its own
-# 100 default, so a thrashing run spent all 1000 supersteps (~16 min, 3M+ tokens)
-# before failing with a bare GraphRecursionError. Mounted in both compose lanes
-# too; the ceiling is DEERFLOW_MAX_RECURSION_LIMIT (default 4000 as of 0.2.8 -
-# it was 500, which measured below three successful runs' super-step counts).
-#
-# NOTE (2026-10-30): this COPY used to claim the bake and the mount "cannot
-# diverge" because they point at the same file. That is only true if the file never
-# changes between builds. Measured on the 0.2.7 image: its baked copy still reads
-# `{"recursion_limit": 100}` while the tracked source now defaults to the ceiling.
-# The running stack is correct because the mount wins; the image is stale. Any run
-# WITHOUT the mount - a bare `docker run`, a debug shell, a lane that forgets the
-# mount - would silently reintroduce the 100 floor.
-#
-# scripts/test-baked-patch-parity.ps1 now asserts that a baked patch always has a
-# shadowing mount in both lanes (so a stale bake can only be masked, never live)
-# and reports the drift so the rebuild is a known task rather than a surprise.
-COPY deploy/client-bundle/patches/deer-flow-run-recursion-cap.py /app/backend/app/gateway/services.py
-
 RUN ln -sf /app/backend/.venv/bin/markitdown /usr/local/bin/markitdown
+
+# Pacgate 2026-11-24: the two 2.0.0-era bakes are DELETED, not re-derived.
+# v2.2.0 ships both fixes natively, so carrying our copies would shadow upstream
+# the moment a compose mount is dropped:
+#   - patches/deer-flow-loop-detection.py -> upstream rewrote
+#     middlewares/loop_detection_middleware.py in v2.2.0 (per-run keyed counters;
+#     the behaviour our 2026-10-27 backport supplied). The loop_detection CONFIG
+#     block in the shipped config is retained unchanged - its keys are intact.
+#   - patches/deer-flow-run-recursion-cap.py -> upstream clamps recursion_limit
+#     against AppConfig.max_recursion_limit (default 1000) at the call site.
+#     DEERFLOW_MAX_RECURSION_LIMIT is no longer consulted; the old patch was inert.
+# See docs/superpowers/specs/2026-11-24-deer-flow-2.2.0-upgrade-design.md.
 
 # Pacgate 2026-11-06: strip pymupdf4llm's inline HTML from heading titles.
 #
