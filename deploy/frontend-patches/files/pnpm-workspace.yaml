@@ -1,0 +1,20 @@
+packages: []
+
+# Pacgate patch: upstream pins next 16.4.1, which pnpm/npm now blocks at install
+# and Next.js refuses at build time ("SecurityFatalError: Your version of Next.js
+# is affected by a known security vulnerability"). Our overlay carries the same
+# override as upstream's other dependency escapes; pinned to the last 16.4 patch
+# that is not flagged. Revisit when upstream moves its own pin.
+overrides:
+  # GHSA-965w-775f-mr7g: speech-rule-engine 4.1.2 pins vulnerable 0.9.8.
+  "@xmldom/xmldom@>=0.9.0 <0.9.12": 0.9.12
+  # Nextra 4.6.1 strips children before validating required Layout props.
+  # Keep its previous Zod until https://github.com/shuding/nextra/issues/5036 is fixed.
+  "nextra@4.6.1>zod": 4.3.6
+  "nextra-theme-docs@4.6.1>zod": 4.3.6
+  "next": 16.4.6
+  "eslint-config-next": 16.4.6
+ignoredBuiltDependencies:
+  - esbuild
+  - sharp
+  - unrs-resolver

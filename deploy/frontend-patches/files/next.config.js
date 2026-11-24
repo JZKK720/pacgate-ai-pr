@@ -1,8 +1,11 @@
+import { fileURLToPath } from "node:url";
+
 /**
  * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially useful
  * for Docker builds.
  */
 import "./src/env.js";
+import { getAllowedDevOrigins } from "./src/dev-origins.js";
 
 function getInternalServiceURL(envKey, fallbackURL) {
   const configured = process.env[envKey]?.trim();
@@ -24,47 +27,27 @@ const config = {
     locales: ["en", "zh"],
     defaultLocale: "en",
   },
+  turbopack: {
+    root: fileURLToPath(new URL(".", import.meta.url)),
+  },
   devIndicators: false,
-
-  // ── Pacgate patch: stop Next.js killing long agent runs ────────────────────
+  allowedDevOrigins: getAllowedDevOrigins(),
+  // -- Pacgate patch: stop Next.js killing long agent runs ---------------------
   //
-  // THE DEFECT (measured on the dev box, 2026-10-13, deer-flow-frontend 0.1.27):
-  // Next.js proxies the `rewrites()` destinations below, and its
+  // Next.js proxies the rewrites() destinations below, and
   // `experimental.proxyTimeout` DEFAULTS TO 30000 ms. Every gateway call that
-  // runs longer than 30 s therefore had its socket torn down mid-flight, and the
-  // browser/server-to-server caller got an error WHILE THE RUN KEPT EXECUTING
-  // server-side. The frontend logged the exact shape:
+  // runs longer than 30 s therefore had its socket torn down mid-flight while
+  // the run kept executing server-side -- measured on this box as
+  // `Failed to proxy http://deer-flow:8001/api/threads/<id>/runs/wait` with
+  // `socket hang up` / ECONNRESET, on the client's primary research path.
   //
-  //     Failed to proxy http://deer-flow:8001/api/threads/<id>/runs/wait
-  //     Error: socket hang up  { code: 'ECONNRESET' }
-  //
-  // Isolated by comparing the same request on three paths:
-  //     nginx :8089  -> HTTP 500 at 30.1 s   (FAILED)
-  //     frontend :8090 -> HTTP 200 at 23.8 s  REPLY=PONG   (under the cap)
-  //     gateway :8001  -> HTTP 200 at 27.0 s               (no proxy involved)
-  //
-  // WHY THIS MATTERS. The deer-flow run record for the failed request read
-  // `status=success` with the model's answer stored, and the LLM call to Ollama
-  // returned 200: the generation was never broken. Only the DELIVERY was. Any
-  // real legal-research or document task (minutes, not seconds) hit this on the
-  // client's primary path, which is why it presented as "the model cannot
-  // generate" and "pacgate-api / deer-flow frontend lost connection".
-  //
-  // WHY 3600000 AND NOT SOMETHING TIGHTER. Next.js is the INNER proxy, and the
-  // observed worst case on this box is a real run at 2495 s (41 min), so a
-  // 300 s-class value is simply too short:
-  //   browser -> nginx (/ and /research/) -> Next.js -> gateway
-  // Every layer caps the request INDEPENDENTLY, and the first one to give up
-  // wins. Measured progression while fixing this:
-  //   Next.js default 30 s   -> HTTP 500 at  30.1 s
-  //   nginx / 300 s          -> HTTP 504 at 300.1 s   (with the line below set)
-  // 3600 s (1 h) gives the inner proxy headroom above any run we have actually
-  // seen, and nginx is set ABOVE this so the outer boundary is the last to
-  // fail rather than the first.
+  // Next.js is the INNER proxy; the observed worst case here is a real run at
+  // 2495 s (41 min), and nginx sits outside us. Every layer caps independently
+  // and the first to give up wins, so 3600 s gives the inner proxy headroom
+  // above anything measured, with nginx set higher still.
   experimental: {
     proxyTimeout: 3600000,
   },
-
   async rewrites() {
     const rewrites = [];
     const gatewayURL = getInternalServiceURL(
