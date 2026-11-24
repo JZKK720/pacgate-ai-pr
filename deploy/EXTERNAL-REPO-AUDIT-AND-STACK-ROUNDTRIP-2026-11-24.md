@@ -392,5 +392,61 @@ a test pins both. The adapter reports the endpoint that **answered**, not the on
 configured, and does not append the alias when the operator named a non-loopback
 host.
 
-**Lesson for the next audit:** for anything the kernel reaches, probe from inside
-the kernel container. Host-side success is not evidence about the deployed path.
+### 7.1 It was not one defect — it was three, and the fix belongs in one place
+
+Reading the roster output instead of trusting the DataFlow result exposed the
+next one immediately: **`openviking` showed `"fetch failed"` while openviking was
+live on the host** (`200` on `/health`).
+
+```
+http://localhost:1933/health            -> fetch failed     (from inside the container)
+http://host.docker.internal:1933/health -> 200
+
+POST /api/console/openvikingHealth -> {"ok":false,"detail":"TypeError: fetch failed"}
+```
+
+Root cause was structural, not per-adapter: `httpProbeApp` — the shared factory
+behind **both** openviking and weknora — accepted a zero-arg `probe` closure. The
+closure bound `cfg.baseUrl` before any fallback could run, so the adapter could
+only ever try one address. Patching DataFlow by hand had fixed one symptom of a
+rule that had no home.
+
+So the rule moved to `agent-desktop/src/main/managed-apps/endpoint-candidates.ts`:
+
+| Export | Contract |
+| --- | --- |
+| `isLoopbackEndpoint(url)` | loopback **including** `host.docker.internal`, matched exactly |
+| `hostGatewayCandidates(url)` | configured first, then the alias — **only** for a loopback endpoint |
+| `firstAnswering(...)` | first successful result plus **the URL that answered** |
+
+`dataflow.ts` now uses the same helper instead of its own copy, and its
+`DATAFLOW_CANDIDATE_URLS` constant was deleted rather than left as a dead export
+— deriving the alias from the configured URL also makes a custom port work, which
+the hardcoded `:8000` list could not.
+
+Running the three adapters side by side found one more blemish: weknora rendered
+`"WeKnora not reachable at "` with a blank URL, because its probe returns an empty
+`baseUrl` for an unconfigured block. It now reads
+`"WeKnora has no usable endpoint configured - invalid or missing WeKnora base URL"`.
+
+Verified on the deployed kernel after a rebuild (`a72333b`):
+
+```
+POST /api/console/openvikingHealth
+  -> {"ok":true,"detail":"reachable at http://host.docker.internal:1933",
+      authNote:"... session inventory needs valid credentials (API key)..."}
+listManagedApps found: ai-workspace, openviking
+  dataflow  "no DataFlow MCP endpoint at http://localhost:8000/mcp — fetch failed"
+  kitesurf  "no CDP endpoint at http://127.0.0.1:8787"
+  weknora   "WeKnora has no usable endpoint configured - ..."
+  blank-endpoint messages remaining: 0
+```
+
+**Lessons for the next audit:**
+
+1. **Read the whole roster, not just the row you changed.** DataFlow was fixed;
+   the neighbouring row was the same bug and had been silently wrong all along.
+2. **For anything the kernel reaches, probe from inside the kernel container.**
+   Host-side success is not evidence about the deployed path.
+3. **When the same defect appears twice, stop fixing instances.** The third one
+   (weknora) was already in the codebase and would have shipped unfound.
