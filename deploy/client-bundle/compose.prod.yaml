@@ -322,7 +322,7 @@ services:
       # per-RUN scope replaces the window. The loop_detection CONFIG block stays:
       # its keys are unchanged at v2.1.0 and a per-run counter is what the bash
       # override was sized for.
-      - ./patches/deer-flow-loop-detection.py:/app/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py:ro
+      # 2026-11-24 (2.2.0): mount dropped - loop_detection_middleware.py was rewritten upstream in v2.2.0 (per-run keyed counters).
       - ./patches/deer-flow-sandbox-audit.py:/app/backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py:ro
       # Pacgate 2026-10-28: clamp the lead-agent recursion budget.
       # Pacgate 2026-11-07: and FLOOR it - the clamp alone did not save anyone.
@@ -351,7 +351,7 @@ services:
       # floor yields to a lower explicit ceiling so the env var still means what it
       # says. Do not "tidy" the floor away as redundant - it is the only thing
       # standing between a stale client constant and a truncated deliverable.
-      - ./patches/deer-flow-run-recursion-cap.py:/app/backend/app/gateway/services.py:ro
+      # 2026-11-24 (2.2.0): mount dropped - services.py now clamps recursion_limit against AppConfig.max_recursion_limit upstream in v2.2.0.
       # Pacgate 2026-10-07: mirror max_tokens into extra_body for Ollama targets.
       # langchain-openai renames max_tokens -> max_completion_tokens, which
       # Ollama's /v1 endpoint ignores - background calls (memory updater) then
@@ -394,7 +394,7 @@ services:
       # dropped ALL 137 MCP tools once any skill declared allowed-tools (agent
       # left with bash/read_file only). The patch matches exact or
       # "<normalized-declaration>_" prefixes.
-      - ./patches/deer-flow-tool-policy.py:/app/backend/packages/harness/deerflow/skills/tool_policy.py:ro
+      # 2026-11-24 (2.2.0): mount dropped - tool_policy.py was deleted upstream in v2.2.0 (#6935: allowed-tools is now metadata only).
       # Pacgate 2026-10-21: make tool_search deferral TRANSPARENT.
       #
       # tool_search was shipped disabled because deferral produced a "deferred,
@@ -426,10 +426,10 @@ services:
       # storage class WAS configured. Upstream degrades silently on any
       # exception, which would move matter memory off the pacgate-api
       # sanitization gate while every health check still reports green.
-      - ./patches/deer-flow-memory-storage.py:/app/backend/packages/harness/deerflow/agents/memory/storage.py:ro
+      # 2026-11-24 (2.2.0): mount dropped - agents/memory/storage.py moved to agents/memory/backends/deermem/core/storage.py in v2.2.0.
       # Pacgate 2026-10-26: bound the memory lane's input and stabilize its
       # prompt prefix (see compose.bundle.yaml for the measurement).
-      - ./patches/deer-flow-memory-prompt.py:/app/backend/packages/harness/deerflow/agents/memory/prompt.py:ro
+      # 2026-11-24 (2.2.0): mount dropped - agents/memory/prompt.py moved to backends/deermem/deermem/core/prompt.py in v2.2.0.
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
       # prefix (see compose.bundle.yaml for the rationale).
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
