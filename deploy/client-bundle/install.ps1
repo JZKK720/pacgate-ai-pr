@@ -971,6 +971,20 @@ if ((Test-Path $envPath) -and (Test-Path $ovTemplate)) {
         # ANSI/GBK; the template carries Chinese text and must stay UTF-8.
         $conf = Get-Content $ovTemplate -Raw -Encoding UTF8
         $conf = $conf.Replace('${OPENVIKING_ROOT_API_KEY}', $ovKey)
+
+        # OpenViking MEMORY-EXTRACTION model is a per-machine tier decision, not a
+        # repo constant. The pinned model must FIT the AIPC card: extraction on a
+        # model that does not fit does not error, it silently writes no memory.
+        # The template default is therefore the 9.8 GB tag that fits a 16 GB
+        # HX370/HX470 card; a big-memory box (Ryzen AI MAX 395, 128 GB) opts up here.
+        #
+        # This lives in .env because .env survives `git pull`. Editing the template
+        # on a client machine would be overwritten by the next update, silently
+        # reverting a deliberate upgrade. Unset = keep the template default.
+        $ovVlm = $envVars['OPENVIKING_VLM_MODEL']
+        if ($ovVlm -and $ovVlm -notmatch '^change-me') {
+            $conf = [regex]::Replace($conf, '("vlm"\s*:\s*\{[^}]*?"model"\s*:\s*)"[^"]+"', '${1}"' + $ovVlm + '"', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        }
         $minified = ($conf -replace '(?m)^\s*//.*$', '' -replace '\r?\n', '' -replace '\s{2,}', ' ')
 
         $ovExisting = if ($envVars.ContainsKey('OPENVIKING_CONF_CONTENT')) { $envVars['OPENVIKING_CONF_CONTENT'] } else { '' }

@@ -427,6 +427,46 @@ if ($commentedModels.Count -gt 0) {
 
 # ---------------------------------------------------------------------------
 Write-Host ''
+
+# ---------------------------------------------------------------------------
+# The SHIPPING OpenViking extractor must fit the smallest supported card.
+#
+# WHY (2026-11-25): the extraction model is pinned in ov.conf.template -> vlm.model,
+# which is neither a tier roster entry nor a compose default, so nothing guarded
+# it. A change to the 24 GB 74B shipped as the default and would not load on an
+# HX370/HX470 AIPC (16 GB card). The failure is SILENT: extraction still reports
+# memory operations while writing none, so long-term memory stops growing while
+# the stack looks healthy.
+#
+# This checks the TEMPLATE only - i.e. what every client installs. An operator who
+# deliberately opts up on a big-memory machine sets OPENVIKING_VLM_MODEL in .env,
+# which install.ps1 applies at render time and which this check intentionally
+# ignores: the question here is "what does the bundle ship", not "what is this dev
+# box running".
+$ovTplPath = Join-Path $repoRoot 'deploy/client-bundle/openviking/ov.conf.template'
+if (-not (Test-Path $ovTplPath)) {
+    Write-Warn 'ov.conf.template not found - shipping extractor unchecked'
+} else {
+    $ovTpl = Get-Content -LiteralPath $ovTplPath -Raw
+    $vm = [regex]::Match($ovTpl, '"vlm"\s*:\s*\{[^}]*?"model"\s*:\s*"([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    if (-not $vm.Success) {
+        Write-Warn 'could not read vlm.model from ov.conf.template - shipping extractor unchecked'
+    } else {
+        $vlmTag = $vm.Groups[1].Value
+        if (-not $KnownSizesGB.ContainsKey($vlmTag)) {
+            Write-Warn "shipping extractor '$vlmTag' is not in the size table - add its decimal GB to judge fit"
+        } else {
+            $vlmGB   = [double]$KnownSizesGB[$vlmTag]
+            $embedGB = if ($KnownSizesGB.ContainsKey('nomic-embed-text:latest')) { [double]$KnownSizesGB['nomic-embed-text:latest'] } else { 0 }
+            if (($vlmGB + $embedGB) -gt $AipcVramGB) {
+                Write-Fail ("shipping Ov extractor '{0}' is {1} GB; with the {2} GB embedder it exceeds the {3} GB AIPC card. Extraction fails SILENTLY there - it reports operations but writes no memory. Keep the template at or below the card budget and let a big-memory box opt up via OPENVIKING_VLM_MODEL." -f $vlmTag, $vlmGB, $embedGB, $AipcVramGB)
+            } else {
+                Write-Pass ("shipping Ov extractor '{0}' is {1} GB and fits the {2} GB AIPC card" -f $vlmTag, $vlmGB, $AipcVramGB)
+            }
+        }
+    }
+}
+
 if ($script:failures -gt 0) {
     Write-Host "FAIL: $($script:failures) model(s) in an unconditional path exceed the $AipcVramGB GB AIPC budget." -ForegroundColor Red
     Write-Host '  A model that does not fit does not fail loudly - it spills to CPU or evicts' -ForegroundColor DarkGray

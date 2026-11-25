@@ -57,6 +57,28 @@ models:
   # unpinned lane falls back to; that was this 30B, which is the 2026-10-17
   # defect (every new thread loaded 25 GB). It is now nemotron-bolt-7b-local (7.2 GB).
   # Do not re-order the list without checking what sits first.
+  # - name: nemotron-3.5-bolt-74b-local
+  #   display_name: Nemotron 3.5 Bolt 74B (Local, big-memory boxes only)
+  #   description: 74B MoE at IQ2_XXS, 24 GB. Needs a big-memory AIPC (e.g. Ryzen AI
+  #     MAX 395 with 128 GB unified). It CANNOT fit the 16 GB card in an HX370/HX470,
+  #     where it pages from disk and presents as a stall, not an error.
+  #   use: langchain_openai:ChatOpenAI
+  #   model: nemotron-3.5-bolt:74b-a9b-iq2
+  #   api_key: ollama
+  #   base_url: http://host.docker.internal:11434/v1
+  #   max_tokens: 8192
+  #   temperature: 0.1
+  #   supports_thinking: true
+  #   # A 74B thinking model pauses for a long time; raise the stream chunk timeout
+  #   # so the gateway does not drop the connection mid-thought.
+  #   stream_chunk_timeout: 600
+  #
+  # Pacgate 2026-11-25: commented OUT by default for the same reason the 30B above is -
+  # it does not fit a 16 GB AIPC card. Uncomment on a big-memory machine AND pull the
+  # tag there: it is deliberately absent from ollama-models.txt so no client pulls 24 GB
+  # it cannot load. scripts/test-aipc-capacity-fit.ps1 fails if this is enabled while
+  # the bundle must still run on the small card.
+  #
   # - name: nemotron-3.5-lightning-30b-local
   #   display_name: Nemotron 3.5 Lightning 30B (Local)
   #   description: 1M-token MOE. Requires 25 GB VRAM - NOT available on a 16 GB AIPC.

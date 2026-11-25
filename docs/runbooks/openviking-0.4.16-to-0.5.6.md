@@ -17,12 +17,29 @@
 3. **Writes are confined to the key's own user namespace.** `viking://user/default/...`
    returns PERMISSION_DENIED when the key belongs to `pacgate-service`.
 4. **Extraction silently produced NOTHING on the default protocol.** `memory.extraction_output_format`
-   defaults to `python` (the internal memory-SDK DSL). With the 4B local extractor that
+   defaults to `python` (the internal memory-SDK DSL). With a local Ollama extractor that
    committed sessions in ~2.5s with `completion_tokens=5` and `memories_extracted: {}` -
-   no error anywhere. `json` fixed it, and the 74B extractor is required: the 4B model
-   emits a no-op diff (`before == after`) under the full extraction contract even though
-   it can state the fact correctly when asked directly.
-5. **First extraction costs minutes.** 81s warm, 279s cold on this box; the acceptance
+   no error anywhere. Setting it to `json` fixed it.
+
+   **Correction, and why it matters (measured 2026-11-25).** The first diagnosis also blamed
+   the model size and pinned the 24 GB 74B as the extractor. That was wrong in a way worth
+   recording: the protocol and the model were changed in the SAME step, so the model got
+   credit for the protocol's fix. Re-tested with the protocol alone, the 9.8 GB
+   `nemotron-3.5-bolt:e4b-q8_0` captures facts correctly - a concept-level question
+   ("when is the Kelmarsh arbitration hearing, and when must the expert report be filed?")
+   returned the hearing date and the deadline from natural language. The 74B is NOT needed.
+
+   That matters commercially: 24 GB cannot fit the 16 GB card in an HX370/HX470 AIPC, so
+   shipping it as the default would have broken memory extraction on the small machines
+   silently - extraction still reports memory operations while writing none. The shipping
+   template therefore keeps the 9.8 GB tag, and a big-memory box (Ryzen AI MAX 395) opts up
+   with `OPENVIKING_VLM_MODEL` in `.env`. `scripts/test-aipc-capacity-fit.ps1` now fails if
+   the template pin does not fit the 16 GB card.
+
+   One caution when testing this: do NOT use a unique token as the canary. Extraction
+   CONSOLIDATES facts into entity documents and legitimately rewrites or drops per-run
+   tokens, so token matching reports failures on stored facts. Ask a concept-level question
+   and check the answer, or read the memory file directly.5. **First extraction costs minutes.** 81s warm, 279s cold on this box; the acceptance
    budget must be minutes, not seconds.
 
 Timings and evidence: `scripts/test-openviking-roundtrip.ps1` and
