@@ -424,15 +424,40 @@ Expected: `{"status":"ok","healthy":true,...}`. The installer renders the
 OpenViking config (Ollama embedding + VLM) into `.env` as
 `OPENVIKING_CONF_CONTENT` and seeds the server's `ov.conf` on first boot.
 
-Functional check (optional, uses the root key from `.env`):
+Functional check (optional). Use the ACCOUNT-SCOPED service key, NOT the root key:
+since OpenViking 0.5.x `/mcp` refuses root keys with `-32001`, so a root-key probe
+reports a failure on a healthy stack. `install.ps1` provisions the service key
+automatically; `scripts/ov-issue-service-key.ps1` repairs or rotates it.
 
 ```powershell
-$key = (Get-Content .env | Select-String '^OPENVIKING_ROOT_API_KEY=').Line.Split('=')[1]
+$key = (Get-Content .env | Select-String '^OPENVIKING_SERVICE_KEY=').Line.Split('=')[1]
 $body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 curl.exe -s -X POST http://localhost:1933/mcp -H "X-API-Key: $key" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d $body
 ```
 
 Expected: a tool list including `find`, `search`, `read`, `remember`.
+
+### The extraction model is a per-machine tier
+
+OpenViking turns sessions into long-term memory with a local model whose size must
+FIT the machine's GPU. **A model that does not fit does not raise an error:**
+extraction still reports memory operations while writing none, so the stack looks
+healthy while memory quietly stops growing. Two settings, both in `.env`:
+
+| Setting | Purpose |
+|---|---|
+| (template default) | `nemotron-3.5-bolt:e4b-q8_0`, 9.8 GB. Fits the 16 GB card in an HX370/HX470 AIPC. Correct for every standard install. |
+| `OPENVIKING_VLM_MODEL` | Opt UP on a big-memory machine only, e.g. `nemotron-3.5-bolt:74b-a9b-iq2` (24 GB) on a Ryzen AI MAX 395 with 128 GB unified. |
+
+`OPENVIKING_VLM_MODEL` lives in `.env` because `.env` survives `git pull`; editing
+`openviking/ov.conf.template` on a client machine would be silently reverted by the
+next update. `scripts/test-aipc-capacity-fit.ps1` fails if the shipping template pin
+plus the embedder exceeds the 16 GB card, so the default cannot regress.
+
+When testing memory, do NOT check for a unique token you wrote: extraction
+consolidates facts into entity documents and legitimately rewrites or drops
+per-run markers. Ask a concept-level question instead ("when is the hearing, and
+when is the expert report due?") and confirm the answer.
 
 Boundary rule: OpenViking stores conversational context only (decisions,
 preferences, working knowledge). Matter documents and T1-T4-controlled content
