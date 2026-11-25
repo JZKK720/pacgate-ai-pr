@@ -196,7 +196,10 @@ if (`$d -notlike '*_stubs*') {
     # 2026-11-25: the template default IS 74b now (0.5.6 extraction needs it), so the
     # simulated change must move to a THIRD tag - swapping to the current default would
     # be a no-op and the test would pass without proving anything.
-    $ovTpl = $ovTpl.Replace('nemotron-3.5-bolt:74b-a9b-iq2', 'nemotron-3.5-lightning:30b-a3b')
+    # The swap must start from the template's CURRENT default, or it is a no-op and
+    # the test would pass without proving anything. Anchored on e4b-q8_0 (the shipping
+    # default since the tier fix); a future default change updates this line.
+    $ovTpl = $ovTpl.Replace('nemotron-3.5-bolt:e4b-q8_0', 'nemotron-3.5-lightning:30b-a3b')
     [System.IO.File]::WriteAllText($ovTplPath, $ovTpl, [System.Text.UTF8Encoding]::new($false))
 
     $out4 = & $run $work

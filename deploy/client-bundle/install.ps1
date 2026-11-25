@@ -1129,18 +1129,19 @@ if (Test-Path $dfTemplate) {
         $dfSvcKey = $envVars['OPENVIKING_SERVICE_KEY']
         if (-not $dfSvcKey -or $dfSvcKey -match '^change-me') {
             $issued = $null
-            $ovAlive = (& docker ps --filter 'name=^openviking$' --format '{{.Names}}' 2>$null | Out-String).Trim()
+            # 'Stop', so every native call goes through the shipped helper.
+            $ovAlive = (Invoke-WithNativeStderr { docker ps --filter 'name=^openviking$' --format '{{.Names}}' } | Out-String).Trim()
             if ($ovAlive -eq 'openviking') {
                 $issueBody = '{"user_id":"pacgate-service","role":"admin"}'
                 $prevEap = $ErrorActionPreference
                 $ErrorActionPreference = 'Continue'
                 try {
-                    $raw = & docker exec openviking sh -c "curl -s -X POST http://127.0.0.1:1933/api/v1/admin/accounts/default/users -H 'Content-Type: application/json' -H 'X-API-Key: '`$OPENVIKING_ROOT_API_KEY -d '$issueBody'" 2>$null
+                    $raw = Invoke-WithNativeStderr { docker exec openviking sh -c "curl -s -X POST http://127.0.0.1:1933/api/v1/admin/accounts/default/users -H 'Content-Type: application/json' -H 'X-API-Key: '`$OPENVIKING_ROOT_API_KEY -d '$issueBody'" }
                     if ($raw) {
                         try { $o = ($raw | Out-String) | ConvertFrom-Json; if ($o.result.user_key) { $issued = $o.result.user_key } } catch { }
                     }
                     if (-not $issued) {
-                        $raw2 = & docker exec openviking sh -c "curl -s -X POST http://127.0.0.1:1933/api/v1/admin/accounts/default/users/pacgate-service/key -H 'Content-Type: application/json' -H 'X-API-Key: '`$OPENVIKING_ROOT_API_KEY" 2>$null
+                        $raw2 = Invoke-WithNativeStderr { docker exec openviking sh -c "curl -s -X POST http://127.0.0.1:1933/api/v1/admin/accounts/default/users/pacgate-service/key -H 'Content-Type: application/json' -H 'X-API-Key: '`$OPENVIKING_ROOT_API_KEY" }
                         if ($raw2) {
                             try { $o2 = ($raw2 | Out-String) | ConvertFrom-Json; if ($o2.result.user_key) { $issued = $o2.result.user_key } } catch { }
                         }
