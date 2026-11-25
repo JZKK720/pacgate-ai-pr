@@ -1,71 +1,57 @@
+import os
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import httpx
+
 from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
 from langgraph.config import get_config
 from langgraph.types import Command
 
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.tools.types import Runtime
 
 OUTPUTS_VIRTUAL_PREFIX = f"{VIRTUAL_PATH_PREFIX}/outputs"
 
-# ══ Pacgate: matter-store publish (design-gap fix 2026-10-05) ════════════════
+# ══ Pacgate: matter-store publish (design-gap fix 2026-10-05) ═══════════════
 #
 # WHY THIS EXISTS. The per-thread outputs dir that backs the Artifacts panel
-# lives in deer-flow's own tree (host-persisted via the ./data/deer-flow
-# mount) - so a presented file is durable. But it is INVISIBLE to the matter
-# workspace: the pacgate tenants tree (`tenants/<t>/matters/<m>/docs/`) only
-# holds explicitly uploaded/attached documents, so a deliverable a lawyer was
-# shown in chat is not discoverable from the matter's own view, from any
-# other user's session, or through the pacgate API at all.
+# lives in deer-flow's own tree, so a presented file is durable there, but it
+# is INVISIBLE to the matter workspace: the pacgate tenants tree only holds
+# explicitly uploaded/attached documents. A deliverable a lawyer was shown in
+# chat is not discoverable from the matter's own view, from any other user's
+# session, or through the pacgate API at all.
 #
 # The remedy piggybacks on a pacgate lane that already exists and is tested:
-# `POST /api/documents` (matter-attached upload, exercised by
-# `pacgate_upload_document`). After the artifact is registered for the panel,
-# this tool mirrors it into the matter document store, so every presented
-# deliverable becomes part of the permanent tenant/matter tree and is
-# browsable from the matter workspace endpoint alongside operator uploads.
+# `POST /api/documents` (matter-attached upload). After the artifact is
+# registered for the panel, this tool mirrors it into the matter document
+# store, so every presented deliverable becomes part of the permanent
+# tenant/matter tree.
 #
 # DESIGN RULES.
 # - Publish is a COPY: the panel keeps serving the original file; the matter
-#   store gains an independent, versioned copy. Deleting either side does not
-#   disturb the other.
-# - Publish is best-effort by design: if pacgate-api is unreachable, has no
-#   matter configured (PACGATE_MATTER_ID empty), or refuses the upload, the
-#   panel behavior is UNCHANGED - the user still gets their file. Failures are
-#   logged and reported in the tool message, never thrown. The artifact must
-#   never become hostage to the metadata lane.
+#   store gains an independent, versioned copy.
+# - Publish is best-effort: if pacgate-api is unreachable, has no matter
+#   configured, or refuses the upload, the panel behaviour is UNCHANGED.
+#   Failures are logged and reported in the tool message, never thrown.
 # - The mirrored filename is prefixed `presented-` so matter documents stay
-#   distinguishable from operator uploads in the workspace listing.
-# ═════════════════════════════════════════════════════════════════════════════
+#   distinguishable from operator uploads.
+# ════════════════════════════════════════════════════════════════════════════
 
 PUBLISHED_FILE_PREFIX = "presented-"
 
 
 def _pacgate_publish_config() -> dict[str, str]:
-    """Read the publish targets from the process env (compose provides them).
-
-    Returns a dict possibly containing:
-        base_url    - pacgate-api base URL (PACGATE_API_URL)
-        email       - service login email (PACGATE_API_EMAIL)
-        password    - service login password (PACGATE_API_PASSWORD)
-        jwt_token   - pre-issued token (PACGATE_JWT_TOKEN), used when set
-        matter_id   - the matter to publish into (PACGATE_MATTER_ID)
-        tenant_id   - the tenant slug (PACGATE_TENANT_ID)
-
-    An empty dict (no PACGATE_API_URL) means publishing is simply disabled.
-    """
+    """Read the publish targets from the process env (compose provides them)."""
     env = {
-        "base_url": (Path.__module__ and __import__("os").environ.get("PACGATE_API_URL", "")),
-        "email": __import__("os").environ.get("PACGATE_API_EMAIL", ""),
-        "password": __import__("os").environ.get("PACGATE_API_PASSWORD", ""),
-        "jwt_token": __import__("os").environ.get("PACGATE_JWT_TOKEN", ""),
-        "matter_id": __import__("os").environ.get("PACGATE_MATTER_ID", ""),
-        "tenant_id": __import__("os").environ.get("PACGATE_TENANT_ID", ""),
+        "base_url": os.environ.get("PACGATE_API_URL", ""),
+        "email": os.environ.get("PACGATE_API_EMAIL", ""),
+        "password": os.environ.get("PACGATE_API_PASSWORD", ""),
+        "jwt_token": os.environ.get("PACGATE_JWT_TOKEN", ""),
+        "matter_id": os.environ.get("PACGATE_MATTER_ID", ""),
+        "tenant_id": os.environ.get("PACGATE_TENANT_ID", ""),
     }
     return {k: v.strip() for k, v in env.items() if v and v.strip()}
 
@@ -84,24 +70,14 @@ def _pacgate_login(base_url: str, email: str, password: str, timeout: float) -> 
     return token
 
 
-def _pacgate_publish_file(
-    file_path: Path,
-    matter_id: str,
-    timeout: float = 30.0,
-) -> dict[str, object]:
+def _pacgate_publish_file(file_path: Path, matter_id: str, timeout: float = 30.0) -> dict[str, object]:
     """Upload one presented file into the matter's permanent document store.
 
-    Returns a small result dict:
-        published  - True when the copy landed (2xx)
-        document_id / version - set on success
-        skipped    - present with a reason when publish was intentionally off
-        error      - set when the attempt failed (best-effort: never raised)
-
-    The mirrored document is named `presented-<filename>` so matter documents
-    stay distinguishable from operator uploads in the workspace listing.
+    Returns a small dict: {"published": True, ...} on success, or a dict with
+    ``skipped``/``error`` explaining the no-op. Never raises - the artifact
+    panel must not become hostage to the metadata lane.
     """
     import base64
-    import os
 
     cfg = _pacgate_publish_config()
     if not cfg:
@@ -114,7 +90,6 @@ def _pacgate_publish_file(
     except OSError as e:
         return {"published": False, "error": f"cannot read presented file: {e}"}
 
-    b64 = base64.b64encode(data).decode("ascii")
     filename = f"{PUBLISHED_FILE_PREFIX}{file_path.name}"
 
     try:
@@ -126,9 +101,7 @@ def _pacgate_publish_file(
             headers["Authorization"] = f"Bearer {token}"
 
         # pacgate-api upload takes MULTIPART (axum::Multipart), not JSON - the
-        # same contract pacgate_deerflow_adapter.client.upload() already uses
-        # successfully. A JSON body gets rejected pre-auth with
-        # "Invalid `boundary` for multipart/form-data request".
+        # same contract pacgate_deerflow_adapter.client.upload() uses.
         resp = httpx.post(
             f"{cfg['base_url']}/api/documents",
             data={"matter_id": matter_id},
@@ -137,7 +110,7 @@ def _pacgate_publish_file(
             timeout=timeout,
         )
         if resp.status_code in (401, 403) and cfg.get("email"):
-            # One bounded re-login: token could be stale. (No retry loop.)
+            # One bounded re-login: the token could be stale. No retry loop.
             token = _pacgate_login(cfg["base_url"], cfg["email"], cfg["password"], timeout)
             headers["Authorization"] = f"Bearer {token}"
             resp = httpx.post(
@@ -213,7 +186,7 @@ def _normalize_presented_filepath(
 
     if stripped == virtual_prefix or stripped.startswith(virtual_prefix + "/"):
         try:
-            actual_path = get_paths().resolve_virtual_path(thread_id, filepath, user_id=get_effective_user_id())
+            actual_path = get_paths().resolve_virtual_path(thread_id, filepath, user_id=resolve_runtime_user_id(runtime))
         except TypeError:
             actual_path = get_paths().resolve_virtual_path(thread_id, filepath)
     else:
@@ -233,7 +206,7 @@ def present_file_tool(
     filepaths: list[str],
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
-    """Make files visible to the user for viewing and rendering in the client interface, and publish a copy to the matter's permanent document store.
+    """Make files visible to the user for viewing and rendering in the client interface.
 
     When to use the present_files tool:
 
@@ -263,16 +236,14 @@ def present_file_tool(
             update={"messages": [ToolMessage(f"Error: {exc}", tool_call_id=tool_call_id)]},
         )
 
-    # ── Pacgate: best-effort mirror into the matter document store ──────────
-    # Resolves each presented file's HOST-side path (the normalized virtual
-    # path maps back to the per-thread outputs dir), then uploads a copy.
+    # ── Pacgate: best-effort mirror into the matter document store ──
     publish_notes: list[str] = []
     cfg_matter = _pacgate_publish_config().get("matter_id", "")
     if cfg_matter:
+        thread_data = (runtime.state or {}).get("thread_data") or {}
+        outputs_dir_raw = thread_data.get("outputs_path")
         try:
-            outputs_dir = Path(
-                (runtime.state.get("thread_data") or {}).get("outputs_path", "")
-            ).resolve()
+            outputs_dir = Path(outputs_dir_raw).resolve() if outputs_dir_raw else None
         except Exception:  # noqa: BLE001 - resolve failures disable publishing
             outputs_dir = None
 

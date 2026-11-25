@@ -128,12 +128,15 @@ $ovKey = $null; $ovRootKey = $null
 foreach ($line in Get-Content $EnvFile) {
     if ($line -match '^PACGATE_API_EMAIL=(.+)$')       { $email     = $Matches[1].Trim() }
     if ($line -match '^PACGATE_API_PASSWORD=(.+)$')    { $password  = $Matches[1].Trim() }
-    if ($line -match '^OPENVIKING_ROOT_API_KEY=(.+)$') { $ovRootKey = $Matches[1].Trim() }
-    if ($line -match '^OPENVIKING_USER_API_KEY=(.+)$') { $ovKey     = $Matches[1].Trim() }
+    if ($line -match '^OPENVIKING_SERVICE_KEY=(.+)$')   { $ovServiceKey = $Matches[1].Trim() }
+    if ($line -match '^OPENVIKING_USER_API_KEY=(.+)$')   { $ovKey     = $Matches[1].Trim() }
 }
-# The MCP lane (step 10) accepts either principal. Prefer the account-USER key
-# when .env has one (it is the correct principal for tenant-scoped surfaces);
-# fall back to the root key, which upstream verified works on /mcp remember/find.
+# OpenViking 0.5.x: /mcp accepts the account-scoped SERVICE key and REJECTS the
+# root key with -32001 ("ROOT API keys cannot access tenant-scoped data APIs").
+# That inverted on upgrade - the previous comment here said the root key worked
+# on /mcp remember/find, which was true on 0.4.16. Order: explicit user key,
+# then the provisioned service key, then root only as a 0.4.x fallback.
+if (-not $ovKey) { $ovKey = $ovServiceKey }
 if (-not $ovKey) { $ovKey = $ovRootKey }
 # Never echo a secret - only whether it is present.
 if (-not $email -or -not $password) { Die 'PACGATE_API_EMAIL / PACGATE_API_PASSWORD missing from .env.' 2 }
@@ -443,7 +446,14 @@ if ($ovUp) {
         # WRITE: remember takes messages:[{role,content}].
         $w = Invoke-OvMcp @{ jsonrpc = '2.0'; id = 1; method = 'tools/call'; params = @{
             name = 'remember'; arguments = @{ messages = @(@{ role = 'user'; content = $probeText }) } } }
-        $wrote = ($w.result.content[0].text -match 'Stored|committed')
+        # 0.5.x changed the ACCEPTANCE wording, not the payload: the write now queues
+        # extraction and answers "Submitted N message(s) for memory extraction
+        # (session ..., task_id=...)" instead of "Stored"/"committed". Matching only
+        # the old wording made a successful write look like a rejected one, which
+        # reported lane 10 as SKIPPED on a healthy 0.5.6 stack. Accept both, and treat
+        # an explicit error result as failure regardless of wording.
+        $wroteText = [string]$w.result.content[0].text
+        $wrote = ($wroteText -match 'Stored|committed|Submitted \d+ message') -and ($wroteText -notmatch 'validation error|Error executing tool')
 
         # RECALL: extraction is ASYNCHRONOUS - the embedding pass runs after the
         # write returns (measured ~45-60s warm on this box). A synchronous read

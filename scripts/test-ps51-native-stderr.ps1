@@ -84,7 +84,10 @@ $liveStackScripts = @(
     # redirects under 'Continue', which is safe, but it is listed so a future
     # edit that raises its ErrorActionPreference cannot reintroduce the defect
     # unnoticed.
-    'scripts/test-loop-detection-window.ps1'
+    # The 2.2.0 rebase replaced test-loop-detection-window.ps1 with
+    # test-loop-detection.ps1; it probes the live container the same way and must
+    # keep the same 5.1-safe stderr discipline.
+    'scripts/test-loop-detection.ps1'
     'scripts/preflight-docker-egress.ps1'
     # Added 2026-10-28. test-chat-artifact-durability.ps1 shells out to docker
     # inspect/exec and needs the same stderr discipline; listing it here keeps a

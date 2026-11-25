@@ -164,7 +164,12 @@ $pacEnv = Read-EnvFile (Join-Path $repoRoot 'deploy/client-bundle/.env')
 $qmEnv  = Read-EnvFile (Join-Path $repoRoot 'deploy/client-bundle/qm-pacgate/.env')
 $email  = if ($pacEnv.ContainsKey('PACGATE_API_EMAIL')) { $pacEnv['PACGATE_API_EMAIL'] } else { '' }
 $apiPw  = if ($pacEnv.ContainsKey('PACGATE_API_PASSWORD')) { $pacEnv['PACGATE_API_PASSWORD'] } else { '' }
-$ovKey  = if ($pacEnv.ContainsKey('OPENVIKING_API_KEY')) { $pacEnv['OPENVIKING_API_KEY'] } else { '' }
+# OpenViking 0.5.x: /mcp requires the account-scoped SERVICE key; the root key is
+# rejected with -32001. Prefer the service key, fall back to the app/root key used
+# by 0.4.x installs so this gate still works on an un-upgraded stack.
+$ovKey = if ($pacEnv.ContainsKey('OPENVIKING_SERVICE_KEY') -and $pacEnv['OPENVIKING_SERVICE_KEY']) { $pacEnv['OPENVIKING_SERVICE_KEY'] }
+         elseif ($pacEnv.ContainsKey('OPENVIKING_API_KEY')) { $pacEnv['OPENVIKING_API_KEY'] }
+         else { '' }
 
 # ---------------------------------------------------------------------------
 # E1. pacgate-api - reachable and can issue a token.

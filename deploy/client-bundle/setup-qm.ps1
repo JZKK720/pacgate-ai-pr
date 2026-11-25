@@ -537,22 +537,29 @@ try {
     # string into DATABASE_URL and qm fails to reach its own database.
     $pgPassword = New-SecretHex
 
-    # OpenViking credentials. Required because qm's sandbox declares them in
-    # secretEnv and compose has no default. The ROOT key matters specifically:
-    # compose notes that "/mcp authenticates with the ROOT key; the app key returns
-    # 401 there", so providing only the app key leaves the ov-* sandbox tools
-    # broken. Both are read from the main bundle's .env, which install.ps1 already
-    # generated - the qm stack talks to the SAME OpenViking instance over the host
-    # port, so the keys must match.
+    # OpenViking credentials. Required because qm sandbox declares them in
+    # secretEnv and compose has no default. Read from the main bundle .env.
+    #
+    # 2026-11-25 (OpenViking 0.5.x): the key the sandbox presents to /mcp is the
+    # ACCOUNT-SCOPED SERVICE key, not the root key. The previous note said /mcp
+    # authenticated with the ROOT key and the app key returned 401 - true on 0.4.16,
+    # and INVERTED on 0.5.x, where the root key returns
+    #   -32001 "ROOT API keys cannot access tenant-scoped data APIs"
+    # while the service key works. Passing the root key breaks every ov-* sandbox
+    # tool on upgrade - measured live 2026-11-25 as lane E7 -> 403.
     $mainEnv = Join-Path $PSScriptRoot '.env'
-    $ovRoot = ''; $ovApi = ''; $fcKey = ''
+    $ovRoot = ''; $ovApi = ''; $fcKey = ''; $ovService = ''
     if (Test-Path $mainEnv) {
         foreach ($line in (Get-Content -LiteralPath $mainEnv)) {
-            if ($line -match '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*(.+)$') { $ovRoot = $Matches[1].Trim() }
+            if ($line -match '^\s*OPENVIKING_SERVICE_KEY\s*=\s*(.+)$') { $ovService = $Matches[1].Trim() }
+            elseif ($line -match '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*(.+)$') { $ovRoot = $Matches[1].Trim() }
             elseif ($line -match '^\s*OPENVIKING_API_KEY\s*=\s*(.+)$') { $ovApi = $Matches[1].Trim() }
             elseif ($line -match '^\s*FIRECRAWL_API_KEY\s*=\s*(.+)$') { $fcKey = $Matches[1].Trim() }
         }
     }
+    # The sandbox presents OPENVIKING_API_KEY. Point it at the service key when
+    # one exists; leave the operator value alone when it does not (0.4.16).
+    if ($ovService) { $ovApi = $ovService }
     if (-not $ovRoot) {
         Write-Host "[WARN] OPENVIKING_ROOT_API_KEY not found in $mainEnv" -ForegroundColor Yellow
         Write-Host "  The qm sandbox ov-* tools will return 401 until it is set." -ForegroundColor Yellow

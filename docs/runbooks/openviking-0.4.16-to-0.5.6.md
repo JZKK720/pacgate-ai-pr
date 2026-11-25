@@ -1,6 +1,32 @@
 # Runbook: OpenViking 0.4.16 -> 0.5.6
 
-**Status:** Not executed. This host runs `ghcr.io/volcengine/openviking@sha256:46f9e34cd37238c28cbd9535033773d179006bdf7f3e528dd1c46567abce7701` (v0.4.16, image created 2026-08-21), pinned in `deploy/client-bundle/compose.bundle.yaml` and `deploy/client-bundle/compose.prod.yaml`.
+**Status:** EXECUTED 2026-11-25. Running `ghcr.io/volcengine/openviking@sha256:121dc552743bb4cdf1db9782b9662dd0ef2cea128362f0d1a4b3e19ad9e07b38` (v0.5.6), pinned in both compose lanes.
+
+**What the runbook got wrong, measured during execution (read this before the next upgrade):**
+
+1. **The root key no longer opens the data API.** v0.5.x refuses it on every tenant-scoped
+   route: `-32001 "ROOT API keys cannot access tenant-scoped data APIs in api_key mode."`
+   The root key survives only on `/api/v1/admin`, `/api/v1/observer`, `/api/v1/console`,
+   `/api/v1/tasks`, `/api/v1/system/*` and `/api/v1/debug/health`. Every client therefore
+   needs an **account-scoped user key**, issued with `scripts/ov-issue-service-key.ps1`.
+   Symptom if missed: `/health` stays 200, so the container reports healthy, while every
+   `ov-*` tool and deer-flow memory recall fails. Nothing in the runbook predicted this.
+2. **`remember` changed shape.** It now takes `messages:[{role,content}]` and answers
+   "Submitted N message(s) for memory extraction", not "Stored". The old `{content: ...}`
+   payload is rejected with a pydantic `Field required` error.
+3. **Writes are confined to the key's own user namespace.** `viking://user/default/...`
+   returns PERMISSION_DENIED when the key belongs to `pacgate-service`.
+4. **Extraction silently produced NOTHING on the default protocol.** `memory.extraction_output_format`
+   defaults to `python` (the internal memory-SDK DSL). With the 4B local extractor that
+   committed sessions in ~2.5s with `completion_tokens=5` and `memories_extracted: {}` -
+   no error anywhere. `json` fixed it, and the 74B extractor is required: the 4B model
+   emits a no-op diff (`before == after`) under the full extraction contract even though
+   it can state the fact correctly when asked directly.
+5. **First extraction costs minutes.** 81s warm, 279s cold on this box; the acceptance
+   budget must be minutes, not seconds.
+
+Timings and evidence: `scripts/test-openviking-roundtrip.ps1` and
+`scripts/test-legal-journey.ps1` both pass with all lanes verified. Before this run the host was on `sha256:46f9e34cd37238c28cbd9535033773d179006bdf7f3e528dd1c46567abce7701` (v0.4.16).
 **Risk:** high-medium. The data directory is the only copy of agent memory. There is no online downgrade path.
 **Estimated window:** 60-90 minutes including rollback rehearsal. Run with the bundle stopped, not against a live practice.
 

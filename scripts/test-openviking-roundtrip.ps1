@@ -54,7 +54,20 @@ if ($null -eq $health) {
 Write-Host '[PASS] health: OpenViking reports healthy'
 
 $canary = 'pacgate-roundtrip-' + [guid]::NewGuid().ToString('N')
-$uri    = "viking://user/default/probe-$canary.md"
+# 0.5.x scopes writes to the AUTHENTICATED user. Measured 2026-11-25 on v0.5.6:
+# writing to viking://user/default/... with the pacgate-service key returns
+#   PERMISSION_DENIED "write permission required"
+# The canary must therefore live under the service user's own namespace. The
+# account/user is carried inside the key, so it is read from .env rather than
+# assumed - hardcoding a user name here would break the moment the operator
+# issues the key for a different identity.
+$ovUser = 'pacgate-service'
+$envFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.env'
+if (Test-Path $envFile) {
+    $m = Select-String -Path $envFile -Pattern '^OPENVIKING_SERVICE_USER=(\S+)' | Select-Object -First 1
+    if ($m) { $ovUser = $m.Matches[0].Groups[1].Value.Trim() }
+}
+$uri    = "viking://user/$ovUser/probe-$canary.md"
 # Marker lives ONLY in the body, never in the URI - so a "File not found: <uri>"
 # error can never be misread as the canary still being present.
 $marker = "roundtriptoken-$([guid]::NewGuid().ToString('N'))"

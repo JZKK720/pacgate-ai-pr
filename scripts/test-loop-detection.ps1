@@ -55,11 +55,19 @@ function Skip-That {
 function Invoke-NativeCapture {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Script,
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+        # Start-Job runs the scriptblock in a NEW process with fresh session state, so it
+        # does NOT inherit this scope's variables. The earlier version bound no arguments,
+        # so `docker cp $pyPath ...` inside the job expanded to `docker cp  deer-flow:...`;
+        # docker refused with "requires 2 arguments", the probe never reached the
+        # container, and the live assertions reported "no WINDOW= line" on a healthy
+        # container. Measured 2026-11-25. Anything the scriptblock references must be
+        # passed through this array.
+        [object[]]$Arguments = @()
     )
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $job = Start-Job -ScriptBlock $Script
+    $job = Start-Job -ScriptBlock $Script -ArgumentList $Arguments
     try {
         if (-not (Wait-Job -Job $job -Timeout $TimeoutSeconds)) {
             Stop-Job -Job $job -ErrorAction SilentlyContinue
@@ -215,8 +223,12 @@ def play(seq):
     rt = SimpleNamespace(context={"thread_id": "t", "run_id": "r"})
     for i, (name, args) in enumerate(seq):
         msgs.append(AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": "c%d" % i}]))
-        warn, stop = mw._track_and_check({"messages": msgs}, rt)
-        if stop:
+        # deer-flow 2.2.0 returns ONE `_LoopDecision | None`, not a (warn, stop) tuple.
+        # Unpacking it raised TypeError on the first call, and the caller swallowed that
+        # into "no PRODUCTIVE_TRIP= line" - so this probe was reporting a healthy guard as
+        # broken. `.hard_stop` is the property the middleware itself branches on.
+        decision = mw._track_and_check({"messages": msgs}, rt)
+        if decision is not None and decision.hard_stop:
             return i + 1
     return None
 
@@ -239,7 +251,11 @@ print("REPEAT_TRIP=%s" % play(same))
 
         $pyPath = Join-Path ([System.IO.Path]::GetTempPath()) 'pacgate-loop-probe.py'
         Set-Content -Path $pyPath -Value $PYPROBE -Encoding UTF8
-        $null = Invoke-NativeCapture { docker cp $pyPath deer-flow:/tmp/pacgate-loop-probe.py } 30
+        # $pyPath must be passed through -ArgumentList; a bare `{ docker cp $pyPath ... }`
+        # runs in a fresh process where $pyPath is $null (see Invoke-NativeCapture).
+        $null = Invoke-NativeCapture {
+            param($src) docker cp $src deer-flow:/tmp/pacgate-loop-probe.py
+        } 30 @($pyPath)
         Remove-Item $pyPath -ErrorAction SilentlyContinue
         $out = Invoke-NativeCapture { docker exec deer-flow /app/backend/.venv/bin/python /tmp/pacgate-loop-probe.py } 60
         $null = Invoke-NativeCapture { docker exec deer-flow rm -f /tmp/pacgate-loop-probe.py } 15

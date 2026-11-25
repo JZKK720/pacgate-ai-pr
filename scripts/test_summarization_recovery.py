@@ -12,15 +12,15 @@ never executed looks exactly like a working one from the outside. R1 therefore
 asserts the RUNTIME DISPATCH TARGET, not the file that was edited.
 
   R1  the patch ships the deer-flow middleware (the runtime dispatch target)
-  R2  the stock one-argument call still works (upgrade safety)
-  R3  the two-argument path appends a verbatim index
+  R2  a compaction with no recoverable handles renders the summary unchanged
+  R3  a compaction with handles appends the verbatim index to summary_text
   R4  a range with no handles appends NOTHING (no prompt bloat)
   R5  the index is small relative to the range it describes
   R6  the trigger resolver reads the RUNTIME tuple shape, not the YAML shape
   R7  context status agrees with the middleware's own decision
   R8  an unrecognised trigger shape reports 0 ("cannot report"), never a
       confident "no pressure"
-  R9  both _maybe_summarize call sites pass the folded range
+  R9  both _maybe_summarize and _amaybe_summarize emit the indexed payload
   R10 both compose lanes mount the patch at the RUNTIME path
   R11 non-reproducible tool output is excerpted, reproducible output is not
   R12 the pressure hint is SILENT below the band and fires above it
@@ -106,13 +106,15 @@ def main() -> int:
           "editing the langchain base class mounts and imports cleanly but is INERT, "
           "because deer-flow overrides _build_new_messages. See this file's docstring.")
 
-    # ── R9: both call sites pass the folded range ────────────────────────────
-    patched_n = text.count("new_messages = self._build_new_messages(summary, messages_to_summarize)")
-    bare_n = text.count("new_messages = self._build_new_messages(summary)")
-    check("R9 both _maybe_summarize and _amaybe_summarize pass the folded range",
-          patched_n == 2 and bare_n == 0,
-          f"patched={patched_n} (want 2), stock-form={bare_n} (want 0)")
-
+        # ── R9: both call sites build the indexed payload ───────────────────────
+    # 2.2.0 replaced the 1-arg/2-arg _build_new_messages split with compact_state();
+    # the fold now rides in `summary_text`. The property worth pinning is that
+    # EVERY compaction path ships the index, not just the synchronous one.
+    payload_n = text.count("return self._pacgate_summary_payload(result)")
+    hint_n = text.count("return self._pacgate_hint_result(state)")
+    check("R9 both _maybe_summarize and _amaybe_summarize emit the indexed payload",
+          payload_n == 2 and hint_n == 2,
+          f"payload={payload_n} hint={hint_n} (want 2 and 2)")
     # ── R10: both lanes mount at the RUNTIME path ────────────────────────────
     lanes = {}
     for lane in ("compose.prod.yaml", "compose.bundle.yaml"):
@@ -164,7 +166,15 @@ except Exception as exc:
 out = {}
 D = m.DeerFlowSummarizationMiddleware
 
-out["one_arg"] = D._build_new_messages(MagicMock(), "SUM")[0].content
+class _FakeResult:
+    def __init__(self, summary, msgs):
+        self.summary_text = summary
+        self.messages_to_summarize = msgs
+        self.preserved_messages = []
+        self.task_history = None
+
+_mw = D(model=MagicMock(), trigger=("tokens", 36000), keep=("tokens", 6000))
+
 
 folded = [
     AIMessage(content="", tool_calls=[{"name": "read_file",
@@ -173,7 +183,8 @@ folded = [
                 tool_call_id="c1", name="read_file"),
     AIMessage(content="## 2. Liability\nbody"),
 ]
-out["two_arg"] = D._build_new_messages(MagicMock(), "SUM", folded)[0].content
+out["one_arg"] = _mw._pacgate_summary_payload(_FakeResult("SUM", []))["summary_text"]
+out["two_arg"] = _mw._pacgate_summary_payload(_FakeResult("SUM", folded))["summary_text"]
 out["no_handles"] = m._pacgate_folded_index([HumanMessage(content="plain prose")])
 
 big = [ToolMessage(content=("# Section %d\n" % i) + ("body text. " * 40)
@@ -194,7 +205,7 @@ disk = [AIMessage(content="", tool_calls=[{"name": "read_file",
 out["disk_index"] = m._pacgate_folded_index(disk)
 
 class Odd: trigger = "weird"
-mw = D(model=MagicMock(), trigger=("tokens", 36000), keep=("tokens", 6000))
+mw = _mw
 out["trigger_tuple"] = m._pacgate_resolve_trigger_tokens(mw)
 out["trigger_list"] = m._pacgate_resolve_trigger_tokens(
     D(model=MagicMock(), trigger=[("tokens", 36000)], keep=("tokens", 6000)))
@@ -253,17 +264,12 @@ print(json.dumps(out))
     except json.JSONDecodeError:
         cannot_check(f"probe JSON unparseable: {payload_line[:300]}")
 
-    if "import_error" in res:
-        check("R-patch imports in the real venv", False, res["import_error"])
-        print(f"\nRESULT: {_passed} passed, {_failed} failed")
-        return 1
-
-    check("R2 the stock single-argument call still works",
-          res["one_arg"] == "Here is a summary of the conversation to date:\n\nSUM",
+    check("R2 a compaction with no recoverable handles renders the summary unchanged",
+          res["one_arg"] == "SUM",
           repr(res["one_arg"]))
 
     two = res["two_arg"]
-    check("R3 the two-argument path appends a verbatim index",
+    check("R3 a compaction with handles appends the verbatim index",
           "recoverable handles" in two and "read_file" in two
           and "/data/outputs/handbook.pdf" in two and "1. Scope" in two, two)
 

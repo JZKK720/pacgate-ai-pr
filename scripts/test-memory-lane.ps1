@@ -288,31 +288,38 @@ else {
     # on a correctly patched file - a false negative that fails the suite on
     # every machine. Passing the pattern as a direct argv element avoids the
     # second shell entirely.
-    $mounted = docker exec deer-flow grep -c 'REFUSING to fall back' /app/backend/packages/harness/deerflow/agents/memory/storage.py 2>&1
-    if ("$mounted".Trim() -match '^[1-9]') {
-        Pass 'the mounted memory storage carries the refusal patch'
+    # deer-flow 2.2.0: the storage factory moved out of deerflow/agents/memory/storage.py
+    # into the DeerMem backend, and the refusal is now upstream's own (it raises
+    # instead of substituting a file lane). The gate must probe the module the runtime
+    # actually calls - probing the 2.0.0 path is what reported ModuleNotFoundError
+    # on a perfectly healthy 2.2.0 stack.
+    $storagePy = '/app/backend/packages/harness/deerflow/agents/memory/backends/deermem/deermem/core/storage.py'
+    $refusal = docker exec deer-flow grep -c 'Refusing to silently fall back' $storagePy 2>&1
+    if ("$refusal".Trim() -match '^[1-9]') {
+        Pass 'the runtime storage factory refuses to fall back (2.2.0 create_storage)'
     }
     else {
-        Fail 'the mounted memory storage is UNPATCHED - a configured-but-broken class would silently become FileMemoryStorage'
+        Fail 'the runtime storage factory does not refuse - a configured-but-broken class could silently become a file lane'
     }
 
-    # Prove the refusal by breaking the class in-process. This is the only way to
-    # observe the fallback: it is a runtime branch, not a config value.
-    $probe = @'
+    # Prove it by breaking the class in-process: the refusal is a runtime branch,
+    # not a config value, so only an in-process probe observes it.
+    $probe = @"
 import sys
 sys.path.insert(0, "/app/backend/packages/harness")
-from deerflow.config import get_app_config
-get_app_config()
-import deerflow.agents.memory.storage as S
-import deerflow.config.memory_config as mc
-mc.get_memory_config().storage_class = "nonexistent.module.BrokenStorage"
-S._storage_instance = None
+from deerflow.agents.memory.backends.deermem.deermem.core.storage import create_storage
+from deerflow.agents.memory.backends.deermem.deermem.config import DeerMemConfig
+
+cfg = DeerMemConfig()
+cfg.storage_class = "nonexistent.module.BrokenStorage"
 try:
-    st = S.get_memory_storage()
+    st = create_storage(cfg)
     print("FELL_BACK:" + type(st).__name__)
-except Exception:
+except ValueError:
     print("REFUSED")
-'@
+except Exception as exc:
+    print("OTHER:" + type(exc).__name__)
+"@
     $probe | Set-Content -Path (Join-Path $env:TEMP 'memlane_probe.py') -Encoding utf8
     docker cp (Join-Path $env:TEMP 'memlane_probe.py') deer-flow:/tmp/memlane_probe.py 2>&1 | Out-Null
     # The probe imports langgraph, which emits a deprecation warning on stderr.

@@ -61,6 +61,11 @@ try {
     @(
         'OPENVIKING_ROOT_API_KEY=0123456789abcdef0123456789abcdef'
         'OPENVIKING_API_KEY=0123456789abcdef0123456789abcdef'
+        # 0.5.x: the extensions template substitutes `` into the
+        # openviking MCP header. A fixture without one leaves a literal placeholder, so
+        # Case 1's 'no literal ${...}' assertion fails on a correct install.
+        'OPENVIKING_SERVICE_KEY=fixture-account.fixture-user.0123456789abcdef0123456789abcdef'
+        'OPENVIKING_SERVICE_USER=fixture-user'
         'PACGATE_DB_PASSWORD=testpass'
         'PACGATE_JWT_SECRET=testsecret'
     ) | Set-Content (Join-Path $work '.env')
@@ -188,13 +193,16 @@ if (`$d -notlike '*_stubs*') {
     # Rewrite the template's VLM tag to simulate a VLM change reaching the machine.
     $ovTplPath = Join-Path $work 'openviking/ov.conf.template'
     $ovTpl = Get-Content $ovTplPath -Raw -Encoding UTF8
-    $ovTpl = $ovTpl.Replace('nemotron-3.5-bolt:e4b-q8_0', 'nemotron-3.5-bolt:74b-a9b-iq2')
+    # 2026-11-25: the template default IS 74b now (0.5.6 extraction needs it), so the
+    # simulated change must move to a THIRD tag - swapping to the current default would
+    # be a no-op and the test would pass without proving anything.
+    $ovTpl = $ovTpl.Replace('nemotron-3.5-bolt:74b-a9b-iq2', 'nemotron-3.5-lightning:30b-a3b')
     [System.IO.File]::WriteAllText($ovTplPath, $ovTpl, [System.Text.UTF8Encoding]::new($false))
 
     $out4 = & $run $work
     $out4txt = $out4 -join "`n"
     $ovAfter = Get-WorkEnvKey 'OPENVIKING_CONF_CONTENT'
-    Check 'template change WAS applied to .env (the defect was that it was not)' ($ovAfter -match '74b-a9b-iq2')
+    Check 'template change WAS applied to .env (the defect was that it was not)' ($ovAfter -match 'lightning:30b-a3b')
     Check 'stale value is GONE (no duplicate line left above)' ((Get-WorkEnvKeyCount 'OPENVIKING_CONF_CONTENT') -eq 1)
     Check 'CHANGE IS REPORTED (not silent)' ($out4txt -match 'from template')
     Check 'named the VLM model' ($out4txt -match 'OpenViking VLM now')
@@ -246,4 +254,9 @@ finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -gt 0) { exit 1 }
+        'OPENVIKING_API_KEY=0123456789abcdef0123456789abcdef'
+        # 0.5.x models a service key as account.user.secret; the extensions template
+        # substitutes ${OPENVIKING_SERVICE_KEY} into the openviking MCP header, so a
+        # fixture without one leaves a literal placeholder and Case 1 fails.
+        'OPENVIKING_SERVICE_KEY=fixture-account.fixture-user.0123456789abcdef0123456789abcdef'
+        'OPENVIKING_SERVICE_USER=fixture-user'

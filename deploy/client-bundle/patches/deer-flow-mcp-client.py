@@ -1,90 +1,48 @@
-"""MCP client using langchain-mcp-adapters.
-
-Pacgate patch 2026-10-11: raise the HTTP transport timeouts for remote MCP
-servers instead of riding the MCP SDK defaults.
-
-Root cause (measured live 2026-10-11, run 53720ae5): langchain-mcp-adapters
-builds the httpx client with MCP defaults of connect/write/pool = 30s and
-read = 300s (mcp.shared._httpx_utils: MCP_DEFAULT_TIMEOUT=30.0,
-MCP_DEFAULT_SSE_READ_TIMEOUT=300.0). Two long-lane tool calls live far above
-those numbers in normal operation:
-
-  - pacgate_execute_workflow: measured 174s live (kb_search + find_in + docx
-    generation chain) and can scale with matter size.
-  - pacgate_sanitize_document / pacgate_sanitize_text: server-side budget is
-    SANITIZE_TIMEOUT_S=700 (~655s observed).
-
-On 2026-10-11 01:47:41 a workflow call that had COMPLETED server-side
-(pacgate-api finished at 01:46:00) was still torn down client-side:
-"Server disconnected without sending a response", killing an agent run that
-had already done ~4 minutes of work. This patch replaces the SDK default
-httpx.Timeout with one sized for the Pacgate tool lanes:
-  - per-request read budget: 900s (covers the 700s sanitize ceiling plus
-    transport headroom, and everything measured so far),
-  - SSE-stream idle read: 300s (unchanged; only matters for streaming).
-
-Note on scope: this is the connect/read budget for HTTP MCP servers this
-gateway serves. The MCP spec timeouts (timedelta) still route through
-langchain-mcp-adapters' deprecated streamablehttp_client, which converts
-them to httpx.Timeout(total=timeout, read=sse_read_timeout) - so we set the
-same shape via httpx_client_factory to avoid the deprecation path entirely.
-
-Pacgate patch 2026-10-15: forward the per-server headers on the httpx client.
-The factory previously declared ``**_kwargs`` and dropped everything, so no
-configured ``X-API-Key``/``Authorization`` ever reached the wire. See the
-docstring of _httpx_timeout_factory for the measured failure chain.
-"""
+"""MCP client using langchain-mcp-adapters."""
 
 import logging
-from datetime import timedelta
 from typing import Any
 
 import httpx
 
 from deerflow.config.extensions_config import ExtensionsConfig, McpServerConfig
+from deerflow.mcp.headers import illegal_header_value_reason
 
 logger = logging.getLogger(__name__)
 
-# Pacgate: read budget for a single MCP tool call over HTTP. Must exceed the
-# largest server-side lane (sanitize 700s) with headroom, and stay below the
-# compose/nginx 720s read chain so errors surface here deterministically.
+# Pacgate 2026-10-11: read budget for a single MCP tool call over HTTP. Must
+# exceed the largest server-side lane (sanitize 700s) with headroom, and stay
+# below the compose/nginx 720s read chain so failures surface here.
 PACGATE_MCP_TOOL_TIMEOUT_S = float(900)
-# Idle budget for the GET/SSE stream (server-initiated messages). The SDK
-# default of 300s is fine for our servers; kept explicit for clarity.
+# Idle budget for the GET/SSE stream; unchanged from the SDK default.
 PACGATE_MCP_SSE_READ_TIMEOUT_S = float(300)
 
 
-def _httpx_timeout_factory(
+def _pacgate_httpx_client_factory(
     headers: dict[str, str] | None = None,
     timeout: httpx.Timeout | None = None,
     auth: httpx.Auth | None = None,
 ) -> httpx.AsyncClient:
-    """Build the httpx.AsyncClient with Pacgate's MCP timeout shape.
+    """Pacgate's replacement for mcp's create_mcp_http_client.
 
-    Signature mirrors mcp.shared._httpx_utils.create_mcp_http_client, as
-    called by mcp.client.streamable_http (headers=, timeout=, auth=).
+    The SDK caller (streamable_http_client / sse_client) passes
+    ``timeout=httpx.Timeout(<connect/write/pool>, read=<sse_read_timeout>)``,
+    i.e. 30s connect/write/pool and 300s read by default. Two long-lane tool
+    calls live far above those numbers (pacgate_execute_workflow measured at
+    ~174s and scaling with matter size; pacgate_sanitize_* at ~655s against a
+    700s server-side budget). Measured 2026-10-11: a workflow that had already
+    completed server-side was torn down at 01:47:41 with "Server disconnected
+    without sending a response" because of the 300s read budget.
 
-    ``timeout`` is accepted and deliberately ignored: the caller passes the
-    MCP SDK default shape, and replacing it with PACGATE_MCP_TOOL_TIMEOUT_S is
-    the entire point of this patch (see the module docstring).
-
-    ``headers`` and ``auth`` MUST be forwarded. Until 2026-10-15 this took
-    ``**_kwargs`` and dropped them, so every server carrying an ``X-API-Key``
-    or ``Authorization`` header authenticated as anonymous. OpenViking
-    answered 401, and because
-    deerflow.mcp.tools._load_mcp_tools() awaits
-    MultiServerMCPClient.get_tools() for all servers under a single
-    try/except, that one 401 returned [] for every server - including the
-    healthy pacgate server. Measured symptom on v0.1.31:
-    "Total tools loaded: 7, built-in tools: 2, MCP tools: 0".
+    `timeout` is therefore deliberately IGNORED (the whole point of this patch),
+    while `headers` and `auth` are forwarded: a server with an X-API-Key would
+    otherwise authenticate as anonymous and get 401s that cascade into an empty
+    tool list for every server.
     """
     del timeout
     return httpx.AsyncClient(
         follow_redirects=True,
-        timeout=httpx.Timeout(
-            PACGATE_MCP_TOOL_TIMEOUT_S,
-            read=PACGATE_MCP_TOOL_TIMEOUT_S,
-        ),
+        timeout=httpx.Timeout(PACGATE_MCP_TOOL_TIMEOUT_S, read=PACGATE_MCP_TOOL_TIMEOUT_S),
         headers=headers,
         auth=auth,
     )
@@ -108,6 +66,8 @@ def build_server_params(server_name: str, config: McpServerConfig) -> dict[str, 
             raise ValueError(f"MCP server '{server_name}' with stdio transport requires 'command' field")
         params["command"] = config.command
         params["args"] = config.args
+        if config.cwd:
+            params["cwd"] = config.cwd
         # Add environment variables if present
         if config.env:
             params["env"] = config.env
@@ -115,14 +75,29 @@ def build_server_params(server_name: str, config: McpServerConfig) -> dict[str, 
         if not config.url:
             raise ValueError(f"MCP server '{server_name}' with {transport_type} transport requires 'url' field")
         params["url"] = config.url
+        if (config.model_extra or {}).get("personal_public_network") is True:
+            from deerflow.mcp.personal_network import personal_httpx_client_factory
+
+            params["httpx_client_factory"] = personal_httpx_client_factory
+        else:
+            # Pacgate: replace the 30s/300s SDK default with the Pacgate budget.
+            # Personal-network servers keep upstream's factory, which owns its
+            # own transport pinning and must not be wrapped.
+            params["httpx_client_factory"] = _pacgate_httpx_client_factory
         # Add headers if present
         if config.headers:
+            # A statically configured value the transport would refuse gets the
+            # same treatment as a request-scoped one: h11 renders the full
+            # value into its exception on a line break or surrounding
+            # whitespace, which reaches the model through
+            # ToolErrorHandlingMiddleware. These values are API keys often
+            # enough to be worth refusing here, where build_servers_config
+            # already drops just this server and logs the reason.
+            for header_name, header_value in config.headers.items():
+                reason = illegal_header_value_reason(header_value)
+                if reason is not None:
+                    raise ValueError(f"MCP server '{server_name}' has a header '{header_name}' that cannot be sent as an HTTP header value: it {reason}")
             params["headers"] = config.headers
-        # Pacgate 2026-10-11: replace the MCP SDK's default 30s/300s httpx
-        # budget (which kills >5min tool calls, see module docstring) with a
-        # Pacgate-sized one. Passed via httpx_client_factory so we do not
-        # touch the deprecated timeout/sse_read_timeout kwargs at all.
-        params["httpx_client_factory"] = _httpx_timeout_factory
     else:
         raise ValueError(f"MCP server '{server_name}' has unsupported transport type: {transport_type}")
 

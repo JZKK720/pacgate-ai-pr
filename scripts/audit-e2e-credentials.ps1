@@ -26,7 +26,7 @@
 #   A4  PACGATE_MATTER_ID names a matter this identity can read
 #   A5  PACGATE_DB_PASSWORD opens the pacgate database
 #   A6  PACGATE_SANITIZER_KEY is present and long enough to be real key material
-#   A7  OPENVIKING_ROOT_API_KEY is accepted by OpenViking /mcp
+#   A7  the OpenViking credential that /mcp actually accepts is present and works
 #   A8  connector keys: report which are absent, and map them to the connectors
 #       that go unavailable - a missing key is a PRODUCT DECISION, not a defect,
 #       so this WARNS rather than fails. The exception is a key that is present
@@ -236,9 +236,14 @@ if (-not $san) {
 }
 
 # ── A7: OpenViking ──────────────────────────────────────────────────────────
-Section 'A7  OPENVIKING_ROOT_API_KEY is accepted by OpenViking'
-
-$ovKey = $envVars['OPENVIKING_ROOT_API_KEY']
+# ── A7: OpenViking (0.5.x: account-scoped SERVICE key, not the root key) ─────
+Section 'A7  OpenViking accepts the key its clients present'
+# 2026-11-25 (OpenViking 0.5.x): /mcp now REJECTS the root key with -32001, so
+# auditing the root key here reported "403 not reachable" on a perfectly healthy
+# stack. Audit the key the clients actually send: the account-scoped service key,
+# falling back to root only for a 0.4.x install that has no service key yet.
+$ovKey = $envVars['OPENVIKING_SERVICE_KEY']
+if (-not $ovKey) { $ovKey = $envVars['OPENVIKING_ROOT_API_KEY'] }
 $ovCtr = (& docker ps --format '{{.Names}}' 2>$null | Where-Object { $_ -eq 'openviking' })
 if (-not $ovKey) {
     Fail 'OPENVIKING_ROOT_API_KEY is unset'
@@ -265,9 +270,9 @@ if (-not $ovKey) {
     }
 
     if ($code -eq 200) {
-        Pass "OPENVIKING_ROOT_API_KEY (tag $(Get-Tag $ovKey)) -> /mcp 200"
+        Pass "OpenViking service key (tag $(Get-Tag $ovKey)) -> /mcp 200"
     } elseif ($code -eq 401) {
-        Fail "OPENVIKING_ROOT_API_KEY (tag $(Get-Tag $ovKey)) -> /mcp 401 Invalid API Key"
+        Fail "OpenViking service key (tag $(Get-Tag $ovKey)) -> /mcp 401 Invalid API Key"
     } else {
         Warn "OpenViking /mcp returned HTTP $code - not reachable in the expected shape; key not evaluated"
     }

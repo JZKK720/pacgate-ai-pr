@@ -293,7 +293,8 @@ export function buildRunContext({
       : {}),
     // Pacgate 2026-10-30: an unset mode is not "thinking on". `!== "flash"`
     // is true for undefined, so a fresh profile spent its first reply on the
-    // reasoning channel. Only the explicit thinking modes enable it.
+    // reasoning channel. An UNSET mode must not enable thinking: only the explicit
+    // thinking modes below turn it on.
     thinking_enabled:
       settings.mode === "thinking" ||
       settings.mode === "pro" ||

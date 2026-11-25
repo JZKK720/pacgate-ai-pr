@@ -166,7 +166,14 @@ Write-Host 'C1  keys present in BOTH files' -ForegroundColor Cyan
 # What actually matters is that each file's identity AUTHENTICATES, so those two
 # are verified against pacgate-api under C4b below. Everything else here is a
 # genuinely shared value (OpenViking keys) and must still match exactly.
-$identityKeys = @('PACGATE_API_EMAIL', 'PACGATE_API_PASSWORD')
+# 2026-11-25 (OpenViking 0.5.x): OPENVIKING_API_KEY joins this list. On 0.4.16 it had
+# to equal the root key, so both stacks shared it. On 0.5.x the client must present an
+# ACCOUNT-SCOPED user key, and the two stacks are different principals (the deployment
+# admin vs the qm bridge), so each file legitimately carries its own. Requiring equality
+# here would demand a single shared identity across two separate service accounts.
+# What matters is asserted in C3/C4 below: each key is the right KIND and actually
+# authenticates to /mcp.
+$identityKeys = @('PACGATE_API_EMAIL', 'PACGATE_API_PASSWORD', 'OPENVIKING_API_KEY')
 
 $shared = @($pac.Keys | Where-Object { $qm.Contains($_) } | Sort-Object)
 
@@ -306,24 +313,7 @@ if ($SkipLive) {
 # passes. Every qm ov-* sandbox tool fails at call time instead.
 # ---------------------------------------------------------------------------
 Write-Host ''
-Write-Host 'C3  OpenViking client key equals the root key' -ForegroundColor Cyan
-
-$ovChecked = 0
-foreach ($pair in @(@{ label = 'pacgate'; map = $pac }, @{ label = 'qm     '; map = $qm })) {
-    $m = $pair.map
-    if (-not $m.Contains('OPENVIKING_ROOT_API_KEY') -or -not $m.Contains('OPENVIKING_API_KEY')) {
-        Write-Warn "$($pair.label) : one or both OPENVIKING_*_API_KEY keys absent - cannot compare"
-        continue
-    }
-    $ovChecked++
-    $rootTag = Get-SecretTag $m['OPENVIKING_ROOT_API_KEY']
-    $apiTag  = Get-SecretTag $m['OPENVIKING_API_KEY']
-    if ($rootTag -ceq $apiTag) {
-        Write-Pass "$($pair.label) : OPENVIKING_API_KEY == OPENVIKING_ROOT_API_KEY (tag $apiTag)"
-    } else {
-        Write-Fail "$($pair.label) : OPENVIKING_API_KEY (tag $apiTag) != OPENVIKING_ROOT_API_KEY (tag $rootTag) - no per-client key is registered in OpenViking, so the client key cannot authenticate; set it equal to the root key"
-    }
-}
+Write-Host 'C3  OpenViking data-API key is the right KIND for the running service' -ForegroundColor Cyan  # 2026-11-25 (OpenViking 0.5.x). This check used to require #   OPENVIKING_API_KEY == OPENVIKING_ROOT_API_KEY # because on 0.4.16 the root key was the only key that opened /mcp. 0.5.x INVERTS # that: the root key is refused on every tenant-scoped data API with #   -32001 "ROOT API keys cannot access tenant-scoped data APIs in api_key mode." # and only an account-scoped USER key works. Asserting equality therefore demands # precisely the value guaranteed to fail. What must hold instead: the client key is # NOT the root key, it equals the dedicated SERVICE key (one principal per lane), # and it actually authenticates - which C4 proves behaviourally. $ovChecked = 0 foreach ($pair in @(@{ label = 'pacgate'; map = $pac }, @{ label = 'qm     '; map = $qm })) {     $m = $pair.map     if (-not $m.Contains('OPENVIKING_ROOT_API_KEY') -or -not $m.Contains('OPENVIKING_API_KEY')) {         Write-Warn "$($pair.label) : one or both OPENVIKING_*_API_KEY keys absent - cannot compare"         continue     }     $ovChecked++     $rootTag = Get-SecretTag $m['OPENVIKING_ROOT_API_KEY']     $apiTag  = Get-SecretTag $m['OPENVIKING_API_KEY']     if ($rootTag -ceq $apiTag) {         Write-Fail "$($pair.label) : OPENVIKING_API_KEY IS the root key (tag $apiTag). OpenViking 0.5.x refuses root keys on /mcp, so every ov-* call fails with -32001. Issue an account-scoped key: scripts/ov-issue-service-key.ps1"     } else {         Write-Pass "$($pair.label) : OPENVIKING_API_KEY (tag $apiTag) is an account-scoped key, not the root key"     }     if ($m.Contains('OPENVIKING_SERVICE_KEY') -and $m['OPENVIKING_SERVICE_KEY']) {         if ((Get-SecretTag $m['OPENVIKING_SERVICE_KEY']) -ceq $apiTag) {             Write-Pass "$($pair.label) : OPENVIKING_API_KEY matches OPENVIKING_SERVICE_KEY (one principal per lane)"         } else {             Write-Fail "$($pair.label) : OPENVIKING_API_KEY (tag $apiTag) differs from OPENVIKING_SERVICE_KEY - deer-flow and the sandbox would authenticate as different principals"         }     } }
 
 # ---------------------------------------------------------------------------
 # C4. Live proof: the client key actually authenticates to /mcp.

@@ -27,6 +27,9 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 $hooks = 'deploy/frontend-patches/files/src/core/threads/hooks.ts'
 $box   = 'deploy/frontend-patches/files/src/components/workspace/input-box.tsx'
+# overlay must carry the ported copy or upstream's pro default ships unpatched.
+# 2.2.0 moved getResolvedMode out of input-box.tsx into this shared module; the
+$resolver = 'deploy/frontend-patches/files/src/core/models/reasoning.ts'
 
 # Derive the frontend image tag from the compose pin rather than hardcoding it, so a
 # release bump cannot leave this gate looking at the previous image and reporting a
@@ -66,22 +69,33 @@ Check 'T1 thinking is not derived from a "!= flash" negation' `
 $t2 = [regex]::Match($h, 'thinking_enabled:[\s\S]{0,500}?(?=\n\s*is_plan_mode:)')
 Check 'T2 the thinking_enabled expression can be isolated' $t2.Success
 if ($t2.Success) {
-    Check 'T2 it names "thinking"' ($t2.Value -match 'context\.mode\s*===\s*"thinking"')
-    Check 'T2 it names "pro"'      ($t2.Value -match 'context\.mode\s*===\s*"pro"')
-    Check 'T2 it names "ultra"'    ($t2.Value -match 'context\.mode\s*===\s*"ultra"')
+    # 2.2.0 renamed the receiver to `settings.mode` (2.0.0 overlay used `context.mode`).
+    # Accept either so the gate tests the LOGIC (three explicit mode names in one
+    # expression), not the variable name this upstream release happens to use.
+    Check 'T2 it names "thinking"' ($t2.Value -match '(?:context|settings)\.mode\s*===\s*"thinking"')
+    Check 'T2 it names "pro"'      ($t2.Value -match '(?:context|settings)\.mode\s*===\s*"pro"')
+    Check 'T2 it names "ultra"'    ($t2.Value -match '(?:context|settings)\.mode\s*===\s*"ultra"')
 }
-
-# ── T3 ───────────────────────────────────────────────────────────────────────
 Check 'T3 getResolvedMode does not default to pro' `
       ($b -notmatch 'return supportsThinking \? "pro" : "flash"') `
       'that default runs on mount and turns thinking on before the user chooses'
-Check 'T3 an unset mode resolves to flash' ($b -match 'return mode \?\? "flash"')
+# 2.2.0 moved the resolver body out of input-box.tsx into core/models/reasoning.ts,
+# so the overlay must carry that module or upstream's `mode ?? "pro"` ships unpatched.
+$r = if (Test-Path $resolver) { Get-Content $resolver -Raw } else { '' }
+Check 'T3 the overlay ships the 2.2.0 resolver module' (Test-Path $resolver) `
+      "$resolver is missing - the resolver would keep upstream's pro default"
+Check 'T3 an unset mode resolves to flash' ($r -match 'return mode \?\? "flash"') `
+      'an unset mode must resolve to flash; `?? "pro"` turns thinking on before the user chooses'
+Check 'T3 no path returns pro for an unset mode' ($r -notmatch 'return mode \?\? "pro"') `
+      'a remaining `mode ?? "pro"` keeps thinking on by default'
 
 # ── T4 ───────────────────────────────────────────────────────────────────────
 # The reason must be recorded at both sites, so a future edit does not "simplify"
 # the negation back.
 Check 'T4 hooks.ts records why the negation was wrong' ($h -match 'UNSET mode must not enable thinking')
-Check 'T4 input-box.tsx records why the pro default was removed' ($b -match 'do NOT default an unset mode')
+# 2.2.0: the resolver body moved to core/models/reasoning.ts, so that is where
+# the reason has to live now. input-box.tsx only calls it.
+Check 'T4 the resolver records why the pro default was removed' ($r -match 'do NOT default an unset mode')
 
 # ── T5 (live, advisory) ──────────────────────────────────────────────────────
 # The whole point of this fix is that it ships in a BUILT image, and the source

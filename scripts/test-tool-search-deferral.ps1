@@ -69,8 +69,12 @@ Assert-That (Test-Path $patch) "patch present at $patch"
 $src = if (Test-Path $patch) { Get-Content -LiteralPath $patch -Raw } else { '' }
 Assert-That ($src -match 'class\s+DeferredToolFilterMiddleware') `
     'the patch still defines DeferredToolFilterMiddleware'
-Assert-That ($src -match '_promotion_command') `
+# 2.2.0 rebase renamed the promotion helper (_promotion_command ->
+# _promotion_payload + _with_promotion) and scoped promotion per user turn.
+Assert-That ($src -match '_promotion_payload') `
     'it promotes on first call instead of erroring'
+Assert-That ($src -match '_with_promotion') `
+    'the promotion is merged into the tool result'
 Assert-That ($src -match 'Auto-promoting deferred tool') `
     'the promotion is logged (so a silent regression is visible in the log)'
 # The whole point: the handler must still RUN. A patch that promotes but returns

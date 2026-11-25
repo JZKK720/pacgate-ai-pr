@@ -227,7 +227,6 @@ def promote_entry(lines: list[str], name: str) -> list[str]:
     # `cloud_model: nemotron-bolt-7b-local` pin - the tracked config uses that name as
     # its "heavy lift" alias, and the promoted entry serves that role here.
     pins = [
-        ("model_name", "nemotron-bolt-7b-memory", 1),
         ("model_name", "nemotron-bolt-7b-local", 2),
         ("local_model", "nemotron-bolt-7b-local", 1),
         ("cloud_model", "nemotron-bolt-7b-local", 1),
@@ -379,7 +378,7 @@ def main() -> int:
                 "config's lane pins moved - update this generator deliberately."
             )
 
-    retarget(r"^(\s+)model_name: nemotron-bolt-7b-memory$", r"\1model_name: " + MEM74, 1)
+    retarget(r"^(\s{6})model: nemotron-3\.5-bolt:e4b-q8_0$", r"\1model: " + MEM74, 1)
     retarget(r"^(\s+)model_name: nemotron-bolt-7b-local$", r"\1model_name: " + BOLT74, 2)
     retarget(r"^(\s+)local_model: nemotron-bolt-7b-local$", r"\1local_model: " + BOLT74, 1)
     retarget(r"^(\s+)cloud_model: nemotron-bolt-7b-local$", r"\1cloud_model: " + BOLT74, 1)

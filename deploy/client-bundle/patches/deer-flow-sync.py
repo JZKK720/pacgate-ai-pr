@@ -4,9 +4,9 @@ import asyncio
 import atexit
 import concurrent.futures
 import contextvars
+import threading
 import functools
 import logging
-import threading
 from collections.abc import Callable
 from typing import Any, get_type_hints
 
@@ -19,29 +19,34 @@ _SYNC_TOOL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10, thre
 
 atexit.register(lambda: _SYNC_TOOL_EXECUTOR.shutdown(wait=False))
 
-
-# ---------------------------------------------------------------------------
-# Shared background event loop for sync tool invocation.
+# ─────────────────────────────────────────────────────────────────────────────
+# Pacgate: shared background event loop for sync tool invocation.
 #
-# The previous implementation called ``asyncio.run(coro(...))`` on every sync
-# tool call, which creates a *new* event loop per call. When parallel tool
-# calls (e.g. two Firecrawl MCP tools issued together by the agent) run through
-# the sync wrapper, each call gets its own loop. The MCP session pool keys
-# sessions by ``(server, scope_key)`` and tracks the owning event loop; a
-# second call on a *different* loop sees the first call's in-flight session
-# creation as foreign, evicts it, and cancels the subprocess spawn mid-flight
-# (``asyncio.exceptions.CancelledError`` at ``_make_subprocess_transport``).
-# That leaves the run stuck waiting for a tool result that never arrives.
+# The stock implementation calls `asyncio.run(coro(...))` (and, in a running
+# loop, a one-off `asyncio.run` inside a thread-pool worker), so every sync
+# tool call gets its OWN loop. When parallel tool calls (e.g. two Firecrawl MCP
+# tools issued together) go through the sync wrapper, each call gets a separate
+# loop. The MCP session pool keys sessions by `(server, scope_key)` and tracks
+# the owning event loop; a second call on a different loop sees the first
+# call's in-flight session creation as foreign, evicts it, and cancels the
+# subprocess spawn mid-flight (`asyncio.exceptions.CancelledError` at
+# `_make_subprocess_transport`). That leaves the run waiting on a tool result
+# that never arrives.
 #
-# Fix: run every sync tool coroutine on ONE shared background event loop. All
-# sync tool calls then share a single loop, so the session pool never sees a
-# cross-loop in-flight creation and never cancels a subprocess spawn. The async
-# path (``ainvoke`` -> ``coroutine``) is unaffected.
-# ---------------------------------------------------------------------------
-
+# Running every sync tool coroutine on ONE shared background loop removes the
+# cross-loop race: the session pool never sees an in-flight creation on a loop
+# it does not recognise. The async path (`ainvoke` -> `coroutine`) is
+# unaffected.
+# ─────────────────────────────────────────────────────────────────────────
 _SYNC_LOOP: asyncio.AbstractEventLoop | None = None
 _SYNC_LOOP_THREAD: threading.Thread | None = None
 _SYNC_LOOP_LOCK = threading.Lock()
+
+
+def _run_sync_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Run the shared background event loop forever (daemon thread)."""
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
 
 
 def _get_sync_loop() -> asyncio.AbstractEventLoop:
@@ -64,12 +69,6 @@ def _get_sync_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
-def _run_sync_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Run the shared background event loop forever (daemon thread)."""
-    asyncio.set_event_loop(loop)
-    loop.run_forever()
-
-
 def _shutdown_sync_loop() -> None:
     """Stop the shared background event loop on interpreter exit."""
     global _SYNC_LOOP, _SYNC_LOOP_THREAD
@@ -81,7 +80,6 @@ def _shutdown_sync_loop() -> None:
 
 
 atexit.register(_shutdown_sync_loop)
-
 
 def _get_runnable_config_param(func: Callable[..., Any]) -> str | None:
     """Return the coroutine parameter that expects LangChain RunnableConfig."""
@@ -122,6 +120,20 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
         else, such as ``run_config``, may collide with LangChain's injected
         ``config`` argument. Rename that user-facing field or extend this
         helper before using that signature.
+
+        The returned wrapper is built with ``functools.wraps(coro)``, so it
+        copies ``__name__``, ``__qualname__``, ``__doc__``, ``__annotations__``
+        and ``__dict__`` and sets ``__wrapped__``. This matters for LangGraph:
+        ``ToolNode._get_all_injected_args`` reads ``get_type_hints(tool.func)``,
+        and ``get_type_hints`` follows ``__wrapped__`` back to the coroutine's
+        own ``__globals__``. That is why injected parameters such as
+        ``runtime: Runtime`` are still detected here even when the caller was
+        compiled with ``from __future__ import annotations`` (mcp/tools.py,
+        skill_manage_tool.py) and the annotation is a string. Do not replace
+        ``wraps`` with a bare wrapper or a hand-copied signature: the string
+        annotation would then be evaluated against the wrapper's module globals,
+        or the ``runtime`` parameter would disappear entirely and the tool would
+        run with ``runtime=None``.
     """
     config_param = _get_runnable_config_param(coro)
 
@@ -134,14 +146,13 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
         try:
             if loop is not None and loop.is_running():
                 # We are already inside a running loop (async context). Run the
-                # coroutine on the shared background loop so it shares the same
-                # event loop as other sync tool calls, avoiding cross-loop
-                # session-pool races. Preserve the caller's contextvars.
+                # coroutine on the shared background loop so it shares an event
+                # loop with the other sync tool calls - this is what stops the
+                # cross-loop session-pool eviction described above. Preserve the
+                # caller's contextvars.
                 context = contextvars.copy_context()
                 sync_loop = _get_sync_loop()
-                future = asyncio.run_coroutine_threadsafe(
-                    context.run(coro, *args, **kwargs), sync_loop
-                )
+                future = asyncio.run_coroutine_threadsafe(context.run(coro, *args, **kwargs), sync_loop)
                 return future.result()
             # No running loop (pure sync context): run on the shared loop too.
             sync_loop = _get_sync_loop()
@@ -153,6 +164,7 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
 
     if config_param:
 
+        @functools.wraps(coro)
         def sync_wrapper(*args: Any, config: RunnableConfig = None, **kwargs: Any) -> Any:
             if config is not None or config_param not in kwargs:
                 kwargs[config_param] = config
@@ -160,6 +172,7 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
 
         return sync_wrapper
 
+    @functools.wraps(coro)
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
         return run_coroutine(*args, **kwargs)
 

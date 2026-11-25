@@ -39,3 +39,6 @@ deploy/qm-pacgate/sandbox-local/** text eol=lf
 # the runtime wants anyway. Pinning it makes a clone, bundle and `git am`
 # reproduce the same bytes on any platform.
 deploy/client-bundle/patches/** text eol=lf
+# Adapter package: LF endings so bind-mount parity holds cross-platform.
+pacgate-adapters/** text eol=lf
+deploy/client-bundle/memory-prompts/** text eol=lf

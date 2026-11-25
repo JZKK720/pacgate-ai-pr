@@ -83,8 +83,17 @@ if (-not $ApiKey) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
     $envFile = Join-Path $repoRoot 'deploy/client-bundle/.env'
     if (Test-Path $envFile) {
-        $line = (Select-String -Path $envFile -Pattern '^OPENVIKING_ROOT_API_KEY=' | Select-Object -First 1).Line
-        if ($line) { $ApiKey = $line.Substring('OPENVIKING_ROOT_API_KEY='.Length).Trim() }
+        # OpenViking 0.5.x refuses the ROOT key on every tenant-scoped data API
+        # (-32001), so a diagnostic that sends the root key reports a false outage
+        # against a healthy stack. Prefer the per-account SERVICE key; fall back to
+        # root only for 0.4.x, where no service key exists.
+        $svc = (Select-String -Path $envFile -Pattern '^OPENVIKING_SERVICE_KEY=' | Select-Object -First 1).Line
+        if ($svc) {
+            $ApiKey = $svc.Substring('OPENVIKING_SERVICE_KEY='.Length).Trim()
+        } else {
+            $line = (Select-String -Path $envFile -Pattern '^OPENVIKING_ROOT_API_KEY=' | Select-Object -First 1).Line
+            if ($line) { $ApiKey = $line.Substring('OPENVIKING_ROOT_API_KEY='.Length).Trim() }
+        }
     }
 }
 if (-not $ApiKey) { throw 'no API key: pass -ApiKey or set OPENVIKING_ROOT_API_KEY in deploy/client-bundle/.env' }

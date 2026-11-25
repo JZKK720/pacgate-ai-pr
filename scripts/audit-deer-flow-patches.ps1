@@ -75,7 +75,10 @@ $patchMap = [ordered]@{
     'deer-flow-auth-errors.py' = 'backend/app/gateway/auth/errors.py'
     'deer-flow-prompt.py'      = 'backend/packages/harness/deerflow/agents/lead_agent/prompt.py'
     'deer-flow-sync.py'        = 'backend/packages/harness/deerflow/tools/sync.py'
-    'deer-flow-thread-runs.py' = 'backend/app/gateway/routers/thread_runs.py'
+    # 2026-11-24 (2.2.0): thread_runs.py itself is no longer forked - upstream
+    # moved RunCreateRequest into app/gateway/run_models.py. The only surviving
+    # delta is the multitask_strategy default, carried by this patch.
+    'pacgate-run-models.py'   = 'backend/app/gateway/run_models.py'
     'deer-flow-uploads.py'     = 'backend/app/gateway/routers/uploads.py'
     'deer-flow-worker.py'      = 'backend/packages/harness/deerflow/runtime/runs/worker.py'
     # Pacgate 2026-11-24: 2.2.0 moved outline extraction into
@@ -83,8 +86,14 @@ $patchMap = [ordered]@{
     # The surviving delta (inline-HTML strip in _clean_bold_title) is carried by
     # deer-flow-file-outline.py; the old file_conversion whole-file fork is gone.
     'deer-flow-file-outline.py' = 'backend/packages/harness/deerflow/utils/file_outline.py'
-    # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated.
-    'deer-flow-mcp-args.py'    = 'backend/packages/harness/deerflow/mcp/tools.py'
+    # 2026-11-24 (2.2.0): removed. The whole-file fork of mcp/tools.py was a
+    # v2.0.0 snapshot that 2.2.0 no longer matches (ServerDiscoveryResult and
+    # ~600 lines of discovery/binding machinery were added upstream), so mounting
+    # it made the gateway unimportable. The one behaviour we need - rewriting
+    # virtual /mnt/user-data paths inside MCP tool ARGUMENTS - is now an
+    # mcpInterceptors entry in the extensions config, implemented in
+    # pacgate_deerflow_adapter.virtual_path_interceptor. That is an upstream
+    # extension point, so there is no longer a fork to rebase.
     # Pacgate 2026-10-11: MCP HTTP client read timeout + per-server headers.
     # LOCAL-ONLY - upstream has no counterpart for this patch.
     'deer-flow-mcp-client.py'  = 'backend/packages/harness/deerflow/mcp/client.py'
@@ -100,6 +109,8 @@ $patchMap = [ordered]@{
 
 # langchain-mcp-tools.py overrides a VENDORED package inside the image venv, not
 # upstream source, so it has no path in this repo and cannot be rebased here.
+# It carries one hunk (hyphen -> underscore in the server-name prefix) and is
+# verified byte-identical to the image's copy apart from it.
 $vendoredPatch = 'langchain-mcp-tools.py'
 
 # ── completeness: report mounted patches that are NOT in the rebase map ──────
@@ -130,6 +141,7 @@ $notUpstream = @(
     'pacgate-adapter-client.py'       # our own adapter tree (/app/adapters)
     'pacgate-adapter-storage.py'      # our own adapter tree (/app/adapters)
     'pacgate-adapter-matter-memory.py'  # our own adapter tree (/app/adapters), v2.2.0 backend
+    'pacgate-adapter-virtual-path-interceptor.py'  # our own adapter tree (/app/adapters), replaces deer-flow-mcp-args.py
 )
 
 $composeProd = Join-Path $repoRoot 'deploy/client-bundle/compose.prod.yaml'

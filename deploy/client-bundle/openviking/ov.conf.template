@@ -17,10 +17,13 @@
   },
   "vlm": {
     "provider": "ollama",
-    "model": "nemotron-3.5-bolt:e4b-q8_0",
+    "model": "nemotron-3.5-bolt:74b-a9b-iq2",
     "api_base": "http://host.docker.internal:11434",
     "api_key": "ollama",
     "max_tokens": 8192,
     "temperature": 0.1
+  },
+  "memory": {
+    "extraction_output_format": "json"
   }
 }

@@ -221,12 +221,22 @@ if ($ovh -eq 'healthy') { Ok 'container health = healthy' } else { Bad "containe
 # shell, so this lane reported "needs the root key in env" on a stack where the
 # endpoint answers 200 with 15 tools. Measured 2026-11-04 by calling it directly
 # with the .env value.
-$ovKey = $env:OPENVIKING_ROOT_API_KEY
+# OpenViking 0.5.x refuses the ROOT key on every tenant-scoped data API (-32001),
+# so presenting it here reported a FALSE failure on a healthy stack: /health needs
+# no key and passed, while /mcp 403d purely because of which credential was sent.
+# Prefer the account-scoped SERVICE key; fall back to root for a 0.4.x install.
+$ovKey = $env:OPENVIKING_SERVICE_KEY
+if (-not $ovKey) { $ovKey = $env:OPENVIKING_ROOT_API_KEY }
 if (-not $ovKey) {
     $envFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'deploy/client-bundle/.env'
     if (Test-Path $envFile) {
-        $ovLine = Get-Content $envFile | Where-Object { $_ -match '^\s*OPENVIKING_ROOT_API_KEY\s*=' } | Select-Object -First 1
-        if ($ovLine) { $ovKey = ($ovLine -replace '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*', '').Trim() }
+        $svcLine = Get-Content $envFile | Where-Object { $_ -match '^\s*OPENVIKING_SERVICE_KEY\s*=\s*\S' } | Select-Object -First 1
+        if ($svcLine) {
+            $ovKey = ($svcLine -replace '^\s*OPENVIKING_SERVICE_KEY\s*=\s*', '').Trim()
+        } else {
+            $ovLine = Get-Content $envFile | Where-Object { $_ -match '^\s*OPENVIKING_ROOT_API_KEY\s*=' } | Select-Object -First 1
+            if ($ovLine) { $ovKey = ($ovLine -replace '^\s*OPENVIKING_ROOT_API_KEY\s*=\s*', '').Trim() }
+        }
     }
 }
 # ALWAYS POST FROM A FILE - there is deliberately no inline attempt.
@@ -256,7 +266,7 @@ try {
 finally { Remove-Item -LiteralPath $ovBody -ErrorAction SilentlyContinue }
 
 if ($mcp -eq '200' -or $mcp -eq '202') { Ok "openviking MCP tools/list -> $mcp" }
-elseif (-not $ovKey) { Skip "openviking MCP -> $mcp (no OPENVIKING_ROOT_API_KEY in env or client-bundle/.env)" }
+elseif (-not $ovKey) { Skip "openviking MCP -> $mcp (no OPENVIKING_SERVICE_KEY or OPENVIKING_ROOT_API_KEY in env or client-bundle/.env)" }
 else { Bad "openviking MCP -> $mcp (a key IS configured, so this is a real failure, not a skip)" }
 
 # ── Lane 6: ocr-service (the bake IS the weights tree) ──────────────────────

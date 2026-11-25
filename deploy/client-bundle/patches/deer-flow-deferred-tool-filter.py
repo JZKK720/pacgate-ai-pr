@@ -1,72 +1,58 @@
 """PacGate patch (2026-10-21): auto-promote a deferred tool instead of erroring.
 
-Base: ghcr.io/jzkk720/deer-flow-pacgate:0.1.34 image version of
-``packages/harness/deerflow/agents/middlewares/deferred_tool_filter_middleware.py``.
+Base: deer-flow 2.2.0 ``deferred_tool_filter_middleware.py``.
 
-ROOT CAUSE FIXED HERE
+ROOT CAUSE THIS PATCH FIXES
     ``tool_search`` was shipped DISABLED in deer-flow-config.yaml with this note:
 
         EVIDENCE (2026-09-12): deferral makes ALL models call MCP tools without
         promoting first -> "deferred, not promoted" loop, never reaching
         write_file.
 
-    That is a real failure, and it is not a model defect - it is this middleware's
-    design. When the model calls a deferred tool, ``_blocked_tool_message`` returns
-    a ToolMessage that says "Call tool_search first ... then retry". The model then
-    has to (a) understand the instruction, (b) emit a SECOND tool call to
-    tool_search, (c) wait for the schema, and (d) re-emit the original call with
-    correct arguments. Small local models (gemma4:12b, ornith-1.5:9b) routinely
-    fail at step (b) or (d), so the run burns turns and never reaches the tool it
-    actually wanted. The recorded symptom - "never reaching write_file" - is
-    exactly that loop.
-
-    The cost of leaving it disabled is large and measured on this box: MCP schemas
-    are 32,023 of 42,582 bound characters, so deferral removes ~8,005 of ~10,645
-    tokens from EVERY call (75%). At the measured 528 tok/s prefill that is ~15 s
-    of fixed cost per call, on every turn of every run.
+    That is a real failure, and it is not a model defect - it is this
+    middleware's design. When the model calls a deferred tool,
+    ``_blocked_tool_message`` returns a ToolMessage saying "Call tool_search
+    first ... then retry". The model then has to (a) understand the
+    instruction, (b) emit a SECOND tool call to tool_search, (c) wait for the
+    schema, and (d) re-emit the original call with correct arguments. Small
+    local models routinely fail at step (b) or (d), so the run burns turns and
+    never reaches the tool it actually wanted.
 
 WHAT THIS PATCH DOES
-    Turns the block into a transparent promotion. When the model calls a deferred
-    tool, this middleware:
+    Turns the block into a transparent promotion. When the model calls a
+    deferred tool, this middleware:
 
-      1. promotes that tool's schema into graph state (same ``promoted`` key and
-         catalog-hash scoping the real ``tool_search`` uses, so the reducer in
-         thread_state.py merges it correctly), and
+      1. promotes that tool's schema into graph state (same ``promoted`` key
+         and catalog-hash scoping the real ``tool_search`` uses, so the
+         reducer merges it correctly), and
       2. executes the call in the SAME turn via the normal handler.
 
-    The model therefore never has to know that deferral exists. It sees the tool
-    name in <available-deferred-tools>, calls it, and it works. From the next turn
-    the schema is bound normally, so the model can also reason about it.
-
-    This is strictly better than the error path for small models: it removes the
-    two steps they fail at, and it costs one extra schema in context only AFTER
-    the tool has been used - which is when it is worth paying for.
-
-WHY NOT JUST BIND EVERYTHING
-    That is the current state and it is what this patch exists to avoid: 75% of
-    every prompt is schema text for tools that, measured across 828 checkpoints
-    and 2,664 tool calls on this box, were used in 380 of 2,664 calls (14%) - and
-    the sandbox tools (bash/read_file/write_file) carried the rest.
+    The model therefore never has to know that deferral exists. From the next
+    turn the schema is bound normally, so the model can reason about it.
 
 SAFETY
-    - Promotion is scoped by catalog hash, so a stale persisted name cannot expose
-      a different tool after the catalog drifts.
-    - The tool must still be in the deferred set to be promoted; an unknown name
-      falls through to the normal handler, which raises the usual "not found".
-    - Nothing is promoted for tools the policy filter removed, because the
-      deferred set is built AFTER policy filtering.
+    - Promotion is scoped by catalog hash AND the genuine user-turn id (see
+      ``_promotion_is_current``), so a stale persisted promotion cannot expose
+      a renamed tool or leak into a later user turn.
+    - The tool must still be in the deferred set to be promoted; an unknown
+      name falls through to the normal handler.
+    - The promoted payload carries the current ``turn_id`` so it composes with
+      the upstream per-turn migration in ``_turn_state_update``.
 """
 
 import logging
-from collections.abc import Awaitable, Callable
-from typing import override
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
+from langgraph.runtime import Runtime
 from langgraph.types import Command
+
+from deerflow.agents.middlewares.message_utils import genuine_user_turn_id, has_ai_response_after_latest_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +62,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
 
     ToolNode still holds all tools (including deferred) for execution routing,
     but the LLM only sees active tool schemas plus tools that have already been
-    promoted (recorded in ``state["promoted"]`` under the current catalog hash).
+    promoted under the current catalog hash and genuine user turn.
     """
 
     def __init__(self, deferred_names: frozenset[str], catalog_hash: str | None):
@@ -84,13 +70,52 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         self._deferred = deferred_names
         self._catalog_hash = catalog_hash
 
-    def _promoted(self, state) -> set[str]:
+    def release_policy_parameters(self) -> dict[str, object]:
+        return {
+            "deferred_names": sorted(self._deferred),
+            "catalog_hash": self._catalog_hash,
+            "promotion_scope": "graph_state_catalog_hash_user_turn",
+        }
+
+    def _promotion_is_current(self, state: Mapping[str, Any] | None, promoted: Mapping[str, Any]) -> bool:
+        if promoted.get("catalog_hash") != self._catalog_hash:
+            return False
+        promoted_turn_id = promoted.get("turn_id")
+        if promoted_turn_id is None:
+            return has_ai_response_after_latest_user_message(list((state or {}).get("messages") or []))
+        current_turn_id = genuine_user_turn_id(list((state or {}).get("messages") or []))
+        return current_turn_id is not None and promoted_turn_id == current_turn_id
+
+    def _promoted(self, state: Mapping[str, Any] | None) -> set[str]:
         promoted = (state or {}).get("promoted")
-        if promoted and promoted.get("catalog_hash") == self._catalog_hash:
-            return set(promoted.get("names") or [])
+        if not isinstance(promoted, Mapping) or not self._promotion_is_current(state, promoted):
+            return set()
+        names = promoted.get("names")
+        if isinstance(names, Sequence) and not isinstance(names, (str, bytes)):
+            return {name for name in names if isinstance(name, str)}
         return set()
 
-    def _hidden(self, state) -> set[str]:
+    def _turn_state_update(self, state: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        turn_id = genuine_user_turn_id(list((state or {}).get("messages") or []))
+        if not self._deferred or not self._catalog_hash or turn_id is None:
+            return None
+        promoted = (state or {}).get("promoted")
+        if isinstance(promoted, Mapping) and self._promotion_is_current(state, promoted):
+            if promoted.get("turn_id") == turn_id:
+                return None
+            names = promoted.get("names")
+            migrated_names = [name for name in names if isinstance(name, str)] if isinstance(names, Sequence) and not isinstance(names, (str, bytes)) else []
+        else:
+            migrated_names = []
+        return {
+            "promoted": {
+                "catalog_hash": self._catalog_hash,
+                "names": migrated_names,
+                "turn_id": turn_id,
+            }
+        }
+
+    def _hidden(self, state: Mapping[str, Any] | None) -> set[str]:
         return set(self._deferred) - self._promoted(state)
 
     def _filter_tools(self, request: ModelRequest) -> ModelRequest:
@@ -104,31 +129,34 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
             logger.debug("Filtered %d deferred tool schema(s) from model binding", len(request.tools) - len(active))
         return request.override(tools=active)
 
-    def _promotion_command(self, request: ToolCallRequest) -> Command | None:
-        """Promote the called tool and run it in the same turn.
-
-        Returns None when the call is not for a hidden deferred tool, so the
-        normal handler runs unchanged.
-        """
+    def _promotion_payload(self, request: ToolCallRequest) -> dict[str, Any] | None:
+        """Build the ``promoted`` payload for this call, or None if not deferred."""
         if not self._deferred:
             return None
         name = str(request.tool_call.get("name") or "")
         if not name or name not in self._hidden(request.state):
             return None
+        turn_id = genuine_user_turn_id(list((request.state or {}).get("messages") or []))
+        payload = {"catalog_hash": self._catalog_hash, "names": [name]}
+        if turn_id is not None:
+            payload["turn_id"] = turn_id
+        return payload
 
-        # Promote BEFORE executing so the schema is bound from the next turn on.
-        # The reducer in thread_state.merge_promoted unions names under the same
-        # catalog hash, so this composes with a real tool_search call rather than
-        # replacing its result.
-        logger.info(
-            "Auto-promoting deferred tool %r on first call (tool_search deferral is transparent)",
-            name,
-        )
-        return Command(
-            update={
-                "promoted": {"catalog_hash": self._catalog_hash, "names": [name]},
-            }
-        )
+    def _with_promotion(self, result: ToolMessage | Command, payload: dict[str, Any]) -> Command:
+        """Merge the promotion into whatever the handler returned."""
+        if isinstance(result, Command):
+            merged = dict(result.update or {})
+            merged["promoted"] = payload
+            return Command(update=merged, goto=result.goto, graph=result.graph)
+        return Command(update={"promoted": payload, "messages": [result]})
+
+    @override
+    def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        return self._turn_state_update(state)
+
+    @override
+    async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        return self._turn_state_update(state)
 
     @override
     def wrap_model_call(
@@ -144,23 +172,15 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        promotion = self._promotion_command(request)
+        payload = self._promotion_payload(request)
         result = handler(request)
-        if promotion is None:
+        if payload is None:
             return result
-        # Merge the promotion into whatever the handler returned. The handler's
-        # result may itself be a Command (tools that write state) or a plain
-        # ToolMessage; both must keep their own updates.
-        if isinstance(result, Command):
-            merged = dict(result.update or {})
-            merged["promoted"] = {"catalog_hash": self._catalog_hash, "names": [str(request.tool_call.get("name"))]}
-            return Command(update=merged, goto=result.goto, graph=result.graph)
-        return Command(
-            update={
-                "promoted": {"catalog_hash": self._catalog_hash, "names": [str(request.tool_call.get("name"))]},
-                "messages": [result],
-            }
+        logger.info(
+            "Auto-promoting deferred tool %r on first call (tool_search deferral is transparent)",
+            request.tool_call.get("name"),
         )
+        return self._with_promotion(result, payload)
 
     @override
     async def awrap_model_call(
@@ -176,17 +196,12 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
-        promotion = self._promotion_command(request)
+        payload = self._promotion_payload(request)
         result = await handler(request)
-        if promotion is None:
+        if payload is None:
             return result
-        if isinstance(result, Command):
-            merged = dict(result.update or {})
-            merged["promoted"] = {"catalog_hash": self._catalog_hash, "names": [str(request.tool_call.get("name"))]}
-            return Command(update=merged, goto=result.goto, graph=result.graph)
-        return Command(
-            update={
-                "promoted": {"catalog_hash": self._catalog_hash, "names": [str(request.tool_call.get("name"))]},
-                "messages": [result],
-            }
+        logger.info(
+            "Auto-promoting deferred tool %r on first call (tool_search deferral is transparent)",
+            request.tool_call.get("name"),
         )
+        return self._with_promotion(result, payload)

@@ -6,27 +6,31 @@
 #   officecli_officecli({"command":"create /mnt/user-data/outputs/x.docx"})
 #     -> ToolException: Could not find a part of the path
 #
-# `/mnt/user-data` is a VIRTUAL path. Inside the container the real directory is
-# `{data}/deer-flow/users/<user>/threads/<thread>/user-data/outputs`. bash
-# commands were rewritten by `replace_virtual_paths_in_command` and read_file's
-# `path` by `replace_virtual_path`; MCP ARGUMENTS were passed verbatim.
+# /mnt/user-data is a VIRTUAL path. Inside the container the real directory is
+# {data}/deer-flow/users/<user>/threads/<thread>/user-data/outputs. bash commands
+# were rewritten by replace_virtual_paths_in_command and read_file's path by
+# replace_virtual_path; MCP ARGUMENTS were passed verbatim.
 #
-# The same patch also restores `runtime` injection. Without InjectedToolArg the
-# injected ToolRuntime never reaches the closure, so the rewrite would silently
-# no-op - measured both ways against a real ToolNode with an MCP-shaped schema:
-#     plain  `runtime: Runtime | None = None`       -> runtime NONE
-#     `Annotated[Runtime | None, InjectedToolArg()]` -> runtime YES
+# 2026-11-24: the fix moved off a whole-file fork of deerflow/mcp/tools.py onto
+# deer-flow's supported mcpInterceptors extension point, implemented by
+# pacgate_deerflow_adapter.virtual_path_interceptor. The fork was a v2.0.0
+# snapshot; 2.2.0 added ServerDiscoveryResult and ~600 lines of discovery and
+# binding machinery, so the mount made the gateway unimportable.
+#
+# HOW THE INTERCEPTOR GETS THREAD CONTEXT
+# deer-flow injects the ToolRuntime by PARAMETER NAME ("runtime"), not by
+# annotation, so an unannotated `runtime: Runtime | None = None` in the tool
+# closure is enough - upstream 2.2.0 does exactly that. The interceptor reads
+# request.runtime, which deer-flow fills from the same injection path.
 #
 # WHAT IS ASSERTED
-#   A1  the patch exists and is a whole module, not a diff
-#   A2  the closure marks `runtime` with InjectedToolArg, and imports it
-#   A3  the argument rewrite is wired ONCE, before the interceptor branch, so no
-#       call path can skip it
-#   A4  the rewriter is a no-op without thread data, on a path-free value, and is
-#       depth-bounded
-#   A5  both compose files mount the patch (A5 parity - install.ps1 uses the bundle)
-#   A6  live: the deployed file is the patch, and the module actually loads the
-#       MCP tool surface through it
+#   A1  the adapter module and its bind-mount copy exist and are byte-identical
+#   A2  it implements the MCPToolCallRequest interceptor contract
+#   A3  the rewrite is applied to request.args before the handler runs
+#   A4  the rewriter is bounded, ignores non-matching values, and never throws
+#   A5  both compose lanes mount the adapter file, and the extensions config
+#       registers it under mcpInterceptors
+#   A6  live: the deployed module imports inside deer-flow
 #
 # Exit 2 means CANNOT CHECK and must never be read as a failure.
 [CmdletBinding()]
@@ -37,10 +41,14 @@ param(
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$patch = 'deploy/client-bundle/patches/deer-flow-mcp-args.py'
+$pkg     = 'pacgate-adapters/python/pacgate_deerflow_adapter/virtual_path_interceptor.py'
+$mounted = 'deploy/client-bundle/patches/pacgate-adapter-virtual-path-interceptor.py'
 $composes = @('deploy/client-bundle/compose.prod.yaml',
               'deploy/client-bundle/compose.bundle.yaml')
-$mountTarget = '/app/backend/packages/harness/deerflow/mcp/tools.py'
+$extensionsConfigs = @('deploy/client-bundle/deer-flow-extensions-config.template.json',
+                       'deploy/client-bundle/deer-flow-extensions-config.json')
+$mountTarget = '/app/adapters/pacgate_deerflow_adapter/virtual_path_interceptor.py'
+$interceptorSpec = 'pacgate_deerflow_adapter.virtual_path_interceptor:build_virtual_path_interceptor'
 
 $script:passed = 0
 $script:failed = 0
@@ -51,59 +59,57 @@ function Check($n, $ok, $d) {
 
 Write-Host '=== MCP argument path translation ===' -ForegroundColor Cyan
 
-# ── A1 ───────────────────────────────────────────────────────────────────────
-Check 'A1 the patch exists' (Test-Path $patch) $patch
-if (-not (Test-Path $patch)) { Write-Host 'RESULT: cannot continue'; exit 1 }
-$src = Get-Content $patch -Raw
+# -- A1 ------------------------------------------------------------------
+Check 'A1 the adapter module exists' (Test-Path $pkg) $pkg
+Check 'A1 the bind-mounted copy exists' (Test-Path $mounted) $mounted
+if (-not (Test-Path $pkg) -or -not (Test-Path $mounted)) { Write-Host 'RESULT: cannot continue'; exit 1 }
+$src = Get-Content $pkg -Raw
+Check 'A1 the two copies are byte-identical' `
+      ((Get-FileHash $pkg -Algorithm SHA256).Hash -eq (Get-FileHash $mounted -Algorithm SHA256).Hash)
 
-Check 'A1 the patch is a whole module (defines _make_session_pool_tool)' `
-      ($src -match '(?m)^def _make_session_pool_tool\(')
+# -- A2 ------------------------------------------------------------------
+Check 'A2 exposes a zero-argument builder for mcpInterceptors' `
+      ($src -match '(?m)^def build_virtual_path_interceptor\(\s*\)')
+Check 'A2 returns an async intercept(request, handler) coroutine' `
+      ($src -match '(?m)^\s+async def intercept\(\s*request\s*:\s*MCPToolCallRequest\s*,\s*handler\s*\)')
+Check 'A2 reads the runtime off the request (never a module global)' `
+      ($src -match 'request\.runtime')
+Check 'A2 forwards to the wrapped handler' `
+      ($src -match 'return await handler\(')
 
-# ── A2 ───────────────────────────────────────────────────────────────────────
-# The exact shape that made a first patch attempt silently no-op.
-Check 'A2 runtime is annotated InjectedToolArg' `
-      ($src -match 'runtime:\s*Annotated\[\s*Runtime\s*\|\s*None\s*,\s*InjectedToolArg\(\)\s*\]') `
-      'without InjectedToolArg the injected ToolRuntime is dropped by _parse_input'
-Check 'A2 InjectedToolArg is imported' `
-      ($src -match 'from langchain_core\.tools\.base import InjectedToolArg')
+# -- A3 ------------------------------------------------------------------
+$overrideAt = $src.IndexOf('request.override(args=')
+$handlerAt  = $src.IndexOf('return await handler(')
+Check 'A3 the rewritten args are put on the request before the handler runs' `
+      ($overrideAt -ge 0 -and $handlerAt -gt $overrideAt) `
+      "overrideAt=$overrideAt handlerAt=$handlerAt"
+Check 'A3 a path-free value is returned untouched' `
+      ($src -match 'if VIRTUAL_PATH_PREFIX not in value')
+Check 'A3 no thread context means no rewrite (no-op, not a crash)' `
+      ($src -match 'if not thread_data or not isinstance\(args, dict\)')
 
-# ── A3 ───────────────────────────────────────────────────────────────────────
-$rewriteAt = $src.IndexOf('_rewrite_virtual_paths_in_args(arguments')
-$branchAt  = $src.IndexOf('if tool_interceptors:')
-Check 'A3 the argument rewrite is wired at the call site' ($rewriteAt -ge 0)
-Check 'A3 the rewrite precedes the interceptor branch' `
-      ($rewriteAt -ge 0 -and $branchAt -ge 0 -and $rewriteAt -lt $branchAt) `
-      "rewriteAt=$rewriteAt branchAt=$branchAt"
-
-# Both helpers are needed: the prefix rewriter is space-safe but only handles a
-# value that STARTS with a virtual root; the command rewriter handles an embedded
-# path but tokenizes on whitespace, so a path with spaces must not reach it first.
-Check 'A3 a pure path is rewritten with the exact helper' `
-      ($src -match 'new_value = replace_virtual_path\(value, thread_data\)')
-Check 'A3 an embedded path falls back to the command helper' `
-      ($src -match 'new_value = replace_virtual_paths_in_command\(value, thread_data\)')
-Check 'A3 the exact helper is tried before the command helper' `
+# -- A4 ------------------------------------------------------------------
+Check 'A4 containers are walked to a bounded depth' ($src -match '_ARG_PATH_MAX_DEPTH')
+Check 'A4 an unchanged structure is returned by identity' `
+      ($src -match 'return rewritten if changed else args')
+Check 'A4 the pure-path case is tried before the embedded-command case' `
       ($src.IndexOf('replace_virtual_path(value, thread_data)') -lt $src.IndexOf('replace_virtual_paths_in_command(value, thread_data)'))
 
-# ── A4 ───────────────────────────────────────────────────────────────────────
-Check 'A4 the rewriter short-circuits without thread data' `
-      ($src -match 'if not thread_data or not isinstance\(args, dict\):\s*\r?\n\s*return args')
-Check 'A4 the rewriter is depth-bounded' ($src -match '_ARG_PATH_MAX_DEPTH')
-Check 'A4 a path-free string is returned unchanged' `
-      ($src -match 'if VIRTUAL_PATH_PREFIX not in value:\s*\r?\n\s*return value')
-Check 'A4 an unchanged argument object is returned as-is' `
-      ($src -match 'return rewritten if changed else args')
-Check 'A4 thread data falls back to a derivation when the graph did not inject it' `
-      ($src -match 'def _thread_data_for_mcp\(')
-
-# ── A5 ───────────────────────────────────────────────────────────────────────
+# -- A5 ------------------------------------------------------------------
 foreach ($c in $composes) {
     $body = if (Test-Path $c) { Get-Content $c -Raw } else { '' }
-    Check "A5 $c mounts the patch over $mountTarget" `
-          ($body -match [regex]::Escape("./patches/deer-flow-mcp-args.py:$mountTarget"))
+    Check "A5 $c mounts the interceptor at $mountTarget" `
+          ($body -match [regex]::Escape("./patches/pacgate-adapter-virtual-path-interceptor.py:$mountTarget"))
+    Check "A5 $c no longer mounts the retired whole-file tools.py fork" `
+          ($body -notmatch 'deer-flow-mcp-args\.py:/app/backend/packages/harness/deerflow/mcp/tools\.py')
+}
+foreach ($c in $extensionsConfigs) {
+    $body = if (Test-Path $c) { Get-Content $c -Raw } else { '' }
+    Check "A5 $c registers the interceptor" `
+          ($body -match [regex]::Escape($interceptorSpec))
 }
 
-# ── A6 (live) ────────────────────────────────────────────────────────────────
+# -- A6 (live) -----------------------------------------------------------
 $running = $false
 try {
     $state = docker inspect -f '{{.State.Health.Status}}' $Container 2>$null
@@ -118,50 +124,51 @@ if (-not $running) {
     if ($script:failed -gt 0) { exit 1 } else { exit 2 }
 }
 
-$liveCount = (docker exec $Container sh -c "grep -c '_rewrite_virtual_paths_in_args' $mountTarget" 2>$null)
-Check 'A6 the running container executes the patch' `
-      ($liveCount -and [int]$liveCount -ge 2) `
-      "grep count in container: $liveCount"
-
-# A docker cp copy would not appear in the mount table; only a real bind mount
-# will. `mount` does not report the SOURCE on this Windows/9p host, so the
-# authoritative source of truth is docker's own mount list, which is also
-# platform-independent.
-$mnt = (docker exec $Container sh -c "mount | grep '$mountTarget'" 2>$null)
-Check 'A6 the patch is a live bind mount' `
-      ($mnt) `
-      'a docker cp copy would not appear here; only a real mount will'
-
 $mountJson = (docker inspect -f '{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.RW}};{{end}}' $Container 2>$null)
 $mountRow = @(($mountJson -split ';') | Where-Object { $_ -match [regex]::Escape($mountTarget) }) | Select-Object -First 1
 Check 'A6 the mount source is the tracked patch' `
-      ($mountRow -and $mountRow -match 'deer-flow-mcp-args\.py') `
+      ($mountRow -and $mountRow -match 'pacgate-adapter-virtual-path-interceptor\.py') `
       "mount row: $mountRow"
 Check 'A6 the mount is read-only' `
       ($mountRow -and $mountRow -match '\|False$') `
       ".RW must be False for a :ro mount; got: $mountRow"
 
-# The module must still import and load the surface. A syntax error or a broken
-# import here would take every MCP tool with it - the exact blast radius that
-# makes this patch worth gating rather than eyeballing.
-#
-# The probe is written to a file rather than passed with -c: nesting Python
-# quotes inside `sh -c` inside PowerShell is where a gate starts failing on a
-# healthy stack, which is how a runner earns being ignored.
-$probeDir = Join-Path $env:TEMP ("mcp-args-gate-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$probeDir = Join-Path $env:TEMP ("mcp-argpath-gate-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
 $probeFile = Join-Path $probeDir 'probe.py'
 @'
 import asyncio
-from deerflow.mcp.tools import get_mcp_tools
+import json
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 
-print("COUNT", len(asyncio.run(get_mcp_tools())))
+from pacgate_deerflow_adapter.virtual_path_interceptor import build_virtual_path_interceptor
+
+intercept = build_virtual_path_interceptor()
+captured = {}
+
+async def handler(req):
+    captured['args'] = req.args
+    return 'ok'
+
+async def main():
+    await intercept(
+        MCPToolCallRequest(
+            name="t",
+            args={"command": "create /mnt/user-data/outputs/x.docx"},
+            server_name="s",
+            runtime=None,
+        ),
+        handler,
+    )
+    print("REWRITE", json.dumps(captured['args'], sort_keys=True))
+
+asyncio.run(main())
 '@ | Out-File -FilePath $probeFile -Encoding utf8
-docker cp $probeFile "${Container}:/tmp/mcp_args_gate_probe.py" 2>$null | Out-Null
-$probe = docker exec $Container sh -c "cd /app/backend && .venv/bin/python /tmp/mcp_args_gate_probe.py" 2>$null
+docker cp $probeFile "${Container}:/tmp/mcp_argpath_gate_probe.py" 2>$null | Out-Null
+$probe = docker exec $Container sh -c "cd /app/backend && PYTHONPATH=/app/adapters .venv/bin/python /tmp/mcp_argpath_gate_probe.py" 2>&1
 Remove-Item $probeDir -Recurse -Force -ErrorAction SilentlyContinue
-Check 'A6 the patched module loads the MCP tool surface' `
-      ($probe -and $probe -match 'COUNT ([1-9][0-9]*)') `
+Check 'A6 the interceptor imports and runs inside deer-flow' `
+      ($probe -match 'REWRITE') `
       (($probe | Out-String).Trim() -replace '\s+', ' ')
 
 Write-Host ''

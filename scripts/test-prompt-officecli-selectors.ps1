@@ -155,11 +155,26 @@ if tpl is None:
 
 # The fields apply_prompt_template() actually supplies. Anything else is a brace
 # that was never escaped.
-expected = {
+base = {
     "acp_section", "agent_name", "deferred_tools_section", "self_update_section",
     "skills_section", "soul", "subagent_reminder", "subagent_section",
     "subagent_thinking",
 }
+
+# DERIVED FROM THE RUNTIME SOURCE, not hardcoded (2026-11-25). This list was
+# frozen at 2.0.0, so when 2.2.0 added seven legitimate template fields the
+# check reported them as unescaped braces - a false outage on a healthy
+# prompt. The kwargs of the real `.format(` call ARE the authority: a field
+# the renderer supplies can never be a stray brace.
+passed = set()
+for node in ast.walk(ast.parse(src)):
+    if (isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "SYSTEM_PROMPT_TEMPLATE"):
+        passed |= {k.arg for k in node.keywords if k.arg}
+expected = base | passed
 found = {f for _, f, _, _ in string.Formatter().parse(tpl) if f is not None}
 print("FOUND", sorted(found))
 print("UNEXPECTED", sorted(found - expected))

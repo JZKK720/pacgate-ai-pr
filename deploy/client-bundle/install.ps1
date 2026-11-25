@@ -798,6 +798,16 @@ if ($Update -and -not $SkipRepoPull) {
                         # hypothetical. ls-files is used instead of status
                         # because status COLLAPSES whole untracked directories to
                         # "dir/" and the names would never match.
+                        # -c core.quotepath=false is required on BOTH sides. Without it
+                        # git C-quotes non-ASCII paths, and it quoted only ONE of the two
+                        # lists here: `$incoming` below passed the flag (so it produced
+                        # 法律素材脱敏范围.md) while this ls-files call did not (so `$untracked`
+                        # produced "\346\263\225...md"). The `-contains` compare then never
+                        # matched, the collision went undetected, and `git pull --ff-only`
+                        # was attempted over the operator's untracked file - the exact
+                        # destroy-my-work outcome this pre-check exists to prevent.
+                        # Measured 2026-11-25: the gate's non-ASCII case failed while every
+                        # ASCII case passed, because ASCII names are never quoted.
                         $untracked = Invoke-WithNativeStderr { @(git -c core.quotepath=false ls-files --others --exclude-standard 2>$null | Where-Object { $_ }) }
                         $collisions = @()
                         if ($untracked.Count -gt 0) {
@@ -1083,6 +1093,64 @@ $dfTemplate = ".\deer-flow-extensions-config.template.json"
 $dfRendered = ".\deer-flow-extensions-config.json"
 if (Test-Path $dfTemplate) {
         $dfKey = $envVars['OPENVIKING_ROOT_API_KEY']
+
+        # ---------------------------------------------------------------------------
+        # OpenViking 0.5.x: the ROOT key no longer opens the data API.
+        #
+        # Measured 2026-11-25 on v0.5.6: POSTing /mcp with the root key returns
+        #   -32001 "ROOT API keys cannot access tenant-scoped data APIs in api_key mode."
+        # The allow-list is /api/v1/system/*, /api/v1/admin, /observer, /console, /tasks, so
+        # the root key can still ADMINISTER but cannot READ or WRITE memory. deer-flow puts
+        # this key on every OpenViking MCP call, so on 0.5.x a root key silently disables
+        # memory recall for the whole agent - no error the model can see, just empty results.
+        #
+        # The replacement is a per-account USER key the SERVER issues (it is salted per
+        # account/user, so it cannot be derived from the root key or committed here).
+        # Provision it once through the one surface the root key may still use.
+        #
+        # Idempotent and best-effort: reuse whatever .env already holds; issue only when
+        # missing; never fail the install on it. An install that cannot reach OpenViking yet
+        # still renders with the root key (correct for 0.4.16) and is repaired later by
+        # scripts/ov-issue-service-key.ps1.
+        $dfSvcKey = $envVars['OPENVIKING_SERVICE_KEY']
+        if (-not $dfSvcKey -or $dfSvcKey -match '^change-me') {
+            $issued = $null
+            $ovAlive = (& docker ps --filter 'name=^openviking$' --format '{{.Names}}' 2>$null | Out-String).Trim()
+            if ($ovAlive -eq 'openviking') {
+                $issueBody = '{"user_id":"pacgate-service","role":"admin"}'
+                $prevEap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try {
+                    $raw = & docker exec openviking sh -c "curl -s -X POST http://127.0.0.1:1933/api/v1/admin/accounts/default/users -H 'Content-Type: application/json' -H 'X-API-Key: '`$OPENVIKING_ROOT_API_KEY -d '$issueBody'" 2>$null
+                    if ($raw) {
+                        try { $o = ($raw | Out-String) | ConvertFrom-Json; if ($o.result.user_key) { $issued = $o.result.user_key } } catch { }
+                    }
+                    if (-not $issued) {
+                        $raw2 = & docker exec openviking sh -c "curl -s -X POST http://127.0.0.1:1933/api/v1/admin/accounts/default/users/pacgate-service/key -H 'Content-Type: application/json' -H 'X-API-Key: '`$OPENVIKING_ROOT_API_KEY" 2>$null
+                        if ($raw2) {
+                            try { $o2 = ($raw2 | Out-String) | ConvertFrom-Json; if ($o2.result.user_key) { $issued = $o2.result.user_key } } catch { }
+                        }
+                    }
+                } finally { $ErrorActionPreference = $prevEap }
+            }
+            if ($issued) {
+                $dfSvcKey = $issued
+                $envVars['OPENVIKING_SERVICE_KEY'] = $dfSvcKey
+                $txt = Get-Content $envPath -Raw
+                $envLine = "OPENVIKING_SERVICE_KEY=$issued"
+                if ($txt -match '(?m)^\s*OPENVIKING_SERVICE_KEY\s*=') {
+                    $txt = [regex]::Replace($txt, '(?m)^\s*OPENVIKING_SERVICE_KEY\s*=.*$', $envLine.Replace('$','$$$$'))
+                } else {
+                    $txt = $txt.TrimEnd() + "`r`n" + $envLine + "`r`n"
+                }
+                [System.IO.File]::WriteAllText($envPath, $txt, (New-Object System.Text.UTF8Encoding($false)))
+                Write-Host "[OK] Issued the OpenViking service key (0.5.x refuses the root key on /mcp)" -ForegroundColor Green
+            } else {
+                # 0.4.16, or openviking not up yet: the root key is still what works there.
+                Write-Host "[ .. ] No OpenViking service key yet - rendering with the root key (correct for 0.4.x; run scripts/ov-issue-service-key.ps1 after upgrading)" -ForegroundColor DarkGray
+                $dfSvcKey = $dfKey
+            }
+        }
         if (-not $dfKey -or $dfKey -match '^change-me') {
             # No usable key: we cannot render. A missing file is fatal (compose
             # mounts it :ro, so deer-flow memory recall breaks); an existing file
@@ -1097,9 +1165,9 @@ if (Test-Path $dfTemplate) {
                 exit 1
             }
         } else {
-            # The template's openviking entry uses ${OPENVIKING_ROOT_API_KEY} (the
-            # server's root key), NOT ${OPENVIKING_API_KEY}. Replacing the wrong
-            # placeholder is a no-op and leaves a literal ${...} in the rendered
+            # (0.5.x) The openviking entry X-API-Key is the ACCOUNT-SCOPED service key:
+            # not the app key and not the root key, because /mcp rejects root keys.
+            # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
             # file, which makes openviking return 401 and rolls back the entire MCP
             # tool load (deer-flow uses asyncio.gather). See handbook finding #2.
             # -Encoding UTF8: PS 5.1 on a Chinese-locale host decodes BOM-less files as
@@ -1118,7 +1186,11 @@ if (Test-Path $dfTemplate) {
             # diff - the machine simply stops answering legal queries. The rule now
             # is: the template may ADD or UPDATE a server, never remove one. A
             # removal is only ever an explicit operator action.
-            $dfRaw  = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_ROOT_API_KEY}', $dfKey)
+            # The template's openviking entry uses the SERVICE key placeholder (0.5.x), NOT the
+            # server's root key: /mcp refuses root keys with -32001. Replacing the wrong
+            # placeholder is a no-op that leaves a literal placeholder in the rendered file,
+            # which makes openviking return 401 and rolls back the entire MCP tool load.
+            $dfRaw  = (Get-Content $dfTemplate -Raw -Encoding UTF8).Replace('${OPENVIKING_SERVICE_KEY}', $dfSvcKey)
             $dfTpl  = $null
             try { $dfTpl = $dfRaw | ConvertFrom-Json } catch { $dfTpl = $null }
 
@@ -1193,6 +1265,25 @@ if (Test-Path $dfTemplate) {
                 foreach ($k in $allKeys) {
                     if ($templateServers.ContainsKey($k)) { $mergedServers[$k] = $templateServers[$k] }
                     else { $mergedServers[$k] = $existingServers[$k] }
+                }
+
+                # A server entry the OPERATOR added on this machine is the only
+                # thing the merge preserves today, and it only looks at `mcpServers`.
+                # Top-level keys the template does not mention - notably
+                # `mcpInterceptors`, which wires our argument-rewrite interceptor -
+                # would be dropped on every re-render, and the failure is silent:
+                # MCP tools just stop getting their arguments rewritten. Preserve
+                # any top-level key the template does not declare, same rule as
+                # for servers: the template may add or update, never remove.
+                if ($null -ne $dfExisting) {
+                    try { $oldTop = $dfExisting | ConvertFrom-Json } catch { $oldTop = $null }
+                    if ($null -ne $oldTop) {
+                        foreach ($prop in $oldTop.PSObject.Properties) {
+                            if ($prop.Name -ne 'mcpServers' -and -not ($dfTpl.PSObject.Properties.Name -contains $prop.Name)) {
+                                $dfTpl | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+                            }
+                        }
+                    }
                 }
 
                 $dfTpl.mcpServers = [pscustomobject]$mergedServers

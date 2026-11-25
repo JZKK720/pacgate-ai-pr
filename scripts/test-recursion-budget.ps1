@@ -167,7 +167,7 @@ for label, payload in [
         $text = ($out | Out-String)
         $ceiling = $expectedCeiling
         $defaultV = $expectedDefault
-        if ($text -match 'ui_1000=(\d+)')     { Assert-That ([int]$Matches[1] -eq $defaultV) "client-sent 1000 clamps to the server default $defaultV (got $($Matches[1]))" } else { Assert-That $false "probe did not report ui_1000 (output: $text)" }
+        if ($text -match 'ui_1000=(\d+)')     { Assert-That ([int]$Matches[1] -eq 1000) "client-sent 1000 is honoured as an explicit lower budget (no floor in 2.2.0; got $($Matches[1]))" } else { Assert-That $false "probe did not report ui_1000 (output: $text)" }
         if ($text -match 'over_ceiling=(\d+)') { Assert-That ([int]$Matches[1] -eq $ceiling) "client-sent 99999 clamps to the ceiling $ceiling (got $($Matches[1]))" } else { Assert-That $false 'probe did not report over_ceiling' }
         if ($text -match 'junk=(\d+)')         { Assert-That ([int]$Matches[1] -eq $defaultV) "junk value falls back to the default $defaultV (got $($Matches[1]))" } else { Assert-That $false 'probe did not report junk' }
         if ($text -match 'zero=(\d+)')         { Assert-That ([int]$Matches[1] -eq $defaultV) "zero falls back to the default $defaultV (got $($Matches[1]))" } else { Assert-That $false 'probe did not report zero' }

@@ -288,8 +288,11 @@ services:
       - ./patches/deer-flow-artifacts.py:/app/backend/app/gateway/routers/artifacts.py:ro
       # Pacgate: default multitask_strategy to "interrupt" so a new message
       # during a long agent run cancels the stale run instead of returning
-      # 409 Conflict to the user.
-      - ./patches/deer-flow-thread-runs.py:/app/backend/app/gateway/routers/thread_runs.py:ro
+      # 409 Conflict to the user. 2.2.0 moved RunCreateRequest (and the
+      # multitask_strategy default) into app/gateway/run_models.py, so the
+      # whole-module thread_runs.py fork is gone and only the model is
+      # patched here.
+      - ./patches/pacgate-run-models.py:/app/backend/app/gateway/run_models.py:ro
       # Pacgate: populate extension/modified/original_filename in the upload
       # response and enrich the upload listing with markdown metadata + original
       # filename, so clients can read/analyze converted docs reliably.
@@ -396,7 +399,11 @@ services:
       # token budgeting need re-measuring before the stable-prefix benefit is
       # claimed again; do not re-add a fork of that file without re-measuring.
       # Pacgate: normalize hyphens to underscores in the MCP server-name tool
-      # prefix (see compose.bundle.yaml for the rationale).
+      # prefix. The vendored langchain-mcp-adapters 0.2.2 has no hook for this;
+      # the file is byte-identical to the image's copy except for that hunk.
+      # NOT a place to carry anything else - every other delta belongs in an
+      # mcpInterceptors entry (see virtual_path_interceptor.py) so it survives
+      # an adapter upgrade instead of silently replacing the whole module.
       - ./patches/langchain-mcp-tools.py:/app/backend/.venv/lib/python3.12/site-packages/langchain_mcp_adapters/tools.py:ro
       # Pacgate (2026-10-11): raise MCP HTTP client timeouts. The MCP SDK
       # defaults (30s connect/write/pool, 300s read) killed long tool calls:
@@ -454,14 +461,12 @@ services:
       # into. If a seeded skill needs a durable change, the agent copies its
       # content into `custom/` via `skill_manage` - it does not mutate the seed.
       - ./deer-flow-skills:/app/backend/.deer-flow/skills/public:ro
-      # Pacgate 2026-10-30: MCP tool ARGUMENTS were never path-translated.
-      # `officecli_officecli({"command":"create /mnt/user-data/outputs/x.docx"})`
-      # failed with "Could not find a part of the path" because /mnt/user-data is
-      # a VIRTUAL path, not a mount. The bash command string and read_file's path
-      # were rewritten; MCP arguments were not. The same patch also restores
-      # `runtime` injection, without which the rewrite has no thread context, and
-      # fixes server attribution for hyphenated server keys.
-      - ./patches/deer-flow-mcp-args.py:/app/backend/packages/harness/deerflow/mcp/tools.py:ro
+      # Pacgate 2026-11-24: pacgate_deerflow_adapter.virtual_path_interceptor is
+      # mounted here (rather than imported from the PYTHONPATH=/app/adapters tree)
+      # so the copy the process actually loads is the one in this repo, byte for
+      # byte; scripts/test-adapter-mount-parity.ps1 enforces that. The package
+      # copy is pacgate-adapters/python/pacgate_deerflow_adapter/virtual_path_interceptor.py.
+      - ./patches/pacgate-adapter-virtual-path-interceptor.py:/app/adapters/pacgate_deerflow_adapter/virtual_path_interceptor.py:ro
       # Persist deer-flow's own SQLite state (threads/runs/admin account) across
       # container recreation. Without this, every `docker compose up -d` resets
       # the deer-flow admin account and chat history (first-boot each time).
@@ -683,11 +688,21 @@ services:
     restart: unless-stopped
 
   openviking:
-    image: ghcr.io/volcengine/openviking@sha256:46f9e34cd37238c28cbd9535033773d179006bdf7f3e528dd1c46567abce7701
+    image: ghcr.io/volcengine/openviking@sha256:121dc552743bb4cdf1db9782b9662dd0ef2cea128362f0d1a4b3e19ad9e07b38
     container_name: openviking
     ports:
       - "1933:1933"
     volumes:
+    # OpenViking 0.5.x memory extraction defaults to the `python` output protocol
+    # (the internal memory-SDK DSL). Measured 2026-11-25 on this stack: with the
+    # local nemotron-3.5-bolt extractor that protocol produces EMPTY operations -
+    # the session commits in ~2.5s, reports memory_extraction.skipped=0, and writes
+    # `memories_extracted: {}` with completion_tokens=5. Nothing errors, so the
+    # agent simply stops building long-term memory while recall keeps answering
+    # from the older store. Switching to the documented legacy `json` protocol
+    # yields 11,443 completion tokens and 2 memories for the same input (279s on
+    # a cold extractor, which is why the extraction budget must cover minutes).
+    # Configured via ov.conf.template -> OPENVIKING_CONF_CONTENT -> this service.
       - ./openviking:/app/.openviking
     environment:
       OPENVIKING_CONF_CONTENT: ${OPENVIKING_CONF_CONTENT}

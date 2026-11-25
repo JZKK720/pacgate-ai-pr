@@ -207,12 +207,21 @@ Assert-True ($nsBlock.Success -and
 #     INTO the wrong namespace to prove the consistency check above still
 #     detects it. There, the wrong value is the instrument.
 $wrongNs = @{}
+#   - 'deploy/deer-flow-src' is the gitignored upstream bytedance/deer-flow
+#     checkout, used only to audit our patches. Its ghcr.io/bytedance and
+#     ghcr.io/astral-sh references belong to upstream, are not ours to rewrite,
+#     and are absent from a clean clone. Flagging them is noise.
 $exempt = @('scripts/test-workflow-mutations.ps1')
+$excludedDirs = @('deploy/deer-flow-src')
 foreach ($dir in @('scripts', 'deploy')) {
     $dirPath = Join-Path $repoRoot $dir
     if (-not (Test-Path -LiteralPath $dirPath)) { continue }
     $files = @(Get-ChildItem -LiteralPath $dirPath -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in @('.ps1', '.psm1', '.py', '.sh') })
+        Where-Object { $_.Extension -in @('.ps1', '.psm1', '.py', '.sh') } |
+        Where-Object {
+            $relPath = $_.FullName.Substring($repoRoot.Length + 1).Replace('\', '/')
+            -not ($excludedDirs | Where-Object { $relPath.StartsWith($_ + '/') })
+        })
     foreach ($f in $files) {
         $rel = $f.FullName.Substring($repoRoot.Length + 1).Replace('\', '/')
         if ($exempt -contains $rel) { continue }
