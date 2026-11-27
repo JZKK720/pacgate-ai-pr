@@ -47,39 +47,15 @@ simply whatever shipped next. For all of them, the live sources are
 `deploy/AIPC-DEPLOYMENT-HANDBOOK.md`, `deploy/SETUP-AND-OPERATIONS.md`,
 `deploy/DEPLOYMENT-GUIDE.md`, and `plans/`.
 
-| Retired document | Kind | Superseded by |
-|---|---|---|
-| `ADOPTABILITY-AUDIT-2026-10-18.md` | audit | current `plans/` entries |
-| `AIPC-0.2.36-E2E-AUDIT.md`, `AIPC-0.2.37-AUDIT-AND-BENCHMARK.md` | audit | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` |
-| `AIPC-0.2.37-E2E-VERIFICATION.md` | verification | `deploy/client-bundle/install.ps1` carries the live steps |
-| `AIPC-HX370-CAPACITY-VERDICT-2026-10-20.md` | capacity | `LOCAL-MODEL-PICKER-74B.md` (kept) |
-| `AIPC-PERF-ANALYSIS-2026-10-17.md` | perf | `deploy/BENCHMARK-LOCAL-MODELS-2026-11-04.md` |
-| `AIPC1-SANITIZER-FINDINGS-AND-0.1.18.md` | findings | `deploy/sanitizer-agent/` source |
-| `AUDIT-2026-10-14-v0.1.29.md`, `AUDIT-2026-10-21-v0.1.34.md`, `AUDIT-2026-10-22-v0.2.1.md`, `AUDIT-2026-11-08-round-trips.md` | audit | later release notes |
-| `AUDIT-AND-BENCHMARK-2026-10-23-v0.2.3.md`, `AUDIT-CORRECTION-2026-10-15-document-generation.md` | audit | later release notes |
-| `AUDIT-E2E-2026-10-01.md`, `AUDIT-E2E-2026-10-06.md`, `E2E-AUDIT-2026-10-21-v0.1.34.md` | E2E audit | `scripts/run-all-checks.ps1` |
-| `AUDIT-OUTCOME-2026-10-15-generation-and-skills.md`, `AUDIT-TOOLS-2026-10-14.md` | audit | later release notes |
-| `ARCHITECTURE-DIAGRAMS.md` | diagram | `deploy/handbooks/diagrams/` |
-| `BENCHMARK-2026-10-25-0.2.6.md`, `BENCHMARK-2026-10-29-0.2.7.md` | benchmark | `deploy/BENCHMARK-LOCAL-MODELS-2026-11-04.md` |
-| `BENCHMARK-REPORT-2026-09-29.md`, `BENCHMARK-REPORT-2026-10-08-E2E-LOCAL.md`, `BENCHMARK-REPORT-2026-10-09-0.1.25.md`, `BENCHMARK-REPORT-2026-10-09-v0.1.25.md`, `BENCHMARK-REPORT-2026-10-10-REGRESSION-AUDIT.md`, `BENCHMARK-REPORT-2026-10-13-v0.1.27.md`, `BENCHMARK-REPORT-2026-10-13-v0.1.28.md`, `BENCHMARK-REPORT-2026-10-14-v0.1.29.md`, `BENCHMARK-REPORT-2026-10-15-0.1.31.md`, `BENCHMARK-REPORT-2026-10-21-v0.1.34.md` | benchmark | `deploy/BENCHMARK-LOCAL-MODELS-2026-11-04.md` |
-| `CLEAN-CLONE-PROOF-LOG.md` | log | `scripts/test-clean-clone.ps1` |
-| `CONCURRENCY-AND-VRAM-2026-10-21.md` | capacity | `deploy/LOCAL-MODEL-PICKER-74B.md` (kept) |
-| `COPILOT_CONTEXT.md` | context | `.github/copilot-instructions.md` |
-| `CROSS-STACK-AUTH-AND-SYNC-ANALYSIS-2026-10-19.md` | analysis | `deploy/client-bundle/compose.prod.yaml` |
-| `DEER-FLOW-UPSTREAM-DRIFT-ASSESSMENT-2026-09-21.md`, `DEERFLOW-LANE-OPTIMISATION-2026-10-21.md` | assessment | `deploy/client-bundle/patches/` |
-| `DEFECT-cjk-findin-panic-and-mcp-timeouts.md`, `DEFECT-initialize-bootstrap-token.md`, `DEFECT-ocr-weights-not-baked.md`, `DEFECT-pdf-read-pip-install-hang.md`, `DEFECT-redactor-blocks-on-public-entities.md`, `DEFECT-release-tag-provenance.md` | defect record | the code that fixed each one |
-| `DEV-MACHINE-CLEAR-ANALYSIS.md` | analysis | `scripts/audit-doc-freshness.ps1` |
-| `EXTERNAL-REPO-AUDIT-AND-STACK-ROUNDTRIP-2026-11-24.md` | audit | `deploy/EXTERNAL-REPO-*` live notes |
-| `HANDOFF-AIPC-GENERAL.md` | handoff | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` |
-| `HANDOFF-UPSTREAM-RELEASE-0.1.21.md`, `HANDOFF-UPSTREAM-SHORT.md`, `HANDOVER-AIPC-UPGRADE-0.1.31.md` | handoff | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` |
-| `HANDOFF-HX370-64GB-2026-10-20.md`, `AGENT-PROMPT-HX370.md` | handoff | `deploy/LOCAL-MODEL-PICKER-74B.md` (kept) |
-| `INCIDENT-2026-10-04-qm-sandbox-env-printed.md`, `INCIDENT-2026-10-17-cross-stack-credential-divergence.md` | incident | `scripts/test-cross-stack-credentials.ps1` |
-| `MODEL-REGRESSION-AND-CAPACITY-2026-10-21-v0.1.34.md`, `REGRESSION-REPORT-2026-10-14-v0.1.29.md`, `REGRESSION-FIXES-2026-11-04.md` | regression | `scripts/run-all-checks.ps1` |
-| `PLAN-CORPUS-AUDIT.md`, `PLANS.md` | planning | `plans/README.md` |
-| `PRODUCTION-READINESS-2026-10-14.md`, `RUNTIME-VALIDATION-2026-10-11-v0.1.27.md`, `SMOKE-FULL-STACK-2026-10-15-0.1.31.md` | readiness | `scripts/run-all-checks.ps1` |
-| `REINSTALL-AND-BENCHMARK-2026-10-19.md`, `RELEASE-PLAN-0.1.32.md`, `SYNC-2026-11-08-0.2.32.md` | release | `plans/` release history |
-| `RUNBOOK-clean-clone-proof.md`, `STACK-VERIFICATION-EVIDENCE-2026-09-22.md` | runbook | `scripts/test-clean-clone.ps1` |
-| `USER-MANUAL.md`, `USER-MANUAL-ZH.md`, `USER-MANUAL.pdf`, `USER-MANUAL-ZH.pdf` | manual source | `deploy/client-delivery/docs/USER-MANUAL*.pdf` (the shipped copies) |
+| Retired document | Kind |
+|---|---|
+| `AIPC-0.2.37-AUDIT-AND-BENCHMARK.md`, `AIPC-HX370-CAPACITY-VERDICT-2026-10-20.md` | aipc |
+| `AUDIT-2026-10-21-v0.1.34.md`, `AUDIT-2026-11-08-round-trips.md`, `AUDIT-AND-BENCHMARK-2026-10-23-v0.2.3.md`, `AUDIT-CORRECTION-2026-10-15-document-generation.md`, `AUDIT-E2E-2026-10-06.md`, `AUDIT-OUTCOME-2026-10-15-generation-and-skills.md`, `AUDIT-TOOLS-2026-10-14.md`, `E2E-AUDIT-2026-10-21-v0.1.34.md` | audit |
+| `BENCHMARK-2026-10-25-0.2.6.md`, `BENCHMARK-2026-10-29-0.2.7.md`, `BENCHMARK-REPORT-2026-09-29.md`, `BENCHMARK-REPORT-2026-10-08-E2E-LOCAL.md`, `BENCHMARK-REPORT-2026-10-09-0.1.25.md`, `BENCHMARK-REPORT-2026-10-09-v0.1.25.md`, `BENCHMARK-REPORT-2026-10-10-REGRESSION-AUDIT.md`, `BENCHMARK-REPORT-2026-10-13-v0.1.27.md`, `BENCHMARK-REPORT-2026-10-13-v0.1.28.md`, `BENCHMARK-REPORT-2026-10-14-v0.1.29.md`, `BENCHMARK-REPORT-2026-10-15-0.1.31.md`, `BENCHMARK-REPORT-2026-10-21-v0.1.34.md` | benchmark |
+| `DEFECT-cjk-findin-panic-and-mcp-timeouts.md`, `DEFECT-initialize-bootstrap-token.md`, `DEFECT-ocr-weights-not-baked.md`, `DEFECT-pdf-read-pip-install-hang.md`, `DEFECT-redactor-blocks-on-public-entities.md`, `DEFECT-release-tag-provenance.md` | defect |
+| `HANDOFF-AIPC-GENERAL.md`, `HANDOFF-UPSTREAM-RELEASE-0.1.21.md`, `HANDOFF-UPSTREAM-SHORT.md`, `HANDOVER-AIPC-UPGRADE-0.1.31.md` | handoff |
+| `ADOPTABILITY-AUDIT-2026-10-18.md`, `AUTH-ASSIGNED-USERS-DESIGN.md`, `CLEAN-CLONE-PROOF-LOG.md`, `CONCURRENCY-AND-VRAM-2026-10-21.md`, `DEV-MACHINE-CLEAR-ANALYSIS.md`, `EXTERNAL-REPO-AUDIT-AND-STACK-ROUNDTRIP-2026-11-24.md`, `MODEL-REGRESSION-AND-CAPACITY-2026-10-21-v0.1.34.md`, `MULTI-USER-ARCHITECTURE-PLAN.md`, `PRODUCTION-READINESS-2026-10-14.md`, `REINSTALL-AND-BENCHMARK-2026-10-19.md`, `RELEASE-PLAN-0.1.32.md`, `RUNTIME-VALIDATION-2026-10-11-v0.1.27.md`, `SMOKE-FULL-STACK-2026-10-15-0.1.31.md` | record |
+| `REGRESSION-REPORT-2026-10-14-v0.1.29.md` | regression |
 
 ### Note on three documents this README previously kept
 
