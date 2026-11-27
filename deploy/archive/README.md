@@ -33,6 +33,64 @@ The two handoff prompts were already flagged as wrong by the repo's own
 `deploy/PLAN-CORPUS-AUDIT.md`: they pointed AIPC #2 at the layer branch and the
 pre-`jzkk720` namespace.
 
+## Sweep 2026-11-27 — point-in-time records
+
+The 2026-09-27 sweep retired documents that were *misleading*. This sweep used a
+narrower bar: **documents with zero inbound references from any live script,
+gate, workflow, compose file, or source comment.** Everything below is a dated
+audit, benchmark, handoff, incident, or regression record — historically useful,
+never an instruction. Nothing here is cited by tooling; that was verified with a
+full-tree reference index before each move.
+
+Dated records are grouped rather than tabulated because their "superseded by" is
+simply whatever shipped next. For all of them, the live sources are
+`deploy/AIPC-DEPLOYMENT-HANDBOOK.md`, `deploy/SETUP-AND-OPERATIONS.md`,
+`deploy/DEPLOYMENT-GUIDE.md`, and `plans/`.
+
+| Retired document | Kind | Superseded by |
+|---|---|---|
+| `ADOPTABILITY-AUDIT-2026-10-18.md` | audit | current `plans/` entries |
+| `AIPC-0.2.36-E2E-AUDIT.md`, `AIPC-0.2.37-AUDIT-AND-BENCHMARK.md` | audit | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` |
+| `AIPC-0.2.37-E2E-VERIFICATION.md` | verification | `deploy/client-bundle/install.ps1` carries the live steps |
+| `AIPC-HX370-CAPACITY-VERDICT-2026-10-20.md` | capacity | `LOCAL-MODEL-PICKER-74B.md` (kept) |
+| `AIPC-PERF-ANALYSIS-2026-10-17.md` | perf | `deploy/BENCHMARK-LOCAL-MODELS-2026-11-04.md` |
+| `AIPC1-SANITIZER-FINDINGS-AND-0.1.18.md` | findings | `deploy/sanitizer-agent/` source |
+| `AUDIT-2026-10-14-v0.1.29.md`, `AUDIT-2026-10-21-v0.1.34.md`, `AUDIT-2026-10-22-v0.2.1.md`, `AUDIT-2026-11-08-round-trips.md` | audit | later release notes |
+| `AUDIT-AND-BENCHMARK-2026-10-23-v0.2.3.md`, `AUDIT-CORRECTION-2026-10-15-document-generation.md` | audit | later release notes |
+| `AUDIT-E2E-2026-10-01.md`, `AUDIT-E2E-2026-10-06.md`, `E2E-AUDIT-2026-10-21-v0.1.34.md` | E2E audit | `scripts/run-all-checks.ps1` |
+| `AUDIT-OUTCOME-2026-10-15-generation-and-skills.md`, `AUDIT-TOOLS-2026-10-14.md` | audit | later release notes |
+| `ARCHITECTURE-DIAGRAMS.md` | diagram | `deploy/handbooks/diagrams/` |
+| `BENCHMARK-2026-10-25-0.2.6.md`, `BENCHMARK-2026-10-29-0.2.7.md` | benchmark | `deploy/BENCHMARK-LOCAL-MODELS-2026-11-04.md` |
+| `BENCHMARK-REPORT-2026-09-29.md`, `BENCHMARK-REPORT-2026-10-08-E2E-LOCAL.md`, `BENCHMARK-REPORT-2026-10-09-0.1.25.md`, `BENCHMARK-REPORT-2026-10-09-v0.1.25.md`, `BENCHMARK-REPORT-2026-10-10-REGRESSION-AUDIT.md`, `BENCHMARK-REPORT-2026-10-13-v0.1.27.md`, `BENCHMARK-REPORT-2026-10-13-v0.1.28.md`, `BENCHMARK-REPORT-2026-10-14-v0.1.29.md`, `BENCHMARK-REPORT-2026-10-15-0.1.31.md`, `BENCHMARK-REPORT-2026-10-21-v0.1.34.md` | benchmark | `deploy/BENCHMARK-LOCAL-MODELS-2026-11-04.md` |
+| `CLEAN-CLONE-PROOF-LOG.md` | log | `scripts/test-clean-clone.ps1` |
+| `CONCURRENCY-AND-VRAM-2026-10-21.md` | capacity | `deploy/LOCAL-MODEL-PICKER-74B.md` (kept) |
+| `COPILOT_CONTEXT.md` | context | `.github/copilot-instructions.md` |
+| `CROSS-STACK-AUTH-AND-SYNC-ANALYSIS-2026-10-19.md` | analysis | `deploy/client-bundle/compose.prod.yaml` |
+| `DEER-FLOW-UPSTREAM-DRIFT-ASSESSMENT-2026-09-21.md`, `DEERFLOW-LANE-OPTIMISATION-2026-10-21.md` | assessment | `deploy/client-bundle/patches/` |
+| `DEFECT-cjk-findin-panic-and-mcp-timeouts.md`, `DEFECT-initialize-bootstrap-token.md`, `DEFECT-ocr-weights-not-baked.md`, `DEFECT-pdf-read-pip-install-hang.md`, `DEFECT-redactor-blocks-on-public-entities.md`, `DEFECT-release-tag-provenance.md` | defect record | the code that fixed each one |
+| `DEV-MACHINE-CLEAR-ANALYSIS.md` | analysis | `scripts/audit-doc-freshness.ps1` |
+| `EXTERNAL-REPO-AUDIT-AND-STACK-ROUNDTRIP-2026-11-24.md` | audit | `deploy/EXTERNAL-REPO-*` live notes |
+| `HANDOFF-AIPC-GENERAL.md` | handoff | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` |
+| `HANDOFF-UPSTREAM-RELEASE-0.1.21.md`, `HANDOFF-UPSTREAM-SHORT.md`, `HANDOVER-AIPC-UPGRADE-0.1.31.md` | handoff | `deploy/AIPC-DEPLOYMENT-HANDBOOK.md` |
+| `HANDOFF-HX370-64GB-2026-10-20.md`, `AGENT-PROMPT-HX370.md` | handoff | `deploy/LOCAL-MODEL-PICKER-74B.md` (kept) |
+| `INCIDENT-2026-10-04-qm-sandbox-env-printed.md`, `INCIDENT-2026-10-17-cross-stack-credential-divergence.md` | incident | `scripts/test-cross-stack-credentials.ps1` |
+| `MODEL-REGRESSION-AND-CAPACITY-2026-10-21-v0.1.34.md`, `REGRESSION-REPORT-2026-10-14-v0.1.29.md`, `REGRESSION-FIXES-2026-11-04.md` | regression | `scripts/run-all-checks.ps1` |
+| `PLAN-CORPUS-AUDIT.md`, `PLANS.md` | planning | `plans/README.md` |
+| `PRODUCTION-READINESS-2026-10-14.md`, `RUNTIME-VALIDATION-2026-10-11-v0.1.27.md`, `SMOKE-FULL-STACK-2026-10-15-0.1.31.md` | readiness | `scripts/run-all-checks.ps1` |
+| `REINSTALL-AND-BENCHMARK-2026-10-19.md`, `RELEASE-PLAN-0.1.32.md`, `SYNC-2026-11-08-0.2.32.md` | release | `plans/` release history |
+| `RUNBOOK-clean-clone-proof.md`, `STACK-VERIFICATION-EVIDENCE-2026-09-22.md` | runbook | `scripts/test-clean-clone.ps1` |
+| `USER-MANUAL.md`, `USER-MANUAL-ZH.md`, `USER-MANUAL.pdf`, `USER-MANUAL-ZH.pdf` | manual source | `deploy/client-delivery/docs/USER-MANUAL*.pdf` (the shipped copies) |
+
+### Note on three documents this README previously kept
+
+`AUTH-ASSIGNED-USERS-DESIGN.md`, `MULTI-USER-ARCHITECTURE-PLAN.md`,
+`QM-BRINGUP-RUNBOOK.md` and `QM-BRINGUP-AUDIT-2026-09-21.md` were recorded in the
+previous revision of this README as "candidates for a future sweep" that were
+deliberately **not** retired, on the grounds that they are not misleading. That
+judgement still holds; they are retired here only because this sweep's bar was
+"zero inbound references", which they also meet. `auth.rs` and `plans/` remain the
+live source of truth for assigned-users behaviour and multi-user architecture.
+
 ## Graph artifacts
 
 `graph.html`, `GRAPH_REPORT.md`, `graphify-graph.json` and
@@ -59,7 +117,23 @@ rediscovered:
   `plans/008-refine-user-manuals-bilingual-mermaid-pdf.md` documents with
   **root-relative** invocations and line-number citations, so moving them would
   invalidate that plan. Tidier tree, real cost: not worth it.
+- `HANDOFF-SYNC-TO-ORIGIN-MAIN.md` — **deliberately kept by the 2026-11-27 sweep
+  too.** It is linked from `docs/superpowers/plans/2026-11-08-push-local-commits.md`
+  and cited by `scripts/audit-post-deploy.ps1`, and
+  `plans/2026-11-14-cut-0.2.35-to-close-the-release-gap.md` instructs that its
+  "one thing 0.2.34 does not contain" section be **rewritten, not deleted**.
+  Archiving it would dangle a link and destroy a document a plan still owns.
+- `LOCAL-MODEL-PICKER-74B.md` — kept for the same reason: linked from three
+  `docs/superpowers/` documents and cited by `scripts/regen-local-model-override.py`
+  as the justification for the local-model override it generates.
+- `DEFECT-summarization-treadmill.md` — kept: the 74B threshold reasoning is cited
+  by `docs/superpowers/decisions/2026-11-08-billion-context-evaluation.md`.
+- `DEFECT-ps51-cjk-literal-parse-failure.md` — kept: the ASCII-only rule it explains
+  is cited by three comment blocks in `scripts/detect-literal-credentials.ps1`, and
+  the rule is live in that script's regexes.
 - `AUTH-ASSIGNED-USERS-DESIGN.md`, `MULTI-USER-ARCHITECTURE-PLAN.md`,
-  `QM-BRINGUP-RUNBOOK.md`, `QM-BRINGUP-AUDIT-2026-09-21.md` — no inbound links,
-  so they are *candidates* for a future sweep, but they describe architecture
-  that has not changed. They are not misleading, which was this sweep's bar.
+  `QM-BRINGUP-RUNBOOK.md`, `QM-BRINGUP-AUDIT-2026-09-21.md` — **retired by the
+  2026-11-27 sweep above.** They were kept by the 2026-09-27 sweep on the grounds
+  that they are not misleading, which is still true; the newer sweep used a
+  different bar (zero inbound references), which they also met. See the note in
+  the 2026-11-27 section.
