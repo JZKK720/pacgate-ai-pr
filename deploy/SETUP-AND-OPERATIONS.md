@@ -59,7 +59,7 @@ graph TB
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
-# Namespace/version corrected 2026-09-22: publishing is ghcr.io/jzkk720 at 0.1.19.
+# Namespace/version corrected 2026-09-22: publishing is ghcr.io/jzkk720 at 0.3.0.
 # The previous form used pacgate-ai at 0.1.3, and pushed the frontend as 0.1.0 -
 # a tag that was never created, so that push could only fail.
 

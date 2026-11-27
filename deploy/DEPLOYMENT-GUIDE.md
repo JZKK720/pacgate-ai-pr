@@ -5,7 +5,7 @@
 
 > **VERIFIED AGAINST `0.3.0` (2026-10-11).** The pins in this guide were reset
 > from the 0.1.3 era, when the namespace was `ghcr.io/pacgate-ai/*`. The release
-> authority is now **`ghcr.io/jzkk720/*`** and every pin is `0.1.19`, derived
+> authority is now **`ghcr.io/jzkk720/*`** and every pin is `0.3.0`, derived
 > from `pacgate-ai/Cargo.toml` rather than hand-typed. Confirm the current value
 > before using this guide; `scripts/bump-release-version.ps1` keeps the four pin
 > surfaces consistent.
@@ -118,7 +118,7 @@ namespace.
 echo $env:GHCR_TOKEN | docker login ghcr.io -u pacgate-ai --password-stdin
 
 # Push the images (qm runs via docker compose, not as a Docker image)
-# Version comes from pacgate-ai/Cargo.toml (currently 0.1.19) - do not hand-type it;
+# Version comes from pacgate-ai/Cargo.toml (currently 0.3.0) - do not hand-type it;
 # scripts/bump-release-version.ps1 updates all four pin surfaces together.
 docker push ghcr.io/jzkk720/pacgate-api:<version>
 docker push ghcr.io/jzkk720/pacgate-mcp:<version>
@@ -494,7 +494,7 @@ cd C:\pacgate-ai-pr\deploy\client-bundle
 #     repo - qm runs from published upstream images via qm.config.jsonc.)
 #
 # 2. Rebuild + push
-#    (use the version from pacgate-ai/Cargo.toml - currently 0.1.19 - rather than
+#    (use the version from pacgate-ai/Cargo.toml - currently 0.3.0 - rather than
 #     hand-typing it; scripts/bump-release-version.ps1 derives it from the pins)
 docker build -t ghcr.io/jzkk720/deer-flow-pacgate:<version> -f deploy/deer-flow-pacgate/Dockerfile .
 docker push ghcr.io/jzkk720/deer-flow-pacgate:<version>

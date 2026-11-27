@@ -1,17 +1,28 @@
-# qm 0.1.19 deployment - the two-service topology.
+# qm 0.1.20 deployment - the two-service topology.
 #
-# 2026-11-24: bumped 0.1.18 -> 0.1.19. 0.1.19 is a patch, not a re-architecture:
-# 151 of 153 dist files are byte-identical to 0.1.18. The only source change is the
-# removal of PI_DETECT_MODEL from the Fly.io env allowlist (services.js); the local
-# Docker path does not consume it. All three published digests moved:
-#   core 988ce509... -> fd3482d2...   egress-proxy d2c7458b... -> 008359925c54
-#   sandbox-base 56eae686... -> 4ddeeb8e...
-# `npx qm check` passes against our qm.config.jsonc on both pins, and
-# scripts/test-qm-upstream-drift.ps1 reports current. PI_DETECT_MODEL is left in the
-# config: it is inert upstream, and deleting it here would change more than the bump.
+# 2026-11-27: bumped 0.1.19 -> 0.1.20 (upstream dist-tag `next`; `latest` is still
+# 0.1.18). 0.1.20 is a FEATURE release, not a patch - 179 files vs 176, with a new
+# dist/src/frontmatter module and changed sandbox-layer, docker backend, aws backend
+# and cli. The material change is SKILL FRONTMATTER PARSING: the inline hand-rolled
+# YAML reader (stripSkillQuotes / skillIndent / a literal-block accumulator) was
+# replaced by parseFrontmatter() backed by a new `yaml` dependency, which also adds
+# FrontmatterFenceError. We ship 30+ skills under deer-flow-skills, so this release
+# is about how OUR skill files are read, not a cosmetic bump.
+#
+# Digests moved (all three, as in every qm release):
+#   core           fd3482d2... -> a64d18cc...
+#   sandbox-base   4ddeeb8e... -> 7c5d764f...
+# The registry publishes both as tags named `sha256-<hex>`; the bare `sha256:<hex>`
+# reference resolves only when the request carries an image-manifest Accept type,
+# which is why a naive HEAD without Accept reports a false 404.
+#
+# Previous bump (2026-11-24) for the record: 0.1.18 -> 0.1.19 was a patch (151 of 153
+# dist files identical), removing PI_DETECT_MODEL from the Fly.io env allowlist. That
+# key is left in our config: it is inert upstream and removing it would widen the diff.
 #
 # WHY THIS FILE CHANGED SHAPE (2026-11-23)
 #
+# 0.1.18 was a re-architecture, not a version bump: the topology collapsed 5 services to 2.
 # 0.1.18 was a re-architecture, not a version bump: the topology collapsed 5 services to 2.
 # "web-ui", "portal" and "admin" are no longer services - core now serves the public sign-in
 # front door, the browser UI and the operator settings at /settings. "auth" survives as the
@@ -42,7 +53,7 @@ name: qm-pacgate
 
 services:
   core:
-    image: ghcr.io/yc-software/qm/core@sha256:fd3482d26dafb5e70801561968a91fad1022e9940994c2e9cd083e7008530c6f
+    image: ghcr.io/yc-software/qm/core@sha256:a64d18cc72fa8d0f7af295e5e502a62e5ed5a406f2deee59351b4a51f76ac75b
     container_name: qm-pacgate-core
     user: node
     # Docker access for the socket mount: on Docker Desktop the socket is root:root

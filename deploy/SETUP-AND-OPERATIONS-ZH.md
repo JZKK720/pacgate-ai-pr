@@ -59,7 +59,7 @@ graph TB
 ```powershell
 cd c:\Users\cubecloud-io\github-pr\pacgate-ai-pr
 
-# 命名空间/版本于 2026-09-22 更正：发布位置为 ghcr.io/jzkk720，版本 0.1.19。
+# 命名空间/版本于 2026-09-22 更正：发布位置为 ghcr.io/jzkk720，版本 0.3.0。
 # 旧写法使用 pacgate-ai 的 0.1.3，且前端推送的 0.1.0 标签从未创建，该推送只能失败。
 
 # 构建 pacgate-api（Rust 1.94 多阶段）
