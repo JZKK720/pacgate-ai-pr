@@ -429,7 +429,14 @@ if ($commentedModels.Count -gt 0) {
 Write-Host ''
 
 # ---------------------------------------------------------------------------
-# The SHIPPING OpenViking extractor must fit the smallest supported card.
+# The SHIPPING OpenViking extractor must fit the reference client card (16 GB).
+#
+# It is deliberately NOT evaluated against a caller-supplied smaller budget.
+# install.ps1 runs this script at the host's real VRAM to decide whether to STOP, and it
+# parses the models[0] OVER_CAP line. A second, unrelated FAIL at a tiny synthetic budget
+# (4 GB in test-model-default-capacity) made the script exit 1 before B0 could report, so
+# the installer printed "install is continuing" where the gate expected a stop. Measured
+# 2026-11-28. The shipping check is about the BUNDLE, so it rides the reference card.
 #
 # WHY (2026-11-25): the extraction model is pinned in ov.conf.template -> vlm.model,
 # which is neither a tier roster entry nor a compose default, so nothing guarded
@@ -444,7 +451,9 @@ Write-Host ''
 # ignores: the question here is "what does the bundle ship", not "what is this dev
 # box running".
 $ovTplPath = Join-Path $repoRoot 'deploy/client-bundle/openviking/ov.conf.template'
-if (-not (Test-Path $ovTplPath)) {
+if ($AipcVramGB -lt 16) {
+    Write-Host "  [ .. ] shipping Ov extractor checked against the 16 GB reference card, not this $AipcVramGB GB probe" -ForegroundColor DarkGray
+} elseif (-not (Test-Path $ovTplPath)) {
     Write-Warn 'ov.conf.template not found - shipping extractor unchecked'
 } else {
     $ovTpl = Get-Content -LiteralPath $ovTplPath -Raw
