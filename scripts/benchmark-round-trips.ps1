@@ -21,6 +21,10 @@ WHAT IT MEASURES, cheapest first
     L3  document round trip  upload -> sanitize -> download (the sanitizer lane)
     L4  agent round trip     /runs/wait on a tool-requiring prompt (the slow one)
 
+    L3 was LISTED in this header from the first version and never implemented, so
+    every report showed L0/L1/L2 and read as if the sanitizer lane had been measured.
+    Implemented 2026-11-28; it authenticates to pacgate-api with its own bearer token
+    (the L1 session is a deer-flow cookie jar and does not authorise the pacgate API).
     L4 is opt-in (-IncludeAgent) because on a box where the model cannot load it takes
     the full timeout to fail, which is not a measurement of anything.
 
@@ -57,6 +61,9 @@ $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 . (Join-Path $PSScriptRoot 'lib/QmEndpoint.ps1')
+# L3 builds its PDF fixture inside the release ocr-service image (it is the container
+# with PIL), so it needs the same release-image helper the fixture-building gates use.
+. (Join-Path $PSScriptRoot 'lib/Release-ImageState.ps1')
 $QmUrl = Get-QmEndpoint -RepoRoot $repoRoot -QmUrl $QmUrl
 
 $results = [System.Collections.Generic.List[object]]::new()
@@ -275,6 +282,112 @@ Measure-Probe 'L2' 'mcp handshake + tools/list (cold)' {
         throw ("mcp handshake did not complete: " + (($raw -replace '\s+', ' ').Trim()))
     }
     @{ Note = "$($m.Groups[1].Value) tools" }
+}
+Write-Host ''
+
+# ── L3: the document round trip. The lane this script ADVERTISED but never had. ──
+#
+# The header listed L3 ("upload -> sanitize -> download") from the first version and no
+# probe was ever written, so the report showed L0/L1/L2 and any reader would assume the
+# sanitizer lane had been measured. It had not. This measures the real path.
+#
+# pacgate-api needs its OWN bearer token here: the L1 session is a deer-flow cookie jar
+# and does not authorise the pacgate API. Same two sources test-legal-journey.ps1 uses -
+# PACGATE_API_EMAIL / PACGATE_API_PASSWORD from the bundle .env.
+$l3Token = $null
+$envFile = Join-Path $repoRoot 'deploy/client-bundle/.env'
+if (Test-Path $envFile) {
+    foreach ($line in Get-Content $envFile) {
+        if ($line -match '^PACGATE_API_EMAIL=(.+)$')    { $script:apiEmail = $Matches[1].Trim() }
+        if ($line -match '^PACGATE_API_PASSWORD=(.+)$') { $script:apiPassword = $Matches[1].Trim() }
+    }
+}
+if ($script:apiEmail -and $script:apiPassword) {
+    $loginBody = @{ email = $script:apiEmail; password = $script:apiPassword } | ConvertTo-Json
+    foreach ($lp in @("$NginxUrl/pacgate/api/auth/login", "$NginxUrl/pacgate/auth/login")) {
+        try {
+            $lr = Invoke-RestMethod -Uri $lp -Method Post -ContentType 'application/json' -Body $loginBody -TimeoutSec 30
+            if ($lr.token) { $l3Token = $lr.token; break }
+        } catch { }
+    }
+}
+
+if (-not $l3Token) {
+    Write-Host 'L3  document round trip - SKIPPED (no pacgate-api credential in .env)' -ForegroundColor Yellow
+} else {
+    Write-Host 'L3  document round trip (upload -> sanitize -> download)' -ForegroundColor Cyan
+    $l3H = @{ Authorization = "Bearer $l3Token" }
+    $l3Matter = $null
+    $l3Doc = $null
+    try {
+        $mkBody = @{ name = "bench-l3-$([guid]::NewGuid().ToString('N').Substring(0,8))" } | ConvertTo-Json
+        $mk = Invoke-RestMethod -Uri "$NginxUrl/pacgate/api/matters" -Method Post -Headers $l3H -ContentType 'application/json' -Body $mkBody -TimeoutSec 60
+        $l3Matter = $mk.id
+    } catch {
+        Write-Host '  [skip] could not create a matter for the document lane' -ForegroundColor Yellow
+    }
+
+    if ($l3Matter) {
+        $script:OcrImage = Get-ReleaseOcrImage
+        if (-not $script:OcrImage) {
+            Write-Host '  [skip] cannot derive the release ocr-service image for the PDF fixture' -ForegroundColor Yellow
+        } else {
+            Measure-Probe 'L3' 'document upload -> sanitize -> download' {
+                # A born-digital PDF (a .txt would route to OCR instead), built in the OCR
+                # image because that is the container with PIL. The generator is written to
+                # a FILE and mounted rather than passed as -c: nested quoting of a python
+                # one-liner inside a PowerShell here-string is what made the first attempt
+                # at this lane unparseable.
+                $fxDir = Join-Path ([System.IO.Path]::GetTempPath()) ("bench-l3-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+                New-Item -ItemType Directory -Path $fxDir -Force | Out-Null
+                $gen = Join-Path $fxDir 'gen.py'
+                $pdf = Join-Path $fxDir 'bench.pdf'
+                $py = 'from PIL import Image, ImageDraw, ImageFont' + "`n" +
+                      'img = Image.new("RGB", (900, 300), "white")' + "`n" +
+                      'd = ImageDraw.Draw(img)' + "`n" +
+                      'f = ImageFont.load_default()' + "`n" +
+                      'd.text((16, 100), "11010519491231002X", fill="black", font=f)' + "`n" +
+                      'd.text((16, 150), "13812345678", fill="black", font=f)' + "`n" +
+                      'img.save("/fix/bench.pdf", "PDF", resolution=100)' + "`n"
+                [System.IO.File]::WriteAllText($gen, $py, (New-Object System.Text.UTF8Encoding($false)))
+
+                docker run --rm -v "${fxDir}:/fix" --entrypoint python3 $script:OcrImage /fix/gen.py 2>&1 | Out-Null
+                if (-not (Test-Path $pdf)) { throw 'could not build the PDF fixture in the OCR image' }
+
+                $bytes = [System.IO.File]::ReadAllBytes($pdf)
+                $bnd = '----bench' + [guid]::NewGuid().ToString('N').Substring(0,10)
+                $ms = New-Object System.IO.MemoryStream
+                $bw = New-Object System.IO.BinaryWriter($ms)
+                $head = '--' + $bnd + "`r`n" + 'Content-Disposition: form-data; name="matter_id"' + "`r`n`r`n" + $l3Matter + "`r`n" +
+                        '--' + $bnd + "`r`n" + 'Content-Disposition: form-data; name="file"; filename="bench.pdf"' + "`r`n" +
+                        'Content-Type: application/pdf' + "`r`n`r`n"
+                $bw.Write([System.Text.Encoding]::ASCII.GetBytes($head))
+                $bw.Write($bytes)
+                $bw.Write([System.Text.Encoding]::ASCII.GetBytes("`r`n--$bnd--`r`n"))
+                $bw.Flush()
+                try {
+                    $up = Invoke-RestMethod -Uri "$NginxUrl/pacgate/api/documents" -Method Post -Headers $l3H -ContentType "multipart/form-data; boundary=$bnd" -Body $ms.ToArray() -TimeoutSec 120
+                    $l3Doc = $up.id
+                } finally { Remove-Item $fxDir -Recurse -Force -ErrorAction SilentlyContinue }
+                if (-not $l3Doc) { throw 'upload returned no document id' }
+
+                # Sanitize is where the redactor runs; the verdict is the contract.
+                $sxUrl = "$NginxUrl/pacgate/api/documents/$l3Doc/sanitize"
+                $job = Invoke-RestMethod -Uri $sxUrl -Method Post -Headers $l3H -ContentType 'application/json' -Body '{"data_level":"T3"}' -TimeoutSec 300
+                if ($job.verdict -ne 'pass') { throw "sanitize verdict was '$($job.verdict)'" }
+
+                # The download is the egress gate: it must open only after sanitize.
+                $dlUrl = "$NginxUrl/pacgate/api/documents/$l3Doc/download"
+                $dl = Invoke-WebRequest -Uri $dlUrl -Headers $l3H -UseBasicParsing -TimeoutSec 120
+                if ($dl.StatusCode -ne 200) { throw "download returned $($dl.StatusCode)" }
+                @{ Note = "redactions=$($job.redaction_count) bytes=$($dl.RawContentLength)" }
+            }
+
+            # Clean up, so a benchmark does not accumulate matters on the stack it measures.
+            try { Invoke-RestMethod -Uri "$NginxUrl/pacgate/api/documents/$l3Doc" -Method Delete -Headers $l3H -TimeoutSec 60 | Out-Null } catch { }
+            try { Invoke-RestMethod -Uri "$NginxUrl/pacgate/api/matters/$l3Matter" -Method Delete -Headers $l3H -TimeoutSec 60 | Out-Null } catch { }
+        }
+    }
 }
 Write-Host ''
 

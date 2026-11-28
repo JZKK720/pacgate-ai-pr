@@ -29,7 +29,14 @@ param(
     # one lived here until 2026-10-15 and put a live password in a public repo.
     [string]$DfEmail = 'admin@pacgate-law.com',
     [string]$DfPassword = '',
-    [string]$DfModel = 'gemma4-12b-local',
+    # 2026-11-28: this defaulted to 'gemma4-12b-local', a model RETIRED from the roster
+    # (gemma4:12b was replaced by nemotron-3.5-bolt on 2026-11-04 and the name no longer
+    # exists in deer-flow-config.yaml at all). The lane therefore requested a model that
+    # is not there and reported "ERR 400" on every run, which reads as a broken
+    # generation lane rather than a stale benchmark default. Now the roster's actual
+    # local default. A name absent from the roster is reported as such below, so the
+    # next retirement surfaces as a clear message instead of a bare ERR.
+    [string]$DfModel = 'nemotron-bolt-7b-local',
     # Emit pure markdown (for > file). Without it, prints a human summary too.
     [switch]$Markdown
 )
@@ -208,7 +215,7 @@ Write-Output '> concurrent chat starves embeddings on a single runner slot.'
 Write-Output ''
 Write-Output '## 1. HTTP latency through nginx (the client-facing edge)'
 Write-Output ''
-Write-Output '| Endpoint | Status | Min ms | Max ms | Samples |'
+Write-Output '| Endpoint | Status | Min ms | Max ms | min / median / max (ms), per sample |'
 Write-Output '| --- | --- | --- | --- | --- |'
 foreach ($r in $rows) { Write-Output "| $($r.Label) | $($r.Status) | $($r.Min) | $($r.Max) | $($r.All) |" }
 Write-Output ''
