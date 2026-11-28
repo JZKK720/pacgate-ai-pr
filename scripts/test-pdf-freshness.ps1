@@ -172,7 +172,10 @@ else {
             Fail "$($s.Pdf) is STALE - $($s.Src) has an uncommitted edit newer than the render (working-tree mtime)"
         }
     }
-    Write-Host '        Re-render:  .venv\Scripts\python.exe safe_markdown_to_pdf.py <src.md> <out.pdf>' -ForegroundColor Gray
+    Write-Host '        Re-render handbooks:  .venv\Scripts\python.exe deploy/handbooks/render_handbooks.py --name aipc' -ForegroundColor Gray
+    Write-Host '        (do NOT use safe_markdown_to_pdf.py for handbooks - measured 2026-11-28 it' -ForegroundColor Gray
+    Write-Host '         produced 17 pages with ZERO embedded fonts versus 24 with 6, so a Chinese' -ForegroundColor Gray
+    Write-Host '         document loses its glyphs in a client viewer.)' -ForegroundColor Gray
 }
 
 # ---------------------------------------------------------------------------
