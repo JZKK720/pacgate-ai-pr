@@ -71,6 +71,12 @@ Write-Host ("         db {0:N0} MB   wal {1:N0} MB" -f ($dbBytes/1MB), $walMB) -
 
 if ($walMB -gt $WalWarnMB) {
     Fail ("the write-ahead log is $walMB MB (> $WalWarnMB MB): checkpointing is not completing. A WAL this large is how 'database disk image is malformed' starts. Run scripts/repair-deer-flow-checkpoints.ps1 with deer-flow STOPPED.")
+    # Stop here. The remaining probes diagnose *why writes fail*, and a blocking WAL
+    # is already the answer - running them adds noise (and, if the write probe starts
+    # failing, a second symptom pointing at the same cause).
+    Write-Host ''
+    Write-Host ("RESULT: {0} passed, {1} FAILED - the WAL is the failure, stopping before the write probe" -f $script:passed, $script:failed) -ForegroundColor Red
+    exit 1
 }
 else {
     Pass "the WAL is within bounds ($walMB MB)"
@@ -104,7 +110,14 @@ $null = & docker exec $Container rm -f /tmp/df-checkpoint-probe.py 2>&1
 $info = $null
 try { $info = $raw | ConvertFrom-Json } catch { }
 if ($null -eq $info) {
-    Write-Host "  exit 2 - could not read the store: $raw" -ForegroundColor Yellow
+    # Empty output is its own diagnosis: the container went away between the size
+    # check and this probe (or exec failed outright), so there is nothing to quote.
+    # Printing "could not read the store: " with a blank reason sends the operator
+    # looking for a database problem that is actually a container problem.
+    $why = if ([string]::IsNullOrWhiteSpace($raw)) {
+        "the probe printed nothing at all - did '$Container' stop or get restarted mid-run? (check: docker ps -a --filter name=^$Container`$)"
+    } else { $raw }
+    Write-Host "  exit 2 - could not read the store: $why" -ForegroundColor Yellow
     exit 2
 }
 if ($info.error) {

@@ -73,31 +73,50 @@ $state = (& docker inspect $Container --format '{{.State.Running}}' 2>$null | Ou
 if ($state -eq 'true') { Die "$Container is still running - cannot checkpoint safely." }
 Ok "$Container is stopped"
 
-$exists = (& docker exec $Container sh -c "test -f $db && echo yes" 2>$null | Out-String).Trim()
-if ($exists -ne 'yes') {
-    # A stopped container can still be inspected through a throwaway one.
-    $exists = (& docker run --rm --volumes-from $Container --entrypoint sh $Image -c "test -f $db && echo yes" 2>$null | Out-String).Trim()
-}
+$exists = (& docker run --rm --volumes-from $Container --entrypoint sh $Image -c "test -f $db && echo yes" 2>$null | Out-String).Trim()
 if ($exists -ne 'yes') { Write-Host "  exit 2 - $db not found" -ForegroundColor Yellow; exit 2 }
 Ok "found $db"
 
 # ── 2. back up before touching anything ─────────────────────────────────────
 # The backup is the rollback. It is written BEFORE the checkpoint so a failed repair
 # can always be undone, and it is verified so a truncated copy is not mistaken for one.
+#
+# Every measurement here runs in a THROWAWAY container over `--volumes-from`. It cannot
+# use `docker exec`: step 1 guarantees the app is stopped, and `docker exec` against a
+# stopped container fails, returns nothing, and the empty string then casts to 0. The
+# first version of this script did exactly that and reported "backup size 2777534464
+# != source 0"; the copy was complete and the source measurement was the lie.
 Step '2. Backup db + wal, and verify it'
 New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
-$null = & docker run --rm --volumes-from $Container --entrypoint sh $Image -c "cp $db /tmp/ck.db && (cp $db-wal /tmp/ck.wal 2>/dev/null || true)" 2>&1
-$tmpName = (Split-Path $BackupDir -Leaf)
-$null = & docker cp "${Container}:$db" (Join-Path $BackupDir 'checkpoints.db') 2>&1
-$walExists = (& docker exec $Container sh -c "test -f $db-wal && echo yes" 2>$null | Out-String).Trim()
-if ($walExists -eq 'yes') { $null = & docker cp "${Container}:$db-wal" (Join-Path $BackupDir 'checkpoints.db-wal') 2>&1 }
+function OnVolume([string]$shellCommand) {
+    ((& docker run --rm --volumes-from $Container --entrypoint sh $Image -c $shellCommand 2>$null | Out-String).Trim())
+}
 
-$srcBytes = [int64]((& docker exec $Container sh -c "stat -c %s $db" 2>$null | Out-String).Trim())
-$bakFile  = Join-Path $BackupDir 'checkpoints.db'
+$walExists = (OnVolume "test -f $db-wal && echo yes")
+if ($walExists -ne 'yes') {
+    # Not fatal: a store that was checkpointed cleanly has no WAL at all. But say so,
+    # because a missing WAL and an unreadable WAL look identical if this is silent.
+    Write-Host '  no -wal file on the volume (already checkpointed, or cleanly shut down)' -ForegroundColor DarkGray
+    $walExists = $null
+}
+
+$null = & docker cp "${Container}:$db" (Join-Path $BackupDir 'checkpoints.db') 2>&1
+$srcBytes = 0
+$srcRaw = OnVolume "stat -c %s $db 2>/dev/null || echo ''"
+if (-not [int64]::TryParse($srcRaw, [ref]$srcBytes)) {
+    Die "could not measure $db on the volume (got '$srcRaw'). The app is stopped, so every probe must go through --volumes-from, not docker exec."
+}
+if ($walExists) { $null = & docker cp "${Container}:$db-wal" (Join-Path $BackupDir 'checkpoints.db-wal') 2>&1 }
+
+$bakFile = Join-Path $BackupDir 'checkpoints.db'
 if (-not (Test-Path $bakFile)) { Die "the backup file was not written to $BackupDir" }
 $bakBytes = (Get-Item $bakFile).Length
 if ($bakBytes -ne $srcBytes) { Die "backup size $bakBytes != source $srcBytes - the copy is incomplete, not repairing" }
 Ok ("backup verified: {0:N0} MB at {1}" -f ($bakBytes/1MB), $BackupDir)
+if ($walExists) {
+    $walBak = Join-Path $BackupDir 'checkpoints.db-wal'
+    if (Test-Path $walBak) { Ok ("wal backed up too: {0:N0} MB (a checkpoint on a backed-up db can still be rolled back)" -f ((Get-Item $walBak).Length/1MB)) }
+}
 
 # ── 3. checkpoint the WAL. This is the actual repair. ────────────────────────
 Step '3. wal_checkpoint(TRUNCATE)'
@@ -114,9 +133,12 @@ try:
 except Exception as exc:
     res["error"] = type(exc).__name__ + ": " + str(exc)[:250]
 res["elapsed_s"] = round(time.time() - t, 1)
+# Key by SUFFIX, not basename: os.path.basename("/x/checkpoints.db") is "checkpoints.db",
+# so a basename-keyed dict has no "db" member and "$r.db" silently renders as 0 MB for a
+# 2.7 GB file. Reported "after: db 0 MB" on a store that had just passed quick_check.
 for suffix in ("", "-wal", "-shm"):
     p = db + suffix
-    res[os.path.basename(p) or "db"] = os.path.getsize(p) if os.path.exists(p) else None
+    res["db" + suffix] = os.path.getsize(p) if os.path.exists(p) else None
 print(json.dumps(res))
 '@
 $pp = Join-Path ([System.IO.Path]::GetTempPath()) 'df-repair.py'
@@ -145,7 +167,7 @@ else {
 }
 if ($r.quick_check -eq 'ok') { Ok 'quick_check reports a sound file' }
 else { Die "quick_check reported: $($r.quick_check). The rows are NOT fine - restore the backup at $BackupDir." }
-Ok ("after: db {0:N0} MB, wal {1}" -f ($r.db/1MB), $(if ($null -eq $r.'checkpoints.db-wal') { 'absent' } else { "{0:N0} MB" -f ($r.'checkpoints.db-wal'/1MB) }))
+Ok ("after: db {0:N0} MB, wal {1}" -f ($r.db/1MB), $(if ($null -eq $r.'db-wal') { 'absent' } else { "{0:N0} MB" -f ($r.'db-wal'/1MB) }))
 
 # ── 4. bring the stack back the way it was found ─────────────────────────────
 Step '4. Restore the previous running state'
