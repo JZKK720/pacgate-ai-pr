@@ -183,7 +183,16 @@ Write-Host ''
 Write-Host 'L5  no API key anywhere in the laya path' -ForegroundColor Cyan
 
 # Scope to laya-related lines only: pacgate-api legitimately uses credentials.
-$layaLines = @(($src -split '\r?\n') | Where-Object { $_ -match 'laya' })
+#
+# STRIP LINE COMMENTS FIRST. Without that, DOCUMENTING the rule violates it: an
+# explanatory comment such as "laya-serve sets no LAYA_API_KEY" sits on a line that
+# mentions laya and contains the string API_KEY, so it counts as a violation of the
+# very property it describes. Measured 2026-11-28, when exactly that comment made this
+# assertion fail on correct code. Same trap and same remedy as
+# test-workflow-namespace.ps1, which strips comments so documenting the old GHCR
+# namespace is not itself a namespace violation.
+$codeOnly = @(($src -split '\r?\n') | ForEach-Object { ($_ -split '#')[0] })
+$layaLines = @($codeOnly | Where-Object { $_ -match 'laya' })
 $keyHits = @($layaLines | Where-Object { $_ -match 'API_KEY|api_key|Authorization|Bearer' })
 Check 'no key or bearer auth is required to reach laya' ($keyHits.Count -eq 0) `
     (($keyHits | Select-Object -First 3) -join ' | ')

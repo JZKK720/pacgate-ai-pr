@@ -1392,9 +1392,22 @@ def _laya_url() -> str:
     return os.environ.get("PACGATE_LAYA_URL", LAYA_DEFAULT_URL).rstrip("/")
 
 
+def _laya_timeout() -> float:
+    """Read PACGATE_LAYA_TIMEOUT once, for every laya call site.
+
+    2026-11-28: `_laya_post` and the /route caller each read this var inline with
+    their own "60" default. Two reads of one tunable is the same defect class as
+    PACGATE_SANITIZE_TIMEOUT, which had diverged to 600 vs 700 and silently shortened
+    one code path. They agree today at 60, which is exactly why this is worth removing
+    now rather than after someone edits one of them. test-mcp-repair-hints section 6
+    fails any tunable that is read more than once.
+    """
+    return float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+
+
 def _laya_post(payload: dict[str, Any]) -> dict[str, Any]:
     """POST to laya-serve, or raise _LayaUnavailable."""
-    timeout = float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+    timeout = _laya_timeout()
     try:
         resp = httpx.post(_laya_url(), json=payload, timeout=timeout)
     except httpx.HTTPError as exc:
@@ -1506,7 +1519,17 @@ def _laya_unavailable_result(tool: str, exc: Exception) -> str:
             # call rather than a different one.
             "repair_hint": {
                 "action": "configure_service",
-                "requires": ["PACGATE_LAYA_URL", "PACGATE_LAYA_API_KEY"],
+                # 2026-11-28: this listed PACGATE_LAYA_API_KEY, which does not exist
+                # anywhere in the stack. server.py reads only PACGATE_LAYA_URL, and
+                # laya-serve's own Dockerfile says plainly "No LAYA_API_KEY: this
+                # service is reachable only on the compose network, and requiring a
+                # key would contradict the reason we picked a local engine over a
+                # metered API." A repair hint that names a non-existent variable sends
+                # an operator looking for a secret to configure when the real step is
+                # to enable the image. The gate (test-laya-tools L5) asserts exactly
+                # this: no key or bearer auth is required to reach laya.
+                "requires": ["PACGATE_LAYA_URL", "LAYA_IMAGE", "profile:laya"],
+                "enable": "docker compose --profile laya up -d laya",
                 "note": (
                     "This tool cannot produce a number without a laya service. "
                     "Retrying will not help; configure the endpoint or route the "
@@ -2024,7 +2047,7 @@ def pacgate_route_language(
     if lang_guess:
         payload["lang_guess"] = lang_guess
     try:
-        timeout = float(os.environ.get("PACGATE_LAYA_TIMEOUT", "60"))
+        timeout = _laya_timeout()
         route_url = _laya_url().replace("/systemone", "/route")
         resp = httpx.post(route_url, json=payload, timeout=timeout)
         if resp.status_code >= 400:
@@ -2368,7 +2391,15 @@ def _ensure_sanitized_text(
         resp = client.post(
             f"/api/documents/{document_id}/sanitize",
             json={"data_level": data_level},
-            timeout=float(os.environ.get("PACGATE_SANITIZE_TIMEOUT", "600")),
+            # 2026-11-28: this re-read the env var inline with a default of 600,
+            # while the module constant SANITIZE_TIMEOUT_S (L1017) defaults to 700 and the
+            # other two call sites use it. So an unset PACGATE_SANITIZE_TIMEOUT gave this
+            # path 600s and every other path 700s - a silent 100s shortfall on the ONE
+            # code path that runs when the initial response has no readable body. The
+            # measured full-document sanitize is ~655s (comment at L1011), so that path
+            # could time out on documents the others complete. Use the constant: one
+            # source of truth, and an operator override reaches every caller.
+            timeout=SANITIZE_TIMEOUT_S,
         )
         if resp.status_code >= 400:
             return None, f"sanitize refused ({resp.status_code}): {resp.text[:140]}; earlier: {source}"

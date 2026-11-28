@@ -163,6 +163,23 @@ Check 'it names pacgate_clause_risk' ($withheldCode -match 'pacgate_clause_risk'
 Check 'it supplies the substitute arguments' ($withheldCode -match '"arguments"\s*:') 'names the tool but not its arguments - the caller re-derives them and often re-issues the same call'
 Check 'it forbids retrying this tool' ($withheldCode -match 'do not retry') 'does not say not to retry this tool'
 
+# ── 6. each timeout tunable is read once, so its default cannot diverge ──────
+#
+# WHY (measured 2026-11-28): PACGATE_SANITIZE_TIMEOUT was read into a module
+# constant defaulting to 700, and ALSO re-read inline at one call site with a
+# hardcoded default of 600. With the variable unset, that one path got 600s while
+# every other path got 700s - and it is the path taken only when the first response
+# has no readable body, so the shortfall stays invisible until a document is big
+# enough to need the extra 100s (a full-document sanitize was measured at ~655s).
+# An operator override also failed to reach it. The rule: a tunable is read ONCE.
+Write-Host '6. each timeout tunable is read once, so its default cannot diverge' -ForegroundColor White
+foreach ($var in @('PACGATE_SANITIZE_TIMEOUT', 'PACGATE_LAYA_TIMEOUT')) {
+    $envReads = @(($src -split '\r?\n') | Where-Object { $_.TrimStart() -notmatch '^#' } |
+        Where-Object { $_ -match ([regex]::Escape($var) + '\s*"') })
+    Check "$var is read exactly once" ($envReads.Count -eq 1) `
+        ("found $($envReads.Count): " + (($envReads | ForEach-Object { $_.Trim() }) -join ' | '))
+}
+
 Write-Host ''
 if ($failed -gt 0) {
     Write-Host "RESULT: $passed passed, $failed failed" -ForegroundColor Red
