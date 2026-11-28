@@ -715,6 +715,16 @@ $liveStackGates = @(
     # reads it back, deletes it, and confirms it is gone. It creates no memory,
     # session, or matter data. Exits 2 when OpenViking is down.
     'scripts/test-openviking-roundtrip.ps1'
+    # DEER-FLOW CHECKPOINT STORE, registered 2026-11-28. Thread creation began
+    # returning 500 with "sqlite3.DatabaseError: database disk image is malformed"
+    # raised from LangGraph's checkpoint writer. Nothing in this suite watched the
+    # checkpoint store, so the stack reported healthy throughout. The real cause was
+    # NOT corruption: a reader held the file, wal_checkpoint returned busy=1, and
+    # the WAL grew to 1.17 GB until a writer saw unreadable pages. quick_check said
+    # "ok" and plain INSERTs succeeded the whole time, so only a WRITE-path probe
+    # catches this. The gate checks the WAL size, quick_check, and that a checkpoint
+    # row can actually be written. Exits 2 when deer-flow is down.
+    'scripts/test-deer-flow-checkpoints.ps1'
     # LEGAL JOURNEY, registered 2026-10-31. This is the closest thing to a real
     # acceptance test in the repo - matter -> upload -> extract -> sanitize -> review
     # gate -> KB search -> external search -> connector health -> deer-flow auth ->
